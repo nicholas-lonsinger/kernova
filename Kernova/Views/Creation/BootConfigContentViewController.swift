@@ -108,7 +108,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         }
         let commandLineField = NSTextField(
             string: creationVM.kernelCommandLine ?? Self.defaultKernelCommandLine)
-        commandLineField.placeholderString = "Kernel Command Line"
+        commandLineField.placeholderString = "Kernel command line"
         commandLineField.delegate = self
 
         addFullWidth(
@@ -119,7 +119,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)),
                 makeFileRow(
                     label: "Initrd", path: creationVM.initrdPath, browseAction: #selector(browseInitrd)),
-                makeGroupedFormCardRow("Command Line", control: commandLineField, fillsControl: true),
+                makeGroupedFormCardRow("Command line", control: commandLineField, fillsControl: true),
             ]))
     }
 

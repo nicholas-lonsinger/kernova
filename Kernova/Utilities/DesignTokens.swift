@@ -32,6 +32,18 @@ enum Spacing {
     static let major: CGFloat = 20
 }
 
+/// Corner radii for the app's rounded containers.
+enum CornerRadius {
+    /// Grouped-form cards and the tiles that echo them (`10`).
+    static let card: CGFloat = 10
+}
+
+/// Opacities applied to whole controls or rows.
+enum Alpha {
+    /// A control or row that is present but not editable right now (`0.5`).
+    static let disabled: CGFloat = 0.5
+}
+
 /// Status → color mapping shared by VM-status and guest-agent-status indicators.
 enum StatusColor {
     /// Inert / not-yet-connected (stopped VM, agent waiting/connecting).
@@ -49,6 +61,10 @@ enum StatusColor {
 
 /// Shared text styles.
 enum Typography {
+    /// Section and page headings — `.title2` at `.semibold`.
+    static var title: NSFont {
+        .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .title2).pointSize, weight: .semibold)
+    }
     /// Primary body text — the default for form labels and list-row titles.
     static var body: NSFont { .preferredFont(forTextStyle: .body) }
 }

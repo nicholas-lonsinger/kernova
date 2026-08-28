@@ -77,12 +77,12 @@ final class ResourceConfigContentViewController: NSViewController {
         addSectionHeader("Compute", to: form)
         addCard(
             [
-                makeGroupedFormCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
+                makeGroupedFormCardRow("CPU cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
                 makeGroupedFormCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
             ], to: form)
 
         addSectionHeader("Storage", to: form)
-        addCard([makeGroupedFormCardRow("Disk Size", control: diskPopUp)], to: form)
+        addCard([makeGroupedFormCardRow("Disk size", control: diskPopUp)], to: form)
         let caption = makeGroupedFormCaption(
             "Physical disk usage grows only as data is written (ASIF sparse format).")
         form.addArrangedSubview(caption)

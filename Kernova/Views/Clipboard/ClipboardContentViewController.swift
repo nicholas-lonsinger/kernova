@@ -30,12 +30,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let summaryView = ClipboardSummaryView()
     private let concealedPreview = ClipboardConcealedPreviewView()
     private let commandBar = ClipboardCommandBarView()
-    private let passthroughBanner = ClipboardPassthroughBanner()
-    private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
-        equalToConstant: 0)
-    private lazy var commandBarCollapsed = commandBar.heightAnchor.constraint(equalToConstant: 0)
-    /// Content-type indicator; doubles as the transient-status surface.
-    private let indicatorView = ClipboardIndicatorView()
+    /// The content well: holds the previews and names the buffer's content type.
+    private let bufferCard = ClipboardBufferCardView()
+    /// The footer's automatic-passthrough switch.
+    private let passthroughSwitch = NSSwitch()
+    /// The status line's transient-message slot.
+    private let statusMessage = ClipboardStatusMessageView()
 
     private let transferProgressBar = NSProgressIndicator()
     private lazy var transferBarCollapsed = transferProgressBar.heightAnchor.constraint(
@@ -175,7 +175,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         self.statusLabel = label
 
         let button = NSButton(title: "", target: nil, action: nil)
-        button.bezelStyle = .accessoryBarAction
+        button.bezelStyle = .push
         button.controlSize = .small
         button.isHidden = true
         self.actionButton = button
@@ -214,21 +214,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         for contentView in contentViews {
             contentView.translatesAutoresizingMaskIntoConstraints = false
             contentView.isHidden = contentView !== scrollView
-            container.addSubview(contentView)
+            bufferCard.contentContainer.addSubview(contentView)
         }
-
-        passthroughBanner.translatesAutoresizingMaskIntoConstraints = false
-        passthroughBanner.isHidden = true
-        passthroughBanner.onTurnOff = { [weak self] in self?.disablePassthrough() }
-        container.addSubview(passthroughBanner)
 
         commandBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(commandBar)
-
-        let statusDivider = NSBox()
-        statusDivider.boxType = .separator
-        statusDivider.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(statusDivider)
+        container.addSubview(bufferCard)
 
         transferProgressBar.style = .bar
         transferProgressBar.isIndeterminate = false
@@ -239,49 +230,54 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         transferProgressBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(transferProgressBar)
 
-        let statusBar = makeStatusBar()
-        statusBar.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(statusBar)
+        let footer = makeFooter()
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(footer)
 
         var constraints: [NSLayoutConstraint] = [
-            passthroughBanner.topAnchor.constraint(equalTo: container.topAnchor),
-            passthroughBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            passthroughBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            passthroughBannerCollapsed,
-
-            commandBar.topAnchor.constraint(equalTo: passthroughBanner.bottomAnchor),
+            commandBar.topAnchor.constraint(equalTo: container.topAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            // The inset card is the window's only delineator — no dividers.
+            bufferCard.topAnchor.constraint(
+                equalTo: commandBar.bottomAnchor, constant: Spacing.small),
+            bufferCard.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor, constant: Spacing.medium),
+            bufferCard.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor, constant: -Spacing.medium),
         ]
         for contentView in contentViews {
             constraints += [
-                contentView.topAnchor.constraint(equalTo: commandBar.bottomAnchor),
-                contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                contentView.bottomAnchor.constraint(equalTo: statusDivider.topAnchor),
+                contentView.topAnchor.constraint(equalTo: bufferCard.contentContainer.topAnchor),
+                contentView.leadingAnchor.constraint(
+                    equalTo: bufferCard.contentContainer.leadingAnchor),
+                contentView.trailingAnchor.constraint(
+                    equalTo: bufferCard.contentContainer.trailingAnchor),
+                contentView.bottomAnchor.constraint(
+                    equalTo: bufferCard.contentContainer.bottomAnchor),
             ]
         }
         constraints += [
-            statusDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            statusDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            transferProgressBar.topAnchor.constraint(equalTo: statusDivider.bottomAnchor),
-            transferProgressBar.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor, constant: Spacing.medium),
-            transferProgressBar.trailingAnchor.constraint(
-                equalTo: container.trailingAnchor, constant: -Spacing.medium),
+            transferProgressBar.topAnchor.constraint(
+                equalTo: bufferCard.bottomAnchor, constant: Spacing.small),
+            transferProgressBar.leadingAnchor.constraint(equalTo: bufferCard.leadingAnchor),
+            transferProgressBar.trailingAnchor.constraint(equalTo: bufferCard.trailingAnchor),
             transferBarCollapsed,
 
-            statusBar.topAnchor.constraint(equalTo: transferProgressBar.bottomAnchor),
-            statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            footer.topAnchor.constraint(equalTo: transferProgressBar.bottomAnchor),
+            footer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ]
         NSLayoutConstraint.activate(constraints)
 
-        // Lower content hugging so the content area yields space to the bars.
-        scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        // Lower hugging so the card — and the editor inside it — absorb the
+        // window's slack rather than the bars around them.
+        for view in [bufferCard, scrollView] {
+            view.setContentHuggingPriority(.defaultLow, for: .vertical)
+            view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        }
 
         self.view = container
     }
@@ -310,9 +306,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let text = textView.string
         editSeq &+= 1
         hasPendingEdit = true
-        indicatorView.setText(ClipboardContentDescriber.indicatorText(forPlainText: text))
-        commandBar.copyButton.isEnabled = !text.isEmpty && !isCopyingToMac
-        commandBar.clearButton.isEnabled = !text.isEmpty
+        bufferCard.setContentType(ClipboardContentDescriber.indicatorText(forPlainText: text))
+        refreshCommandButtons()
         scheduleEditCommit(text: text, seq: editSeq)
     }
 
@@ -393,17 +388,37 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         updateUI()
     }
 
-    var isCommandBarHiddenForTesting: Bool { commandBar.isHidden }
-
-    /// The command bar's laid-out height, so a test can assert the collapse
-    /// resolves to zero rather than only that `isHidden` was set.
-    var commandBarLaidOutHeightForTesting: CGFloat { commandBar.frame.height }
-
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
 
-    /// The indicator slot's current text — the persistent content-type line, or a
-    /// transient message while one is up.
-    var indicatorTextForTesting: String { indicatorView.stringValue }
+    /// The status line's transient slot — empty unless a message is up.
+    var indicatorTextForTesting: String { statusMessage.stringValue }
+
+    /// The buffer card's content-type chip.
+    var contentChipTextForTesting: String { bufferCard.chipTextForTesting }
+
+    /// The band the chip reserves above the buffer's content.
+    var contentChipBandHeightForTesting: CGFloat { bufferCard.chipBandHeightForTesting }
+
+    var isPassthroughSwitchOnForTesting: Bool { passthroughSwitch.state == .on }
+
+    /// Whether the manual command actions are offered right now.
+    var areCommandActionsEnabledForTesting: Bool { commandBar.pasteButton.isEnabled }
+
+    /// Flips the footer switch as a click would, running the real write path.
+    func togglePassthroughSwitchForTesting(_ isOn: Bool) {
+        setPassthroughSwitchForTesting(isOn)
+        passthroughToggled()
+    }
+
+    /// Moves the switch without writing — the state a raised confirmation sheet
+    /// leaves it in while the user decides.
+    func setPassthroughSwitchForTesting(_ isOn: Bool) {
+        passthroughSwitch.state = isOn ? .on : .off
+    }
+
+    /// Drives the confirmation outcomes without a window/sheet.
+    func confirmPassthroughEnableForTesting() { passthroughSetting?.confirmEnable() }
+    func cancelPassthroughEnableForTesting() { passthroughSetting?.cancelEnable() }
 
     /// The bottom transfer bar's fraction, or `nil` while it is collapsed.
     var transferBarFractionForTesting: Double? {
@@ -487,11 +502,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let status = instance.agentStatus
         let canInstallKernovaAgent = instance.configuration.guestOS == .macOS
 
-        let hasContent = service != nil && !(service?.clipboardContent.isEmpty ?? true)
         textView.isEditable = service != nil
-        commandBar.pasteButton.isEnabled = service != nil
-        commandBar.copyButton.isEnabled = hasContent && !isCopyingToMac
-        commandBar.clearButton.isEnabled = hasContent
 
         updateTransferProgress()
 
@@ -503,7 +514,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 cancelPendingEdit()
                 lastAppliedDigest = content.digest
                 apply(content: content)
-                indicatorView.setText(ClipboardContentDescriber.indicatorText(for: content))
+                bufferCard.setContentType(ClipboardContentDescriber.indicatorText(for: content))
             }
         }
 
@@ -511,7 +522,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             let wording = ClipboardTransferWording.wording(for: finish, vmName: instance.name)
         {
             lastShownFinish = finish
-            indicatorView.showTransientMessage(wording.message, style: .error)
+            statusMessage.showTransientMessage(wording.message, style: .error)
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
@@ -519,28 +530,56 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         triggerPreviewMaterialization()
     }
 
-    /// Reveals the passthrough banner and hides the manual command bar while
-    /// automatic passthrough is on.
+    /// Renders the footer switch from the model and withdraws the manual
+    /// actions while automatic passthrough owns the transfer.
+    ///
+    /// The command row stays in place either way — a disabled button says the
+    /// action exists and is not available now, which a vanished row does not.
     private func updatePassthroughChrome() {
-        let on = instance.configuration.clipboardPassthroughEnabled
-        if passthroughBanner.isHidden == on {
-            passthroughBanner.isHidden = !on
-            passthroughBannerCollapsed.isActive = !on
-        }
-        guard commandBar.isHidden != on else { return }
+        let on = isPassthroughOn
+        passthroughSwitch.state = on ? .on : .off
         // Full Keyboard Access can park focus on a command button; move it off
-        // before the bar disappears.
+        // before the buttons go inert.
         if on, let responder = view.window?.firstResponder as? NSView,
             responder.isDescendant(of: commandBar)
         {
             view.window?.makeFirstResponder(dropContainer)
         }
-        commandBar.isHidden = on
-        commandBarCollapsed.isActive = on
+        refreshCommandButtons()
     }
 
-    private func disablePassthrough() {
-        viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
+    /// The one place the three command buttons' enablement is decided.
+    private func refreshCommandButtons() {
+        let connected = instance.clipboardService != nil
+        let offered = connected && !isPassthroughOn
+        commandBar.pasteButton.isEnabled = offered
+        commandBar.copyButton.isEnabled = offered && hasBufferContent && !isCopyingToMac
+        commandBar.clearButton.isEnabled = offered && hasBufferContent
+    }
+
+    /// Whether the buffer the buttons act on holds anything — the editor's text
+    /// while a keystroke has not yet reached the model, the model otherwise.
+    private var hasBufferContent: Bool {
+        if hasPendingEdit { return !textView.string.isEmpty }
+        guard let service = instance.clipboardService else { return false }
+        return !service.clipboardContent.isEmpty
+    }
+
+    /// Passthrough's shared write path; `nil` once the view model is gone.
+    ///
+    /// Built per use rather than stored: the confirmation alert holds its
+    /// `refresh` closure across the sheet.
+    private var passthroughSetting: ClipboardPassthroughSetting? {
+        guard let viewModel else { return nil }
+        return ClipboardPassthroughSetting(
+            instance: instance, viewModel: viewModel,
+            refresh: { [weak self] in self?.updatePassthroughChrome() })
+    }
+
+    /// Turning it off is immediate; turning it on confirms first, on this
+    /// window (CLIPBOARD.md §10).
+    @objc private func passthroughToggled() {
+        passthroughSetting?.set(passthroughSwitch.state == .on, confirmingIn: view.window)
     }
 
     /// Pulls the representations the window renders richly, when it is visible.
@@ -659,12 +698,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard !isCopyingToMac else { return }
         isCopyingToMac = true
 
-        commandBar.copyButton.isEnabled = false
+        refreshCommandButtons()
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
                 self.isCopyingToMac = false
-                self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
+                self.refreshCommandButtons()
             }
             let outcome = await self.publisher.publish(from: service)
             self.showCopyOutcome(outcome)
@@ -675,28 +714,28 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func showCopyOutcome(_ outcome: HostPublishOutcome) {
         switch outcome {
         case .nothingServed(let reasons):
-            indicatorView.showTransientMessage(dropMessage(for: reasons), style: .error)
+            statusMessage.showTransientMessage(dropMessage(for: reasons), style: .error)
         case .stagingFailed:
-            indicatorView.showTransientMessage(
+            statusMessage.showTransientMessage(
                 "Couldn't prepare the clipboard content to copy", style: .error)
         case .written(_, let droppedReasons, _):
             if droppedReasons.isEmpty {
-                indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
+                statusMessage.showTransientMessage("Copied to Mac clipboard", style: .info)
             } else if droppedReasons.contains(.overPasteBudget) {
                 // Partial success — name the cap, since it is what the user has to
                 // act on to get the files across.
-                indicatorView.showTransientMessage(
+                statusMessage.showTransientMessage(
                     "Copied without the files — over the \(ClipboardPasteLimit.displayLimit(instance.effectiveClipboardMaxPasteBytes)) clipboard transfer limit",
                     style: .warning)
             } else {
                 // Partial success — don't claim an unqualified one.
                 let count = droppedReasons.count
-                indicatorView.showTransientMessage(
+                statusMessage.showTransientMessage(
                     "Copied to Mac clipboard — \(count) item\(count == 1 ? "" : "s") couldn't be prepared",
                     style: .warning)
             }
         case .writeFailed:
-            indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
+            statusMessage.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
         }
         #if DEBUG
         onCopyOutcomeForTesting?()
@@ -736,14 +775,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             service.clipboardContent = content
             service.grabIfChanged()
             if let note {
-                indicatorView.showTransientMessage(note, style: .warning)
+                statusMessage.showTransientMessage(note, style: .warning)
             }
             Self.logger.info(
                 "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
             return true
         case .rejected(let message, _):
-            indicatorView.showTransientMessage(message, style: .warning)
+            statusMessage.showTransientMessage(message, style: .warning)
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
             return false
         case .pendingFiles:
@@ -806,15 +845,15 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard allowsBinary else {
             // A text-only transport rejects the file whatever it holds, so say so
             // instead of writing it out first.
-            indicatorView.showTransientMessage(
+            statusMessage.showTransientMessage(
                 ClipboardPasteboardIntake.textOnlyTransportMessage, style: .warning)
             return
         }
 
-        indicatorView.showTransientMessage("Receiving dropped file…", style: .info)
+        statusMessage.showTransientMessage("Receiving dropped file…", style: .info)
 
         guard let destination = service.reserveDropDestination() else {
-            indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
+            statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
             Self.logger.error("Failed to reserve a directory for the dropped file promise")
             return
         }
@@ -834,7 +873,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 defer { if !keepFile { try? FileManager.default.removeItem(at: url) } }
                 guard let self else { return }
                 if let error {
-                    self.indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
+                    self.statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
                     Self.logger.error(
                         "File promise receipt failed: \(error.localizedDescription, privacy: .public)"
                     )
@@ -934,12 +973,46 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [statusCircle, statusLabel, spacer, indicatorView, actionButton])
+        let stack = NSStackView(views: [statusCircle, statusLabel, spacer, statusMessage, actionButton])
         stack.orientation = .horizontal
         stack.spacing = Spacing.small
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         stack.alignment = .centerY
 
+        return stack
+    }
+
+    /// The window's footer: the passthrough switch over the agent status line.
+    private func makeFooter() -> NSView {
+        let stack = NSStackView(views: [makePassthroughRow(), makeStatusBar()])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Spacing.none
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for row in stack.arrangedSubviews {
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return stack
+    }
+
+    private func makePassthroughRow() -> NSView {
+        let label = NSTextField(labelWithString: "Automatic passthrough")
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.isSelectable = false
+        label.toolTip = ClipboardPassthroughConfirmation.message
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        passthroughSwitch.controlSize = .small
+        passthroughSwitch.target = self
+        passthroughSwitch.action = #selector(passthroughToggled)
+
+        let stack = NSStackView(views: [label, spacer, passthroughSwitch])
+        stack.orientation = .horizontal
+        stack.spacing = Spacing.small
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 0, right: 12)
+        stack.alignment = .centerY
         return stack
     }
 }

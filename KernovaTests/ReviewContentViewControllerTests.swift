@@ -97,7 +97,7 @@ struct ReviewContentViewControllerTests {
         await vc.latestImageTaskForTesting?.value
 
         #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
-        #expect(findLabel(withText: "macOS Version", in: vc.view) == nil)
+        #expect(findLabel(withText: "macOS version", in: vc.view) == nil)
         #expect(
             findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }
@@ -127,7 +127,7 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "Local File", in: vc.view) != nil)
         #expect(findLabel(withText: "Restore.ipsw", in: vc.view) != nil)
         // Not yet inspected, so no version or size row shows.
-        #expect(findLabel(withText: "macOS Version", in: vc.view) == nil)
+        #expect(findLabel(withText: "macOS version", in: vc.view) == nil)
         #expect(findLabel(withText: "Size", in: vc.view) == nil)
     }
 

@@ -33,7 +33,7 @@ final class OSSelectionContentViewController: NSViewController {
         let container = NSView()
 
         let heading = NSTextField(labelWithString: "Choose Operating System")
-        heading.font = WizardStyle.titleFont
+        heading.font = Typography.title
         heading.isSelectable = false
 
         let subtitle = NSTextField(

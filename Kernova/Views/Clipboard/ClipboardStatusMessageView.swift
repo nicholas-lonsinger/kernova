@@ -1,12 +1,13 @@
 import AppKit
 
-/// The clipboard window's content-type indicator and transient-status surface.
+/// The clipboard window's transient-status slot, at the trailing end of the
+/// status line.
 ///
-/// Shows the persistent content-type text (e.g. "PNG image · 1920 × 1080 ·
-/// 3.4 MB") and temporarily takes over to show transient messages — send
-/// failures, size-cap skips, copy confirmations — reverting after a few seconds.
+/// Shows send failures, size-cap skips, copy confirmations and drop notes for a
+/// few seconds, then clears. The buffer's content type is stated by the buffer
+/// card's chip, not here.
 @MainActor
-final class ClipboardIndicatorView: NSTextField {
+final class ClipboardStatusMessageView: NSTextField {
     /// Tone of a transient message.
     enum TransientStyle {
         case info
@@ -29,9 +30,7 @@ final class ClipboardIndicatorView: NSTextField {
     private static let horizontalCompressionResistance = NSLayoutConstraint.Priority(
         rawValue: NSLayoutConstraint.Priority.defaultLow.rawValue + 1)
 
-    /// The persistent indicator text a transient message reverts to.
-    private var persistentText = ""
-    private var revertTask: Task<Void, Never>?
+    private var clearTask: Task<Void, Never>?
 
     init() {
         super.init(frame: .zero)
@@ -55,38 +54,26 @@ final class ClipboardIndicatorView: NSTextField {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Updates the persistent content-type indicator.
+    /// Shows `text` in the status slot for a few seconds, then clears it.
     ///
-    /// While a transient message is showing, the new text takes over once the
-    /// transient reverts.
-    func setText(_ text: String) {
-        persistentText = text
-        guard revertTask == nil else { return }
-        stringValue = text
-        textColor = .secondaryLabelColor
-    }
-
-    /// Shows `text` in the indicator slot for a few seconds.
-    ///
-    /// Reverts to the persistent text afterwards. A newer message replaces the
-    /// current one and restarts the clock.
+    /// A newer message replaces the current one and restarts the clock.
     func showTransientMessage(_ text: String, style: TransientStyle) {
-        revertTask?.cancel()
+        clearTask?.cancel()
         stringValue = text
         textColor = style.color
-        revertTask = Task { [weak self] in
+        clearTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: Self.transientDuration)
             } catch {
                 return  // superseded by a newer message
             }
-            self?.revertToPersistent()
+            self?.clear()
         }
     }
 
-    private func revertToPersistent() {
-        revertTask = nil
-        stringValue = persistentText
+    private func clear() {
+        clearTask = nil
+        stringValue = ""
         textColor = .secondaryLabelColor
     }
 }

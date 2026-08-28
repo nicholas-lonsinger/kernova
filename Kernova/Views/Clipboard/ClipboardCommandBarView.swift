@@ -1,10 +1,11 @@
 import AppKit
 
-/// The clipboard window's command row: icon buttons for host-pasteboard
-/// transfers and clearing the buffer.
+/// The clipboard window's command row: standard bordered buttons for
+/// host-pasteboard transfers and clearing the buffer.
 ///
-/// The bar carries its own hairline, so it self-delineates from the content
-/// area below when the owner collapses it via `isHidden`.
+/// The row stays in place whatever the buffer holds and whether or not
+/// automatic passthrough is on — passthrough disables the buttons rather than
+/// taking the row away. The inset buffer card below is what delineates it.
 @MainActor
 final class ClipboardCommandBarView: NSView {
     // RATIONALE: No keyEquivalent on any button — a Cmd+V / Cmd+C equivalent
@@ -40,20 +41,11 @@ final class ClipboardCommandBarView: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        let hairline = NSBox()
-        hairline.boxType = .separator
-        hairline.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hairline)
-
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: hairline.topAnchor),
-
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -63,7 +55,7 @@ final class ClipboardCommandBarView: NSView {
 
     private static func makeButton(title: String, symbol: String, tooltip: String) -> NSButton {
         let button = NSButton(title: title, target: nil, action: nil)
-        button.bezelStyle = .accessoryBarAction
+        button.bezelStyle = .push
         button.controlSize = .small
         button.image = .systemSymbol(symbol, accessibilityDescription: title)
         button.imagePosition = .imageLeading

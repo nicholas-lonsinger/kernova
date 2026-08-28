@@ -23,11 +23,6 @@ enum WizardStyle {
     /// Inset around the chrome rows (step indicator, navigation bar).
     static let chromePadding: CGFloat = 20
 
-    /// Font for a step's leading title row.
-    static var titleFont: NSFont {
-        .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .title2).pointSize, weight: .semibold)
-    }
-
     /// Font for a step's explanatory subtitle row.
     static var subtitleFont: NSFont { .preferredFont(forTextStyle: .body) }
 }
@@ -35,7 +30,7 @@ enum WizardStyle {
 @MainActor
 func makeWizardTitle(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
-    label.font = WizardStyle.titleFont
+    label.font = Typography.title
     label.alignment = .left
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0

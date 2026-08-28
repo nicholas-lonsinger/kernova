@@ -30,7 +30,14 @@ final class SnapshotSectionView: NSView {
     /// editing field.
     private(set) var activeEdit: UUID?
 
+    /// The section's info affordance, exposed so a panel header can host it in
+    /// place of the inner section header.
+    let infoButton = InfoButtonView()
+
     private let readoutLabel = NSTextField(labelWithString: "")
+
+    /// The header's size readout, exposed on the same terms as ``infoButton``.
+    var sizeReadout: NSView { readoutLabel }
     private let listStack = NSStackView()
     private var takeSnapshotButton = NSButton()
 
@@ -93,8 +100,13 @@ final class SnapshotSectionView: NSView {
     /// off-main read lands; a row with no entry yet shows its date alone.
     private var sizesByID: [UUID: UInt64] = [:]
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    /// Whether the section draws its own header, or hands ``infoButton`` and
+    /// ``sizeReadout`` to a panel header that states the category name instead.
+    private let showsHeader: Bool
+
+    init(showsHeader: Bool = true) {
+        self.showsHeader = showsHeader
+        super.init(frame: .zero)
         takeSnapshotButton = makeLinkButton(
             "Take Snapshot\u{2026}", target: self, action: #selector(takeSnapshotTapped))
         buildLayout()
@@ -123,15 +135,18 @@ final class SnapshotSectionView: NSView {
         footer.alignment = .centerY
         footer.spacing = Spacing.standard
 
-        let section = NSStackView(views: [
-            makeHeader(),
-            makeGroupedFormCard(rows: [listStack, footer]),
+        configureChrome()
+        var rows: [NSView] = []
+        if showsHeader { rows.append(makeHeader()) }
+        rows.append(makeGroupedFormCard(rows: [listStack, footer]))
+        rows.append(
             makeGroupedFormCaption(
                 "Reverting returns the VM to the state and settings it had when the snapshot was "
                     + "taken. Snapshots stay until you delete them. A snapshot\u{2019}s size counts "
                     + "the blocks it shares with the VM\u{2019}s disks, so the listed sizes overlap "
-                    + "rather than add up."),
-        ])
+                    + "rather than add up."))
+
+        let section = NSStackView(views: rows)
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = Spacing.small
@@ -149,9 +164,10 @@ final class SnapshotSectionView: NSView {
         }
     }
 
-    private func makeHeader() -> NSView {
-        let info = InfoButtonView()
-        info.configure(
+    /// Configures the two header pieces a panel header can host instead: they
+    /// are built whether or not this section draws a header of its own.
+    private func configureChrome() {
+        infoButton.configure(
             label: "Snapshots",
             paragraphs: [
                 .body(
@@ -181,13 +197,15 @@ final class SnapshotSectionView: NSView {
             "The space the snapshots\u{2019} files hold. Their copies share blocks with the "
             + "VM\u{2019}s disks, so this overlaps with the VM rather than adding to it."
         readoutLabel.setContentHuggingPriority(.required, for: .horizontal)
+    }
 
+    private func makeHeader() -> NSView {
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let header = NSStackView(views: [
-            makeGroupedFormSectionHeader("Snapshots"), info, spacer, readoutLabel,
+            makeGroupedFormSectionHeader("Snapshots"), infoButton, spacer, readoutLabel,
         ])
         header.orientation = .horizontal
         header.alignment = .centerY

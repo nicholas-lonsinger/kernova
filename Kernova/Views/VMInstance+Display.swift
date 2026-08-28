@@ -62,6 +62,13 @@ extension VMInstance {
         vsockDropService?.reportUnreadableDrop()
     }
 
+    /// The storage disks to show for this VM, materializing the default main
+    /// disk when its configuration carries none.
+    var displayedStorageDisks: [StorageDisk] {
+        if let disks = configuration.storageDisks, !disks.isEmpty { return disks }
+        return VMLibraryViewModel.defaultStorageDisks(for: self)
+    }
+
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
     var statusDisplayName: String {
         if let state = preparingState { return state.displayLabel }

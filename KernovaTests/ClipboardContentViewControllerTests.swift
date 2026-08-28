@@ -364,11 +364,12 @@ struct ClipboardContentViewControllerEditTests {
     }
 }
 
-/// Verifies the command bar's passthrough-driven visibility (#599): the manual
-/// Paste from Mac / Copy to Mac / Clear actions — the command bar and their
+/// Verifies the command actions' passthrough gating (#599): the manual Paste
+/// from Mac / Copy to Mac / Clear actions — the command row's buttons and their
 /// responder-chain `paste:`/`copy:` equivalents — are withdrawn while automatic
 /// passthrough is on, both at window-open time and live as the toggle changes,
-/// and restored when it's turned back off.
+/// and restored when it's turned back off. The row itself stays in place either
+/// way, so the actions read as unavailable rather than absent.
 @Suite("ClipboardContentViewController passthrough chrome", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerPassthroughChromeTests {
@@ -381,28 +382,38 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         ClipboardContentViewController(instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
     }
 
-    @Test("passthrough off (the default) shows the command bar")
-    func passthroughOffShowsCommandBar() {
-        let vc = makeController(instance: makeClipboardInstance())
-        _ = vc.view  // forces loadView + viewDidLoad → updateUI
-
-        #expect(vc.isCommandBarHiddenForTesting == false)
-    }
-
-    @Test("passthrough already on when the window opens hides the command bar")
-    func passthroughOnAtOpenHidesCommandBar() {
-        let vc = makeController(instance: makeClipboardInstance(passthroughEnabled: true))
-        _ = vc.view  // forces loadView + viewDidLoad → updateUI
-
-        #expect(vc.isCommandBarHiddenForTesting == true)
-    }
-
-    @Test("toggling passthrough live shows/hides the command bar without reopening the window")
-    func liveToggleUpdatesCommandBarVisibility() async throws {
-        let instance = makeClipboardInstance()
+    /// A controller over a connected VM, since the command actions need a
+    /// clipboard service before passthrough decides anything.
+    private func makeConnectedController(passthroughEnabled: Bool = false) -> (
+        ClipboardContentViewController, VMInstance
+    ) {
+        let instance = makeClipboardInstance(passthroughEnabled: passthroughEnabled)
+        instance.clipboardService = FakeClipboardService(content: .empty)
         let vc = makeController(instance: instance)
-        _ = vc.view  // forces loadView + viewDidLoad → observeServiceChanges
-        #expect(vc.isCommandBarHiddenForTesting == false)
+        _ = vc.view  // forces loadView + viewDidLoad → updateUI
+        return (vc, instance)
+    }
+
+    @Test("passthrough off (the default) offers the command actions")
+    func passthroughOffOffersCommandActions() {
+        let (vc, _) = makeConnectedController()
+
+        #expect(vc.areCommandActionsEnabledForTesting == true)
+        #expect(vc.isPassthroughSwitchOnForTesting == false)
+    }
+
+    @Test("passthrough on at open keeps the command row and withdraws its actions")
+    func passthroughOnAtOpenDisablesCommandActions() {
+        let (vc, _) = makeConnectedController(passthroughEnabled: true)
+
+        #expect(vc.areCommandActionsEnabledForTesting == false)
+        #expect(vc.isPassthroughSwitchOnForTesting == true)
+    }
+
+    @Test("toggling passthrough live moves the switch and the actions without reopening")
+    func liveToggleUpdatesFooterAndActions() async throws {
+        let (vc, instance) = makeConnectedController()
+        #expect(vc.areCommandActionsEnabledForTesting == true)
 
         // Driven through the production `ObservationLoop`, not
         // `simulateObservationForTesting()`: a hand-called `updateUI()` would
@@ -411,27 +422,17 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         // would freeze the window's chrome until it is reopened.
         //
         // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
-        // tests") — the observed effect is `commandBar.isHidden`, a plain AppKit
-        // property with no Observable or `AsyncGate` signal to arm against; the
-        // loop's internal re-arm hop is not test-facing.
+        // tests") — the observed effect is an `NSSwitch`'s state and a button's
+        // `isEnabled`, plain AppKit properties with no Observable or `AsyncGate`
+        // signal to arm against; the loop's internal re-arm hop is not
+        // test-facing.
         instance.configuration.clipboardPassthroughEnabled = true
-        try await waitUntil { vc.isCommandBarHiddenForTesting }
+        try await waitUntil { vc.isPassthroughSwitchOnForTesting }
+        #expect(vc.areCommandActionsEnabledForTesting == false)
 
         instance.configuration.clipboardPassthroughEnabled = false
-        try await waitUntil { !vc.isCommandBarHiddenForTesting }
-    }
-
-    @Test("the hidden command bar actually lays out at zero height")
-    func hiddenCommandBarCollapsesToZeroHeight() {
-        let vc = makeController(instance: makeClipboardInstance(passthroughEnabled: true))
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
-            styleMask: [.titled], backing: .buffered, defer: true)
-        window.contentViewController = vc
-        vc.view.layoutSubtreeIfNeeded()
-
-        #expect(vc.isCommandBarHiddenForTesting == true)
-        #expect(vc.commandBarLaidOutHeightForTesting == 0)
+        try await waitUntil { !vc.isPassthroughSwitchOnForTesting }
+        #expect(vc.areCommandActionsEnabledForTesting == true)
     }
 
     @Test("paste:/copy: are gated while passthrough is on and restored when it's off")
@@ -736,6 +737,193 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         instance.clipboardTransfers.retire(operation)
         vc.simulateObservationForTesting()
         #expect(vc.transferBarFractionForTesting == nil)
+    }
+}
+
+/// Verifies the footer's passthrough switch, the window's second surface for a
+/// setting the VM's settings pane also offers: both go through
+/// `ClipboardPassthroughSetting`, so turning it on confirms first and a
+/// cancelled or unconfirmable enable writes nothing and puts the switch back.
+@Suite("ClipboardContentViewController passthrough switch", .admissionGated)
+@MainActor
+struct ClipboardPassthroughSwitchTests {
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
+    private let preferences = makeEphemeralPreferences(
+        suiteName: "test.kernova.clipboard-passthrough-switch")
+
+    /// The controller and the view model it holds **weakly** — a caller that
+    /// drops the view model leaves the write path with nothing to write through.
+    private func makeController(_ instance: VMInstance) -> (
+        ClipboardContentViewController, VMLibraryViewModel
+    ) {
+        let viewModel = makeClipboardViewModel(preferences: preferences)
+        let vc = ClipboardContentViewController(instance: instance, viewModel: viewModel)
+        _ = vc.view  // forces loadView + viewDidLoad → updateUI
+        return (vc, viewModel)
+    }
+
+    @Test("turning passthrough off writes immediately, with no confirmation")
+    func flipOffWritesImmediately() {
+        let instance = makeClipboardInstance(passthroughEnabled: true)
+        let (vc, viewModel) = makeController(instance)
+        defer { _ = viewModel }
+        #expect(vc.isPassthroughSwitchOnForTesting == true)
+
+        vc.togglePassthroughSwitchForTesting(false)
+
+        #expect(instance.configuration.clipboardPassthroughEnabled == false)
+        #expect(vc.isPassthroughSwitchOnForTesting == false)
+    }
+
+    @Test("turning it on with no window to confirm in writes nothing and re-renders off")
+    func flipOnWithoutWindowWritesNothing() {
+        let instance = makeClipboardInstance()
+        let (vc, viewModel) = makeController(instance)
+        defer { _ = viewModel }
+
+        // The offscreen test controller has no window to host the confirmation
+        // sheet, so the enable path must not silently enable.
+        vc.togglePassthroughSwitchForTesting(true)
+
+        #expect(instance.configuration.clipboardPassthroughEnabled == false)
+        #expect(vc.isPassthroughSwitchOnForTesting == false)
+    }
+
+    @Test("confirming the security prompt turns passthrough on")
+    func confirmEnables() async throws {
+        let instance = makeClipboardInstance()
+        let (vc, viewModel) = makeController(instance)
+        defer { _ = viewModel }
+
+        vc.confirmPassthroughEnableForTesting()
+
+        #expect(instance.configuration.clipboardPassthroughEnabled == true)
+        // The switch follows the model on the observation pass the write kicks
+        // off, the same as any other surface showing the setting.
+        //
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
+        // tests") — the observed effect is an `NSSwitch`'s state, a plain AppKit
+        // property with no Observable or `AsyncGate` signal to arm against.
+        try await waitUntil { vc.isPassthroughSwitchOnForTesting }
+    }
+
+    @Test("cancelling the prompt writes nothing and puts the switch back")
+    func cancelReverts() {
+        let instance = makeClipboardInstance()
+        let (vc, viewModel) = makeController(instance)
+        defer { _ = viewModel }
+        // The user flipped it; the sheet is up.
+        vc.setPassthroughSwitchForTesting(true)
+
+        vc.cancelPassthroughEnableForTesting()
+
+        #expect(instance.configuration.clipboardPassthroughEnabled == false)
+        #expect(vc.isPassthroughSwitchOnForTesting == false)
+    }
+
+    @Test("a write from another surface moves this window's switch")
+    func writeFromAnotherSurfaceMovesTheSwitch() async throws {
+        let instance = makeClipboardInstance()
+        let (vc, viewModel) = makeController(instance)
+        #expect(vc.isPassthroughSwitchOnForTesting == false)
+
+        // The settings pane's write path, landing on the same model.
+        _ = viewModel.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
+
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
+        // tests") — the observed effect is an `NSSwitch`'s state, a plain AppKit
+        // property with no Observable or `AsyncGate` signal to arm against.
+        try await waitUntil { vc.isPassthroughSwitchOnForTesting }
+    }
+}
+
+/// Verifies the buffer card's content-type chip, which states what the buffer
+/// holds — the job the status line used to share with transient messages.
+@Suite("ClipboardContentViewController content chip", .admissionGated)
+@MainActor
+struct ClipboardContentChipTests {
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-chip")
+
+    private func makeController(
+        content: ClipboardContent, readPasteboard: NSPasteboard = .general
+    ) -> (ClipboardContentViewController, VMInstance) {
+        let instance = makeClipboardInstance()
+        instance.clipboardService = FakeClipboardService(content: content)
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            readPasteboard: readPasteboard)
+        _ = vc.view
+        return (vc, instance)
+    }
+
+    @Test("an external update names the content type on the chip")
+    func externalUpdateNamesTheContentType() {
+        let content = ClipboardContent(text: "hello from the guest")
+        let (vc, _) = makeController(content: content)
+
+        #expect(vc.contentChipTextForTesting == ClipboardContentDescriber.indicatorText(for: content))
+        // The status slot stays free for transient messages.
+        #expect(vc.indicatorTextForTesting.isEmpty)
+    }
+
+    @Test("a keystroke burst updates the chip through the hash-free path")
+    func keystrokesUpdateTheChip() {
+        let (vc, _) = makeController(content: ClipboardContent(text: "before"))
+
+        vc.setEditorTextForTesting("typed by hand")
+
+        #expect(
+            vc.contentChipTextForTesting
+                == ClipboardContentDescriber.indicatorText(forPlainText: "typed by hand"))
+    }
+
+    @Test("with no content type the chip reserves no band above the buffer")
+    func noContentTypeLeavesNoBand() {
+        // A running VM whose guest agent hasn't connected has no clipboard
+        // service, so nothing names a content type — the card must not open with
+        // a strip of blank fill above the editor.
+        let instance = makeClipboardInstance()
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentViewController = vc
+        vc.view.layoutSubtreeIfNeeded()
+
+        #expect(vc.contentChipTextForTesting.isEmpty)
+        #expect(vc.contentChipBandHeightForTesting == 0)
+    }
+
+    @Test("a named content type reserves the chip's band")
+    func namedContentTypeReservesTheBand() {
+        let (vc, _) = makeController(content: ClipboardContent(text: "buffer text"))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentViewController = vc
+        vc.view.layoutSubtreeIfNeeded()
+
+        #expect(!vc.contentChipTextForTesting.isEmpty)
+        #expect(vc.contentChipBandHeightForTesting > 0)
+    }
+
+    @Test("a transient message lands in the status slot and leaves the chip alone")
+    func transientLeavesTheChipAlone() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        let (vc, _) = makeController(
+            content: ClipboardContent(text: "buffer text"), readPasteboard: pasteboard)
+        let chip = vc.contentChipTextForTesting
+        #expect(!chip.isEmpty)
+
+        // An empty pasteboard is refused, which surfaces as a transient message.
+        vc.paste(nil)
+
+        #expect(!vc.indicatorTextForTesting.isEmpty)
+        #expect(vc.contentChipTextForTesting == chip)
     }
 }
 

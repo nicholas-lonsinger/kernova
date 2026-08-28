@@ -21,7 +21,7 @@ principles are in [AGENTS.md](../AGENTS.md#principles).
 
 Use `NSFont.preferredFont(forTextStyle:)` so type scales with the system setting.
 
-- `.title2` at `.semibold` — section/page headings (`WizardStyle.titleFont`)
+- `.title2` at `.semibold` — section/page headings (`Typography.title`)
 - `.headline` — important labels and step indicators (`CalloutStyle.headlineFont`)
 - `.body` — primary form content (`Typography.body`)
 - `.caption1` / `.caption2` — secondary text, metadata, step numbers
@@ -46,8 +46,11 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 ### Controls
 
 - Grouped settings forms: build with the `GroupedFormStyle` factories (`makeGroupedFormCard`, `makeGroupedFormCardRow`, …).
+- Row and toggle labels take sentence case; section headers, push-button titles, Apple UI names, and Kernova proper nouns keep Title Case.
+- A section whose rows only a stopped VM can change carries the `makeGroupedFormLockHint()` header hint and dims those rows to `Alpha.disabled`; there is no page-level lock banner.
+- A setting rendered on more than one surface keeps one write path: every surface reads its value from the model, every action calls the one shared handler, and a refused or cancelled write is undone by re-rendering all of them — never by poking the control that fired.
 - Navigation list: source-list `NSOutlineView` (`SidebarViewController`).
-- Borderless `NSButton` in lists; `.rounded` bezel for dialog actions.
+- Borderless `NSButton` in lists; `.push` bezel for dialog actions and command rows.
 - `AlertButtonRole.destructive` for delete/stop confirmations (`SheetAlert`).
 - `NSProgressIndicator`: `.controlSize = .large` for major operations, `.mini` for inline status.
 
@@ -59,4 +62,9 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 
 ### Cards and Containers
 
+- Grouped cards: `GroupedFormStyle.cardFill` at `CornerRadius.card`, borderless, with hairlines inset to the label edge and bleeding to the card's trailing edge.
+- The detail pane is an overview of one card per `VMSettingsCategory`, each drilling into that category's panel. A card states the facts answering "what is this VM right now" — never the panel's full row list — so a new setting decides its card representation, or states that it has none.
+- A boolean on a card renders as its own live switch, dimmed through `applyGroupedFormRowEnabled` while the current state doesn't allow editing it. A card carrying live switches states no "Editable when stopped" hint — the hint would contradict the controls beside it.
+- A content well — a buffer or preview surface — is an inset card at `CornerRadius.card` filled `.textBackgroundColor`, borderless and clipping, with a capsule chip naming what it holds in its top-trailing corner (`ClipboardBufferCardView`).
+- A pane with no natural width of its own caps its form content at `GroupedFormStyle.columnWidth`, centered.
 - Code blocks: `CalloutStyle.makeCalloutCode` — monospaced, selectable `NSTextField` for copy-worthy snippets.

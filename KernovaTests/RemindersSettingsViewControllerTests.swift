@@ -178,8 +178,8 @@ struct RemindersSettingsViewControllerTests {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
-        #expect(findLabel(withText: "Menu Bar Quit Reminder", in: controller.view) != nil)
-        #expect(findLabel(withText: "Guest Agent Install Reminder", in: controller.view) != nil)
+        #expect(findLabel(withText: "Menu bar quit reminder", in: controller.view) != nil)
+        #expect(findLabel(withText: "Guest agent install reminder", in: controller.view) != nil)
         // Two app-wide switches plus one per VM.
         #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
 
