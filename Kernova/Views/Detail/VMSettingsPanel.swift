@@ -25,6 +25,11 @@ final class VMSettingsPanelContext {
     /// The shell, which owns the write paths a panel shares with the overview.
     weak var host: (any VMSettingsPanelHost)?
 
+    /// `true` while the pane is off screen, so an async read that lands late
+    /// paints nothing. The shell drives it from its own appearance callbacks;
+    /// AppKit's forwarding to hidden children is not dependable.
+    private(set) var isDismissed = false
+
     init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
@@ -50,6 +55,10 @@ final class VMSettingsPanelContext {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
+    }
+
+    func setDismissed(_ isDismissed: Bool) {
+        self.isDismissed = isDismissed
     }
 }
 

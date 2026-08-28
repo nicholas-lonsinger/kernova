@@ -33,6 +33,9 @@ final class VMSettingsViewController: NSViewController {
 
     private let vmnetNetworks: any VmnetNetworkProviding
 
+    /// The bindings every panel reads; rebound in one write per `reconfigure`.
+    private let panelContext: VMSettingsPanelContext
+
     // MARK: - Observation & live state
 
     private let fileMonitor = AttachmentFileMonitor()
@@ -94,7 +97,9 @@ final class VMSettingsViewController: NSViewController {
     /// drill-in shows the right state immediately.
     private var panels: [VMSettingsCategory: NSView] = [:]
     /// Header pieces a single-section category hands to the panel header.
-    private var panelChrome: [VMSettingsCategory: PanelChrome] = [:]
+    private var panelChrome: [VMSettingsCategory: VMSettingsPanelChrome] = [:]
+    /// The per-category panels, each owning its own sections and refresh pass.
+    private var panelControllers: [VMSettingsCategory: any VMSettingsPanel] = [:]
     /// The open category, or `nil` for the overview.
     private(set) var selectedCategory: VMSettingsCategory?
     /// What the IP address row currently shows, `nil` while it shows nothing —
@@ -102,12 +107,6 @@ final class VMSettingsViewController: NSViewController {
     private var resolvedIPAddress: String?
     /// Whether port forwarding applies, as `refreshNetwork()` decided it.
     private var networkForwardsPorts = false
-
-    /// What a panel header shows in place of a single section's own header.
-    private struct PanelChrome {
-        var leading: [NSView] = []
-        var trailing: [NSView] = []
-    }
 
     /// "Editable when stopped" hints on lockable section headers; shown only
     /// while read-only.
@@ -224,14 +223,6 @@ final class VMSettingsViewController: NSViewController {
 
     // Shared Directories
     private var sharedListStack = NSStackView()
-
-    // Snapshots
-    /// The Snapshots section, rebuilt per instance by `buildForm`.
-    private var snapshotSection: SnapshotSectionView?
-    /// The snapshot ids the size read was last issued for, so it re-runs when
-    /// the set changes rather than on every `apply()` pass.
-    private var snapshotSizeIDs: [UUID]?
-    private var snapshotSizeTask: Task<Void, Never>?
 
     // Network
     private var networkModePopUp = NSPopUpButton()
@@ -357,7 +348,13 @@ final class VMSettingsViewController: NSViewController {
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
         self.micPermission = micPermissionStatus()
+        self.panelContext = VMSettingsPanelContext(
+            instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
+            bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
+            vmnetNetworks: vmnetNetworks, micPermissionStatus: micPermissionStatus,
+            systemSettings: systemSettings)
         super.init(nibName: nil, bundle: nil)
+        panelContext.host = self
     }
 
     @available(*, unavailable)
@@ -381,9 +378,13 @@ final class VMSettingsViewController: NSViewController {
         if instanceChanged, isViewLoaded, nameRowIsEditing {
             endNameRenameSession()
         }
+        // Panels settle anything bound to the outgoing instance before the
+        // context moves under them.
+        panelControllers.values.forEach { $0.willRebind() }
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
+        panelContext.rebind(instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
 
         guard isViewLoaded else { return }
 
@@ -457,6 +458,7 @@ final class VMSettingsViewController: NSViewController {
 
         overviewVC.delegate = self
         addChild(overviewVC)
+        installPanels()
         panelHeader.onBack = { [weak self] in self?.showOverview() }
 
         view = root
@@ -466,6 +468,7 @@ final class VMSettingsViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         hasDisappeared = false
+        panelContext.setDismissed(false)
         startInstanceSideEffects()
         if modelObservation == nil {
             restartModelObservation()
@@ -508,6 +511,8 @@ final class VMSettingsViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         hasDisappeared = true
+        panelContext.setDismissed(true)
+        panelControllers.values.forEach { $0.prepareForDisappearance() }
         // End an in-flight name rename through the commit path (focus loss
         // commits): leaving the session flags armed would re-show the edit box
         // on reappear with no outside-click monitor and a stale marker.
@@ -527,11 +532,6 @@ final class VMSettingsViewController: NSViewController {
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         activeStorageEdit = nil
         activeRemovableEdit = nil
-        snapshotSection?.clearActiveEdit()
-        snapshotSizeTask?.cancel()
-        snapshotSizeTask = nil
-        // Re-read on the next appear: the sizes may have moved while away.
-        snapshotSizeIDs = nil
     }
 
     override func viewDidDisappear() {
@@ -658,7 +658,6 @@ extension VMSettingsViewController {
             .general: [buildGeneralSection(), buildStartupSection()],
             .storage: [buildStorageSection(), buildRemovableMediaSection()],
             .network: [buildNetworkSection()],
-            .snapshots: [buildSnapshotsSection()],
         ]
         var system = [buildResourcesSection(), buildDisplaySection(), buildAudioSection()]
         if guestOS == .macOS {
@@ -676,7 +675,13 @@ extension VMSettingsViewController {
         ]
 
         for category in VMSettingsCategory.allCases {
-            let panel = makePanel(sections[category] ?? [])
+            let panel: NSView
+            if let controller = panelControllers[category] {
+                controller.rebuild()
+                panel = controller.view
+            } else {
+                panel = makePanel(sections[category] ?? [])
+            }
             panel.isHidden = true
             addPanelContent(panel)
             panels[category] = panel
@@ -686,6 +691,17 @@ extension VMSettingsViewController {
         // cleared the category would leave the overview hidden from the previous
         // VM's drill-in — a blank pane with nothing to click.
         show(nil)
+    }
+
+    /// Creates the per-category panels once, as child controllers.
+    private func installPanels() {
+        let panels: [any VMSettingsPanel] = [
+            VMSettingsSnapshotsPanelViewController(context: panelContext)
+        ]
+        for panel in panels {
+            addChild(panel)
+            panelControllers[panel.category] = panel
+        }
     }
 
     /// Stacks one category's sections into the panel shown for it.
@@ -769,7 +785,8 @@ extension VMSettingsViewController {
     /// Paints the open panel's header from the model; a no-op on the overview.
     private func refreshPanelHeader() {
         guard let category = selectedCategory else { return }
-        let chrome = panelChrome[category] ?? PanelChrome()
+        let chrome = panelControllers[category]?.chrome ?? panelChrome[category]
+            ?? VMSettingsPanelChrome()
         panelHeader.configure(
             vmName: instance.name,
             statusColor: instance.statusDisplayNSColor,
@@ -1263,22 +1280,6 @@ extension VMSettingsViewController {
         return makeGroupedFormSection([makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card])
     }
 
-    // MARK: Snapshots
-
-    /// The Snapshots panel's only section, so its header moves to the panel
-    /// header — which hosts the info affordance and the size readout the
-    /// section would otherwise draw itself.
-    private func buildSnapshotsSection() -> NSView {
-        let section = SnapshotSectionView(showsHeader: false)
-        section.delegate = self
-        snapshotSection = section
-        panelChrome[.snapshots] = PanelChrome(
-            leading: [section.infoButton], trailing: [section.sizeReadout])
-        // A fresh section has no sizes yet, so the read must be re-issued.
-        snapshotSizeIDs = nil
-        return section
-    }
-
     // MARK: Network
 
     /// What a Mode menu item selects, carried as the item's `representedObject`.
@@ -1348,7 +1349,7 @@ extension VMSettingsViewController {
         // header: the info affordance and the lock hint go there rather than
         // repeating the category name inside the form.
         let hint = makeLockHint { self.networkLockHint = $0 }
-        panelChrome[.network] = PanelChrome(
+        panelChrome[.network] = VMSettingsPanelChrome(
             leading: [makeGroupedFormInfoButton(label: "Network", paragraphs: paragraphs)],
             trailing: [hint])
         return makeGroupedFormSection([
@@ -2025,7 +2026,7 @@ extension VMSettingsViewController {
         refreshStorageList()
         refreshRemovableList()
         refreshSharedList()
-        refreshSnapshots()
+        panelControllers.values.forEach { $0.refresh() }
         // Last, so the cards state what the refreshers above just resolved.
         refreshOverview()
         refreshPanelHeader()
@@ -2736,65 +2737,6 @@ extension VMSettingsViewController {
                 readOnlySelector: #selector(sharedReadOnlyToggled),
                 deleteSelector: #selector(sharedDeleteTapped))
             addGroupedFormFullWidth(row, to: sharedListStack)
-        }
-    }
-
-    private func refreshSnapshots() {
-        guard let snapshotSection else { return }
-        snapshotSection.update(
-            manifest: instance.snapshotManifest,
-            canTakeSnapshot: viewModel.canTakeSnapshot(instance),
-            canRevert: viewModel.canRevertToSnapshot(instance),
-            canDelete: viewModel.canDeleteSnapshots(instance),
-            baselineID: instance.ephemeralBaselineSnapshot?.id)
-
-        // The sizes are a directory walk over gigabyte-scale copies, so they are
-        // read off the main actor and only when the set of snapshots changed.
-        let ids = instance.snapshotManifest.ordered.map(\.id)
-        guard ids != snapshotSizeIDs else { return }
-        snapshotSizeIDs = ids
-        snapshotSizeTask?.cancel()
-        guard !ids.isEmpty else {
-            snapshotSection.applySizes([:])
-            return
-        }
-        let instanceID = instance.id
-        snapshotSizeTask = Task { [weak self] in
-            guard let self else { return }
-            let sizes = await self.viewModel.snapshotOnDiskBytes(for: self.instance)
-            // The pane is reused across route and VM changes, so a read that
-            // lands after the user moved on must not paint the new VM's rows.
-            guard !Task.isCancelled, !self.hasDisappeared, self.instance.id == instanceID else {
-                return
-            }
-            self.snapshotSection?.applySizes(sizes)
-        }
-    }
-
-    /// Get Info popover for one snapshot, with its on-disk footprint read off
-    /// the main actor first.
-    private func presentSnapshotInfoPopover(_ snapshot: VMSnapshot, from anchor: NSView) {
-        let instanceID = instance.id
-        Task { [weak self] in
-            guard let self else { return }
-            let sizes = await self.viewModel.snapshotOnDiskBytes(for: self.instance)
-            // The pane is reused across route and VM changes, so a read that
-            // lands after the user moved on must not name the new VM's sizes.
-            guard !self.hasDisappeared, self.instance.id == instanceID else { return }
-            let content = SnapshotInfoPopoverContentViewController(
-                snapshot: snapshot,
-                onDiskText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}",
-                onCommitNotes: { [weak self] notes in
-                    guard let self else { return }
-                    // Looked up fresh: the popover outlives edits landing from
-                    // elsewhere, and the copy it was built with can be stale.
-                    guard let current = self.instance.snapshotManifest.snapshot(id: snapshot.id)
-                    else { return }
-                    self.viewModel.setSnapshotNotes(current, notes: notes, on: self.instance)
-                    self.refreshSnapshots()
-                })
-            content.onRequestClose = { [weak self] in self?.attachmentInfoPresenter.close() }
-            self.attachmentInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
         }
     }
 
@@ -3775,6 +3717,27 @@ extension VMSettingsViewController: VMSettingsOverviewDelegate {
     func overview(
         _ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool
     ) {
+        apply(toggle, to: isOn)
+    }
+}
+
+// MARK: - VMSettingsPanelHost
+
+extension VMSettingsViewController: VMSettingsPanelHost {
+    /// The panel's own switch, arriving at the same dispatcher the overview
+    /// card's does — one write path per mirrored setting, not two.
+    func settingsPanel(
+        _ panel: any VMSettingsPanel, setToggle toggle: VMOverviewToggle, to isOn: Bool
+    ) {
+        apply(toggle, to: isOn)
+    }
+
+    func settingsPanelRequestsFullRefresh() {
+        apply()
+    }
+
+    /// The one dispatcher for every mirrored toggle, whichever surface flipped.
+    private func apply(_ toggle: VMOverviewToggle, to isOn: Bool) {
         switch toggle {
         case .autoStart: setAutoStart(isOn)
         case .ephemeralMode: setEphemeralMode(isOn)
@@ -3782,56 +3745,6 @@ extension VMSettingsViewController: VMSettingsOverviewDelegate {
         case .clipboardPassthrough: setClipboardPassthrough(isOn)
         case .dropFiles: setDropFiles(isOn)
         }
-    }
-}
-
-// MARK: - SnapshotSectionViewDelegate
-
-extension VMSettingsViewController: SnapshotSectionViewDelegate {
-    func snapshotSectionRequestedTakeSnapshot(_ view: SnapshotSectionView) {
-        viewModel.requestTakeSnapshot(instance)
-    }
-
-    func snapshotSection(_ view: SnapshotSectionView, requestedRevertTo snapshot: VMSnapshot) {
-        viewModel.confirmRevert(instance, to: snapshot)
-    }
-
-    func snapshotSection(_ view: SnapshotSectionView, requestedDeleteOf snapshot: VMSnapshot) {
-        viewModel.confirmDeleteSnapshot(instance, snapshot: snapshot)
-    }
-
-    /// Commits an inline rename, deferred to the next runloop turn so the field
-    /// editor's end-editing callback fully unwinds before the rebuild tears down
-    /// and recreates the editing row.
-    func snapshotSection(
-        _ view: SnapshotSectionView, renamed snapshot: VMSnapshot, to newName: String
-    ) {
-        Task { [weak self] in
-            guard let self else { return }
-            self.viewModel.renameSnapshot(snapshot, newName: newName, on: self.instance)
-            // A no-op rename (empty / unchanged) fires no observation, so force a
-            // refresh to pick up anything suppressed during the edit.
-            self.refreshSnapshots()
-        }
-    }
-
-    /// Commits an inline note edit, deferred for the same reason a rename is.
-    func snapshotSection(
-        _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot
-    ) {
-        Task { [weak self] in
-            guard let self else { return }
-            self.viewModel.setSnapshotNotes(snapshot, notes: notes, on: self.instance)
-            // A no-op edit (unchanged) fires no observation, so force a refresh
-            // to pick up anything suppressed during the edit.
-            self.refreshSnapshots()
-        }
-    }
-
-    func snapshotSection(
-        _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView
-    ) {
-        presentSnapshotInfoPopover(snapshot, from: anchor)
     }
 }
 
