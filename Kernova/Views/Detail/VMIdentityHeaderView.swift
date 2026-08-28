@@ -22,6 +22,16 @@ final class VMIdentityHeaderView: NSView {
     /// Side of the square icon tile.
     private static let tileSize: CGFloat = 44
 
+    /// What a category's accessory text resists being squeezed at, one step
+    /// below the facts line's own `.defaultLow`.
+    ///
+    /// Panel chrome is built for a section header, where a trailing hint holds
+    /// its width against a section title, so a narrow pane would take the whole
+    /// shortfall out of the facts line and leave a static hint at full width.
+    /// On this row the VM's live state outranks the panel's fixed text.
+    private static let accessoryCompressionResistance = NSLayoutConstraint.Priority(
+        NSLayoutConstraint.Priority.defaultLow.rawValue - 1)
+
     private let iconView = NSImageView()
     private let tile = NSBox()
     /// Carries the tile, so hiding it takes the glyph with it.
@@ -153,10 +163,29 @@ final class VMIdentityHeaderView: NSView {
             : [nameLabel]
         guard wanted.map(ObjectIdentifier.init) != titleRow.arrangedSubviews.map(ObjectIdentifier.init)
         else { return }
+        (leadingAccessories + trailingAccessories).forEach(applySqueezePolicy)
         detach(statusRow, from: column)
         titleRow.arrangedSubviews.forEach { detach($0, from: titleRow) }
         wanted.forEach { titleRow.addArrangedSubview($0) }
         if !drilledIn { column.addArrangedSubview(statusRow) }
+    }
+
+    /// Sets the row's squeeze order on an accessory: its text truncates tail at
+    /// ``accessoryCompressionResistance``, so a narrow pane takes the width it
+    /// is short out of the accessories before the facts line.
+    ///
+    /// Fixed-size affordances — the info button's 16-point square — are held by
+    /// their own constraints and give up nothing either way.
+    private func applySqueezePolicy(to view: NSView) {
+        if let label = view as? NSTextField {
+            label.maximumNumberOfLines = 1
+            label.lineBreakMode = .byTruncatingTail
+        }
+        if view is NSTextField || view is NSStackView {
+            view.setContentCompressionResistancePriority(
+                Self.accessoryCompressionResistance, for: .horizontal)
+        }
+        view.subviews.forEach(applySqueezePolicy)
     }
 
     /// Takes `view` out of `stack` and out of the view tree, so re-adding it
