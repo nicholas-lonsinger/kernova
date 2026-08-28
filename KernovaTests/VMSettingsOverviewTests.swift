@@ -180,16 +180,20 @@ struct VMSettingsOverviewTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
-    @Test("A drilled-in header keeps the overview's anatomy, tile and facts line included")
-    func panelHeaderMatchesTheIdentityLayout() throws {
+    @Test("A drilled-in header is one row: the way back, the title, the facts trailing")
+    func panelHeaderIsOneRowBehindTheBackButton() throws {
         let (vc, instance, _) = makeController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.setContentSize(NSSize(width: 700, height: 400))
+        window.contentView = vc.view
         let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
         vc.view.layoutSubtreeIfNeeded()
         let facts = header.renderedFactsLine
         #expect(!facts.isEmpty)
-        // The overview states the VM's name over the same facts line.
+        // The overview states the VM's name over the same facts line, on its tile.
         #expect(findLabel(withText: instance.name, in: header) != nil)
-        let nameSlot = try #require(findLabel(withText: instance.name, in: header)).frame
+        let tile = try #require(firstSubview(NSBox.self, in: header))
+        #expect(isVisible(tile, within: header))
 
         vc.showCategory(.system)
         vc.view.layoutSubtreeIfNeeded()
@@ -200,32 +204,23 @@ struct VMSettingsOverviewTests {
         let title = try #require(findLabel(withText: "System", in: header))
         let factsLabel = try #require(findLabel(withText: facts, in: header))
         #expect(back.accessibilityLabel() == "Back")
-        // Borderless: the tile behind it is the bezel, and it is never tinted
-        // with the accent color.
-        #expect(back.isBordered == false)
-        #expect(back.contentTintColor == .secondaryLabelColor)
-        // The tile is unchanged — same size, same fill — and the chevron sits
-        // centered on it, where the guest-OS glyph sits on the overview.
-        let tile = try #require(firstSubview(NSBox.self, in: header))
-        #expect(tile.frame.size == NSSize(width: 44, height: 44))
-        #expect(tile.fillColor == GroupedFormStyle.cardFill)
-        let backCenter = back.convert(NSPoint(x: back.bounds.midX, y: back.bounds.midY), to: header)
-        let tileCenter = tile.convert(NSPoint(x: tile.bounds.midX, y: tile.bounds.midY), to: header)
-        // Within a point: the button's own height is odd, so its center lands on
-        // the backing grid a half-point off the tile's.
-        #expect(abs(backCenter.x - tileCenter.x) < 1)
-        #expect(abs(backCenter.y - tileCenter.y) < 1)
-        // The category name takes the VM name's slot, at the same font — same
-        // origin, the width following the text.
-        #expect(title.font == Typography.title)
-        #expect(title.frame.origin == nameSlot.origin)
-        #expect(title.frame.height == nameSlot.height)
+        // A real bezeled control in the accent color, not a hand-drawn chevron.
+        #expect(back.isBordered)
+        #expect(back.bezelStyle == .push)
+        #expect(back.contentTintColor == .controlAccentColor)
+        #expect(back.frame.size == NSSize(width: 28, height: 24))
+        // No tile: the row leads with the button, the title following it.
+        #expect(!isVisible(tile, within: header))
         #expect(findLabel(withText: instance.name, in: header) == nil)
-        // The facts line stays on its own line below the title, as on the
-        // overview — never trailing it on the title's row.
+        #expect(title.font == Typography.title)
+        let backFrame = back.convert(back.bounds, to: header)
         let titleFrame = title.convert(title.bounds, to: header)
         let factsFrame = factsLabel.convert(factsLabel.bounds, to: header)
-        #expect(factsFrame.maxY <= titleFrame.minY)
+        #expect(titleFrame.minX > backFrame.maxX)
+        // The facts line trails the title on that same row, not below it.
+        #expect(factsFrame.minX > titleFrame.maxX)
+        #expect(factsFrame.midY > titleFrame.minY)
+        #expect(factsFrame.midY < titleFrame.maxY)
     }
 
     @Test("A single-section panel states its name once, keeping the section's affordances")
