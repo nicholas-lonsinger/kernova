@@ -77,11 +77,11 @@ func settingsLockHints(in view: NSView) -> [NSView] {
     allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
 }
 
-/// The lock hints on the open panel's header, which is where a single-section
-/// category's hint lives.
+/// The lock hints on the pinned header, which is where a single-section
+/// category's hint lives while that category is open.
 @MainActor
 func panelHeaderLockHints(in vc: VMSettingsViewController) -> [NSView] {
-    guard let header = firstSubview(VMSettingsPanelHeaderView.self, in: vc.view) else { return [] }
+    guard let header = firstSubview(VMIdentityHeaderView.self, in: vc.view) else { return [] }
     return settingsLockHints(in: header)
 }
 

@@ -1,20 +1,40 @@
 import AppKit
 
-/// The VM's identity above the settings form: a guest-OS icon tile, the VM
-/// name, and a status dot beside a one-line facts summary.
+/// The header above the settings form: a tile, a title, and a status dot beside
+/// a one-line facts summary.
+///
+/// One anatomy serves both states, so drilling into a category morphs the header
+/// in place rather than swapping in a second view laid out to match by hand: the
+/// tile's glyph turns from the guest OS's into the way back, and the title from
+/// the VM's name into the category's. The facts line is the same line in both.
 ///
 /// A plain view plus a pure summary function, holding no concern of the surface
 /// that hosts it.
 @MainActor
 final class VMIdentityHeaderView: NSView {
+    /// What the header states.
+    enum Mode: Equatable {
+        /// The VM's name, over its own icon tile.
+        case identity
+        /// The open category's name, the tile becoming the way back.
+        case category(String)
+    }
+
     /// Side of the square icon tile.
     private static let tileSize: CGFloat = 44
 
     private let iconView = NSImageView()
     private let tile = NSBox()
+    private let backButton = HeaderBackButton()
     private let nameLabel = NSTextField(labelWithString: "")
+    private let titleRow = NSStackView()
+    private let trailingSpacer = NSView()
     private let statusDot = NSImageView()
     private let factsLabel = NSTextField(labelWithString: "")
+
+    private var mode: Mode = .identity
+    /// Views handed over by the open panel, removed when another one opens.
+    private var accessories: [NSView] = []
 
     /// The facts line as currently rendered, for a surface stating the same
     /// summary — the disk figure is read here and nowhere else.
@@ -44,10 +64,26 @@ final class VMIdentityHeaderView: NSView {
         fatalError("VMIdentityHeaderView does not support NSCoder")
     }
 
+    /// Routes the tile's back button to the host that owns the way out of a
+    /// panel.
+    func setBackAction(target: AnyObject?, action: Selector) {
+        backButton.target = target
+        backButton.action = action
+    }
+
     /// Binds the header to `instance`, painting everything known synchronously
     /// and filling the disk figure in when its off-main read lands.
-    func configure(with instance: VMInstance) {
+    ///
+    /// `mode` decides what the tile and the title state; a category hosts
+    /// `leadingAccessories` beside its title and `trailingAccessories` at the
+    /// title row's far edge.
+    func configure(
+        with instance: VMInstance, mode: Mode = .identity,
+        leadingAccessories: [NSView] = [], trailingAccessories: [NSView] = []
+    ) {
         self.instance = instance
+        self.mode = mode
+        setAccessories(leadingAccessories, trailingAccessories)
         let boot = instance.displayedStorageDisks.first
         let key = boot.map {
             DiskReadKey(instanceID: instance.id, path: $0.path, isInternal: $0.isInternal)
@@ -75,12 +111,31 @@ final class VMIdentityHeaderView: NSView {
 
     // MARK: - Rendering
 
+    /// Hands the title row the panel's views, in place of the previous panel's.
+    private func setAccessories(_ leading: [NSView], _ trailing: [NSView]) {
+        let wanted = leading.isEmpty && trailing.isEmpty ? [] : leading + [trailingSpacer] + trailing
+        guard wanted.map(ObjectIdentifier.init) != accessories.map(ObjectIdentifier.init) else {
+            return
+        }
+        accessories.forEach { $0.removeFromSuperview() }
+        accessories = wanted
+        wanted.forEach { titleRow.addArrangedSubview($0) }
+    }
+
     private func render() {
         guard let instance else { return }
         let config = instance.configuration
         iconView.image = .systemSymbol(
             config.guestOS.iconName, accessibilityDescription: config.guestOS.displayName)
-        nameLabel.stringValue = instance.name
+        switch mode {
+        case .identity:
+            nameLabel.stringValue = instance.name
+        case .category(let title):
+            nameLabel.stringValue = title
+        }
+        // The tile is the same tile either way — only what it carries changes.
+        iconView.isHidden = mode != .identity
+        backButton.isHidden = mode == .identity
         statusDot.contentTintColor = instance.statusDisplayNSColor
         statusDot.setAccessibilityLabel(instance.statusDisplayName)
         renderedFactsLine = Self.factsLine(
@@ -129,6 +184,7 @@ final class VMIdentityHeaderView: NSView {
 
         addSubview(tile)
         addSubview(iconView)
+        addSubview(backButton)
         NSLayoutConstraint.activate([
             tile.widthAnchor.constraint(equalToConstant: Self.tileSize),
             tile.heightAnchor.constraint(equalToConstant: Self.tileSize),
@@ -137,6 +193,13 @@ final class VMIdentityHeaderView: NSView {
             tile.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconView.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            // Centered on the tile, not pinned to it: AppKit holds an NSButton
+            // to a minimum size derived from its image, which outranks edge
+            // pins, so a title1 chevron stands a little proud of the tile. The
+            // glyph lands centered either way, and the hit area is the more
+            // generous for it.
+            backButton.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            backButton.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
         ])
 
         nameLabel.font = Typography.title
@@ -161,7 +224,17 @@ final class VMIdentityHeaderView: NSView {
         statusRow.alignment = .centerY
         statusRow.spacing = Spacing.small
 
-        let column = NSStackView(views: [nameLabel, statusRow])
+        trailingSpacer.translatesAutoresizingMaskIntoConstraints = false
+        trailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        // A category's affordances sit beside its title, where a section's info
+        // button sits beside a section title.
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = Spacing.small
+        titleRow.addArrangedSubview(nameLabel)
+
+        let column = NSStackView(views: [titleRow, statusRow])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = Spacing.tight
@@ -180,7 +253,34 @@ final class VMIdentityHeaderView: NSView {
             column.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
             hugsContent,
         ])
-        nameLabel.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+        titleRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
         statusRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+    }
+}
+
+/// The tile's glyph while a category is open: a `chevron.left` at the guest-OS
+/// icon's size, so the tile reads the same either way and only its glyph changes.
+///
+/// Borderless — the tile behind it is the whole bezel, and AppKit's own press
+/// dimming is the feedback, which leaves the tile's fill untouched in every
+/// state.
+@MainActor
+private final class HeaderBackButton: NSButton {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        image = NSImage.systemSymbol("chevron.left", accessibilityDescription: "")
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(textStyle: .title1))
+        imagePosition = .imageOnly
+        isBordered = false
+        setButtonType(.momentaryPushIn)
+        contentTintColor = .secondaryLabelColor
+        toolTip = "Show all settings"
+        setAccessibilityLabel("Back")
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("HeaderBackButton does not support NSCoder")
     }
 }

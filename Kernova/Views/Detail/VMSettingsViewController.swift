@@ -42,11 +42,11 @@ final class VMSettingsViewController: NSViewController {
     private let formStack = NSStackView()
     /// The scrolling form below the pinned header.
     private var scrollView = NSScrollView()
-    /// Hosts the identity header, or the panel header while a category is open.
+    /// Hosts the pinned header.
     private let headerContent = NSStackView()
-    /// The VM's identity block, shown above the overview.
+    /// The pinned header: the VM's identity on the overview, the open
+    /// category's name and the way back inside a panel.
     private var identityHeader = VMIdentityHeaderView()
-    private let panelHeader = VMSettingsPanelHeaderView()
 
     /// The overview of category cards, shown when no category is open.
     private let overviewVC = VMSettingsOverviewViewController()
@@ -152,8 +152,8 @@ final class VMSettingsViewController: NSViewController {
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
         self.scrollView = scrollView
 
-        // The identity — or, inside a panel, the back affordance and panel title
-        // — stays put while the form below it scrolls, on the same column.
+        // The header stays put while the form below it scrolls, on the same
+        // column.
         headerContent.orientation = .vertical
         headerContent.alignment = .leading
         headerContent.spacing = Spacing.none
@@ -184,7 +184,6 @@ final class VMSettingsViewController: NSViewController {
         overviewVC.delegate = self
         addChild(overviewVC)
         installPanels()
-        panelHeader.setBackAction(target: self, action: #selector(backToOverview))
 
         view = root
         buildForm()
@@ -362,29 +361,25 @@ extension VMSettingsViewController {
         scrollMoreIndicator?.rearmFlash()
     }
 
-    /// Puts the identity header or the open panel's header into the pinned
-    /// header container.
+    /// Paints the pinned header for the current state, installing it the first
+    /// time and on a VM switch.
+    ///
+    /// One header serves both states, so a drill-in reconfigures it in place
+    /// rather than swapping views.
     private func refreshHeader() {
-        let header: NSView = selectedCategory == nil ? identityHeader : panelHeader
-        if headerContent.arrangedSubviews.first !== header {
+        if headerContent.arrangedSubviews.first !== identityHeader {
             headerContent.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            headerContent.addArrangedSubview(header)
-            header.widthAnchor.constraint(equalTo: headerContent.widthAnchor).isActive = true
+            headerContent.addArrangedSubview(identityHeader)
+            identityHeader.widthAnchor.constraint(equalTo: headerContent.widthAnchor)
+                .isActive = true
+            identityHeader.setBackAction(target: self, action: #selector(backToOverview))
         }
-        refreshPanelHeader()
-    }
-
-    /// Paints the open panel's header from the model; a no-op on the overview.
-    private func refreshPanelHeader() {
-        guard let category = selectedCategory else { return }
-        let chrome = panelControllers[category]?.chrome ?? VMSettingsPanelChrome()
-        panelHeader.configure(
-            statusColor: instance.statusDisplayNSColor,
-            statusText: instance.statusDisplayName,
-            facts: identityHeader.renderedFactsLine,
-            title: category.title,
-            leadingAccessories: chrome.leading,
-            trailingAccessories: chrome.trailing)
+        let chrome = selectedCategory.flatMap { panelControllers[$0]?.chrome }
+        identityHeader.configure(
+            with: instance,
+            mode: selectedCategory.map { .category($0.title) } ?? .identity,
+            leadingAccessories: chrome?.leading ?? [],
+            trailingAccessories: chrome?.trailing ?? [])
     }
 }
 
@@ -394,11 +389,11 @@ extension VMSettingsViewController {
     /// Idempotently refreshes all mutable chrome from the model.
     private func apply() {
         guard isViewLoaded else { return }
-        identityHeader.configure(with: instance)
         panelControllers.values.forEach { $0.refresh() }
-        // Last, so the cards state what the refreshers above just resolved.
+        // Last, so the cards and the header state what the refreshers above
+        // just resolved — the open panel's chrome among it.
         refreshOverview()
-        refreshPanelHeader()
+        refreshHeader()
     }
 
     /// Paints the overview cards from the same pass that refreshed the panels.
