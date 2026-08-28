@@ -260,7 +260,7 @@ extension VMSettingsViewController {
         panels.removeAll()
 
         identityHeader = VMIdentityHeaderView()
-        overviewVC.rebuild(guestOS: instance.configuration.guestOS)
+        overviewVC.rebuild(instance: instance)
         addPanelContent(overviewVC.view)
 
         for category in VMSettingsCategory.allCases {
@@ -454,8 +454,8 @@ extension VMSettingsViewController {
     }
 
     /// Passthrough's shared write path, which every surface offering the toggle
-    /// goes through — this pane's row, the overview card, and the clipboard
-    /// window's footer switch.
+    /// goes through — this pane's Sharing row and the clipboard window's footer
+    /// switch.
     ///
     /// Built per use so the confirmation alert never holds this controller.
     private var passthroughSetting: ClipboardPassthroughSetting {

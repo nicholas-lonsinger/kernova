@@ -1,8 +1,8 @@
 import Foundation
 
-/// A live boolean an overview card carries as its own switch, alongside the
-/// panel row that shows the same setting.
-enum VMOverviewToggle: String, CaseIterable, Sendable {
+/// A mirrored boolean: a setting a panel row writes, which an overview card may
+/// carry as a switch of its own.
+enum VMOverviewToggle: String, Sendable {
     case autoStart
     case ephemeralMode
     case clipboardSharing
@@ -16,13 +16,6 @@ enum VMOverviewToggle: String, CaseIterable, Sendable {
         case .clipboardSharing: "Clipboard sharing"
         case .clipboardPassthrough: "Automatic clipboard passthrough"
         case .dropFiles: "Drag and drop files"
-        }
-    }
-
-    var category: VMSettingsCategory {
-        switch self {
-        case .autoStart, .ephemeralMode: .general
-        case .clipboardSharing, .clipboardPassthrough, .dropFiles: .sharing
         }
     }
 }
@@ -113,10 +106,8 @@ enum VMOverviewSummary {
             }
             return rows
         case .sharing:
-            let shares = config.sharedDirectories ?? []
-            return [
-                Row(label: "Shared folders", value: shares.isEmpty ? "None" : "\(shares.count)")
-            ]
+            // Sharing states its facts in the closing line instead — see `note`.
+            return []
         case .snapshots:
             let ordered = instance.snapshotManifest.ordered
             var rows = [Row(label: "Snapshots", value: "\(ordered.count)")]
@@ -148,12 +139,11 @@ enum VMOverviewSummary {
                     isEnabled: !instance.snapshotManifest.isEmpty || ephemeralOn),
             ]
         case .sharing:
+            // Passthrough is a panel setting: its enable confirms in a sheet,
+            // which is more weight than a card switch carries.
             var states = [
                 ToggleState(
-                    toggle: .clipboardSharing, isOn: config.clipboardSharingEnabled, isEnabled: true),
-                ToggleState(
-                    toggle: .clipboardPassthrough, isOn: config.clipboardPassthroughEnabled,
-                    isEnabled: config.clipboardSharingEnabled),
+                    toggle: .clipboardSharing, isOn: config.clipboardSharingEnabled, isEnabled: true)
             ]
             if config.guestOS == .macOS {
                 states.append(
@@ -162,6 +152,28 @@ enum VMOverviewSummary {
             return states
         case .system, .storage, .network, .snapshots:
             return []
+        }
+    }
+
+    /// The line `category`'s card closes with, below its switches — one
+    /// full-width sentence rather than a key and a value, `nil` where the
+    /// category states none.
+    @MainActor
+    static func note(for category: VMSettingsCategory, instance: VMInstance) -> String? {
+        switch category {
+        case .sharing:
+            let config = instance.configuration
+            let count = (config.sharedDirectories ?? []).count
+            let folders =
+                switch count {
+                case 0: "No shared folders"
+                case 1: "1 shared folder"
+                default: "\(count) shared folders"
+                }
+            let passthrough = config.clipboardPassthroughEnabled ? "on" : "off"
+            return "Passthrough \(passthrough) \u{00B7} \(folders)"
+        case .general, .system, .storage, .network, .snapshots:
+            return nil
         }
     }
 

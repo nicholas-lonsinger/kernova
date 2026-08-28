@@ -124,13 +124,42 @@ struct VMOverviewSummaryTests {
 
     // MARK: - Sharing and Snapshots
 
-    @Test("Sharing counts the shared folders")
-    func sharingCountsFolders() {
-        #expect(value("Shared folders", .sharing, makeInstance()) == "None")
-        let shared = makeInstance {
+    @Test("Sharing states its facts in the closing line, not in key-value rows")
+    func sharingStatesNoValueRows() {
+        #expect(
+            VMOverviewSummary.rows(
+                for: .sharing, instance: makeInstance(), resolved: VMOverviewResolved()
+            ).isEmpty)
+    }
+
+    @Test("Sharing's line names the passthrough state and counts the folders")
+    func sharingNoteStatesPassthroughAndFolders() {
+        func note(_ instance: VMInstance) -> String? {
+            VMOverviewSummary.note(for: .sharing, instance: instance)
+        }
+        #expect(note(makeInstance()) == "Passthrough off \u{00B7} No shared folders")
+
+        let one = makeInstance {
+            $0.clipboardPassthroughEnabled = true
             $0.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
         }
-        #expect(value("Shared folders", .sharing, shared) == "1")
+        #expect(note(one) == "Passthrough on \u{00B7} 1 shared folder")
+
+        let two = makeInstance {
+            $0.sharedDirectories = [
+                SharedDirectory(path: "/tmp/share"), SharedDirectory(path: "/tmp/other"),
+            ]
+        }
+        #expect(note(two) == "Passthrough off \u{00B7} 2 shared folders")
+    }
+
+    @Test("Sharing is the only card closing with a line")
+    func onlySharingCarriesANote() {
+        let instance = makeInstance()
+        for category in VMSettingsCategory.allCases {
+            let note = VMOverviewSummary.note(for: category, instance: instance)
+            #expect((note != nil) == (category == .sharing))
+        }
     }
 
     @Test("Snapshots counts them and names the newest")
@@ -178,15 +207,12 @@ struct VMOverviewSummaryTests {
         #expect(ephemeral(stuck)?.isOn == true)
     }
 
-    @Test("Passthrough is offered only while clipboard sharing is on")
-    func passthroughToggleRidesSharing() {
-        func passthrough(_ instance: VMInstance) -> VMOverviewSummary.ToggleState? {
-            VMOverviewSummary.toggles(for: .sharing, instance: instance)
-                .first { $0.toggle == .clipboardPassthrough }
+    @Test("Passthrough is a panel setting, never a card switch")
+    func passthroughIsNotACardSwitch() {
+        for instance in [makeInstance(), makeInstance { $0.clipboardSharingEnabled = true }] {
+            let toggles = VMOverviewSummary.toggles(for: .sharing, instance: instance)
+            #expect(!toggles.contains { $0.toggle == .clipboardPassthrough })
         }
-        #expect(passthrough(makeInstance())?.isEnabled == false)
-        let sharing = makeInstance { $0.clipboardSharingEnabled = true }
-        #expect(passthrough(sharing)?.isEnabled == true)
     }
 
     @Test("Drag and drop is a macOS-guest switch only")
@@ -194,7 +220,7 @@ struct VMOverviewSummaryTests {
         let macOS = VMOverviewSummary.toggles(for: .sharing, instance: makeInstance())
         let linux = VMOverviewSummary.toggles(
             for: .sharing, instance: makeInstance(guestOS: .linux))
-        #expect(macOS.contains { $0.toggle == .dropFiles })
-        #expect(!linux.contains { $0.toggle == .dropFiles })
+        #expect(macOS.map(\.toggle) == [.clipboardSharing, .dropFiles])
+        #expect(linux.map(\.toggle) == [.clipboardSharing])
     }
 }

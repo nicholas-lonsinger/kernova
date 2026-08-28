@@ -2,12 +2,12 @@ import AppKit
 import os
 
 /// One overview card: a header row naming the category and offering the
-/// drill-in, the category's current facts as key-value rows, and any live
-/// switches it carries.
+/// drill-in, the category's current facts as key-value rows, any live switches
+/// it carries, and a closing full-width line.
 ///
 /// The card holds no state of its own — every value comes from
-/// ``configure(rows:toggles:showsLockHint:warning:)``, and a flipped switch is
-/// reported to the owner rather than written here.
+/// ``configure(rows:toggles:note:showsLockHint:warning:)``, and a flipped switch
+/// is reported to the owner rather than written here.
 @MainActor
 final class VMOverviewCardView: NSView {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMOverviewCardView")
@@ -39,6 +39,7 @@ final class VMOverviewCardView: NSView {
     private struct Rendered: Equatable {
         let rows: [VMOverviewSummary.Row]
         let toggles: [VMOverviewToggle]
+        let note: String?
     }
 
     init(category: VMSettingsCategory, toggles: [VMOverviewToggle]) {
@@ -103,10 +104,10 @@ final class VMOverviewCardView: NSView {
         fatalError("VMOverviewCardView does not support NSCoder")
     }
 
-    /// Renders `rows` and `toggles`, rebuilding the card body only when the set
-    /// of lines it shows changed.
+    /// Renders `rows`, `toggles` and `note`, rebuilding the card body only when
+    /// the set of lines it shows changed.
     func configure(
-        rows: [VMOverviewSummary.Row], toggles: [VMOverviewSummary.ToggleState],
+        rows: [VMOverviewSummary.Row], toggles: [VMOverviewSummary.ToggleState], note: String?,
         showsLockHint: Bool, warning: String?
     ) {
         lockHint.isHidden = !showsLockHint
@@ -114,10 +115,10 @@ final class VMOverviewCardView: NSView {
         warningGlyph.toolTip = warning
         warningGlyph.setAccessibilityLabel(warning)
 
-        let snapshot = Rendered(rows: rows, toggles: toggles.map(\.toggle))
+        let snapshot = Rendered(rows: rows, toggles: toggles.map(\.toggle), note: note)
         if snapshot != rendered {
             rendered = snapshot
-            rebuild(rows: rows, toggles: snapshot.toggles)
+            rebuild(rows: rows, toggles: snapshot.toggles, note: note)
         }
         for state in toggles {
             guard let entry = toggleRows[state.toggle] else { continue }
@@ -126,15 +127,28 @@ final class VMOverviewCardView: NSView {
         }
     }
 
-    private func rebuild(rows: [VMOverviewSummary.Row], toggles: [VMOverviewToggle]) {
+    private func rebuild(rows: [VMOverviewSummary.Row], toggles: [VMOverviewToggle], note: String?) {
         let valueRows = rows.map {
             makeGroupedFormCardRow($0.label, control: makeGroupedFormValueLabel($0.value))
         }
         let toggleViews = toggles.compactMap { toggleRows[$0]?.row }
-        let built = makeGroupedFormCard(rows: [headerRow] + valueRows + toggleViews)
+        let noteRows = note.map { [Self.makeNoteRow($0)] } ?? []
+        let built = makeGroupedFormCard(rows: [headerRow] + valueRows + toggleViews + noteRows)
         card?.removeFromSuperview()
         addFullSizeSubview(built)
         card = built
+    }
+
+    /// The card's closing line: one secondary sentence spanning the row, with no
+    /// key column of its own.
+    private static func makeNoteRow(_ text: String) -> NSView {
+        let label = makeGroupedFormValueLabel(text)
+        label.lineBreakMode = .byTruncatingTail
+        let row = NSStackView(views: [label])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Spacing.standard
+        return row
     }
 
     @objc private func showTapped() {
