@@ -27,16 +27,17 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         let viewController = ClipboardContentViewController(
             instance: instance, viewModel: viewModel, publisher: instance.hostClipboardPublisher)
         self.clipboardContentVC = viewController
-        // Tall enough for the content area plus the command bar and the agent
-        // status bar; the min keeps both bars and a few text lines visible.
-        let initialSize = NSSize(width: 480, height: 320)
+        // Tall enough for the buffer card between the command row and the
+        // footer; the min keeps the command row, a few lines of the card, the
+        // passthrough switch and the agent status line all visible at once.
+        let initialSize = NSSize(width: 480, height: 340)
 
         let window = NSWindow.withStableContentSize(
             initialSize,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: viewController
         )
-        window.minSize = NSSize(width: 360, height: 280)
+        window.minSize = NSSize(width: 380, height: 300)
         super.init(window: window)
         window.delegate = self
         window.setFrameAutosaveName("Clipboard-\(instance.instanceID.uuidString)")

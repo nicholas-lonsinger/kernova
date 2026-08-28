@@ -3279,43 +3279,26 @@ extension VMSettingsViewController: NSMenuItemValidation {
         setClipboardPassthrough(clipboardPassthroughSwitch.state == .on)
     }
 
-    /// The one write path for passthrough, whichever surface's switch asked for
-    /// it: turning off is immediate, turning on grants the guest continuous read
-    /// of the host clipboard and so confirms first.
+    /// Passthrough's shared write path, which every surface offering the toggle
+    /// goes through — this pane's row, the overview card, and the clipboard
+    /// window's footer switch.
+    ///
+    /// Built per use so the confirmation alert never holds this controller.
+    private var passthroughSetting: ClipboardPassthroughSetting {
+        ClipboardPassthroughSetting(
+            instance: instance, viewModel: viewModel,
+            refresh: { [weak self] in self?.apply() })
+    }
+
     private func setClipboardPassthrough(_ isOn: Bool) {
-        guard isOn else {
-            writeMirrored { $0.clipboardPassthroughEnabled = false }
-            return
-        }
-        guard let window = view.window else {
-            // No window to host a sheet — don't silently enable; put every
-            // surface back on what the model holds.
-            Self.logger.warning("No window to confirm clipboard passthrough in; leaving it off")
-            revertPassthroughToggle()
-            return
-        }
-        presentSheetAlert(
-            ClipboardPassthroughConfirmation.alert(
-                onConfirm: { [weak self] in self?.enablePassthroughConfirmed() },
-                onCancel: { [weak self] in self?.revertPassthroughToggle() }),
-            in: window)
-    }
-
-    private func enablePassthroughConfirmed() {
-        writeMirrored { $0.clipboardPassthroughEnabled = true }
-    }
-
-    /// Undoes a passthrough enable that never happened by re-rendering from the
-    /// model, so every switch showing it goes back — not just the one flipped.
-    private func revertPassthroughToggle() {
-        apply()
+        passthroughSetting.set(isOn, confirmingIn: view.window)
     }
 
     #if DEBUG
     /// Drives the confirmation outcomes without a window/sheet, so tests exercise
     /// the real enable-commit and cancel-revert paths.
-    func confirmPassthroughEnableForTesting() { enablePassthroughConfirmed() }
-    func cancelPassthroughEnableForTesting() { revertPassthroughToggle() }
+    func confirmPassthroughEnableForTesting() { passthroughSetting.confirmEnable() }
+    func cancelPassthroughEnableForTesting() { passthroughSetting.cancelEnable() }
     #endif
 
     @objc private func showMicPermissionInfo(_ sender: NSButton) {
