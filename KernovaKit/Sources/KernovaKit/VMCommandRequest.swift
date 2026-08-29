@@ -31,7 +31,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case snapshots(VMSelector)
 
         case start(VMSelector, recovery: Bool)
-        case cancelGuestSetup(VMSelector)
+        case cancelGuestSetup(VMSelector, confirmed: Bool)
         case stop(VMSelector, disposition: StopDisposition, confirmed: Bool)
         case pause(VMSelector)
         case resume(VMSelector)

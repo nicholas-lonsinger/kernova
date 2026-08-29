@@ -50,7 +50,7 @@ protocol VMCommanding: AnyObject {
     ///
     /// The bundle is preserved and the VM returns to `.initialBoot`, so a later
     /// start resumes it. A VM with no setup in flight refuses.
-    func cancelGuestSetup(_ selector: VMSelector) throws
+    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws
 
     /// Stops the VM the way `disposition` names.
     ///
