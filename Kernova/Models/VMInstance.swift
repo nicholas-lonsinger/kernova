@@ -102,8 +102,8 @@ final class VMInstance {
     /// The named restore points this VM's bundle holds, mirrored from
     /// `Snapshots/manifest.json`.
     ///
-    /// `VMLibraryViewModel` is the only writer — it keeps this and the on-disk
-    /// manifest in step; every surface reads it.
+    /// The library and its adapter are the only writers — they keep this and the
+    /// on-disk manifest in step; every surface reads it.
     var snapshotManifest = VMSnapshotManifest()
 
     var displayMode: VMDisplayMode = .inline
@@ -211,11 +211,11 @@ final class VMInstance {
     private var agentPostStartGeneration: UInt64 = 0
 
     /// Performs a host-side mutation of this instance's configuration and routes
-    /// it through the view model's `updateConfiguration` pipeline (persist +
-    /// apply live policy).
+    /// it through the library's `updateConfiguration` pipeline (persist + apply
+    /// live policy).
     ///
-    /// Wired by `VMLibraryViewModel.wirePersistence(for:)`; `nil` for instances
-    /// created without a view model.
+    /// Wired by `VMLibrary.wirePersistence(for:)`; `nil` for instances created
+    /// outside a library.
     @ObservationIgnored var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> Void)?
 
     /// Fired when the guest agent handshakes a new version that is current
@@ -229,14 +229,14 @@ final class VMInstance {
     /// `VZVirtualMachine` and everything riding it are released — a stop, a
     /// force stop, an error, or a completed save-suspend alike.
     ///
-    /// Wired by `VMLibraryViewModel.wirePersistence(for:)`; the library uses it
-    /// for work that can only run while no VM holds the resource it touches.
+    /// Wired by `VMLibrary.wirePersistence(for:)`; the library uses it for work
+    /// that can only run while no VM holds the resource it touches.
     @ObservationIgnored var onSessionTornDown: (@MainActor () -> Void)?
 
     /// Fired from ``resetToStopped()`` — the guest powering off, however it got
     /// there: a graceful shutdown from inside, Stop, or Force Stop.
     ///
-    /// Wired by `VMLibraryViewModel.wirePersistence(for:)`, which reverts an
+    /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler reverts an
     /// Ephemeral Mode VM to its baseline here. A suspend does not reach it:
     /// `save` tears the session down and rests at `.paused`.
     @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?

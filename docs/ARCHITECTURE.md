@@ -87,7 +87,7 @@ stateless ones are `Sendable` structs.
   run with KVO progress.
 - `USBDeviceService` — runtime USB mass-storage attach/detach against the live XHCI controller.
   Owned by `VMLifecycleCoordinator`.
-- `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMLibraryViewModel`, which
+- `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMLibrary`, which
   auto-pauses running VMs before sleep and resumes them on wake.
 
 `Sendable` structs:
@@ -121,7 +121,7 @@ that cannot materialize, builds the device detached rather than failing the boot
 off-main assembly and the main-actor live-switch path) owns the app's managed vmnet networks and
 the per-VM DHCP reservations and port-forwarding rules riding them, materialized over the
 `VmnetNetworkOperating` seam. Each VM holds a slot keyed on its persisted MAC, and slots and rules
-alike are kept in step with configurations through `VMLibraryViewModel`'s persistence funnel.
+alike are kept in step with configurations through `VMLibrary`'s persistence funnel.
 
 While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by `VMInstance`,
 activated when the VM first reaches `.running`) keeps the live attachment realizing the persisted
@@ -213,22 +213,27 @@ settings attachment rows), `RuntimeFileAccess` (per-boot security-scoped access,
 
 **Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
 rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through
-`VMLibraryViewModel.updateConfiguration(of:mutate:)`, which persists and then calls
+`VMLibrary.updateConfiguration(of:mutate:)`, which persists and then calls
 `applyLivePolicy`. No control writes `instance.configuration` directly.
 
 **Ephemeral Mode reverts through one seam.** `VMInstance.resetToStopped()` fires `onPoweredOff`,
-which `VMLibraryViewModel` wires to the same revert a user confirms. A save-suspend tears the
+which `VMLibrary` relays to the adapter, landing on the same revert a user confirms. A save-suspend tears the
 session down without that hook, so a suspended session survives to revert at its next shutdown.
 
 ### ViewModels
 
-- `VMLibraryViewModel` — the central `@Observable` view model. Owns `[VMInstance]` and every
-  list-level operation, persists order and selection through an injected `AppPreferences`,
-  delegates lifecycle work to `VMLifecycleCoordinator`, and drives alerts, sheets and the wizard by
-  calling its `VMLibraryPresenting` delegate imperatively rather than toggling observed flags.
-  Clone and import register a preparing "phantom" `VMInstance` **synchronously, before any
-  `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
-  imports and clones cannot claim the same bundle URL.
+- `VMLibrary` — the headless `@Observable` source of truth. Owns `[VMInstance]`, the selection and
+  sidebar order (persisted through an injected `AppPreferences`), the library read and the
+  directory/sleep watchers, the configuration-write funnel, and the DHCP-reservation and
+  port-forwarding bookkeeping. It imports no AppKit and presents nothing: failures and the two
+  per-instance hooks a verb answers leave through `onFailure`, `onAgentBecameCurrent` and
+  `onPoweredOff`.
+- `VMLibraryViewModel` — the AppKit adapter over `VMLibrary`. Owns the VM verbs and the inline
+  rename state, forwards the library's reads so UI sees one surface, and drives alerts, sheets and
+  the wizard by calling its `VMLibraryPresenting` delegate imperatively rather than toggling
+  observed flags. Clone and import register a preparing "phantom" `VMInstance` **synchronously,
+  before any `await`** — that is what reserves the destination atomically on the MainActor, so
+  overlapping imports and clones cannot claim the same bundle URL.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
   `IPSWService`, `USBDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
   `Downloading`), and orchestrates the macOS install and Linux install pipelines, each driven by
@@ -239,7 +244,7 @@ session down without that hook, so a suspended session survives to revert at its
   UI-framework dependency. Every image source is backed by an injected service protocol, so the
   wizard can name what a source will install before anything is downloaded.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
-  `VMLibraryViewModel` when the library changes on disk.
+  `VMLibrary` when the library changes on disk.
 
 ### Views
 
@@ -302,11 +307,12 @@ delegated to the user's terminal.
 
 ```
 AppDelegate
-    ├── creates → VMLibraryViewModel (owns [VMInstance])
-    │                 ├── VMStorageService
-    │                 ├── VMSnapshotStore
+    ├── creates → VMLibraryViewModel (the verbs; AppKit adapter)
+    │                 ├── VMLibrary (owns [VMInstance])
+    │                 │      ├── VMStorageService
+    │                 │      ├── VMSnapshotStore
+    │                 │      └── VMDirectoryWatcher, SystemSleepWatcher
     │                 ├── DiskImageService
-    │                 ├── VMDirectoryWatcher, SystemSleepWatcher
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)
     ├── creates → VMLifecycleCoordinator
     │                 ├── VirtualizationService
@@ -317,7 +323,8 @@ AppDelegate
     ├── manages → VMDisplayWindowController (per VM)
     └── manages → ClipboardWindowController (per VM)
 
-AppKit views ──observe──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──→ Services
+AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ VMLibrary (state, persistence)
+                          VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──→ Services
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
 ```
 
