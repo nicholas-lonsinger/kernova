@@ -1,13 +1,20 @@
 import Foundation
+import KernovaKit
 import Virtualization
 import os
 
-/// The AppKit adapter over ``VMLibrary``: the VM verbs, the sheets and alerts
-/// that gather consent for them, and the inline-rename editing state.
+/// The AppKit adapter over ``VMCommandCore``: the sheets and alerts that gather
+/// consent for a verb, the routing of a refused verb to the right surface, the
+/// inline-rename editing state, and the settings edits no automation surface
+/// speaks yet.
 ///
-/// Owns the library, routes its ``VMLibrary/onFailure`` and per-instance hooks
-/// to the presenter, and forwards its reads so a view controller holding a view
-/// model still sees one surface.
+/// It runs no verb itself. Each method here does three things and stops: show
+/// the sheet if one is owed, call the facade with explicit consent, and route
+/// whatever ``CommandError`` comes back through ``present(_:for:)``.
+///
+/// Owns the library and the core, routes ``VMLibrary/onFailure`` and the core's
+/// own failures to the presenter, and forwards the library's reads so a view
+/// controller holding a view model still sees one surface.
 @MainActor
 @Observable
 final class VMLibraryViewModel {
@@ -17,6 +24,9 @@ final class VMLibraryViewModel {
 
     /// Which VMs exist, and everything that keeps that set in step with disk.
     let library: VMLibrary
+
+    /// Every VM verb, headless. The one path from this adapter to a VM.
+    let commands: VMCommandCore
 
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
@@ -92,6 +102,61 @@ final class VMLibraryViewModel {
         library.updateConfiguration(of: instance, mutate: mutate)
     }
 
+    // MARK: - Command Forwarding
+
+    // Headless reads and gates the UI enables its commands from, each
+    // documented on ``VMCommandCore``.
+
+    func canTakeSnapshot(_ instance: VMInstance) -> Bool { commands.canTakeSnapshot(instance) }
+
+    func canRevertToSnapshot(_ instance: VMInstance) -> Bool {
+        commands.canRevertToSnapshot(instance)
+    }
+
+    func canDeleteSnapshots(_ instance: VMInstance) -> Bool { commands.canDeleteSnapshots(instance) }
+
+    func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
+        commands.canDeleteSnapshot(instance, snapshot: snapshot)
+    }
+
+    func reloadSnapshots(for instance: VMInstance) { commands.reloadSnapshots(for: instance) }
+
+    func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
+        await commands.snapshotOnDiskBytes(for: instance)
+    }
+
+    func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
+        commands.bundledDisks(for: instance)
+    }
+
+    func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
+        commands.isMainDisk(disk, of: instance)
+    }
+
+    func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
+        commands.externalAttachments(for: instance)
+    }
+
+    func externalAttachmentsResolvingExistence(for instance: VMInstance) async
+        -> [ExternalAttachment]
+    {
+        await commands.externalAttachmentsResolvingExistence(for: instance)
+    }
+
+    func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
+        commands.sharingVMNames(forPath: path, excluding: instance)
+    }
+
+    func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
+        commands.isGuestAgentInstaller(item)
+    }
+
+    func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
+        commands.isGuestAgentInstallerMounted(on: instance)
+    }
+
+    func cancelGuestSetup(_ instance: VMInstance) { commands.cancelGuestSetup(instance) }
+
     // MARK: - State
 
     /// Whether the sidebar's guest-agent install nudge is turned off for every
@@ -152,7 +217,9 @@ final class VMLibraryViewModel {
 
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
-    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
+    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)? {
+        didSet { commands.displayBootGeometryProvider = displayBootGeometryProvider }
+    }
 
     // MARK: - Initialization
 
@@ -192,7 +259,7 @@ final class VMLibraryViewModel {
             downloadsDirectory: downloadsDirectory
         )
         self.lifecycle = lifecycle
-        self.library = VMLibrary(
+        let library = VMLibrary(
             storageService: storageService,
             snapshotStore: snapshotStore,
             lifecycle: lifecycle,
@@ -201,6 +268,15 @@ final class VMLibraryViewModel {
             vmnetNetworks: vmnetNetworks,
             isVMNetworkingEntitled: isVMNetworkingEntitled
         )
+        self.library = library
+        self.commands = VMCommandCore(
+            library: library,
+            lifecycle: lifecycle,
+            storageService: storageService,
+            snapshotStore: snapshotStore,
+            fileSystem: fileSystem,
+            preferences: preferences
+        )
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
@@ -208,8 +284,13 @@ final class VMLibraryViewModel {
         library.onAgentBecameCurrent = { [weak self] instance in
             self?.unmountGuestAgentInstaller(from: instance)
         }
-        library.onPoweredOff = { [weak self] instance in
-            self?.revertToEphemeralBaselineIfNeeded(instance)
+        // The same routing a call site gets, so a failure nobody awaited still
+        // reaches the sheet or the recovery alert its type asks for.
+        commands.onFailure = { [weak self] failure, instance in
+            self?.present(failure, for: instance)
+        }
+        commands.surfaceDisplay = { [weak self] instance in
+            self?.surfaceDisplay(for: instance)
         }
     }
 
@@ -269,96 +350,6 @@ final class VMLibraryViewModel {
         }
     }
 
-    // MARK: - Guest Setup
-
-    /// Runs a guest-setup pipeline for an `.initialBoot` (or `.error` with a
-    /// surviving context) VM and, on success, chains an auto-boot.
-    ///
-    /// A permanent failure leaves the VM in `.error` so the banner keeps the
-    /// message on screen; cancel and transient failures (the running-VM cap)
-    /// return it to `.initialBoot` for a retry that resumes the download from
-    /// the `.kernovadownload` bundle if present.
-    private func runGuestSetup(
-        on instance: VMInstance,
-        _ pipeline: @escaping (VMLifecycleCoordinator) async throws -> Void
-    ) {
-        if instance.setupTask != nil { return }  // guard against rapid double-click
-        instance.setupTask = Task { [weak self] in
-            guard let self else { return }
-            defer { instance.setupTask = nil }
-            do {
-                try await pipeline(self.lifecycle)
-                instance.setupState = nil
-                await self.start(instance)
-            } catch is CancellationError {
-                // Tear down a VM the install attached before cancellation fired: a
-                // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
-                // the old one is still alive on `instance.session`.
-                instance.tearDownSession()
-                instance.setupState = nil
-                instance.errorMessage = nil
-                instance.status = .initialBoot
-                Self.logger.notice(
-                    "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
-                )
-            } catch {
-                // Same teardown reason as the cancel branch: an attached VM from a
-                // partial install must not bleed into the next retry.
-                instance.tearDownSession()
-                instance.setupState = nil
-                if Task.isCancelled {
-                    // A non-cancellation error arrived before the cancel propagated
-                    // (e.g. a network failure raced it). User intent was cancel, so
-                    // route back to `.initialBoot` and drop the message — no dialog.
-                    instance.errorMessage = nil
-                    instance.status = .initialBoot
-                    Self.logger.notice(
-                        "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
-                    )
-                } else if let explained = self.explainedFailure(for: error, on: instance) {
-                    self.surfaceError(explained.message, title: explained.title)
-                } else {
-                    self.presentError(error)
-                }
-            }
-        }
-    }
-
-    /// Drives the macOS install pipeline for a VM carrying an `installContext`.
-    private func installAndAutoBoot(_ instance: VMInstance) {
-        guard let context = instance.configuration.installContext else {
-            assertionFailure("installAndAutoBoot called without installContext")
-            return
-        }
-        runGuestSetup(on: instance) { lifecycle in
-            try await lifecycle.installMacOS(on: instance, context: context)
-        }
-    }
-
-    /// Drives the Linux installer-image pipeline for a VM carrying a
-    /// `linuxInstallContext`.
-    private func downloadAndAutoBoot(_ instance: VMInstance) {
-        guard let context = instance.configuration.linuxInstallContext else {
-            assertionFailure("downloadAndAutoBoot called without linuxInstallContext")
-            return
-        }
-        runGuestSetup(on: instance) { lifecycle in
-            try await lifecycle.downloadLinuxImage(on: instance, context: context)
-        }
-    }
-
-    /// Cancels the in-progress guest setup — a macOS install, or a Linux
-    /// installer image being fetched or verified.
-    ///
-    /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
-    /// bundle is preserved — this is the non-destructive cancel.
-    func cancelGuestSetup(_ instance: VMInstance) {
-        Self.logger.info("Cancelling setup for '\(instance.name, privacy: .public)'")
-        instance.setupTask?.cancel()
-        // `runGuestSetup`'s cancel catch owns the status transition and
-        // `setupState` cleanup — don't duplicate it here.
-    }
-
     // MARK: - Lifecycle
 
     /// Surfaces the display a start/resume lands on: the detached window for
@@ -372,187 +363,9 @@ final class VMLibraryViewModel {
     }
 
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
-        // Ahead of the setup dispatch: guest setup builds and runs a
-        // `VZVirtualMachine` carrying the configured machine identity and MAC
-        // address, so a conflicting one must be refused before it reaches the
-        // installer, not only on the auto-boot that follows.
-        if refuseIfDuplicateMachineIDConflict(instance) { return }
-        if library.refuseIfDuplicateMACAddressConflict(instance, joining: instance.configuration) { return }
-
-        // Dispatch on the surviving setup context, not status, so `.error`
-        // retries route through the same pipeline too.
-        if instance.configuration.installContext != nil {
-            installAndAutoBoot(instance)
-            return
+        await run(on: instance) {
+            try await self.commands.start(.id(instance.id), recovery: bootIntoRecovery)
         }
-        if instance.configuration.linuxInstallContext != nil {
-            downloadAndAutoBoot(instance)
-            return
-        }
-
-        surfaceDisplay(for: instance)
-        applyMatchWindowBootResolution(to: instance)
-        do {
-            try await lifecycle.start(instance, bootIntoRecovery: bootIntoRecovery)
-        } catch {
-            Self.logger.error(
-                "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            if let presenter, let failure = startFailedAttachment(from: error, on: instance) {
-                presenter.presentStartFailedAttachment(failure, for: instance)
-            } else if let explained = explainedFailure(for: error, on: instance) {
-                surfaceError(explained.message, title: explained.title)
-            } else {
-                presentError(error)
-            }
-        }
-    }
-
-    /// Refuses an operation that would claim a machine identity another VM
-    /// already holds, logging the refusal and surfacing the alert.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    private func refuseIfDuplicateMachineIDConflict(_ instance: VMInstance) -> Bool {
-        guard preferences.blockDuplicateMachineIDBoot,
-            let conflict = liveMachineIDConflict(for: instance)
-        else { return false }
-        Self.logger.notice(
-            "Refused to run '\(instance.name, privacy: .public)': shares a machine ID with active VM '\(conflict.name, privacy: .public)'"
-        )
-        surfaceError(
-            "“\(instance.name)” has the same machine ID as “\(conflict.name)”, which is active. "
-                + "Two virtual machines with the same machine ID must not run at once. "
-                + "Stop “\(conflict.name)” first, or allow this in Settings → Advanced.",
-            title: "Duplicate Machine ID")
-        return true
-    }
-
-    /// The first VM holding a live machine identity matching the given
-    /// instance's, if any.
-    ///
-    /// Live means VZ holds the identity: any active status, or paused with the
-    /// virtual machine still in memory. A cold-paused VM has released it, and
-    /// blocking its twin on a saved state that claims nothing would be wrong.
-    private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
-        instances.first { other in
-            other !== instance
-                && (other.status.isActive || other.isLivePaused)
-                && Self.sharesMachineIdentifier(instance, other)
-        }
-    }
-
-    /// Whether two VMs would claim the same machine identity.
-    ///
-    /// macOS identifiers compare the *effective* value, which falls back to the
-    /// bundle's identifier file exactly as the boot path does; generic
-    /// identifiers have no such file, so they compare configuration fields.
-    private static func sharesMachineIdentifier(_ a: VMInstance, _ b: VMInstance) -> Bool {
-        if let lhs = a.effectiveMachineIdentifierData, let rhs = b.effectiveMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        if let lhs = a.configuration.genericMachineIdentifierData,
-            let rhs = b.configuration.genericMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        return false
-    }
-
-    /// Resizes a cold-booting VM's display to the surface it is about to appear
-    /// on, persisting the result before the VZ configuration is built.
-    ///
-    /// Left alone when a save file exists: VZ restores only into a configuration
-    /// identical to the saved one, and a mismatch fails the restore.
-    private func applyMatchWindowBootResolution(to instance: VMInstance) {
-        guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
-        guard let surface = displayBootGeometryProvider?.displayBootSurface(for: instance) else {
-            Self.logger.notice(
-                "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
-            )
-            return
-        }
-        let hiDPI =
-            instance.configuration.guestOS.supportsDisplayDensity
-            && instance.configuration.displayHiDPI
-        let scale = hiDPI ? surface.backingScaleFactor : 1
-        let resolution = DisplayBootSizing.resolution(
-            fittingPoints: surface.pointSize, backingScaleFactor: scale)
-        let previous = instance.configuration
-        if !updateConfiguration(of: instance, mutate: { $0.displayResolution = resolution }) {
-            // Assigned directly rather than through the funnel: disk still holds
-            // `previous`, so re-persisting it is a second chance to fail.
-            instance.configuration = previous
-            Self.logger.warning(
-                "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"
-            )
-        }
-    }
-
-    /// The storage disk `id` refers to, resolving the synthesized main disk
-    /// when the VM has no explicit list.
-    private func storageDisk(id: UUID, on instance: VMInstance) -> StorageDisk? {
-        (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
-            .first { $0.id == id }
-    }
-
-    /// Maps a start error to a ``StartFailedAttachment`` when it identifies an
-    /// attachment the user can remove to get the VM running, or `nil` when the
-    /// generic error alert is the right surface.
-    ///
-    /// Two exclusions where removal is the wrong advice: the disk the guest boots
-    /// from, and file-lock contention — the file is fine and the lock holder is a VM
-    /// still tearing down, so the fix is to wait and retry.
-    private func startFailedAttachment(
-        from error: Error, on instance: VMInstance
-    ) -> StartFailedAttachment? {
-        guard let builderError = error as? ConfigurationBuilderError,
-            !VirtualizationService.isFileLockContention(builderError)
-        else { return nil }
-        switch builderError {
-        case .storageDiskAttachFailed(let id, _, let label, _):
-            guard let disk = storageDisk(id: id, on: instance),
-                !isMainDisk(disk, of: instance)
-            else { return nil }
-            return StartFailedAttachment(
-                kind: .storageDisk, id: id, label: label,
-                message: builderError.localizedDescription)
-        case .removableMediaAttachFailed(let id, _, let label, _):
-            // Confirm the entry is really in the list: an offer whose action could
-            // only no-op leaves a button that appears to do nothing.
-            guard (instance.configuration.removableMedia ?? []).contains(where: { $0.id == id })
-            else { return nil }
-            return StartFailedAttachment(
-                kind: .removableMedia, id: id, label: label,
-                message: builderError.localizedDescription)
-        default:
-            return nil
-        }
-    }
-
-    /// Maps a start or install failure to alert copy naming the cause and the
-    /// remedy, or `nil` when the raw error description is the right surface.
-    private func explainedFailure(
-        for error: Error, on instance: VMInstance
-    ) -> (title: String, message: String)? {
-        guard VirtualizationService.isVirtualMachineLimitExceeded(error) else { return nil }
-        let verb: String
-        switch instance.startAction {
-        case .start: verb = "Start"
-        case .install, .resumeInstall: verb = "Install"
-        case .download, .resumeDownload: verb = "Download"
-        }
-        let message: String
-        switch instance.configuration.guestOS {
-        case .macOS:
-            message =
-                "macOS allows at most two macOS virtual machines to run at once. Stop another macOS VM, then click \(instance.startAction.label) to try again."
-        case .linux:
-            message =
-                "The limit on running virtual machines has been reached. Stop another virtual machine, then click \(instance.startAction.label) to try again."
-        }
-        return (title: "Couldn't \(verb) “\(instance.name)”", message: message)
     }
 
     /// Confirmed action of the start-failed alert: detach the failing
@@ -574,7 +387,7 @@ final class VMLibraryViewModel {
         let removed: Bool
         switch failure.kind {
         case .storageDisk:
-            if let disk = storageDisk(id: failure.id, on: instance) {
+            if let disk = commands.storageDisk(id: failure.id, on: instance) {
                 _ = removeStorageDisk(disk, from: instance, trashFile: false)
                 removed = true
             } else {
@@ -614,161 +427,63 @@ final class VMLibraryViewModel {
     }
 
     func stop(_ instance: VMInstance) async {
-        // VZ rejects requestStop() on paused VMs ("Invalid virtual machine state").
-        // Surface a confirmation sheet offering resume-and-shutdown or force-stop instead.
-        if instance.isLivePaused {
-            presenter?.presentStopPaused(for: instance)
-            return
-        }
-        if await discardedSavedStateAsEphemeralRevert(instance) { return }
-        do {
-            try await lifecycle.stop(instance)
-        } catch {
-            Self.logger.error(
-                "Failed to stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            presentError(error)
+        // Unconfirmed: a live-paused guest cannot take an ACPI shutdown, and
+        // the core says so by refusing — which is what raises the sheet.
+        await run(on: instance) {
+            try await self.commands.stop(
+                .id(instance.id), disposition: .graceful, confirmed: false)
         }
     }
 
-    /// Resumes a paused VM then requests a graceful ACPI shutdown.
+    /// Resumes a paused VM then requests a graceful ACPI shutdown — the
+    /// stop-paused sheet's default action.
     func resumeAndStop(_ instance: VMInstance) async {
-        do {
-            try await lifecycle.resume(instance)
-            try await lifecycle.stop(instance)
-        } catch {
-            Self.logger.error(
-                "Failed to resume-and-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
+        await run(on: instance) {
+            try await self.commands.stop(
+                .id(instance.id), disposition: .resumeThenShutDown, confirmed: true)
         }
-    }
-
-    /// Force-stops a paused VM via the stop-paused confirmation sheet's "Force Stop" action.
-    func forceStopFromPaused(_ instance: VMInstance) async {
-        await forceStop(instance)
     }
 
     func forceStop(_ instance: VMInstance) async {
-        if await discardedSavedStateAsEphemeralRevert(instance) { return }
-        do {
-            try await lifecycle.forceStop(instance)
-            Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
-        } catch {
-            Self.logger.error(
-                "Failed to force-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
+        await run(on: instance) {
+            try await self.commands.stop(.id(instance.id), disposition: .force, confirmed: true)
         }
     }
 
-    // MARK: - Force Stop Confirmation
-
-    func confirmForceStop(_ instance: VMInstance) {
+    /// Opens the Force Stop / Discard Saved State confirmation.
+    func requestForceStop(_ instance: VMInstance) {
         presenter?.presentForceStop(for: instance)
     }
 
-    func forceStopConfirmed(_ instance: VMInstance) async {
-        await forceStop(instance)
-    }
-
-    // MARK: - Recovery Boot
-
-    /// Presents the confirmation alert for booting a stopped macOS guest into
-    /// macOS Recovery.
-    func confirmStartInRecovery(_ instance: VMInstance) {
+    /// Opens the confirmation for booting a stopped macOS guest into macOS
+    /// Recovery.
+    func requestStartInRecovery(_ instance: VMInstance) {
         presenter?.presentRecoveryBoot(for: instance)
     }
 
-    /// Invoked from the recovery-boot confirmation alert's confirm button.
-    func startInRecoveryConfirmed(_ instance: VMInstance) async {
-        await start(instance, bootIntoRecovery: true)
-    }
-
     func pause(_ instance: VMInstance) async {
-        do {
-            try await lifecycle.pause(instance)
-        } catch {
-            Self.logger.error(
-                "Failed to pause '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            presentError(error)
-        }
+        await run(on: instance) { try await self.commands.pause(.id(instance.id)) }
     }
 
     func resume(_ instance: VMInstance) async {
-        // A cold resume builds a fresh VZVirtualMachine from the save file, so it
-        // claims the machine identity — and puts its MAC address back on a
-        // network — just as a cold boot does. A hot resume's live object already
-        // holds both, and refusing would be refusing a VM its own identity.
-        if instance.isColdPaused {
-            if refuseIfDuplicateMachineIDConflict(instance) { return }
-            if library.refuseIfDuplicateMACAddressConflict(instance, joining: instance.configuration) {
-                return
-            }
-        }
-
-        surfaceDisplay(for: instance)
-        do {
-            try await lifecycle.resume(instance)
-        } catch {
-            Self.logger.error(
-                "Failed to resume '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-        }
+        await run(on: instance) { try await self.commands.resume(.id(instance.id)) }
     }
 
     func save(_ instance: VMInstance) async {
-        do {
-            try await lifecycle.save(instance)
-        } catch {
-            Self.logger.error(
-                "Failed to save '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            presentError(error)
-        }
+        await run(on: instance) { try await self.commands.suspend(.id(instance.id)) }
     }
 
     /// Saves VM state, throwing on failure (used by suspend-on-quit in AppDelegate).
     func trySave(_ instance: VMInstance) async throws {
-        try await lifecycle.save(instance)
+        try await commands.suspend(.id(instance.id))
     }
 
     /// Force-stops a VM, throwing on failure (used by suspend-on-quit fallback in AppDelegate).
     func tryForceStop(_ instance: VMInstance) async throws {
-        try await lifecycle.forceStop(instance)
+        try await commands.stop(.id(instance.id), disposition: .force, confirmed: true)
     }
 
     // MARK: - Snapshots
-
-    /// Re-reads a bundle's snapshot manifest into its instance.
-    ///
-    /// Every instance is seeded at construction; this is for the paths that put
-    /// files in the bundle afterwards (an import copying a bundle that already
-    /// carries snapshots).
-    func reloadSnapshots(for instance: VMInstance) {
-        instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
-    }
-
-    /// Whether Take Snapshot is offered right now — the single gate every
-    /// surface enables its command from.
-    ///
-    /// ``VMInstance/canTakeSnapshot`` alone answers the VM's state; an
-    /// operation still settling would reject the capture, so it has to be part
-    /// of the same read or the command reads as available and errors instead.
-    func canTakeSnapshot(_ instance: VMInstance) -> Bool {
-        instance.canTakeSnapshot && !isBusy(instance)
-    }
-
-    /// Whether a revert is offered right now — the counterpart gate to
-    /// ``canTakeSnapshot(_:)``.
-    func canRevertToSnapshot(_ instance: VMInstance) -> Bool {
-        instance.canRevertToSnapshot && !isBusy(instance)
-    }
-
-    /// Whether a snapshot may be deleted — the one snapshot-list edit that
-    /// goes through the same per-VM serialization a revert holds.
-    func canDeleteSnapshots(_ instance: VMInstance) -> Bool {
-        !isBusy(instance)
-    }
 
     /// Opens the Take Snapshot sheet.
     func requestTakeSnapshot(_ instance: VMInstance) {
@@ -776,189 +491,40 @@ final class VMLibraryViewModel {
         presenter?.presentTakeSnapshotSheet(for: instance)
     }
 
-    /// Captures a snapshot and lists it in the manifest.
-    ///
-    /// Re-checks the gate: the sheet gathers a name and notes, so the VM can
-    /// move between opening it and confirming.
+    /// Captures a snapshot from the Take Snapshot sheet's confirm.
     ///
     /// The returned Task lets tests await the capture.
     @discardableResult
     func takeSnapshot(_ instance: VMInstance, name: String, notes: String = "") -> Task<Void, Never> {
-        guard canTakeSnapshot(instance) else {
-            Self.logger.notice(
-                "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
-            )
-            return Task {}
+        Task { [weak self] in
+            guard let self else { return }
+            await self.run(on: instance) {
+                _ = try await self.commands.takeSnapshot(
+                    .id(instance.id), name: name, notes: notes)
+            }
         }
-        return Task { _ = await captureSnapshot(instance, name: name, notes: notes) }
     }
 
-    /// The capture itself, answering the snapshot that landed — `nil` when
-    /// anything failed, so a caller chaining off it (the revert alert's
-    /// snapshot-first path) stops rather than proceeding on a lost checkpoint.
-    private func captureSnapshot(
-        _ instance: VMInstance, name: String, notes: String
-    ) async -> VMSnapshot? {
-        // Stamped at confirm time, not when the sheet opened: the VM can
-        // start, stop, or suspend while it is up.
-        guard let mode = instance.snapshotCaptureMode else {
-            Self.logger.notice(
-                "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
-            )
-            return nil
-        }
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshot = VMSnapshot(
-            name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
-            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            kind: mode.kind)
-        do {
-            try await lifecycle.takeSnapshot(
-                instance, snapshot: snapshot, store: snapshotStore)
-        } catch {
-            Self.logger.error(
-                "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-            return nil
-        }
-        var manifest = instance.snapshotManifest
-        manifest.insert(snapshot)
-        guard writeSnapshotManifest(manifest, for: instance) else {
-            // Unlisted files are files no surface can reach or remove, so the
-            // capture is undone rather than left orphaned in the bundle.
-            let store = snapshotStore
-            let bundleURL = instance.bundleURL
-            let id = snapshot.id
-            await Task.detached {
-                store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: id)
-            }.value
-            return nil
-        }
-        return snapshot
-    }
-
-    /// Shows the revert confirmation.
-    func confirmRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
+    /// Opens the revert confirmation.
+    func requestRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
         guard canRevertToSnapshot(instance) else { return }
         presenter?.presentRevertSnapshot(snapshot, for: instance)
     }
 
-    /// Takes a fresh snapshot of the current state, then reverts — the revert
-    /// alert's default, non-destructive path.
-    ///
-    /// The button this backs only exists when the alert was built with a
-    /// capturable VM, so the capture here is required, not conditional: a VM
-    /// that stopped being capturable before the click landed aborts rather
-    /// than falling through to the destructive revert with no check-point.
-    func snapshotThenRevertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
-        guard
-            await captureSnapshot(
-                instance, name: instance.snapshotManifest.defaultNewName, notes: "") != nil
-        else { return }
-        await revertConfirmed(instance, to: snapshot)
-    }
-
-    func revertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
-        await startRevert(instance, to: snapshot).value
-    }
-
-    /// Registers a revert and runs it.
-    ///
-    /// Registration happens *before this returns*, not when the copy starts:
-    /// the task body runs no earlier than the caller's next suspension, so a
-    /// termination gate that reads ``hasRevertInFlight`` immediately after a
-    /// power-off sees the revert the power-off requested. Registering from
-    /// inside the task instead would leave a window where the revert is pending
-    /// and invisible.
-    @discardableResult
-    private func startRevert(_ instance: VMInstance, to snapshot: VMSnapshot) -> Task<Void, Never> {
-        let requestID = UUID()
-        let task = Task { [weak self] in
-            await self?.performRevert(instance, to: snapshot)
-            self?.library.revertTasks[requestID] = nil
+    /// Reverts to `snapshot`, optionally check-pointing the current state
+    /// first — the revert confirmation's two actions.
+    func revert(
+        _ instance: VMInstance, to snapshot: VMSnapshot, takingCheckpoint: Bool = false
+    ) async {
+        await run(on: instance) {
+            try await self.commands.revertToSnapshot(
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: takingCheckpoint,
+                confirmed: true)
         }
-        library.revertTasks[requestID] = task
-        return task
     }
 
-    private func performRevert(_ instance: VMInstance, to snapshot: VMSnapshot) async {
-        guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
-            Self.logger.notice(
-                "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
-            )
-            return
-        }
-        // A VM that is live goes back to being live once the files are in
-        // place, so the window it comes up in is chosen before the teardown. A
-        // cold snapshot ends the session for good, so there is none to choose.
-        if instance.hasLiveVirtualMachine, snapshot.kind == .warm {
-            surfaceDisplay(for: instance)
-        }
-        do {
-            try await lifecycle.revertToSnapshot(
-                instance, snapshot: snapshot, store: snapshotStore)
-        } catch {
-            Self.logger.error(
-                "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-            // A resume that failed left the reverted files in place, so the VM's
-            // state does descend from this snapshot and the marker says so.
-            guard case VirtualizationError.revertResumeFailed = error else { return }
-        }
-        var manifest = instance.snapshotManifest
-        manifest.currentID = snapshot.id
-        writeSnapshotManifest(manifest, for: instance)
-    }
-
-    // MARK: - Ephemeral Mode
-
-    /// Returns an Ephemeral Mode VM to its baseline after a power-off; a no-op
-    /// for every other VM.
-    ///
-    /// Reached from ``VMInstance/onPoweredOff``, which fires inside the stop
-    /// that caused it — so the revert runs in its own task, after that stop has
-    /// released the VM.
-    private func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {
-        guard let baseline = instance.ephemeralBaselineSnapshot else { return }
-        revertToEphemeralBaseline(instance, baseline)
-    }
-
-    /// The revert an ephemeral power-off performs, on the same path a
-    /// user-confirmed revert takes — including its error presentation, so a
-    /// baseline that cannot be restored is never silently skipped.
-    @discardableResult
-    private func revertToEphemeralBaseline(
-        _ instance: VMInstance, _ baseline: VMSnapshot
-    ) -> Task<Void, Never> {
-        Self.logger.notice(
-            "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
-        )
-        return startRevert(instance, to: baseline)
-    }
-
-    /// Routes a cold-paused ephemeral VM's Discard Saved State through the
-    /// baseline revert instead, and reports whether it took the request.
-    ///
-    /// Discarding alone would drop the suspended session and leave the guest's
-    /// disks as the session left them — the opposite of what the mode promises.
-    private func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async -> Bool {
-        guard instance.isColdPaused, let baseline = instance.ephemeralBaselineSnapshot else {
-            return false
-        }
-        await revertToEphemeralBaseline(instance, baseline).value
-        return true
-    }
-
-    /// Whether `snapshot` may be deleted: the manifest has to be editable, and
-    /// a VM's Ephemeral baseline is the restore point its every power-off needs.
-    func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        canDeleteSnapshots(instance) && !instance.isEphemeralBaseline(snapshot)
-    }
-
-    /// Shows the delete-snapshot confirmation.
-    func confirmDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
+    /// Opens the delete-snapshot confirmation.
+    func requestDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
         guard canDeleteSnapshot(instance, snapshot: snapshot) else {
             Self.logger.notice(
                 "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
@@ -970,504 +536,78 @@ final class VMLibraryViewModel {
 
     /// Trashes a snapshot's captured files and drops it from the manifest.
     ///
-    /// Serialized against the VM's other operations: a revert reads the very
-    /// directory this trashes, and half of it landing in the Trash mid-copy is
-    /// what that ordering rules out.
-    ///
     /// The returned Task lets tests await the trash.
     @discardableResult
-    func deleteSnapshotConfirmed(_ instance: VMInstance, snapshot: VMSnapshot) -> Task<Void, Never> {
-        let store = snapshotStore
-        let id = snapshot.id
-        return Task { [weak self] in
+    func deleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Task<Void, Never> {
+        Task { [weak self] in
             guard let self else { return }
-            // Re-checked at the write, not just at the confirmation: the
-            // baseline is what every power-off of this VM needs back.
-            guard !instance.isEphemeralBaseline(snapshot) else {
-                Self.logger.notice(
-                    "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
-                )
-                return
+            await self.run(on: instance) {
+                try await self.commands.deleteSnapshot(
+                    .id(instance.id), snapshot: snapshot.id, confirmed: true)
             }
-            do {
-                try await self.lifecycle.discardSnapshot(instance, snapshotID: id, store: store)
-            } catch {
-                Self.logger.error(
-                    "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                self.presentError(error)
-                return
-            }
-            var manifest = instance.snapshotManifest
-            manifest.remove(id: id)
-            self.writeSnapshotManifest(manifest, for: instance)
-            Self.logger.notice(
-                "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
-            )
         }
     }
 
-    /// Renames a snapshot; an empty or unchanged name is a no-op. A
-    /// metadata-only manifest write: no VM operation reads it mid-flight, so
-    /// it lands whether or not the VM is busy.
+    /// Renames a snapshot; an empty or unchanged name is a no-op.
     func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != snapshot.name else { return }
-        var manifest = instance.snapshotManifest
-        manifest.rename(id: snapshot.id, to: trimmed)
-        guard manifest != instance.snapshotManifest else { return }
-        writeSnapshotManifest(manifest, for: instance)
+        runSync(on: instance) {
+            try self.commands.renameSnapshot(
+                .id(instance.id), snapshot: snapshot.id, to: newName)
+        }
     }
 
-    /// Replaces a snapshot's note; an unchanged value is a no-op. A
-    /// metadata-only manifest write: no VM operation reads it mid-flight, so
-    /// it lands whether or not the VM is busy.
-    ///
-    /// Unlike a name, an empty note is a legitimate value — it clears the note.
-    /// Leading and trailing whitespace is trimmed; interior newlines are kept.
+    /// Replaces a snapshot's note; an unchanged value is a no-op.
     func setSnapshotNotes(_ snapshot: VMSnapshot, notes: String, on instance: VMInstance) {
-        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != snapshot.notes else { return }
-        var manifest = instance.snapshotManifest
-        manifest.setNotes(id: snapshot.id, to: trimmed)
-        guard manifest != instance.snapshotManifest else { return }
-        writeSnapshotManifest(manifest, for: instance)
-    }
-
-    /// Bytes each of this VM's snapshots occupies on disk, read off the main
-    /// actor — the copies live on the same volume and can be many gigabytes.
-    func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
-        let store = snapshotStore
-        let bundleURL = instance.bundleURL
-        let ids = instance.snapshotManifest.snapshots.map(\.id)
-        guard !ids.isEmpty else { return [:] }
-        return await Task.detached {
-            store.onDiskBytes(bundleURL: bundleURL, snapshotIDs: ids)
-        }.value
-    }
-
-    /// Writes `manifest` to the bundle and mirrors it onto the instance.
-    ///
-    /// - Returns: Whether it reached disk. On failure the in-memory manifest is
-    ///   left alone, so what the UI shows still matches what is stored.
-    @discardableResult
-    private func writeSnapshotManifest(
-        _ manifest: VMSnapshotManifest, for instance: VMInstance
-    ) -> Bool {
-        do {
-            try snapshotStore.saveManifest(manifest, bundleURL: instance.bundleURL)
-            instance.snapshotManifest = manifest
-            return true
-        } catch {
-            Self.logger.error(
-                "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-            return false
+        runSync(on: instance) {
+            try self.commands.setSnapshotNotes(
+                .id(instance.id), snapshot: snapshot.id, notes: notes)
         }
     }
 
     // MARK: - Delete
 
-    /// Begins the delete-VM flow.
+    /// Opens the delete-VM sheet.
     ///
     /// `permanently` selects the destructive variant: `false` (the default) moves
     /// the bundle and the chosen externals to Trash, `true` deletes them
     /// immediately, bypassing it.
-    func confirmDelete(_ instance: VMInstance, permanently: Bool = false) {
+    func requestDelete(_ instance: VMInstance, permanently: Bool = false) {
         presenter?.presentDeleteSheet(for: instance, permanently: permanently)
     }
 
     /// Deletes the VM bundle and the chosen external files, either to the
     /// Trash or immediately (bypassing it).
-    ///
-    /// Files shared with other VMs are **never** deleted even if their id is passed
-    /// in, so a delete can never break another VM. Externals are deleted *after* the
-    /// bundle so the VM disappears from the library even if a downstream op fails;
-    /// the returned Tasks let tests await completion.
-    @discardableResult
-    func deleteConfirmed(
+    func delete(
         _ instance: VMInstance, deletingExternalIDs: Set<UUID> = [], permanently: Bool = false
-    ) -> [Task<Void, Never>] {
-        // A delete sheet is window-modal but doesn't disable the menu bar, so two
-        // sheets can be queued for the same VM; the second confirm would hit a
-        // missing bundle and surface a spurious error.
-        guard instances.contains(where: { $0.id == instance.id }) else {
-            Self.logger.debug(
-                "Ignoring delete confirm for already-removed VM '\(instance.name, privacy: .public)'"
-            )
-            return []
-        }
-        // The sheet is window-modal but leaves the menu key equivalents live, so
-        // a Start or Resume can land between opening it and confirming — and a
-        // cold resume holds `.paused` with no live VM while it builds its
-        // configuration, which `canDelete` alone still reads as deletable.
-        // Trashing the bundle then pulls the disk image out from under a guest
-        // that is running or about to.
-        guard instance.canDelete, !lifecycle.hasActiveOperation(for: instance.id) else {
-            Self.logger.notice(
-                "Refusing delete of '\(instance.name, privacy: .public)': no longer deletable (status '\(instance.status.displayName, privacy: .public)')"
-            )
-            return []
-        }
-        instance.tearDownSession()
-        let toDelete =
-            deletingExternalIDs.isEmpty
-            ? []
-            : externalAttachments(for: instance).filter {
-                deletingExternalIDs.contains($0.id) && !$0.isShared
-            }
-        var tasks: [Task<Void, Never>] = []
+    ) async {
         do {
-            if permanently {
-                try storageService.permanentlyDeleteVMBundle(at: instance.bundleURL)
-            } else {
-                try storageService.deleteVMBundle(at: instance.bundleURL)
-            }
-            cleanupSetupResumeData(for: instance, permanently: permanently)
-            lifecycle.clearActiveOperation(for: instance.id)
-            sleepPausedInstanceIDs.remove(instance.id)
-            library.evict(instance)
-            library.persistOrder()
-            if permanently {
-                Self.logger.notice("Permanently deleted VM '\(instance.name, privacy: .public)'")
-            } else {
-                Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
-            }
-            let vmName = instance.name
-            for attachment in toDelete {
-                tasks.append(
-                    deleteExternalAttachment(
-                        at: URL(fileURLWithPath: attachment.path),
-                        bookmark: bookmark(for: attachment, in: instance.configuration),
-                        label: attachment.label,
-                        vmName: vmName,
-                        permanently: permanently
-                    )
+            try await commands.delete(
+                .id(instance.id), permanently: permanently, alsoRemoving: deletingExternalIDs,
+                confirmed: true)
+        } catch let error as CommandError {
+            // A second sheet for a VM the first already removed, or one whose
+            // state moved while the sheet was up: refused rather than run, and
+            // there is nothing to tell the user about a delete they can retry.
+            switch error {
+            case .notFound, .invalidState, .busy:
+                Self.logger.notice(
+                    "Refusing delete of '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
                 )
+            default:
+                present(error, for: instance)
             }
         } catch {
-            Self.logger.error(
-                "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-        }
-        return tasks
-    }
-
-    /// The VM's in-bundle (internal) disks, shown read-only in the delete
-    /// sheet's "Removed with the VM" section.
-    ///
-    /// Falls back to the synthesized main disk when `storageDisks` is `nil`, so a
-    /// freshly created VM still shows its `Disk.asif`.
-    func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
-        (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
-            .filter(\.isInternal)
-    }
-
-    /// `true` when `disk` is the VM's primary (boot) `Disk.asif`.
-    ///
-    /// Matches by bundle-relative path, so it stays correct on cloned VMs (whose
-    /// disk ids are regenerated).
-    func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
-        ConfigurationBuilder.isMainBundleDisk(disk, layout: VMBundleLayout(bundleURL: instance.bundleURL))
-    }
-
-    /// Returns the external (non-bundle) files referenced by `instance`.
-    ///
-    /// Each is annotated with the names of other VMs sharing the same path. The
-    /// bundled Guest Agent installer DMG is excluded: its path points *inside the
-    /// app bundle*, so trashing it would corrupt the app for every VM.
-    ///
-    /// Existence is **not** resolved — every ``ExternalAttachment/isMissing`` is
-    /// `false`; use ``externalAttachmentsResolvingExistence(for:)`` when it matters.
-    func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
-        let agentPath = Self.guestAgentInstallerPath
-        var attachments: [ExternalAttachment] = []
-        for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
-            attachments.append(
-                ExternalAttachment(
-                    id: disk.id,
-                    kind: .storageDisk,
-                    label: disk.label,
-                    path: disk.path,
-                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance),
-                    isMissing: false
-                )
-            )
-        }
-        for item in instance.configuration.removableMedia ?? [] where item.path != agentPath {
-            attachments.append(
-                ExternalAttachment(
-                    id: item.id,
-                    kind: .removableMedia,
-                    label: item.label,
-                    path: item.path,
-                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance),
-                    isMissing: false
-                )
-            )
-        }
-        return attachments
-    }
-
-    /// ``externalAttachments(for:)`` with each attachment's
-    /// ``ExternalAttachment/isMissing`` resolved against the filesystem.
-    ///
-    /// The syscalls run detached so a stale or unreachable mount can't freeze the
-    /// main actor. Probes go through each attachment's security bookmark — a raw
-    /// check on an out-of-container path is sandbox-denied and would render every
-    /// row as missing.
-    func externalAttachmentsResolvingExistence(for instance: VMInstance) async -> [ExternalAttachment] {
-        let attachments = externalAttachments(for: instance)
-        guard !attachments.isEmpty else { return attachments }
-        let paths = attachments.map(\.path)
-        let bookmarks = externalAttachmentRefs(for: instance.configuration)
-        let missingByPath = await Task.detached(priority: .userInitiated) {
-            var result: [String: Bool] = [:]
-            for path in paths where result[path] == nil {
-                result[path] = !SecurityScopedBookmark.fileExists(
-                    atPath: path, bookmark: bookmarks[path] ?? nil)
-            }
-            return result
-        }.value
-        return attachments.map { attachment in
-            ExternalAttachment(
-                id: attachment.id,
-                kind: attachment.kind,
-                label: attachment.label,
-                path: attachment.path,
-                sharedWithVMNames: attachment.sharedWithVMNames,
-                isMissing: missingByPath[attachment.path] ?? false
-            )
-        }
-    }
-
-    /// The persisted security bookmark backing an external attachment
-    /// (``ExternalAttachment`` itself is a bookmark-free UI projection).
-    private func bookmark(
-        for attachment: ExternalAttachment, in config: VMConfiguration
-    ) -> Data? {
-        switch attachment.kind {
-        case .storageDisk:
-            (config.storageDisks ?? []).first { $0.id == attachment.id }?.bookmark
-        case .removableMedia:
-            (config.removableMedia ?? []).first { $0.id == attachment.id }?.bookmark
-        }
-    }
-
-    /// Names of other VMs in the library that reference `path` as an external
-    /// storage disk or removable medium.
-    ///
-    /// Only *external* (non-bundle) storage disks count — bundle-relative paths are
-    /// per-VM by construction. `instance` is excluded so the file isn't reported as
-    /// shared with itself.
-    func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
-        instances.compactMap { other -> String? in
-            guard other.id != instance.id else { return nil }
-            let externalDiskPaths = (other.configuration.storageDisks ?? [])
-                .filter { !$0.isInternal }
-                .map(\.path)
-            let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
-            if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
-                return other.name
-            }
-            return nil
-        }
-    }
-
-    /// `true` when `item` is the bundled Guest Agent installer DMG.
-    ///
-    /// The installer lives *inside the app bundle*, so a "remove" of it must only
-    /// detach the entry and never trash the file.
-    func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
-        guard let agentPath = Self.guestAgentInstallerPath else { return false }
-        return item.path == agentPath
-    }
-
-    /// Filesystem path of the bundled Guest Agent installer DMG, if present.
-    ///
-    /// Resolved at the call site (not cached) so it always reflects the running app
-    /// bundle's location.
-    private static var guestAgentInstallerPath: String? {
-        KernovaMacOSAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
-    }
-
-    /// `true` when the bundled Guest Agent installer DMG is currently in this
-    /// VM's `removableMedia` list (live-attached, pending attach, or cold).
-    func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
-        guard let path = Self.guestAgentInstallerPath else { return false }
-        return (instance.configuration.removableMedia ?? []).contains { $0.path == path }
-    }
-
-    /// Trashes any in-progress image download bundle for a VM that's being
-    /// deleted.
-    ///
-    /// Every setup source that fetches its image — a macOS restore image from
-    /// any of its three downloading sources, or a Linux installer ISO — writes
-    /// the same `.kernovadownload` sidecar, so all of them are covered; the
-    /// "delete externals" toggle does not gate it, and the disposition matches
-    /// the VM's own. The completed image at `downloadDestinationPath` lives at a
-    /// user-known path and is left alone.
-    private func cleanupSetupResumeData(for instance: VMInstance, permanently: Bool) {
-        if let context = instance.configuration.installContext,
-            context.source.downloadsImage,
-            let destinationURL = context.downloadDestinationURL
-        {
-            lifecycle.ipswService.discardResumeData(at: destinationURL, permanently: permanently)
-        } else if let destinationURL = instance.configuration.linuxInstallContext?
-            .downloadDestinationURL
-        {
-            lifecycle.downloadService.discardResumeData(
-                at: destinationURL, permanently: permanently)
-        } else {
-            return
-        }
-        Self.logger.notice(
-            "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
-        )
-    }
-
-    /// Detached delete for a single external attachment, to Trash or
-    /// immediately depending on `permanently`.
-    ///
-    /// Missing files are swallowed at `.notice` (the source may have been moved or
-    /// deleted out-of-band); other failures log `.warning` and surface a single
-    /// error alert on the MainActor.
-    private func deleteExternalAttachment(
-        at url: URL, bookmark: Data?, label: String, vmName: String, permanently: Bool
-    ) -> Task<Void, Never> {
-        let fileSystem = fileSystem
-        return Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
-                    target in
-                    if permanently {
-                        try fileSystem.removeItem(at: target)
-                    } else {
-                        try fileSystem.trashItem(at: target)
-                    }
-                }
-                Self.logger.notice(
-                    "Deleted external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
-                )
-            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
-                Self.logger.notice(
-                    "External attachment already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)'; skipping delete"
-                )
-            } catch {
-                let message = error.localizedDescription
-                Self.logger.warning(
-                    "Failed to delete external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
-                )
-                await MainActor.run { [weak self] in
-                    self?.surfaceError(message)
-                }
-            }
-        }
-    }
-
-    // MARK: - Preparing Rows (shared by Clone & Import)
-
-    /// Bounds the blocking bundle copies import and clone run.
-    ///
-    /// Uncapped, a large multi-select drop would spawn N concurrent blocking
-    /// `FileManager` calls on Swift's cooperative pool and saturate it. The cap is
-    /// deliberately small — copies serialize at the device anyway, so a low bound
-    /// avoids cross-volume disk thrash without losing throughput.
-    private static let copyQueue: OperationQueue = {
-        let queue = OperationQueue()
-        queue.maxConcurrentOperationCount = 2
-        queue.qualityOfService = .userInitiated
-        return queue
-    }()
-
-    /// Runs blocking file work off the cooperative pool on the bounded ``copyQueue``, awaiting its
-    /// result.
-    private static func runBoundedCopy<T: Sendable>(
-        _ work: @escaping @Sendable () throws -> T
-    ) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            copyQueue.addOperation {
-                continuation.resume(with: Result(catching: work))
-            }
+            surfaceError(error.localizedDescription)
         }
     }
 
     // MARK: - Import
 
-    /// Reserves a collision-free destination for one `.kernova` bundle, registers its phantom row
-    /// synchronously, and spawns the file copy — a no-op when the source is already in the library
-    /// by UUID.
-    ///
-    /// Everything before the copy `Task` is spawned is synchronous (no `await`), so a batch's
-    /// reservations — and two overlapping triggers' — run atomically on the MainActor and see each
-    /// other's phantoms in `instances`; the copies then run concurrently.
-    private func reserveAndImport(from sourceURL: URL) {
-        do {
-            let vmsDir = try storageService.vmsDirectory
-            var config = try storageService.loadConfiguration(from: sourceURL)
-
-            // Auto-start is the one setting that runs a guest with no user
-            // action, so it is local intent rather than something a bundle
-            // carries in: a VM arriving pre-marked would boot on the next
-            // launch without ever being asked for. The local user marks it.
-            let arrivedMarkedForAutoStart = config.startsAutomaticallyOnLaunch
-            config.startsAutomaticallyOnLaunch = false
-
-            // Already in the library by UUID (including a source already inside the VMs
-            // directory) — select it rather than re-importing.
-            if let existing = instances.first(where: { $0.id == config.id }) {
-                selectedID = existing.id
-                Self.logger.info(
-                    "VM '\(config.name, privacy: .public)' already in library — selected existing instance")
-                return
-            }
-
-            // The save file has to come from the source bundle — the destination doesn't exist yet.
-            let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
-            let initialStatus = VMLibrary.initialStatus(for: config, layout: sourceLayout)
-
-            let destinationURL = library.reserveDestination(for: sourceURL, in: vmsDir)
-            let phantom = VMInstance(
-                configuration: config, bundleURL: destinationURL, status: initialStatus,
-                preferences: preferences)
-
-            let storage = storageService
-            let sanitizedConfig = config
-            library.prepareBundle(
-                phantom, operation: .importing,
-                copyWork: {
-                    try await Self.runBoundedCopy {
-                        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-                    }
-                    // The copy reproduces the source `config.json` verbatim, so
-                    // the cleared flag only reaches disk by writing it back.
-                    if arrivedMarkedForAutoStart {
-                        try storage.saveConfiguration(sanitizedConfig, to: destinationURL)
-                    }
-                },
-                onSuccess: { [weak self] in
-                    // The phantom was wired before its bundle existed, so any
-                    // snapshots that arrived with the copy are read now.
-                    self?.reloadSnapshots(for: phantom)
-                    Self.logger.notice(
-                        "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
-                    )
-                })
-        } catch {
-            Self.logger.error(
-                "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-        }
-    }
-
     /// Filters `urls` to `.kernova` bundles and imports the batch.
     ///
     /// Each bundle's destination is reserved and its phantom row registered synchronously (see
-    /// ``reserveAndImport(from:)``), so two overlapping triggers never collide on a destination
-    /// name and never wait behind each other's copies.
+    /// ``VMCommandCore/importVM(from:)``), so two overlapping triggers never collide on a
+    /// destination name and never wait behind each other's copies.
     ///
     /// Returns whether any bundle was accepted for import — `true` means at least one
     /// bundle was reserved, not that every import will succeed.
@@ -1477,7 +617,7 @@ final class VMLibraryViewModel {
         guard !bundles.isEmpty else { return false }
         Self.logger.notice("Importing \(bundles.count, privacy: .public) bundle(s)")
         for url in bundles {
-            reserveAndImport(from: url)
+            runSync(on: nil) { _ = try self.commands.importVM(from: url) }
         }
         return true
     }
@@ -1490,6 +630,61 @@ final class VMLibraryViewModel {
         }
     }
     #endif
+
+    // MARK: - Clone
+
+    /// The Option-alternate Clone: performs the opposite of the
+    /// `cloneGeneratesNewMachineID` preference for this one clone.
+    func cloneVMWithOppositeMachineIdentity(_ instance: VMInstance) {
+        cloneVM(instance, generateNewMachineID: !preferences.cloneGeneratesNewMachineID)
+    }
+
+    /// Clones `instance`. `generateNewMachineID: nil` follows the
+    /// `cloneGeneratesNewMachineID` preference; the Option-alternate menu items
+    /// pass the opposite explicitly via `cloneVMWithOppositeMachineIdentity`.
+    func cloneVM(_ instance: VMInstance, generateNewMachineID: Bool? = nil) {
+        let identity: CloneMachineIdentity
+        switch generateNewMachineID {
+        case .none: identity = .followPreference
+        case .some(true): identity = .new
+        case .some(false): identity = .keep
+        }
+        do {
+            _ = try commands.clone(.id(instance.id), machineIdentity: identity)
+        } catch let error as CommandError {
+            if case .invalidState = error {
+                Self.logger.debug(
+                    "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
+                )
+            } else {
+                present(error, for: instance)
+            }
+        } catch {
+            surfaceError(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Cancel Preparing
+
+    /// Opens the cancel-clone/import confirmation.
+    func requestCancelPreparing(_ instance: VMInstance) {
+        presenter?.presentCancelPreparing(for: instance)
+    }
+
+    /// Cancels an in-flight clone or import from that confirmation's confirm.
+    func cancelPreparing(_ instance: VMInstance) {
+        do {
+            try commands.cancelPreparing(.id(instance.id), confirmed: true)
+        } catch let error as CommandError {
+            // The copy settled — or the row went — while the confirmation was
+            // up. The operation the user asked to stop is already over.
+            Self.logger.notice(
+                "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+            )
+        } catch {
+            surfaceError(error.localizedDescription)
+        }
+    }
 
     // MARK: - Rename
 
@@ -1532,12 +727,17 @@ final class VMLibraryViewModel {
     /// the pending session), and clearing unconditionally would wipe the newer
     /// rename's marker before its UI ever opened.
     func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
-        let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty {
-            Self.logger.debug(
-                "Committing rename of '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'"
+        do {
+            try commands.rename(.id(instance.id), to: newName)
+        } catch let error as CommandError where error.isOperationFailure {
+            // The configuration funnel already told the user the write failed;
+            // the verb throws so a wire client hears about it, and a second
+            // alert saying the same thing is not what the user needs.
+            Self.logger.error(
+                "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message, privacy: .public)"
             )
-            updateConfiguration(of: instance) { $0.name = trimmed }
+        } catch {
+            present(error, for: instance)
         }
         clearRename(ifOwnedBy: surface.target(for: instance))
     }
@@ -1680,7 +880,7 @@ final class VMLibraryViewModel {
         _ disk: StorageDisk, from instance: VMInstance, trashFile: Bool
     ) -> Task<Void, Never>? {
         updateConfiguration(of: instance) { config in
-            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            var disks = config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
             disks.removeAll { $0.id == disk.id }
             config.storageDisks = disks.isEmpty ? nil : disks
         }
@@ -1737,7 +937,7 @@ final class VMLibraryViewModel {
         let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         updateConfiguration(of: instance) { config in
-            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            var disks = config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
             guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
             disks[index].label = trimmed
             config.storageDisks = disks
@@ -1771,7 +971,7 @@ final class VMLibraryViewModel {
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != disk.notes else { return }
         updateConfiguration(of: instance) { config in
-            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            var disks = config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
             guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
             disks[index].notes = trimmed
             config.storageDisks = disks
@@ -1859,16 +1059,6 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Returns the storage disks list to render when `storageDisks` is
-    /// `nil` / empty.
-    ///
-    /// The settings view uses this so the user always sees the main disk as a row,
-    /// and mutating helpers fall back to it when initializing the list on first edit.
-    static func defaultStorageDisks(for instance: VMInstance) -> [StorageDisk] {
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        return [ConfigurationBuilder.defaultMainDisk(layout: layout)]
-    }
-
     /// Creates a new ASIF disk image inside the VM bundle and adds it to
     /// `storageDisks`.
     ///
@@ -1893,7 +1083,8 @@ final class VMLibraryViewModel {
                 // and pick the same "… 2" suffix.
                 var createdLabel = "\(sizeInGB) GB Disk"
                 updateConfiguration(of: instance) { config in
-                    var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+                    var disks =
+                        config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
                     let label = StorageDisk.uniqueLabel(
                         base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
                     createdLabel = label
@@ -1979,168 +1170,6 @@ final class VMLibraryViewModel {
         }
     }
 
-    // MARK: - Clone
-
-    /// The Option-alternate Clone: performs the opposite of the
-    /// `cloneGeneratesNewMachineID` preference for this one clone.
-    func cloneVMWithOppositeMachineIdentity(_ instance: VMInstance) {
-        cloneVM(instance, generateNewMachineID: !preferences.cloneGeneratesNewMachineID)
-    }
-
-    /// Clones `instance`. `generateNewMachineID: nil` follows the
-    /// `cloneGeneratesNewMachineID` preference; the Option-alternate menu items
-    /// pass the opposite explicitly via `cloneVMWithOppositeMachineIdentity`.
-    func cloneVM(_ instance: VMInstance, generateNewMachineID: Bool? = nil) {
-        guard instance.status.canEditSettings else {
-            Self.logger.debug(
-                "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
-            )
-            return
-        }
-        let generateNewID = generateNewMachineID ?? preferences.cloneGeneratesNewMachineID
-        let existingNames = instances.map(\.configuration.name)
-        var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
-
-        clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
-
-        if generateNewID {
-            if clonedConfig.guestOS == .macOS {
-                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
-            }
-            if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
-                clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
-            }
-        } else {
-            // Keep mode mints only what there is no identity to keep: a source
-            // whose identifier lives in the bundle file alone hands it to the
-            // clone through `filesToCopy` below, untouched here.
-            if clonedConfig.guestOS == .macOS, instance.effectiveMachineIdentifierData == nil {
-                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
-                Self.logger.notice(
-                    "Clone of '\(instance.name, privacy: .public)' had no machine identifier to keep — generated a new one"
-                )
-            }
-            if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel,
-                clonedConfig.genericMachineIdentifierData == nil
-            {
-                clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
-                Self.logger.notice(
-                    "Clone of '\(instance.name, privacy: .public)' had no generic machine identifier to keep — generated a new one"
-                )
-            }
-        }
-
-        var filesToCopy = ["Disk.asif"]
-        switch clonedConfig.guestOS {
-        case .macOS:
-            filesToCopy.append(contentsOf: ["AuxiliaryStorage", "HardwareModel"])
-            if !generateNewID {
-                filesToCopy.append("MachineIdentifier")
-            }
-        case .linux:
-            if clonedConfig.bootMode == .efi {
-                filesToCopy.append("EFIVariableStore")
-            }
-        }
-
-        // The main bundle disk lives at a fixed relative path, so only
-        // `AdditionalDisks/<id>.asif` entries need remapping — their cloned ids
-        // differ from the originals.
-        let originalDisks = instance.configuration.storageDisks ?? []
-        let clonedDisks = clonedConfig.storageDisks ?? []
-        let internalDiskMapping: [(sourceID: UUID, clonedDisk: StorageDisk)] = zip(originalDisks, clonedDisks)
-            .compactMap { original, cloned in
-                guard cloned.isInternal, cloned.path.hasPrefix("AdditionalDisks/") else { return nil }
-                return (sourceID: original.id, clonedDisk: cloned)
-            }
-
-        let bundleURL: URL
-        do {
-            bundleURL = try storageService.bundleURL(for: clonedConfig)
-        } catch {
-            Self.logger.error(
-                "Failed to derive bundle URL for clone of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-            return
-        }
-
-        let phantom = VMInstance(
-            configuration: clonedConfig, bundleURL: bundleURL, preferences: preferences)
-
-        let sourceBundleURL = instance.bundleURL
-        let sourceName = instance.name
-        let config = clonedConfig
-        let storage = storageService
-        let diskMapping = internalDiskMapping
-        let bundleFilesToCopy = filesToCopy
-        library.prepareBundle(
-            phantom, operation: .cloning,
-            copyWork: {
-                let log = Self.logger
-                let skippedDiskIDs: Set<UUID> = try await Self.runBoundedCopy {
-                    let resultURL = try storage.cloneVMBundle(
-                        from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
-
-                    if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
-                        let layout = VMBundleLayout(bundleURL: resultURL)
-                        try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
-                    }
-
-                    var skipped: Set<UUID> = []
-                    if !diskMapping.isEmpty {
-                        let sourceLayout = VMBundleLayout(bundleURL: sourceBundleURL)
-                        let destLayout = VMBundleLayout(bundleURL: resultURL)
-                        let fm = FileManager.default
-                        try fm.createDirectory(
-                            at: destLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
-                        for mapping in diskMapping {
-                            let sourceFile = sourceLayout.additionalDiskURL(id: mapping.sourceID)
-                            let destFile = destLayout.additionalDiskURL(id: mapping.clonedDisk.id)
-                            if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
-                                try fm.copyItem(at: sourceFile, to: destFile)
-                            } else {
-                                log.warning(
-                                    "Internal disk '\(mapping.clonedDisk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — removing from clone"
-                                )
-                                skipped.insert(mapping.clonedDisk.id)
-                            }
-                        }
-                    }
-                    return skipped
-                }
-
-                // `clonedForNewInstance` gives every disk a fresh `id` but copies its
-                // `path` verbatim, while the copy above wrote each file to
-                // `AdditionalDisks/<new-id>.asif` — without this remap, boot-time
-                // resolution looks for the source bundle's id and fails with
-                // `storageDiskNotFound`.
-                if !diskMapping.isEmpty {
-                    let remappedPaths: [UUID: String] = Dictionary(
-                        uniqueKeysWithValues: diskMapping.map { mapping in
-                            (mapping.clonedDisk.id, "AdditionalDisks/\(mapping.clonedDisk.id.uuidString).asif")
-                        }
-                    )
-                    phantom.configuration.storageDisks = phantom.configuration.storageDisks?
-                        .filter { !skippedDiskIDs.contains($0.id) }
-                        .map { disk in
-                            guard let newPath = remappedPaths[disk.id] else { return disk }
-                            var updated = disk
-                            updated.path = newPath
-                            return updated
-                        }
-                    if phantom.configuration.storageDisks?.isEmpty == true {
-                        phantom.configuration.storageDisks = nil
-                    }
-                    try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
-                }
-            },
-            onSuccess: {
-                Self.logger.notice(
-                    "Cloned VM '\(sourceName, privacy: .public)' as '\(config.name, privacy: .public)'")
-            })
-    }
-
     // MARK: - Launch Auto-Start
 
     /// Names of the macOS VMs marked to start automatically, in library order —
@@ -2169,9 +1198,10 @@ final class VMLibraryViewModel {
     /// A VM that has yet to finish setup is skipped: its start runs the macOS
     /// install or the Linux image download, neither of which may begin
     /// unattended. ``VMConfiguration/hasPendingSetup`` is what decides that, not
-    /// the status — ``start(_:)`` dispatches on the surviving install context
-    /// too, so a failed install sitting at `.error` still routes into the
-    /// installer, and `.error` otherwise means "retry the boot".
+    /// the status — ``VMCommandCore/start(_:recovery:)`` dispatches on the
+    /// surviving install context too, so a failed install sitting at `.error`
+    /// still routes into the installer, and `.error` otherwise means "retry the
+    /// boot".
     nonisolated static func autoStartStep(
         startsAutomaticallyOnLaunch: Bool,
         isPreparing: Bool,
@@ -2189,8 +1219,8 @@ final class VMLibraryViewModel {
     /// Starts every VM marked to start automatically, one after another.
     ///
     /// Sequential on purpose: each guest commits its whole memory allocation at
-    /// start, and the duplicate machine-ID and MAC refusals inside ``start(_:)``
-    /// and ``resume(_:)`` compare against VMs that are already live, so they only
+    /// start, and the duplicate machine-ID and MAC refusals inside the start and
+    /// resume verbs compare against VMs that are already live, so they only
     /// answer deterministically once the previous VM has settled.
     ///
     /// Per-VM failures are logged and surfaced by those two methods; the pass
@@ -2261,33 +1291,68 @@ final class VMLibraryViewModel {
         )
     }
 
-    // MARK: - Cancel Preparing
+    // MARK: - Error Handling
 
-    func confirmCancelPreparing(_ instance: VMInstance) {
-        presenter?.presentCancelPreparing(for: instance)
+    /// Runs one verb, routing whatever it refuses with to the right surface.
+    private func run(on instance: VMInstance?, _ verb: () async throws -> Void) async {
+        do {
+            try await verb()
+        } catch {
+            present(error, for: instance)
+        }
     }
 
-    func cancelPreparingConfirmed(_ instance: VMInstance) {
-        guard var state = instance.preparingState else {
-            // The copy settled before the user confirmed — nothing is in flight, so
-            // remove the row and trash the completed bundle here.
-            library.cleanupPhantomInstance(instance)
+    /// The synchronous counterpart of ``run(on:_:)``.
+    private func runSync(on instance: VMInstance?, _ verb: () throws -> Void) {
+        do {
+            try verb()
+        } catch {
+            present(error, for: instance)
+        }
+    }
+
+    /// The single place a ``CommandError`` becomes something on screen.
+    ///
+    /// A consent refusal opens the sheet that gathers it; a failure carrying a
+    /// recovery opens the alert that offers it; everything else is an error
+    /// alert headed by the refusal's own title.
+    private func present(_ error: Error, for instance: VMInstance?) {
+        guard let command = error as? CommandError else {
+            surfaceError(error.localizedDescription)
             return
         }
-        guard !state.isCancelling else { return }  // already cancelling
-
-        // Mark the row "Cancelling…" but keep it in `instances`: the copy is uninterruptible, so
-        // removing it now would race the still-writing copy and briefly drop `hasPreparing`,
-        // letting reconcile resurrect the bundle. The copy task cleans up once it settles.
-        state.task.cancel()
-        state.isCancelling = true
-        instance.preparingState = state
-
-        Self.logger.notice(
-            "Cancelling \(state.operation.displayNoun, privacy: .public) for '\(instance.name, privacy: .public)'")
+        switch command {
+        case .confirmationRequired(let prompt):
+            presentConfirmation(prompt, for: instance)
+        case .operationFailed(_, _, let message, let recovery):
+            if case .removeStartFailedAttachment(let failure) = recovery, let presenter,
+                let instance
+            {
+                presenter.presentStartFailedAttachment(failure, for: instance)
+            } else {
+                surfaceError(message, title: command.alertTitle)
+            }
+        default:
+            surfaceError(command.message, title: command.alertTitle)
+        }
     }
 
-    // MARK: - Error Handling
+    /// Opens the sheet that gathers the consent a refusal is asking for.
+    ///
+    /// One refusal reaches here: a Stop the user asked for that only the core
+    /// can tell is impossible, because the guest is paused. Every other
+    /// confirmation is raised by the `request…` method that opens its own sheet
+    /// and knows the arguments — which VM, which snapshot, Trash or immediate —
+    /// that the prompt alone does not carry.
+    private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance?) {
+        guard let instance, prompt.kind == .stopPaused else {
+            Self.logger.debug(
+                "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public)"
+            )
+            return
+        }
+        presenter?.presentStopPaused(for: instance)
+    }
 
     func presentError(_ error: Error) {
         surfaceError(error.localizedDescription)

@@ -360,12 +360,16 @@ final class DetailAlertsPresenter: NSObject {
     // MARK: - Alert configurations
 
     private func cancelPreparingConfig(_ instance: VMInstance) -> AlertConfiguration {
-        AlertConfiguration(
-            title: instance.preparingState?.operation.cancelAlertTitle ?? "",
-            message: "The operation will be stopped and any partially copied files will be removed.",
+        let prompt = instance.preparingState.map {
+            VMCommandCore.cancelPreparingPrompt($0.operation, on: instance)
+        }
+        return AlertConfiguration(
+            title: prompt?.title ?? "",
+            message: prompt?.message
+                ?? "The operation will be stopped and any partially copied files will be removed.",
             buttons: [
-                AlertButton(instance.preparingState?.operation.cancelLabel ?? "Cancel", role: .destructive) {
-                    [weak self] in self?.viewModel.cancelPreparingConfirmed(instance)
+                AlertButton(prompt?.confirmTitle ?? "Cancel", role: .destructive) {
+                    [weak self] in self?.viewModel.cancelPreparing(instance)
                 },
                 AlertButton("Continue", role: .cancel),
             ])
@@ -374,127 +378,65 @@ final class DetailAlertsPresenter: NSObject {
     /// The revert confirmation.
     ///
     /// The safe path — check-point the current state, then revert — is the
-    /// default button, so Return never fires the destructive one. It is offered
-    /// wherever a capture can be taken, which now covers every at-rest state —
-    /// running, live-paused, cold-paused, and stopped; only a VM mid-operation
-    /// is offered the revert alone.
+    /// default button, so Return never fires the destructive one. Which
+    /// actions exist, and every word of the copy, come from the refusal the
+    /// core raises; this only draws them.
     private func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
-        var buttons: [AlertButton] = []
-        if vm.canTakeSnapshot {
-            buttons.append(
-                AlertButton("Take Snapshot, Then Revert", role: .default) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.snapshotThenRevertConfirmed(vm, to: snapshot) }
-                })
+        let prompt = VMCommandCore.revertPrompt(snapshot, on: vm)
+        var buttons: [AlertButton] = prompt.alternatives.map { alternative in
+            AlertButton(alternative.title, role: .default) { [weak self] in
+                guard let self else { return }
+                Task {
+                    await self.viewModel.revert(
+                        vm, to: snapshot, takingCheckpoint: alternative.takesCheckpoint)
+                }
+            }
         }
         buttons.append(
-            AlertButton("Revert", role: .destructive) { [weak self] in
+            AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
                 guard let self else { return }
-                Task { await self.viewModel.revertConfirmed(vm, to: snapshot) }
+                Task { await self.viewModel.revert(vm, to: snapshot) }
             })
         buttons.append(AlertButton("Cancel", role: .cancel))
 
         return AlertConfiguration(
-            title:
-                "Revert \u{201C}\(vm.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
-            message: Self.revertMessage(snapshot, vm),
-            buttons: buttons)
-    }
-
-    /// What the revert alert says the user is trading away, by what the target
-    /// snapshot holds and what the VM holds now.
-    static func revertMessage(_ snapshot: VMSnapshot, _ vm: VMInstance) -> String {
-        let taken = SnapshotDateFormat.string(from: snapshot.createdAt)
-        let guestLoss =
-            vm.canTakeSnapshot
-            ? "Everything changed inside the guest since then will be lost unless you take a snapshot first."
-            : "Everything changed inside the guest since then will be lost."
-
-        switch snapshot.kind {
-        case .warm:
-            // A cold-paused VM's own suspend slot is the state it would
-            // otherwise resume into, and the revert writes over it.
-            let loss =
-                vm.isColdPaused
-                ? "The suspended session this VM would resume into is replaced by the snapshot\u{2019}s, "
-                    + "and everything changed inside the guest since then will be lost unless you "
-                    + "take a snapshot first."
-                : guestLoss
-            return "The VM will return to the state and settings captured \(taken). "
-                + "\(loss) The snapshot itself is kept."
-        case .cold:
-            // No memory image to come back on, so whatever session the VM holds
-            // now — running or suspended — is gone rather than replaced.
-            let session: String
-            if vm.hasLiveVirtualMachine {
-                session = "The session it is running now ends. "
-            } else if vm.isColdPaused {
-                session = "The suspended session it would resume into is discarded. "
-            } else {
-                session = ""
-            }
-            return "The VM will return to the disks and settings captured \(taken), powered off. "
-                + "\(session)\(guestLoss) The snapshot itself is kept."
-        }
+            title: prompt.title, message: prompt.message, buttons: buttons)
     }
 
     private func deleteSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
-        AlertConfiguration(
-            title: "Delete \u{201C}\(snapshot.name)\u{201D}?",
-            message:
-                "Moves this snapshot\u{2019}s saved state and disk copies to the Trash. "
-                + "\u{201C}\(vm.name)\u{201D} keeps the state it has now.",
+        let prompt = VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm)
+        return AlertConfiguration(
+            title: prompt.title,
+            message: prompt.message,
             buttons: [
-                AlertButton("Delete", role: .destructive) { [weak self] in
-                    self?.viewModel.deleteSnapshotConfirmed(vm, snapshot: snapshot)
+                AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
+                    self?.viewModel.deleteSnapshot(vm, snapshot: snapshot)
                 },
                 AlertButton("Cancel", role: .cancel),
             ])
     }
 
     private func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
-        // A cold-paused ephemeral VM's discard is a revert to its baseline, so
-        // the button names that outcome rather than the deletion it isn't.
-        let ephemeralBaseline = vm.isColdPaused ? vm.ephemeralBaselineSnapshot : nil
-        let discardLabel = ephemeralBaseline == nil ? "Discard" : "Revert to Baseline"
+        let prompt = VMCommandCore.forceStopPrompt(vm)
         var buttons: [AlertButton] = [
-            AlertButton(vm.isColdPaused ? discardLabel : "Force Stop", role: .destructive) {
-                [weak self] in
+            AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
                 guard let self else { return }
-                Task { await self.viewModel.forceStopConfirmed(vm) }
+                Task { await self.viewModel.forceStop(vm) }
             }
         ]
-        // Paused VMs route through the dedicated "Stop Paused" alert instead;
-        // showing "Shut Down" here would chain a second alert on top of this one.
-        if vm.canStop && vm.status != .paused {
-            buttons.append(
-                AlertButton("Shut Down", role: .default) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.stop(vm) }
-                })
+        buttons += prompt.alternatives.map { alternative in
+            AlertButton(alternative.title, role: .default) { [weak self] in
+                guard let self else { return }
+                Task { await self.viewModel.stop(vm) }
+            }
         }
         buttons.append(AlertButton("Cancel", role: .cancel))
-        let message: String
-        if let ephemeralBaseline {
-            message =
-                "\"\(vm.name)\" is ephemeral, so discarding its suspended session returns it to "
-                + "\u{201C}\(ephemeralBaseline.name)\u{201D}. Everything changed inside the guest "
-                + "during the session is discarded."
-        } else if vm.isColdPaused {
-            message =
-                "\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
-        } else {
-            message =
-                "\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost."
-        }
         return AlertConfiguration(
-            title: vm.isColdPaused ? "Discard Saved State" : "Force Stop Virtual Machine",
-            message: message,
-            buttons: buttons)
+            title: prompt.title, message: prompt.message, buttons: buttons)
     }
 
     private func recoveryBootConfig(_ vm: VMInstance) -> AlertConfiguration {
@@ -505,33 +447,34 @@ final class DetailAlertsPresenter: NSObject {
             buttons: [
                 AlertButton("Start in Recovery", role: .default) { [weak self] in
                     guard let self else { return }
-                    Task { await self.viewModel.startInRecoveryConfirmed(vm) }
+                    Task { await self.viewModel.start(vm, bootIntoRecovery: true) }
                 },
                 AlertButton("Cancel", role: .cancel),
             ])
     }
 
     private func stopPausedConfig(_ vm: VMInstance) -> AlertConfiguration {
-        // RATIONALE: this alert is itself a confirmation step, so "Force Stop"
-        // calls `forceStopFromPaused` directly rather than routing through
-        // `confirmForceStop`, which would stack a second alert on top of this
-        // one. The message text makes the destructive outcome explicit, so one
-        // confirmation is sufficient.
-        AlertConfiguration(
-            title: "Stop Paused Virtual Machine",
-            message:
-                "\"\(vm.name)\" is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).",
-            buttons: [
-                AlertButton("Resume and Shut Down", role: .default) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.resumeAndStop(vm) }
-                },
-                AlertButton("Force Stop", role: .destructive) { [weak self] in
-                    guard let self else { return }
-                    Task { await self.viewModel.forceStopFromPaused(vm) }
-                },
-                AlertButton("Cancel", role: .cancel),
-            ])
+        // RATIONALE: this alert is itself the confirmation, so both buttons
+        // call the facade with consent already given rather than routing
+        // through `requestForceStop`, which would stack a second alert on top
+        // of this one. The message text makes the destructive outcome explicit,
+        // so one confirmation is sufficient.
+        let prompt = VMCommandCore.stopPausedPrompt(vm)
+        var buttons: [AlertButton] = [
+            AlertButton(prompt.confirmTitle, role: .default) { [weak self] in
+                guard let self else { return }
+                Task { await self.viewModel.resumeAndStop(vm) }
+            }
+        ]
+        buttons += prompt.alternatives.map { alternative in
+            AlertButton(alternative.title, role: .destructive) { [weak self] in
+                guard let self else { return }
+                Task { await self.viewModel.forceStop(vm) }
+            }
+        }
+        buttons.append(AlertButton("Cancel", role: .cancel))
+        return AlertConfiguration(
+            title: prompt.title, message: prompt.message, buttons: buttons)
     }
 
     private func errorConfig(_ message: String, title: String) -> AlertConfiguration {
@@ -621,8 +564,10 @@ extension DetailAlertsPresenter: DeleteVMSheetContentViewControllerDelegate {
         _ vc: DeleteVMSheetContentViewController, didConfirmDeletingExternalIDs ids: Set<UUID>
     ) {
         if let shown = shownDelete {
-            _ = viewModel.deleteConfirmed(
-                shown.instance, deletingExternalIDs: ids, permanently: shown.permanently)
+            Task { [viewModel] in
+                await viewModel.delete(
+                    shown.instance, deletingExternalIDs: ids, permanently: shown.permanently)
+            }
         }
         deleteSheetPresenter.close()
     }

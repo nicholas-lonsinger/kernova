@@ -66,7 +66,7 @@ extension VMInstance {
     /// disk when its configuration carries none.
     var displayedStorageDisks: [StorageDisk] {
         if let disks = configuration.storageDisks, !disks.isEmpty { return disks }
-        return VMLibraryViewModel.defaultStorageDisks(for: self)
+        return VMCommandCore.defaultStorageDisks(for: self)
     }
 
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").

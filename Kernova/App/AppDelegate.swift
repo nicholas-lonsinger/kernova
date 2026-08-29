@@ -1214,7 +1214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             try await viewModel.trySave(instance)
             viewModel.saveConfiguration(for: instance)
             return true
-        } catch VMLifecycleCoordinator.LifecycleError.operationInProgress {
+        } catch let error as CommandError where error.isBusy {
             Self.logger.warning(
                 "Skipped saving '\(instance.name, privacy: .public)' during termination: another lifecycle operation holds it"
             )
@@ -1470,7 +1470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func startVMInRecovery(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.confirmStartInRecovery(instance)
+        viewModel.requestStartInRecovery(instance)
     }
 
     @objc func pauseVM(_ sender: Any?) {
@@ -1487,7 +1487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let instance = activeInstance else { return }
         // Require explicit confirmation before discarding saved state
         if instance.isColdPaused {
-            viewModel.confirmForceStop(instance)
+            viewModel.requestForceStop(instance)
         } else {
             Task { await viewModel.stop(instance) }
         }
@@ -1495,7 +1495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func forceStopVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.confirmForceStop(instance)
+        viewModel.requestForceStop(instance)
     }
 
     @objc func saveVM(_ sender: Any?) {
@@ -1513,7 +1513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let ref = (sender as? NSMenuItem)?.representedObject as? SnapshotMenuRef else {
             return
         }
-        viewModel.confirmRevert(ref.instance, to: ref.snapshot)
+        viewModel.requestRevert(ref.instance, to: ref.snapshot)
     }
 
     @objc func toggleSettingsPane(_ sender: Any?) {
@@ -1544,12 +1544,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func deleteVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.confirmDelete(instance)
+        viewModel.requestDelete(instance)
     }
 
     @objc func deleteImmediatelyVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.confirmDelete(instance, permanently: true)
+        viewModel.requestDelete(instance, permanently: true)
     }
 
     @objc func showVMInFinder(_ sender: Any?) {

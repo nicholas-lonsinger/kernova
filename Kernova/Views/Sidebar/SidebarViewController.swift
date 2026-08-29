@@ -852,7 +852,7 @@ extension SidebarViewController {
 
     @objc private func menuStartRecovery(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.confirmStartInRecovery(instance)
+        viewModel.requestStartInRecovery(instance)
     }
 
     @objc private func menuPause(_ sender: NSMenuItem) {
@@ -872,7 +872,7 @@ extension SidebarViewController {
 
     @objc private func menuForceStop(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.confirmForceStop(instance)
+        viewModel.requestForceStop(instance)
     }
 
     @objc private func menuSuspend(_ sender: NSMenuItem) {
@@ -887,7 +887,7 @@ extension SidebarViewController {
 
     @objc private func menuRevertToSnapshot(_ sender: NSMenuItem) {
         guard let ref = sender.representedObject as? SnapshotMenuRef else { return }
-        viewModel.confirmRevert(ref.instance, to: ref.snapshot)
+        viewModel.requestRevert(ref.instance, to: ref.snapshot)
     }
 
     @objc private func menuRename(_ sender: NSMenuItem) {
@@ -912,17 +912,17 @@ extension SidebarViewController {
 
     @objc private func menuMoveToTrash(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.confirmDelete(instance)
+        viewModel.requestDelete(instance)
     }
 
     @objc private func menuDeleteImmediately(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.confirmDelete(instance, permanently: true)
+        viewModel.requestDelete(instance, permanently: true)
     }
 
     @objc private func menuCancelPreparing(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.confirmCancelPreparing(instance)
+        viewModel.requestCancelPreparing(instance)
     }
 }
 

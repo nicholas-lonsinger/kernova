@@ -1,7 +1,10 @@
 import Foundation
 
 /// The runtime status of a virtual machine.
-enum VMStatus: Sendable {
+///
+/// The raw value is the name every automation surface reads and writes;
+/// ``displayName`` is what a person reads.
+enum VMStatus: String, Sendable {
     case stopped
     case starting
     case running

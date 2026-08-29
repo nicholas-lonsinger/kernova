@@ -151,6 +151,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, and en
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh
 	@bash Tools/check-entitlements.sh
+	@bash Tools/check-headless-core.sh
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format) and repo setup (git hooks, .worktreeinclude) match what Kernova

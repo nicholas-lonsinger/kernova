@@ -330,20 +330,36 @@ final class VMLibrary {
 
     // MARK: - Revert Registry
 
+    /// One revert in flight, and the VM whose bundle it rewrites.
+    struct RevertRegistration {
+        let instanceID: UUID
+        let task: Task<Void, Never>
+    }
+
     /// Every revert in flight, keyed by a per-request id.
     ///
     /// Keyed by the request rather than the VM: two reverts of one VM would
     /// share a slot and lose one of them, as would two ephemeral VMs powering
-    /// off together under a VM-keyed map.
+    /// off together under a VM-keyed map. Each registration names its VM, so a
+    /// caller that only cares about one can still ask.
     ///
     /// The registry is library state — a revert rewrites the bundle a VM in
     /// `instances` is built from — while the verb that fills it belongs to the
-    /// adapter.
-    var revertTasks: [UUID: Task<Void, Never>] = [:]
+    /// command core.
+    var revertTasks: [UUID: RevertRegistration] = [:]
 
     /// Whether any revert is in flight — requested, whether or not it has
     /// reached the copy.
     var hasRevertInFlight: Bool { !revertTasks.isEmpty }
+
+    /// Whether a revert of this VM in particular is in flight.
+    ///
+    /// The signal is set synchronously when the revert is requested, so a
+    /// power-off's baseline revert is visible to anything that looks on the
+    /// very next main-actor turn.
+    func hasRevertInFlight(for instanceID: UUID) -> Bool {
+        revertTasks.values.contains { $0.instanceID == instanceID }
+    }
 
     /// Waits until no revert is in flight, including any a running revert
     /// starts.
@@ -358,7 +374,7 @@ final class VMLibrary {
     /// second signal beside this registry and would leave the guest to die
     /// inside `restoreMachineStateFrom`.
     func waitForRevertsToSettle() async {
-        while let task = revertTasks.values.first { await task.value }
+        while let registration = revertTasks.values.first { await registration.task.value }
     }
 
     // MARK: - Preparing Rows (shared by Clone & Import)
@@ -623,6 +639,18 @@ final class VMLibrary {
         vmnetNetworks.releaseAddressReservation(for: target.mac, kind: target.kind)
     }
 
+    /// The address this VM's MAC reserves on the app-managed network it joins,
+    /// or `nil` when it has none to report — networking off, Bridged (where
+    /// external DHCP owns addressing), a build without the reservation
+    /// machinery, or a slot whose network has not been materialized yet.
+    ///
+    /// Reads the reservation store without taking a slot: the sync at every
+    /// configuration change is what claims one.
+    func reservedAddress(for config: VMConfiguration) -> String? {
+        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return nil }
+        return vmnetNetworks.reservedAddress(for: target.mac, kind: target.kind)
+    }
+
     /// Keeps the VM's port-forwarding rules in step with its configuration: a
     /// Shared Network VM declares its rules on that network, a VM in any other
     /// mode declares none. Runs wherever ``syncAddressReservation(for:)`` does.
@@ -750,7 +778,7 @@ final class VMLibrary {
     /// Host Only and Bridged are separate networks. Two bridged VMs compare as
     /// one network whatever interface each names — Automatic resolves at start,
     /// so which link they land on is not knowable in advance.
-    private func liveMACAddressConflict(
+    func liveMACAddressConflict(
         for config: VMConfiguration, excluding instance: VMInstance
     ) -> VMInstance? {
         guard config.networkEnabled, let mac = config.macAddress else { return nil }

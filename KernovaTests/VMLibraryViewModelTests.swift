@@ -100,13 +100,13 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Delete
 
-    @Test("confirmDelete always presents the unified delete sheet")
-    func confirmDelete() {
+    @Test("requestDelete always presents the unified delete sheet")
+    func requestDelete() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
-        viewModel.confirmDelete(instance)
+        viewModel.requestDelete(instance)
 
         // Even a VM with no external files routes to the sheet now (it still
         // has its in-bundle main disk to show).
@@ -114,8 +114,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showDeleteSheet == true)
     }
 
-    @Test("deleteConfirmed removes instance and clears selection")
-    func deleteConfirmed() {
+    @Test("deleteVM removes instance and clears selection")
+    func deleteVM() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
@@ -124,7 +124,7 @@ struct VMLibraryViewModelTests {
         // Pre-populate mock storage so delete doesn't throw
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(viewModel.instances.isEmpty)
         #expect(viewModel.selectedID == nil)
@@ -132,8 +132,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 1)
     }
 
-    @Test("deleteConfirmed selects first remaining instance when deleting selected")
-    func deleteConfirmedUpdatesSelection() {
+    @Test("deleteVM selects first remaining instance when deleting selected")
+    func deleteVMUpdatesSelection() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let first = makeInstance(name: "First")
         let second = makeInstance(name: "Second")
@@ -142,27 +142,27 @@ struct VMLibraryViewModelTests {
 
         storage.bundles[second.bundleURL] = second.configuration
 
-        viewModel.deleteConfirmed(second)
+        await viewModel.delete(second)
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.selectedID == first.id)
     }
 
-    @Test("confirmDelete forwards the immediate flag to the delete sheet")
-    func confirmDeleteForwardsPermanentlyFlag() {
+    @Test("requestDelete forwards the immediate flag to the delete sheet")
+    func requestDeleteForwardsPermanentlyFlag() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
-        viewModel.confirmDelete(instance)
+        viewModel.requestDelete(instance)
         #expect(presenter.lastDeleteSheetPermanently == false)
 
-        viewModel.confirmDelete(instance, permanently: true)
+        viewModel.requestDelete(instance, permanently: true)
         #expect(presenter.lastDeleteSheetPermanently == true)
     }
 
-    @Test("deleteConfirmed removes a cold-paused VM without a discard-saved-state pass")
-    func deleteConfirmedColdPaused() {
+    @Test("deleteVM removes a cold-paused VM without a discard-saved-state pass")
+    func deleteVMColdPaused() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .paused  // no live VM ⇒ cold-paused ("Suspended")
@@ -172,7 +172,7 @@ struct VMLibraryViewModelTests {
 
         #expect(instance.isColdPaused)
         #expect(instance.canDelete)
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         // The whole bundle goes, saved state included — no separate discard.
         #expect(viewModel.instances.isEmpty)
@@ -180,8 +180,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 1)
     }
 
-    @Test("deleteConfirmed refuses a VM that stopped being deletable while the sheet was open")
-    func deleteConfirmedRefusesWhenNoLongerDeletable() {
+    @Test("deleteVM refuses a VM that stopped being deletable while the sheet was open")
+    func deleteVMRefusesWhenNoLongerDeletable() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .paused  // Suspended when the sheet opened…
@@ -192,14 +192,14 @@ struct VMLibraryViewModelTests {
         // user clicked Move to Trash.
         instance.status = .running
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(viewModel.instances.count == 1)
         #expect(storage.deleteVMBundleCallCount == 0)
     }
 
-    @Test("deleteConfirmed refuses a cold-paused VM whose resume is still in flight")
-    func deleteConfirmedRefusesDuringInFlightResume() async throws {
+    @Test("deleteVM refuses a cold-paused VM whose resume is still in flight")
+    func deleteVMRefusesDuringInFlightResume() async throws {
         let storage = MockVMStorageService()
         let (viewModel, suspending) = makeSuspendingViewModel(storage: storage)
         suspending.shouldSuspendOnResume = true
@@ -217,7 +217,7 @@ struct VMLibraryViewModelTests {
         #expect(instance.isColdPaused)
         #expect(instance.canDelete)
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(viewModel.instances.count == 1)
         #expect(storage.deleteVMBundleCallCount == 0)
@@ -226,15 +226,15 @@ struct VMLibraryViewModelTests {
         try await resume.value
     }
 
-    @Test("deleteConfirmed permanently hard-deletes the bundle, bypassing the Trash")
-    func deleteConfirmedPermanentlyUsesHardDelete() {
+    @Test("deleteVM permanently hard-deletes the bundle, bypassing the Trash")
+    func deleteVMPermanentlyUsesHardDelete() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance, permanently: true)
+        await viewModel.delete(instance, permanently: true)
 
         #expect(viewModel.instances.isEmpty)
         #expect(viewModel.selectedID == nil)
@@ -243,8 +243,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 0)
     }
 
-    @Test("deleteConfirmed permanently deletes the selected external files")
-    func deleteConfirmedPermanentlyDeletesExternals() async throws {
+    @Test("deleteVM permanently deletes the selected external files")
+    func deleteVMPermanentlyDeletesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let externalDisk = FileManager.default.temporaryDirectory
@@ -260,10 +260,8 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [diskID], permanently: true)
-        for task in tasks { await task.value }
+        await viewModel.delete(instance, deletingExternalIDs: [diskID], permanently: true)
 
-        #expect(tasks.count == 1)
         #expect(viewModel.instances.isEmpty)
         // Hard delete, not trash — mirrors the VM bundle's own disposition.
         #expect(fileSystem.removedURLs == [externalDisk])
@@ -271,8 +269,8 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
-    @Test("deleteConfirmed permanently never deletes a shared external even if selected")
-    func deleteConfirmedPermanentlyNeverDeletesSharedExternal() async throws {
+    @Test("deleteVM permanently never deletes a shared external even if selected")
+    func deleteVMPermanentlyNeverDeletesSharedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let sharedDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
@@ -296,18 +294,16 @@ struct VMLibraryViewModelTests {
         viewModel.instances = [target, other]
         storage.bundles[target.bundleURL] = target.configuration
 
-        let tasks = viewModel.deleteConfirmed(target, deletingExternalIDs: [sharedID], permanently: true)
-        for task in tasks { await task.value }
+        await viewModel.delete(target, deletingExternalIDs: [sharedID], permanently: true)
 
         // The shared-file hard-block holds in the immediate path too.
-        #expect(tasks.isEmpty)
         #expect(fileSystem.removedURLs.isEmpty)
         #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
-    @Test("confirmDelete routes to sheet when the VM references external attachments")
-    func confirmDeleteRoutesToSheetWithExternals() {
+    @Test("requestDelete routes to sheet when the VM references external attachments")
+    func requestDeleteRoutesToSheetWithExternals() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.configuration.removableMedia = [
@@ -315,7 +311,7 @@ struct VMLibraryViewModelTests {
         ]
         viewModel.instances.append(instance)
 
-        viewModel.confirmDelete(instance)
+        viewModel.requestDelete(instance)
 
         #expect(presenter.instanceToDelete?.id == instance.id)
         #expect(presenter.showDeleteSheet == true)
@@ -445,8 +441,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.externalAttachments(for: instance).isEmpty)
     }
 
-    @Test("deleteConfirmed never trashes the Guest Agent DMG even if its id is selected")
-    func deleteConfirmedNeverTrashesGuestAgentDMG() throws {
+    @Test("deleteVM never trashes the Guest Agent DMG even if its id is selected")
+    func deleteVMNeverTrashesGuestAgentDMG() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
@@ -462,16 +458,15 @@ struct VMLibraryViewModelTests {
         // excluded by `externalAttachments`, so no task is spawned. Require
         // this *before* awaiting: a regression would otherwise move the real
         // app-bundle DMG to the Trash.
-        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [agentID])
+        await viewModel.delete(instance, deletingExternalIDs: [agentID])
 
-        try #require(tasks.isEmpty)
         #expect(viewModel.instances.isEmpty)
         #expect(FileManager.default.fileExists(atPath: agentPath))
         #expect(!presenter.showError)
     }
 
-    @Test("deleteConfirmed with no selected externals leaves external files untouched")
-    func deleteConfirmedKeepsExternalsByDefault() throws {
+    @Test("deleteVM with no selected externals leaves external files untouched")
+    func deleteVMKeepsExternalsByDefault() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let externalDisk = FileManager.default.temporaryDirectory
@@ -491,9 +486,8 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
-        #expect(tasks.isEmpty)
         #expect(viewModel.instances.isEmpty)
         #expect(fileSystem.trashedURLs.isEmpty)
         #expect(fileSystem.removedURLs.isEmpty)
@@ -613,7 +607,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        let mainDisk = VMLibraryViewModel.defaultStorageDisks(for: instance)[0]
+        let mainDisk = VMCommandCore.defaultStorageDisks(for: instance)[0]
 
         viewModel.setStorageDiskNotes(mainDisk, notes: "the startup disk", on: instance)
 
@@ -772,8 +766,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
-    @Test("deleteConfirmed trashes the selected external disks and removable media")
-    func deleteConfirmedTrashesExternals() async throws {
+    @Test("deleteVM trashes the selected external disks and removable media")
+    func deleteVMTrashesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let externalDisk = FileManager.default.temporaryDirectory
@@ -796,18 +790,16 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [diskID, isoID])
-        for task in tasks { await task.value }
+        await viewModel.delete(instance, deletingExternalIDs: [diskID, isoID])
 
-        #expect(tasks.count == 2)
         #expect(viewModel.instances.isEmpty)
         #expect(Set(fileSystem.trashedURLs) == [externalDisk, externalISO])
         #expect(!presenter.showError)
         #expect(presenter.showDeleteSheet == false)
     }
 
-    @Test("deleteConfirmed trashes only the selected external and keeps the rest")
-    func deleteConfirmedTrashesOnlySelectedExternal() async throws {
+    @Test("deleteVM trashes only the selected external and keeps the rest")
+    func deleteVMTrashesOnlySelectedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let trashedDisk = FileManager.default.temporaryDirectory
@@ -830,17 +822,15 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [trashedID])
-        for task in tasks { await task.value }
+        await viewModel.delete(instance, deletingExternalIDs: [trashedID])
 
         // Only the selected disk is trashed; the unselected one stays put.
-        #expect(tasks.count == 1)
         #expect(fileSystem.trashedURLs == [trashedDisk])
         #expect(!presenter.showError)
     }
 
-    @Test("deleteConfirmed never trashes a shared external even if its id is selected")
-    func deleteConfirmedNeverTrashesSharedExternal() async throws {
+    @Test("deleteVM never trashes a shared external even if its id is selected")
+    func deleteVMNeverTrashesSharedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let sharedDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
@@ -865,11 +855,9 @@ struct VMLibraryViewModelTests {
         viewModel.instances = [target, other]
         storage.bundles[target.bundleURL] = target.configuration
 
-        let tasks = viewModel.deleteConfirmed(target, deletingExternalIDs: [sharedID])
-        for task in tasks { await task.value }
+        await viewModel.delete(target, deletingExternalIDs: [sharedID])
 
         // Hard-block: a shared file is never trashed, so the other VM keeps it.
-        #expect(tasks.isEmpty)
         #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
@@ -935,12 +923,12 @@ struct VMLibraryViewModelTests {
     }
 
     @Test(
-        "deleteConfirmed discards the IPSW resume-data sidecar",
+        "deleteVM discards the IPSW resume-data sidecar",
         arguments: [
             MacOSInstallContext.Source.downloadLatest, .catalogVersion, .customURL,
         ]
     )
-    func deleteConfirmedDiscardsResumeData(source: MacOSInstallContext.Source) {
+    func deleteVMDiscardsResumeData(source: MacOSInstallContext.Source) async {
         // Every source that downloads its image leaves a partial bundle at
         // `downloadDestinationPath`, so deleting the VM has to discard it.
         let ipswService = MockIPSWService()
@@ -957,7 +945,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(ipswService.discardResumeDataCallCount == 1)
         #expect(
@@ -969,8 +957,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.isEmpty)
     }
 
-    @Test("deleteConfirmed permanently discards the IPSW resume-data immediately too")
-    func deleteConfirmedPermanentlyDiscardsResumeDataImmediately() {
+    @Test("deleteVM permanently discards the IPSW resume-data immediately too")
+    func deleteVMPermanentlyDiscardsResumeDataImmediately() async {
         let ipswService = MockIPSWService()
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
@@ -985,7 +973,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance, permanently: true)
+        await viewModel.delete(instance, permanently: true)
 
         // The whole operation uses one disposition: the partial download is removed
         // immediately, not trashed, matching the bundle and externals.
@@ -995,8 +983,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.isEmpty)
     }
 
-    @Test("deleteConfirmed leaves resume-data alone for a local-file install")
-    func deleteConfirmedNoResumeDataForLocalFileSource() {
+    @Test("deleteVM leaves resume-data alone for a local-file install")
+    func deleteVMNoResumeDataForLocalFileSource() async {
         let ipswService = MockIPSWService()
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
@@ -1014,13 +1002,13 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
-    @Test("deleteConfirmed leaves resume-data alone when VM has no install context")
-    func deleteConfirmedNoResumeDataForNonInstallVM() {
+    @Test("deleteVM leaves resume-data alone when VM has no install context")
+    func deleteVMNoResumeDataForNonInstallVM() async {
         let ipswService = MockIPSWService()
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
@@ -1028,13 +1016,13 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
-    @Test("deleteConfirmed swallows missing-file errors for a selected external")
-    func deleteConfirmedSwallowsMissingExternals() async {
+    @Test("deleteVM swallows missing-file errors for a selected external")
+    func deleteVMSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         fileSystem.trashError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
@@ -1048,15 +1036,14 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [ghostID])
-        for task in tasks { await task.value }
+        await viewModel.delete(instance, deletingExternalIDs: [ghostID])
 
         #expect(viewModel.instances.isEmpty)
         #expect(!presenter.showError)
     }
 
-    @Test("deleteConfirmed permanently swallows missing-file errors for a selected external")
-    func deleteConfirmedPermanentlySwallowsMissingExternals() async {
+    @Test("deleteVM permanently swallows missing-file errors for a selected external")
+    func deleteVMPermanentlySwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         fileSystem.removeError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
@@ -1072,28 +1059,26 @@ struct VMLibraryViewModelTests {
 
         // removeItem on a vanished file throws the same fileNoSuchFile family as
         // trashItem, so the immediate path must swallow it without an error alert.
-        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [ghostID], permanently: true)
-        for task in tasks { await task.value }
+        await viewModel.delete(instance, deletingExternalIDs: [ghostID], permanently: true)
 
         #expect(viewModel.instances.isEmpty)
         #expect(!presenter.showError)
     }
 
-    @Test("deleteConfirmed ignores a repeat confirm for an already-removed VM")
-    func deleteConfirmedIgnoresStaleRepeatConfirm() {
+    @Test("deleteVM ignores a repeat confirm for an already-removed VM")
+    func deleteVMIgnoresStaleRepeatConfirm() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(viewModel.instances.isEmpty)
 
         // A second confirm (e.g. a duplicate queued delete sheet) must not re-run the
         // delete on the now-missing bundle and surface a spurious bundleNotFound error.
-        let tasks = viewModel.deleteConfirmed(instance)
-        #expect(tasks.isEmpty)
+        await viewModel.delete(instance)
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(!presenter.showError)
     }
@@ -1113,25 +1098,27 @@ struct VMLibraryViewModelTests {
         #expect(virtService.lastStartBootIntoRecovery == false)
     }
 
-    @Test("confirmStartInRecovery routes to the presenter")
-    func confirmStartInRecoveryRoutesToPresenter() {
+    @Test("requestStartInRecovery routes to the presenter")
+    func requestStartInRecoveryRoutesToPresenter() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
-        viewModel.confirmStartInRecovery(instance)
+        viewModel.requestStartInRecovery(instance)
 
         #expect(presenter.showRecoveryBootConfirmation)
         #expect(presenter.instanceToRecoveryBoot === instance)
     }
 
-    @Test("startInRecoveryConfirmed starts with the recovery flag set")
-    func startInRecoveryConfirmedSetsFlag() async {
+    @Test("startInRecovery starts with the recovery flag set")
+    func startInRecoverySetsFlag() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        // macOS only: Virtualization.framework has no recovery start option for
+        // Linux/EFI guests, and the verb refuses one.
+        let instance = makeInstance(guestOS: .macOS)
         viewModel.instances.append(instance)
 
-        await viewModel.startInRecoveryConfirmed(instance)
+        await viewModel.start(instance, bootIntoRecovery: true)
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == true)
@@ -2268,7 +2255,7 @@ struct VMLibraryViewModelTests {
         instance.status = .paused
         viewModel.instances.append(instance)
 
-        await viewModel.forceStopFromPaused(instance)
+        await viewModel.forceStop(instance)
 
         #expect(virtService.forceStopCallCount == 1)
         #expect(presenter.instanceToStopPaused == nil)
@@ -2369,7 +2356,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
         let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
 
-        for task in viewModel.deleteConfirmed(instance) { await task.value }
+        await viewModel.delete(instance)
 
         #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
         #expect(vmnet.reservedMACs.isEmpty)
@@ -2382,7 +2369,7 @@ struct VMLibraryViewModelTests {
         let first = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
         _ = makeReservedInstance(in: viewModel, using: vmnet, mac: "AA:BB:CC:DD:EE:0F")
 
-        for task in viewModel.deleteConfirmed(first) { await task.value }
+        await viewModel.delete(first)
 
         #expect(vmnet.releasedMACs.isEmpty)
         #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
@@ -2649,7 +2636,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        for task in viewModel.deleteConfirmed(holder) { await task.value }
+        await viewModel.delete(holder)
         let accepted = viewModel.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
@@ -2734,7 +2721,7 @@ struct VMLibraryViewModelTests {
         instance.configuration.portForwardingRules = [Self.webRule]
         viewModel.instances = [instance]
 
-        for task in viewModel.deleteConfirmed(instance) { await task.value }
+        await viewModel.delete(instance)
 
         #expect(vmnet.declaredForwardingRules.last?.rules.isEmpty == true)
     }
@@ -2810,7 +2797,7 @@ struct VMLibraryViewModelTests {
         vmnet.scriptedPendingKinds = [.shared]
         let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
 
-        for task in viewModel.deleteConfirmed(instance) { await task.value }
+        await viewModel.delete(instance)
 
         #expect(vmnet.invalidatedKinds == [.shared])
     }
@@ -2970,7 +2957,7 @@ struct VMLibraryViewModelTests {
             in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Survivor",
             rules: [Self.sshRule])
 
-        for task in viewModel.deleteConfirmed(deleted) { await task.value }
+        await viewModel.delete(deleted)
 
         // Rules are keyed on the address, so withdrawing the deleted VM's would
         // disarm the survivor's through the same key.
@@ -3006,8 +2993,10 @@ struct VMLibraryViewModelTests {
         virtService.saveError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
 
-        await #expect(throws: VirtualizationError.self) {
+        await #expect(throws: CommandError.self) {
             try await viewModel.trySave(instance)
         }
     }
@@ -3018,8 +3007,10 @@ struct VMLibraryViewModelTests {
         virtService.forceStopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
 
-        await #expect(throws: VirtualizationError.self) {
+        await #expect(throws: CommandError.self) {
             try await viewModel.tryForceStop(instance)
         }
     }
@@ -3494,7 +3485,7 @@ struct VMLibraryViewModelTests {
         let instance = makePendingLinuxVM(
             in: viewModel, storage: storage, destinationPath: destination)
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         let discarded = downloadService.discardedResumeDataURLs.map {
             $0.path(percentEncoded: false)
@@ -3511,7 +3502,7 @@ struct VMLibraryViewModelTests {
             in: viewModel, storage: storage,
             destinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso")
 
-        viewModel.deleteConfirmed(instance, permanently: true)
+        await viewModel.delete(instance, permanently: true)
 
         #expect(downloadService.lastDiscardResumeDataPermanently == true)
     }
@@ -3522,7 +3513,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
         let instance = makePendingLinuxVM(in: viewModel, storage: storage)
 
-        viewModel.deleteConfirmed(instance)
+        await viewModel.delete(instance)
 
         #expect(downloadService.discardResumeDataCallCount == 0)
     }
@@ -4824,15 +4815,15 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Cancel Preparing
 
-    @Test("cancelPreparingConfirmed marks the row Cancelling… and keeps it until the copy settles (#496)")
-    func cancelPreparingConfirmedMarksCancelling() {
+    @Test("cancelPreparingVerb marks the row Cancelling… and keeps it until the copy settles (#496)")
+    func cancelPreparingVerbMarksCancelling() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let phantom = makeInstance(name: "Cloning VM")
         markPreparing(phantom)
         viewModel.instances.append(phantom)
         viewModel.selectedID = phantom.id
 
-        viewModel.cancelPreparingConfirmed(phantom)
+        viewModel.cancelPreparing(phantom)
 
         // The uninterruptible copy is still (notionally) in flight, so the row stays as "Cancelling…";
         // the copy task removes + trashes it once the copy settles.
@@ -4841,8 +4832,8 @@ struct VMLibraryViewModelTests {
         #expect(phantom.preparingState?.displayLabel == "Cancelling\u{2026}")
     }
 
-    @Test("cancelPreparingConfirmed removes the row and trashes after the copy settles (#496)")
-    func cancelPreparingConfirmedRemovesAfterCopySettles() async throws {
+    @Test("cancelPreparingVerb removes the row and trashes after the copy settles (#496)")
+    func cancelPreparingVerbRemovesAfterCopySettles() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = try makeImportSource(name: "Cancel Me", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
@@ -4850,7 +4841,7 @@ struct VMLibraryViewModelTests {
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         let phantom = try #require(viewModel.instances.first { $0.configuration.id == source.config.id })
 
-        viewModel.cancelPreparingConfirmed(phantom)
+        viewModel.cancelPreparing(phantom)
         await viewModel.awaitPreparingForTesting()
 
         // Once the copy settles the copy task removes the row (and trashes the bundle via the
@@ -4861,8 +4852,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("cancelPreparingConfirmed selects remaining instance after the copy settles (#496)")
-    func cancelPreparingConfirmedSelectsRemaining() async throws {
+    @Test("cancelPreparingVerb selects remaining instance after the copy settles (#496)")
+    func cancelPreparingVerbSelectsRemaining() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let other = makeInstance(name: "Other VM")
         viewModel.instances.append(other)
@@ -4872,7 +4863,7 @@ struct VMLibraryViewModelTests {
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         let phantom = try #require(viewModel.instances.first { $0.configuration.id == source.config.id })
 
-        viewModel.cancelPreparingConfirmed(phantom)
+        viewModel.cancelPreparing(phantom)
         await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 1)
@@ -4880,14 +4871,14 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == other.id)
     }
 
-    @Test("confirmCancelPreparing sets state for alert")
-    func confirmCancelPreparingSetsState() {
+    @Test("requestCancelPreparing sets state for alert")
+    func requestCancelPreparingSetsState() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let phantom = makeInstance(name: "Cloning VM")
         markPreparing(phantom)
         viewModel.instances.append(phantom)
 
-        viewModel.confirmCancelPreparing(phantom)
+        viewModel.requestCancelPreparing(phantom)
 
         #expect(presenter.showCancelPreparingConfirmation == true)
         #expect(presenter.preparingInstanceToCancel?.id == phantom.id)
@@ -4895,27 +4886,27 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Force Stop Confirmation
 
-    @Test("confirmForceStop sets instance and shows confirmation")
-    func confirmForceStop() {
+    @Test("requestForceStop sets instance and shows confirmation")
+    func requestForceStop() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
 
-        viewModel.confirmForceStop(instance)
+        viewModel.requestForceStop(instance)
 
         #expect(presenter.instanceToForceStop?.id == instance.id)
         #expect(presenter.showForceStopConfirmation == true)
     }
 
-    @Test("forceStopConfirmed delegates to lifecycle")
-    func forceStopConfirmed() async {
+    @Test("forceStopVerb delegates to lifecycle")
+    func forceStopVerb() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
 
-        await viewModel.forceStopConfirmed(instance)
+        await viewModel.forceStop(instance)
 
         #expect(virtService.forceStopCallCount == 1)
         #expect(instance.status == .stopped)
@@ -5021,8 +5012,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.last?.name == "Discovered")
     }
 
-    @Test("deleteConfirmed removes VM from persisted order")
-    func deleteRemovesFromOrder() {
+    @Test("deleteVM removes VM from persisted order")
+    func deleteRemovesFromOrder() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let a = makeInstance(name: "A")
         let b = makeInstance(name: "B")
@@ -5030,7 +5021,7 @@ struct VMLibraryViewModelTests {
         viewModel.selectedID = b.id
         storage.bundles[b.bundleURL] = b.configuration
 
-        viewModel.deleteConfirmed(b)
+        await viewModel.delete(b)
 
         #expect(preferences.vmOrder == [a.id])
     }
@@ -5547,7 +5538,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
-        let main = VMLibraryViewModel.defaultStorageDisks(for: instance)[0]
+        let main = VMCommandCore.defaultStorageDisks(for: instance)[0]
         let extra = StorageDisk(
             path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
             isInternal: true, kind: .virtio)

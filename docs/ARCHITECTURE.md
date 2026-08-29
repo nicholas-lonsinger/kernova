@@ -228,12 +228,25 @@ session down without that hook, so a suspended session survives to revert at its
   port-forwarding bookkeeping. It imports no AppKit and presents nothing: failures and the two
   per-instance hooks a verb answers leave through `onFailure`, `onAgentBecameCurrent` and
   `onPoweredOff`.
-- `VMLibraryViewModel` — the AppKit adapter over `VMLibrary`. Owns the VM verbs and the inline
-  rename state, forwards the library's reads so UI sees one surface, and drives alerts, sheets and
-  the wizard by calling its `VMLibraryPresenting` delegate imperatively rather than toggling
-  observed flags. Clone and import register a preparing "phantom" `VMInstance` **synchronously,
-  before any `await`** — that is what reserves the destination atomically on the MainActor, so
-  overlapping imports and clones cannot claim the same bundle URL.
+- `VMCommandCore` — the headless implementation of every VM verb, beneath the UI and every
+  automation surface, conforming to the `VMCommanding` facade. `@MainActor` and deliberately not
+  `@Observable`: it holds no state, only `VMLibrary` and `VMLifecycleCoordinator`. VMs are addressed
+  by `VMSelector` and refusals speak one `CommandError` vocabulary; consent is a non-defaulted
+  `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
+  confirming entails. It presents nothing and imports no AppKit — a display leaves through the
+  `surfaceDisplay` hook, an unawaited failure through `onFailure` — and `events()` vends an
+  `AsyncStream<VMLibraryEvent>` fed by one diffing observation, for callers that cannot observe the
+  model. Clone and import register a preparing "phantom" `VMInstance` **synchronously, before any
+  `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
+  imports and clones cannot claim the same bundle URL.
+- `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
+  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
+- `VMLibraryViewModel` — the AppKit adapter over `VMCommandCore` and `VMLibrary`. Runs no verb
+  itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
+  routes the returned `CommandError` to a surface. It also owns the inline rename state and the
+  settings edits no automation surface speaks yet, forwards the library's reads so UI sees one
+  surface, and drives alerts, sheets and the wizard by calling its `VMLibraryPresenting` delegate
+  imperatively rather than toggling observed flags.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
   `IPSWService`, `USBDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
   `Downloading`), and orchestrates the macOS install and Linux install pipelines, each driven by
@@ -307,10 +320,11 @@ delegated to the user's terminal.
 
 ```
 AppDelegate
-    ├── creates → VMLibraryViewModel (the verbs; AppKit adapter)
+    ├── creates → VMLibraryViewModel (AppKit adapter: sheets, consent, presentation)
+    │                 ├── VMCommandCore (the verbs, headless; conforms to VMCommanding)
     │                 ├── VMLibrary (owns [VMInstance])
     │                 │      └── VMDirectoryWatcher, SystemSleepWatcher
-    │                 ├── VMStorageService, VMSnapshotStore (one each, held by both)
+    │                 ├── VMStorageService, VMSnapshotStore (one each, held by all three)
     │                 ├── DiskImageService
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)
     ├── creates → VMLifecycleCoordinator
@@ -323,8 +337,14 @@ AppDelegate
     └── manages → ClipboardWindowController (per VM)
 
 AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ VMLibrary (state, persistence)
-                          VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──→ Services
+                          VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
+
+A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
+
+VMCommandCore ──reads/writes──→ VMLibrary
+              ──delegates────→ VMLifecycleCoordinator ──→ Services
+              ──emits────────→ AsyncStream<VMLibraryEvent>
 ```
 
 ### Utilities
@@ -347,6 +367,10 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
 `KernovaKit` is the local SwiftPM package shared between the host app and the guest agent — the
 vsock wire protocol, the clipboard domain model and file staging/archive, and cross-cutting
 helpers. **New host/guest-identical code belongs here**, not copied into both targets.
+
+It also carries the VM command vocabulary — `VMSelector`, `VMVerb`, the result and refusal types,
+and the `VMCommandRequest`/`VMCommandResponse` envelope — so a future out-of-process client links
+the same declarations the app throws and returns, rather than a mirror of them.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into

@@ -115,11 +115,11 @@ extension VMSettingsSnapshotsPanelViewController: SnapshotSectionViewDelegate {
     }
 
     func snapshotSection(_ view: SnapshotSectionView, requestedRevertTo snapshot: VMSnapshot) {
-        viewModel.confirmRevert(instance, to: snapshot)
+        viewModel.requestRevert(instance, to: snapshot)
     }
 
     func snapshotSection(_ view: SnapshotSectionView, requestedDeleteOf snapshot: VMSnapshot) {
-        viewModel.confirmDeleteSnapshot(instance, snapshot: snapshot)
+        viewModel.requestDeleteSnapshot(instance, snapshot: snapshot)
     }
 
     /// Commits an inline rename, deferred to the next runloop turn so the field
