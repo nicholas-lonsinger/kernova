@@ -189,10 +189,12 @@ final class VMIdentityHeaderView: NSView {
             // Centered on the tile, not pinned to it: AppKit holds an NSButton
             // to a minimum size derived from its image, which outranks edge
             // pins, so a title1 chevron stands a little proud of the tile. The
-            // glyph lands centered either way, and the hit area is the more
-            // generous for it.
+            // floors keep the hit area at least the tile — the visible bezel is
+            // the button, not just the glyph.
             backButton.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
             backButton.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            backButton.widthAnchor.constraint(greaterThanOrEqualTo: tile.widthAnchor),
+            backButton.heightAnchor.constraint(greaterThanOrEqualTo: tile.heightAnchor),
         ])
         backButton.isHidden = true
 

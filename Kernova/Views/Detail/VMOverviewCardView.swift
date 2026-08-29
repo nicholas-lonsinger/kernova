@@ -97,7 +97,8 @@ final class VMOverviewCardView: NSView {
         // destination rather than an action — a locked category is viewable,
         // not editable.
         let edit = makeTintedButton(
-            "Edit", tint: .controlAccentColor, trailingSymbolName: "chevron.right", target: self,
+            "Edit", tint: .controlAccentColor, font: Typography.body,
+            trailingSymbolName: "chevron.right", target: self,
             action: #selector(showTapped))
         let showLabel = "Show \(category.title)"
         edit.toolTip = showLabel
