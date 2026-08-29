@@ -983,6 +983,126 @@ struct VMCommandCoreTests {
         #expect(message == "The disk went away")
     }
 
+    @Test("A clone reports the preparing wire status until its copy settles")
+    func cloneReportsPreparingWireStatus() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+
+        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+
+        #expect(summary.status == "preparing")
+        #expect(harness.core.list().first { $0.id == summary.id }?.status == "preparing")
+        #expect(try harness.core.info(.id(summary.id)).status == "preparing")
+
+        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
+            await task.value
+        }
+    }
+
+    @Test("A preparing phantom's addition reports the preparing wire status")
+    func addedEventReportsPreparingStatus() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        var events = harness.core.events().makeAsyncIterator()
+
+        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+
+        var added: VMLibraryEvent?
+        while let event = await events.next() {
+            if case .added(let phantomSummary) = event, phantomSummary.id == summary.id {
+                added = event
+                break
+            }
+        }
+        guard case .added(let phantomSummary)? = added else {
+            Issue.record("expected an addition")
+            return
+        }
+        #expect(phantomSummary.status == "preparing")
+
+        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
+            await task.value
+        }
+    }
+
+    @Test("A preparing row settling reports the wire-status transition")
+    func preparingSettleReportsStatusChanged() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Cloning")
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+
+        var events = harness.core.events().makeAsyncIterator()
+        instance.preparingState = nil
+
+        let event = try #require(await events.next())
+        guard case .statusChanged(let id, let name, let from, let to) = event else {
+            Issue.record("expected a status change, got \(event)")
+            return
+        }
+        #expect(id == instance.id)
+        #expect(name == "Cloning")
+        #expect(from == "preparing")
+        #expect(to == "stopped")
+    }
+
+    @Test("A clone whose copy fails reports the failure directly, then the phantom's removal")
+    func cloneFailureReportsFailureThenRemoval() async throws {
+        let harness = makeHarness()
+        let cloneError = VMStorageError.bundleAlreadyExists(UUID())
+        harness.storage.cloneVMBundleError = cloneError
+        let instance = makeInstance(in: harness, name: "Source")
+        var events = harness.core.events().makeAsyncIterator()
+
+        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
+        await phantom.preparingState?.task.value
+
+        var failure: VMLibraryEvent?
+        while let event = await events.next() {
+            if case .failure = event {
+                failure = event
+                break
+            }
+        }
+        guard case .failure(let id, _, let message)? = failure else {
+            Issue.record("expected a failure event")
+            return
+        }
+        #expect(id == phantom.id)
+        #expect(message == cloneError.localizedDescription)
+
+        let removed = try #require(await events.next())
+        guard case .removed(let removedID, _) = removed else {
+            Issue.record("expected a removal, got \(removed)")
+            return
+        }
+        #expect(removedID == phantom.id)
+    }
+
+    @Test("A rename reports what changed, and refuses a row still copying")
+    func renameReportsChangeAndRefusesAPreparingRow() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Before")
+        var events = harness.core.events().makeAsyncIterator()
+
+        try harness.core.rename(.id(instance.id), to: "After")
+
+        let event = try #require(await events.next())
+        guard case .renamed(let id, let from, let to) = event else {
+            Issue.record("expected a rename, got \(event)")
+            return
+        }
+        #expect(id == instance.id)
+        #expect(from == "Before")
+        #expect(to == "After")
+
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        let error = try #require(
+            commandError { try harness.core.rename(.id(instance.id), to: "Later") })
+        #expect(error.isBusy)
+        instance.preparingState = nil
+    }
+
     // MARK: - Where failures go
 
     @Test("A revert that failed is thrown to the caller that awaited it")

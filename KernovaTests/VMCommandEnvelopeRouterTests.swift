@@ -217,6 +217,62 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.library.instances.isEmpty)
     }
 
+    // MARK: - Events
+
+    @Test("A clone's settling crosses the wire as an event")
+    func cloneSettlingCrossesTheWireAsAnEvent() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        var events = harness.transport.router.eventResponses().makeAsyncIterator()
+
+        let response = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let summary) = response.result else {
+            Issue.record("expected a summary, got \(response.result)")
+            return
+        }
+        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
+        await phantom.preparingState?.task.value
+
+        var sawSettled = false
+        while let event = await events.next() {
+            if case .event(.statusChanged(let id, _, let from, let to)) = event.result,
+                id == phantom.id, from == "preparing"
+            {
+                #expect(to == "stopped")
+                sawSettled = true
+                break
+            }
+        }
+        #expect(sawSettled)
+    }
+
+    @Test("A clone whose copy fails crosses the wire as a failure event")
+    func cloneFailureCrossesTheWireAsAnEvent() async throws {
+        let harness = makeHarness()
+        harness.storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
+        let instance = makeInstance(in: harness, name: "Source")
+        var events = harness.transport.router.eventResponses().makeAsyncIterator()
+
+        let response = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let summary) = response.result else {
+            Issue.record("expected a summary, got \(response.result)")
+            return
+        }
+        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
+        await phantom.preparingState?.task.value
+
+        var sawFailure = false
+        while let event = await events.next() {
+            if case .event(.failure(let id, _, _)) = event.result, id == phantom.id {
+                sawFailure = true
+                break
+            }
+        }
+        #expect(sawFailure)
+    }
+
     // MARK: - Envelope
 
     @Test("Bytes that are not a request are refused before any verb runs")

@@ -42,6 +42,7 @@ extension VMCommandCore {
         // rename nobody made.
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
+        try refuseIfPreparing(instance)
         guard instance.status.canRename else { throw invalidState(instance) }
         Self.logger.debug(
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
@@ -221,6 +222,9 @@ extension VMCommandCore {
                 Self.logger.notice(
                     "Cloned VM '\(sourceName, privacy: .public)' as '\(config.name, privacy: .public)'"
                 )
+            },
+            onFailure: { [weak self] error in
+                self?.reportPreparingFailure(error, verb: .clone, phantom: phantom)
             })
         return summary(phantom)
     }
@@ -288,6 +292,9 @@ extension VMCommandCore {
                     Self.logger.notice(
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
                     )
+                },
+                onFailure: { [weak self] error in
+                    self?.reportPreparingFailure(error, verb: .importVM, phantom: phantom)
                 })
             return summary(phantom)
         } catch {
