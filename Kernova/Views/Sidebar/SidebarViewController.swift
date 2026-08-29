@@ -73,7 +73,7 @@ final class SidebarViewController: NSViewController {
         outlineView.beginRenameForRow = { [weak self] row in
             guard let self,
                 let instance = self.outlineView.item(atRow: row) as? VMInstance,
-                instance.status.canRename
+                instance.canRename
             else { return }
             self.viewModel.renameVMInSidebar(instance)
         }

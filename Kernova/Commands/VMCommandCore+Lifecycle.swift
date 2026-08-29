@@ -457,6 +457,7 @@ extension VMCommandCore {
 
     func resume(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
+        try refuseIfPreparing(instance)
         guard instance.status.canResume else { throw invalidState(instance) }
 
         // A cold resume builds a fresh VZVirtualMachine from the save file, so it

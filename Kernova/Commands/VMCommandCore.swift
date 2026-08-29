@@ -176,8 +176,17 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// The refusal for a verb the VM's current state does not admit.
+    ///
+    /// A preparing row's real ``VMStatus`` never explains what is blocking
+    /// it — the copy does — so this reports the same ``busy`` refusal
+    /// ``refuseIfPreparing(_:)`` throws rather than naming a status the
+    /// summary already reports as `"preparing"`, which every caller of this
+    /// shared helper inherits without gating individually.
     func invalidState(_ instance: VMInstance) -> CommandError {
-        .invalidState(
+        if let state = instance.preparingState {
+            return preparingBusyError(instance, state: state)
+        }
+        return .invalidState(
             vm: summary(instance), current: instance.status,
             allowed: allowedVerbs(for: instance))
     }
@@ -185,8 +194,15 @@ final class VMCommandCore: VMCommanding {
     /// Refuses while a clone or import is still writing into the VM's bundle.
     func refuseIfPreparing(_ instance: VMInstance) throws {
         guard let state = instance.preparingState else { return }
-        throw CommandError.busy(
-            vm: summary(instance), operation: state.operation.displayNoun.lowercased())
+        throw preparingBusyError(instance, state: state)
+    }
+
+    /// The refusal a verb gets while `instance` is still copying, shared by
+    /// ``refuseIfPreparing(_:)`` and ``invalidState(_:)``.
+    private func preparingBusyError(
+        _ instance: VMInstance, state: VMInstance.PreparingState
+    ) -> CommandError {
+        .busy(vm: summary(instance), operation: state.operation.displayNoun.lowercased())
     }
 
     /// Maps an error a lifecycle call threw into the command vocabulary.

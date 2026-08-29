@@ -401,6 +401,34 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
+    @Test("A state gate reached while preparing reports busy, not a self-contradictory invalid state")
+    func invalidStateReportsBusyWhilePreparing() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Copying")
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+
+        let error = try #require(await commandError { try await harness.core.pause(.id(instance.id)) })
+        guard case .busy(let vm, let operation) = error else {
+            Issue.record("expected a busy refusal, got \(error)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(operation == "clone")
+        instance.preparingState = nil
+    }
+
+    @Test("resume refuses a VM whose clone or import is still copying")
+    func resumeRefusesAPreparingVM() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Copying", status: .paused)
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+
+        let error = try #require(await commandError { try await harness.core.resume(.id(instance.id)) })
+        #expect(error.isBusy)
+        #expect(harness.virtualization.resumeCallCount == 0)
+        instance.preparingState = nil
+    }
+
     // MARK: - Conflicts
 
     @Test("A start that would put two live guests on one machine identity is refused")
