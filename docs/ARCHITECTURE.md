@@ -309,9 +309,8 @@ delegated to the user's terminal.
 AppDelegate
     ├── creates → VMLibraryViewModel (the verbs; AppKit adapter)
     │                 ├── VMLibrary (owns [VMInstance])
-    │                 │      ├── VMStorageService
-    │                 │      ├── VMSnapshotStore
     │                 │      └── VMDirectoryWatcher, SystemSleepWatcher
+    │                 ├── VMStorageService, VMSnapshotStore (one each, held by both)
     │                 ├── DiskImageService
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)
     ├── creates → VMLifecycleCoordinator

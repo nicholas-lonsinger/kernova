@@ -17,7 +17,6 @@ struct VMLibraryTests {
 
     private func makeLibrary(
         storageService: MockVMStorageService = MockVMStorageService(),
-        diskImageService: MockDiskImageService = MockDiskImageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService(),
         usbDeviceService: any USBDeviceProviding = MockUSBDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
@@ -27,10 +26,7 @@ struct VMLibraryTests {
         ).first,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         isVMNetworkingEntitled: Bool = true
-    ) -> (
-        VMLibrary, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
-        any USBDeviceProviding
-    ) {
+    ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any USBDeviceProviding) {
         let library = VMLibrary(
             storageService: storageService,
             snapshotStore: VMSnapshotStore(),
@@ -52,7 +48,7 @@ struct VMLibraryTests {
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
-        return (library, storageService, diskImageService, virtualizationService, usbDeviceService)
+        return (library, storageService, virtualizationService, usbDeviceService)
     }
 
     /// Helper to mark an instance as preparing with a no-op task.
@@ -81,7 +77,7 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
 
         #expect(storage.listVMBundlesCallCount == 0)
         #expect(library.instances.isEmpty)
@@ -90,7 +86,7 @@ struct VMLibraryTests {
 
     @Test("hasLoadedLibrary flips once the read applies, even for an empty library")
     func hasLoadedLibraryFlipsOnEmptyLibrary() async {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         #expect(library.hasLoadedLibrary == false)
 
         await library.loadVMs()
@@ -105,7 +101,7 @@ struct VMLibraryTests {
         storage.listVMBundlesError = VMStorageError.bundleNotFound(
             FileManager.default.temporaryDirectory)
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         // The read is over and the answer is "no VMs" — the UI must not wait
@@ -122,7 +118,7 @@ struct VMLibraryTests {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(onDisk.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = onDisk
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
 
         let load = Task { @MainActor in await library.loadVMs() }
         // Runs behind `load`, so `loadVMs` has captured the pre-read instance
@@ -156,7 +152,7 @@ struct VMLibraryTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         #expect(library.instances.count == 2)
@@ -175,7 +171,7 @@ struct VMLibraryTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         let secondID = library.instances.last?.id
         library.selectedID = secondID
@@ -189,7 +185,7 @@ struct VMLibraryTests {
 
     @Test("selectedID persists to UserDefaults on change")
     func selectedIDPersistsToUserDefaults() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance()
         library.instances.append(instance)
 
@@ -200,7 +196,7 @@ struct VMLibraryTests {
 
     @Test("selectedID clears UserDefaults when set to nil")
     func selectedIDClearsUserDefaults() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance()
         library.instances.append(instance)
         library.selectedID = instance.id
@@ -225,7 +221,7 @@ struct VMLibraryTests {
         // Seed preferences before the load, which is what consults them
         preferences.lastSelectedVMID = config2.id
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         #expect(library.selectedID == config2.id)
@@ -246,7 +242,7 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs = [badURL]
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         // Good VM loaded, bad VM skipped
@@ -268,7 +264,7 @@ struct VMLibraryTests {
         // Seed preferences with a UUID that doesn't match any VM
         preferences.lastSelectedVMID = UUID()
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         #expect(library.selectedID == config.id)
@@ -278,7 +274,7 @@ struct VMLibraryTests {
 
     @Test("saveConfiguration persists via storage service")
     func saveConfigurationPersists() {
-        let (library, storage, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         let instance = makeInstance()
 
         library.saveConfiguration(for: instance)
@@ -288,7 +284,7 @@ struct VMLibraryTests {
 
     @Test("saveConfiguration presents error on failure")
     func saveConfigurationPresentsError() {
-        let (library, storage, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         let instance = makeInstance()
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
@@ -303,7 +299,7 @@ struct VMLibraryTests {
     @Test("A configuration change syncs the VM's DHCP reservation slot for its mode's network")
     func updateConfigurationSyncsAddressReservation() {
         let vmnet = MockVmnetNetworkProvider()
-        let (library, _, _, _, _) = makeLibrary(vmnetNetworks: vmnet)
+        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet)
         let instance = makeInstance()
 
         library.updateConfiguration(of: instance) {
@@ -319,7 +315,7 @@ struct VMLibraryTests {
     @Test("A bridged or MAC-less configuration takes no reservation slot")
     func bridgedConfigurationTakesNoReservationSlot() {
         let vmnet = MockVmnetNetworkProvider()
-        let (library, _, _, _, _) = makeLibrary(vmnetNetworks: vmnet)
+        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet)
         let instance = makeInstance()
 
         library.updateConfiguration(of: instance) {
@@ -339,7 +335,7 @@ struct VMLibraryTests {
 
     @Test("selectedInstance returns the instance matching selectedID")
     func selectedInstance() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance()
         library.instances.append(instance)
         library.selectedID = instance.id
@@ -349,7 +345,7 @@ struct VMLibraryTests {
 
     @Test("selectedInstance returns nil when no match")
     func selectedInstanceNil() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         library.selectedID = UUID()
 
         #expect(library.selectedInstance == nil)
@@ -367,7 +363,7 @@ struct VMLibraryTests {
 
         // The library is never loaded here, so the bundle is on disk and absent
         // from memory — exactly what reconciliation is for.
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
 
         library.reconcileWithDisk()
 
@@ -377,7 +373,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
     func reconcileRemovesStoppedVMs() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance(name: "Gone VM")
         instance.status = .stopped
         library.instances.append(instance)
@@ -390,7 +386,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
     func reconcilePreservesRunningVMs() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance(name: "Running VM")
         instance.status = .running
         library.instances.append(instance)
@@ -403,7 +399,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk preserves paused VMs even if bundle is missing")
     func reconcilePreservesPausedVMs() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance(name: "Paused VM")
         instance.status = .paused
         library.instances.append(instance)
@@ -416,7 +412,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
     func reconcileUpdatesSelection() {
-        let (library, storage, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         let remaining = makeInstance(name: "Remaining")
         let removed = makeInstance(name: "Removed")
         removed.status = .stopped
@@ -442,7 +438,7 @@ struct VMLibraryTests {
         storage.bundles[goodURL] = config
 
         // Create library first (no bad bundles yet)
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
 
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let badURL = FileManager.default.temporaryDirectory
@@ -461,7 +457,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk presents error when listing bundles fails")
     func reconcilePresentsErrorForFilesystemFailure() {
-        let (library, storage, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         failures.reset()
 
         storage.listVMBundlesError = VMStorageError.bundleNotFound(
@@ -477,7 +473,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk does not re-present error for already-reported corrupted bundles")
     func reconcileDeduplicatesFailedBundleErrors() {
         let storage = MockVMStorageService()
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
 
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let badURL = FileManager.default.temporaryDirectory
@@ -507,7 +503,7 @@ struct VMLibraryTests {
         storage.loadConfigurationFailURLs.insert(badURL)
 
         // The initial load reports the error and seeds reportedFailedBundles
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         #expect(failures.showError == true)
         #expect(failures.errorMessage?.contains("broken-vm") == true)
@@ -537,7 +533,7 @@ struct VMLibraryTests {
         storage.loadConfigurationFailURLs.insert(badURL)
 
         // The initial load should report the error
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         #expect(failures.showError == true)
         #expect(failures.errorMessage?.contains("broken-vm") == true)
@@ -554,7 +550,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk re-presents error after previously-failed bundle loads successfully")
     func reconcileReReportsAfterBundleRecovery() {
         let storage = MockVMStorageService()
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
 
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let bundleURL = FileManager.default.temporaryDirectory
@@ -602,7 +598,7 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         #expect(library.instances.count == 1)
@@ -617,7 +613,7 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
         #expect(library.instances.count == 1)
@@ -626,7 +622,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk removes .initialBoot VMs whose bundles vanish")
     func reconcileRemovesInitialBootVMs() {
-        let (library, storage, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
         config.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
@@ -646,7 +642,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk cancels setupTask before evicting an orphaned VM")
     func reconcileCancelsSetupTaskBeforeEviction() async {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
         config.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
@@ -678,7 +674,7 @@ struct VMLibraryTests {
 
     @Test("pauseAllForSleep pauses only running VMs")
     func pauseAllForSleepPausesRunning() async {
-        let (library, _, _, virtService, _) = makeLibrary()
+        let (library, _, virtService, _) = makeLibrary()
         let running1 = makeInstance(name: "Running 1")
         running1.status = .running
         let running2 = makeInstance(name: "Running 2")
@@ -701,7 +697,7 @@ struct VMLibraryTests {
 
     @Test("resumeAllAfterWake resumes only sleep-paused VMs")
     func resumeAllAfterWakeResumesOnlySleepPaused() async {
-        let (library, _, _, virtService, _) = makeLibrary()
+        let (library, _, virtService, _) = makeLibrary()
         let sleepPaused = makeInstance(name: "Sleep Paused")
         sleepPaused.status = .paused
         let userPaused = makeInstance(name: "User Paused")
@@ -721,7 +717,7 @@ struct VMLibraryTests {
     func pauseAllForSleepHandlesError() async {
         let virtService = MockVirtualizationService()
         virtService.pauseError = VirtualizationError.noVirtualMachine
-        let (library, _, _, _, _) = makeLibrary(virtualizationService: virtService)
+        let (library, _, _, _) = makeLibrary(virtualizationService: virtService)
         let running = makeInstance(name: "Running")
         running.status = .running
         library.instances = [running]
@@ -739,7 +735,7 @@ struct VMLibraryTests {
     func resumeAllAfterWakeClearsOnError() async {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
-        let (library, _, _, _, _) = makeLibrary(virtualizationService: virtService)
+        let (library, _, _, _) = makeLibrary(virtualizationService: virtService)
         let instance = makeInstance(name: "Sleep Paused")
         instance.status = .paused
         library.instances = [instance]
@@ -755,7 +751,7 @@ struct VMLibraryTests {
 
     @Test("pauseAllForSleep is no-op when no running VMs")
     func pauseAllForSleepNoOp() async {
-        let (library, _, _, virtService, _) = makeLibrary()
+        let (library, _, virtService, _) = makeLibrary()
         let stopped = makeInstance(name: "Stopped")
         stopped.status = .stopped
         library.instances = [stopped]
@@ -768,7 +764,7 @@ struct VMLibraryTests {
 
     @Test("resumeAllAfterWake is no-op when no sleep-paused VMs")
     func resumeAllAfterWakeNoOp() async {
-        let (library, _, _, virtService, _) = makeLibrary()
+        let (library, _, virtService, _) = makeLibrary()
         let paused = makeInstance(name: "User Paused")
         paused.status = .paused
         library.instances = [paused]
@@ -781,7 +777,7 @@ struct VMLibraryTests {
 
     @Test("pauseAllForSleep skips non-running states")
     func pauseAllForSleepSkipsNonRunning() async {
-        let (library, _, _, virtService, _) = makeLibrary()
+        let (library, _, virtService, _) = makeLibrary()
         let starting = makeInstance(name: "Starting")
         starting.status = .starting
         let saving = makeInstance(name: "Saving")
@@ -798,7 +794,7 @@ struct VMLibraryTests {
 
     @Test("resumeAllAfterWake skips VMs no longer paused")
     func resumeAllAfterWakeSkipsNonPaused() async {
-        let (library, _, _, virtService, _) = makeLibrary()
+        let (library, _, virtService, _) = makeLibrary()
         let instance = makeInstance(name: "Was Paused")
         instance.status = .stopped  // Status changed between sleep and wake
         library.instances = [instance]
@@ -814,7 +810,7 @@ struct VMLibraryTests {
 
     @Test("hasPreparing returns true when an instance is preparing")
     func hasPreparingTrue() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance()
         markPreparing(instance)
         library.instances.append(instance)
@@ -824,7 +820,7 @@ struct VMLibraryTests {
 
     @Test("hasPreparing returns false when no instances are preparing")
     func hasPreparingFalse() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let instance = makeInstance()
         library.instances.append(instance)
 
@@ -841,7 +837,7 @@ struct VMLibraryTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
 
-        let (library, _, _, _, _) = makeLibrary(storageService: storage)
+        let (library, _, _, _) = makeLibrary(storageService: storage)
         library.instances.removeAll()
 
         // Add a preparing instance
@@ -858,7 +854,7 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk preserves preparing instances from removal")
     func reconcilePreservesPreparingInstances() {
-        let (library, _, _, _, _) = makeLibrary()
+        let (library, _, _, _) = makeLibrary()
         let preparing = makeInstance(name: "Preparing VM")
         markPreparing(preparing)
         preparing.status = .stopped
@@ -889,7 +885,7 @@ struct VMLibraryTests {
     @Test("applyLivePolicy attaches a new removable item when added to the list")
     func liveRemovableAddAttaches() async throws {
         let mock = MockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         library.instances.append(instance)
@@ -915,7 +911,7 @@ struct VMLibraryTests {
     @Test("applyLivePolicy detaches and clears tracking when the only item is removed")
     func liveRemovableRemoveDetaches() async throws {
         let mock = MockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         let id = UUID()
@@ -940,7 +936,7 @@ struct VMLibraryTests {
     @Test("applyLivePolicy swaps the only item: detach old, attach new")
     func liveRemovableSwapDetachesThenAttaches() async throws {
         let mock = MockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         let oldID = UUID()
@@ -968,7 +964,7 @@ struct VMLibraryTests {
     @Test("applyLivePolicy detaches and reattaches on readOnly flip (same id)")
     func liveRemovableReadOnlyFlipReattaches() async throws {
         let mock = MockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         let id = UUID()
@@ -993,7 +989,7 @@ struct VMLibraryTests {
     @Test("applyLivePolicy is a no-op when storageDisks change but removableMedia is unchanged")
     func liveRemovableNoopWhenOnlyStorageDisksChange() async throws {
         let mock = MockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         library.instances.append(instance)
@@ -1014,7 +1010,7 @@ struct VMLibraryTests {
     @Test("applyLivePolicy is a no-op when VM is stopped, even with media change")
     func liveRemovableNoopWhenStopped() async throws {
         let mock = MockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .stopped
         library.instances.append(instance)
@@ -1034,7 +1030,7 @@ struct VMLibraryTests {
     func liveRemovableAttachFailureSurfacesError() async throws {
         let mock = MockUSBDeviceService()
         mock.attachError = USBDeviceError.diskImageNotFound("/tmp/missing.iso")
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         library.instances.append(instance)
@@ -1059,7 +1055,7 @@ struct VMLibraryTests {
         // operation in the diff.
         let mock = MockUSBDeviceService()
         mock.detachError = USBDeviceError.deviceNotFound
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         let oldID = UUID()
@@ -1087,7 +1083,7 @@ struct VMLibraryTests {
         struct TransientError: Error {}
         let mock = MockUSBDeviceService()
         mock.detachError = TransientError()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         let oldID = UUID()
@@ -1114,7 +1110,7 @@ struct VMLibraryTests {
     func liveRemovableDetachNoVMBails() async throws {
         let mock = MockUSBDeviceService()
         mock.detachError = USBDeviceError.noVirtualMachine
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         let oldID = UUID()
@@ -1139,7 +1135,7 @@ struct VMLibraryTests {
     func liveRemovableAttachNoVMBails() async throws {
         let mock = MockUSBDeviceService()
         mock.attachError = USBDeviceError.noVirtualMachine
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         library.instances.append(instance)
@@ -1159,7 +1155,7 @@ struct VMLibraryTests {
     @Test("Reconcile loop bails out when VM stops mid-pass — no spurious error")
     func liveRemovableReconcileBailsOutOnVMStop() async throws {
         let mock = SuspendingMockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         library.instances.append(instance)
@@ -1185,7 +1181,7 @@ struct VMLibraryTests {
     @Test("Rapid-fire media swaps coalesce — one Task drains to the latest target")
     func liveRemovableRapidFireCoalescesToLatest() async throws {
         let mock = SuspendingMockUSBDeviceService()
-        let (library, _, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         library.instances.append(instance)
