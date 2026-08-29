@@ -32,23 +32,29 @@ enum VMOverviewAction: String, Sendable {
     }
 }
 
-/// Card values the settings controller resolves from host state or an async
-/// read, which the configuration alone cannot answer.
+/// Values the settings pane resolves from host state, an injected service or an
+/// async read, which the configuration alone cannot answer.
+///
+/// Produced by ``VMOverviewResolver`` and read by every surface stating one of
+/// them — the overview's cards and the panel rows showing the same figure.
 struct VMOverviewResolved: Sendable {
     /// The Mode picker's current title, which names the bridged interface.
     var networkModeTitle: String?
-    /// The address the IP row currently shows, `nil` while there is none.
-    var ipAddress: String?
+    /// What the guest's address resolves to for the mode it is on.
+    var ipAddress: VMOverviewIPAddress = .unavailable
     /// Forwarded-rule count, `nil` wherever forwarding does not apply.
     var portForwardingRuleCount: Int?
-    /// The boot disk's capacity, once the header's off-main read lands.
+    /// The boot disk's capacity, once its off-main read lands.
     var bootDiskBytes: UInt64?
-    /// What this VM's snapshots occupy together, once the Snapshots panel's
-    /// off-main read lands.
+    /// What each snapshot occupies, once the off-main size read lands.
+    var snapshotSizes: [UUID: UInt64] = [:]
+    /// What this VM's snapshots occupy together, from the same read.
     var snapshotTotalBytes: UInt64?
-    /// Whether a capture is offered right now — the panel's own gate.
+    /// Whether a capture is offered right now — the view model's own gate.
     var canTakeSnapshot = false
-    /// The banner message a category's panel currently shows, by category.
+    /// What the Audio section shows beneath its input toggle.
+    var micWarning: MicWarningState = .none
+    /// The banner message a category's panel shows, by category.
     var warnings: [VMSettingsCategory: String] = [:]
 }
 
@@ -129,10 +135,11 @@ enum VMOverviewSummary {
             }
             // The mode names the row, so the address it hands the guest is the
             // value beside it rather than a line of its own.
+            let address = resolved.ipAddress.displayText
             var rows = [
                 Row(
-                    label: mode, value: resolved.ipAddress ?? "",
-                    copy: resolved.ipAddress.map { RowCopy(value: $0, name: "Copy IP Address") })
+                    label: mode, value: address ?? "",
+                    copy: address.map { RowCopy(value: $0, name: "Copy IP Address") })
             ]
             if let count = resolved.portForwardingRuleCount {
                 rows.append(

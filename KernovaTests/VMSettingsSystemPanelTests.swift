@@ -23,7 +23,7 @@ struct VMSettingsSystemPanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .system
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category,
@@ -364,6 +364,7 @@ struct VMSettingsSystemPanelTests {
             micPermissionStatus: { status }, systemSettings: systemSettings)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.system)
         return vc
     }
 
@@ -403,5 +404,39 @@ struct VMSettingsSystemPanelTests {
 
         #expect(findLabel(containing: "Microphone permission is denied", in: vc.view) == nil)
         #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
+    }
+
+    // MARK: - Serial console
+
+    @Test("The reveal button comes back after a disappearance cancels its probe")
+    func serialLogProbeReRunsAfterTheProbeIsCancelled() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-settings-serial-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let viewModel = makeViewModel()
+        let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        let instance = VMInstance(configuration: config, bundleURL: directory)
+        FileManager.default.createFile(
+            atPath: instance.serialLogURL.path(percentEncoded: false), contents: Data([0]))
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.system)
+
+        let panel = try #require(
+            vc.settingsPanelForTesting(.system) as? VMSettingsSystemPanelViewController)
+        let reveal = try #require(findButton(titled: "Reveal serial.log in Finder", in: vc.view))
+        // The probe is still out, so the button has yet to be answered for.
+        #expect(!reveal.isEnabled)
+
+        // The pane goes away before it lands, cancelling it — coming back has to
+        // re-run it, or the button stays dead until the VM's state moves.
+        vc.viewWillDisappear()
+        vc.viewDidAppear()
+        await panel.serialLogProbeForTesting?.value
+
+        #expect(reveal.isEnabled)
     }
 }

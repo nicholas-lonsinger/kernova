@@ -1,4 +1,3 @@
-import AVFoundation
 import AppKit
 import os
 
@@ -14,17 +13,12 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private var lockRegistry = VMSettingsLockRegistry()
 
     private let micPermissionPresenter = PopoverPresenter()
-    private var micPermission: AVAuthorizationStatus
-    private var micPermissionStatus: @MainActor () -> AVAuthorizationStatus {
-        context.micPermissionStatus
-    }
     private var systemSettings: SystemSettingsLink { context.systemSettings }
 
     private let panelStack = NSStackView()
 
     init(context: VMSettingsPanelContext) {
         self.context = context
-        self.micPermission = context.micPermissionStatus()
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -70,20 +64,13 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         refreshSerialRelay()
     }
 
-    func contribute(to resolved: inout VMOverviewResolved) {
-        if renderedAudioWarning == .denied {
-            resolved.warnings[.system] = Self.micPermissionDeniedWarning
-        }
-    }
-
     func prepareForDisappearance() {
         if micPermissionPresenter.isShown { micPermissionPresenter.close() }
-    }
-
-    /// The permission may have been changed in System Settings while the app was
-    /// away, so it is re-read rather than trusted from the last pass.
-    func hostDidBecomeActive() {
-        refreshMicPermission()
+        serialLogProbe?.cancel()
+        serialLogProbe = nil
+        // Re-probe on the next pass: the cancelled read answered nothing, and
+        // the log may have appeared while the pane was away.
+        probedSerialLog = nil
     }
 
     // Resources
@@ -118,6 +105,17 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     // Serial Console
     private var serialRelaySwitch = NSSwitch()
     private var revealSerialLogButton = NSButton()
+    /// What the last existence probe answered for, so the probe re-runs when the
+    /// log it names could have appeared rather than on every refresh pass.
+    private var probedSerialLog: SerialLogProbeKey?
+    private var serialLogProbe: Task<Void, Never>?
+
+    /// serial.log is created on the VM's first run and persists thereafter, so a
+    /// probe stays good until either the VM or its run state moves.
+    private struct SerialLogProbeKey: Equatable {
+        let path: String
+        let status: VMStatus
+    }
 
     private var renderedAudioWarning: MicWarningState?
     // MARK: Resources
@@ -465,16 +463,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         return "\(text)."
     }
 
-    /// What the Audio banner — and the System card's warning glyph — say about a
-    /// refused microphone.
-    static let micPermissionDeniedWarning =
-        "Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs."
-
     private func refreshAudio() {
         audioInputSwitch.state = instance.configuration.audioInputEnabled ? .on : .off
         audioOutputSwitch.state = instance.configuration.audioOutputEnabled ? .on : .off
-        let warning = micPermissionPresentation(
-            micPermission, audioInputEnabled: instance.configuration.audioInputEnabled)
+        let warning = resolved.micWarning
         guard warning != renderedAudioWarning else { return }
         renderedAudioWarning = warning
         audioWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -498,7 +490,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             let banner = makeGroupedFormBanner(
                 symbolName: "exclamationmark.triangle.fill",
                 tint: .systemRed,
-                message: Self.micPermissionDeniedWarning,
+                message: VMOverviewResolver.micPermissionDeniedWarning,
                 trailingButtons: [openSettings, info])
             addGroupedFormFullWidth(banner, to: audioWarningContainer)
         }
@@ -520,15 +512,34 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
 
     private func refreshSerialRelay() {
         serialRelaySwitch.state = instance.configuration.serialSocketRelayEnabled ? .on : .off
-        // serial.log is created on first run and persists thereafter; disable
-        // the reveal button until it exists.
-        revealSerialLogButton.isEnabled = FileManager.default.fileExists(
-            atPath: instance.serialLogURL.path(percentEncoded: false))
+        probeSerialLog()
     }
 
-    private func refreshMicPermission() {
-        micPermission = micPermissionStatus()
+    /// Disables the reveal button until an off-main probe finds the log.
+    ///
+    /// The existence check is a filesystem syscall, so it never runs on the
+    /// refresh pass itself.
+    private func probeSerialLog() {
+        let key = SerialLogProbeKey(
+            path: instance.serialLogURL.path(percentEncoded: false), status: instance.status)
+        guard key != probedSerialLog else { return }
+        probedSerialLog = key
+        revealSerialLogButton.isEnabled = false
+        serialLogProbe?.cancel()
+        serialLogProbe = Task { [weak self] in
+            let exists = await Task.detached {
+                FileManager.default.fileExists(atPath: key.path)
+            }.value
+            guard !Task.isCancelled, let self, self.probedSerialLog == key else { return }
+            self.revealSerialLogButton.isEnabled = exists
+        }
     }
+
+    #if DEBUG
+    /// The in-flight serial.log probe, so a test awaits it instead of polling
+    /// the button it enables.
+    var serialLogProbeForTesting: Task<Void, Never>? { serialLogProbe }
+    #endif
 
     @objc private func cpuStepperChanged() {
         cpuField.integerValue = cpuStepper.integerValue
@@ -621,8 +632,12 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     @objc private func audioInputToggled() {
-        refreshMicPermission()
+        // The permission decides what the banner below the switch says, and the
+        // user may have answered macOS's prompt since the last read.
+        context.overview.rereadMicPermission()
         writeConfig { $0.audioInputEnabled = audioInputSwitch.state == .on }
+        refreshResolved()
+        refreshAudio()
     }
 
     @objc private func audioOutputToggled() {

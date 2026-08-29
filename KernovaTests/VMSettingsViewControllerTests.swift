@@ -57,19 +57,18 @@ struct VMSettingsViewControllerTests {
 
     @Test("Read-only disables lockable controls but not hot-toggleable ones")
     func readOnlyDisablesLockableControls() {
-        let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: true)
-
+        let (network, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .network)
         // The network Mode picker is lockable → disabled while read-only.
-        #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == false)
+        #expect(settingsNetworkModePopUp(in: network.view)?.isEnabled == false)
 
+        let (sharing, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .sharing)
         // Clipboard is hot-toggleable → stays enabled.
-        let clipboard = firstSwitch(action: "clipboardToggled", in: vc.view)
-        #expect(clipboard?.isEnabled == true)
+        #expect(firstSwitch(action: "clipboardToggled", in: sharing.view)?.isEnabled == true)
     }
 
     @Test("Lockable controls are enabled when editable")
     func editableEnablesLockableControls() {
-        let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
+        let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false, category: .network)
         #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == true)
     }
 
@@ -126,7 +125,8 @@ struct VMSettingsViewControllerTests {
 
     @Test("Toggling Clipboard Sharing writes back to the configuration")
     func clipboardToggleWritesConfig() {
-        let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
+        let (vc, instance, _) = makeController(
+            guestOS: .linux, isReadOnly: false, category: .sharing)
         #expect(instance.configuration.clipboardSharingEnabled == false)
 
         guard let clipboard = firstSwitch(action: "clipboardToggled", in: vc.view) else {

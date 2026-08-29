@@ -13,12 +13,6 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
 
     /// The Snapshots section, rebuilt per instance.
     private var snapshotSection: SnapshotSectionView?
-    /// The snapshot ids the size read was last issued for, so it re-runs when
-    /// the set changes rather than on every `refresh()` pass.
-    private var snapshotSizeIDs: [UUID]?
-    private var snapshotSizeTask: Task<Void, Never>?
-    /// What every snapshot occupies together, from the last size read.
-    private var snapshotTotalBytes: UInt64?
     private let infoPresenter = PopoverPresenter()
 
     private let panelStack = NSStackView()
@@ -54,10 +48,6 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         // Drop any in-flight inline edit so the flag can't pin the list in a
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         snapshotSection?.clearActiveEdit()
-        snapshotSizeTask?.cancel()
-        snapshotSizeTask = nil
-        // Re-read on the next appear: the sizes may have moved while away.
-        snapshotSizeIDs = nil
     }
 
     // MARK: - Build
@@ -71,22 +61,10 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         snapshotSection = section
         chrome = VMSettingsPanelChrome(
             leading: [section.infoButton], trailing: [section.sizeReadout])
-        // A fresh section has no sizes yet, so the read must be re-issued — and
-        // the total goes with it, or the card would state the outgoing VM's
-        // footprint beside the incoming VM's count.
-        snapshotSizeIDs = nil
-        snapshotTotalBytes = nil
         return section
     }
 
     // MARK: - Refresh
-
-    /// The card states the capture command and the snapshots' footprint, both of
-    /// which only this panel resolves.
-    func contribute(to resolved: inout VMOverviewResolved) {
-        resolved.canTakeSnapshot = viewModel.canTakeSnapshot(instance)
-        resolved.snapshotTotalBytes = snapshotTotalBytes
-    }
 
     func refresh() {
         guard let snapshotSection else { return }
@@ -96,45 +74,10 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
             canRevert: viewModel.canRevertToSnapshot(instance),
             canDelete: viewModel.canDeleteSnapshots(instance),
             baselineID: instance.ephemeralBaselineSnapshot?.id)
-
-        // The sizes are a directory walk over gigabyte-scale copies, so they are
-        // read off the main actor and only when the set of snapshots changed.
-        let ids = instance.snapshotManifest.ordered.map(\.id)
-        guard ids != snapshotSizeIDs else { return }
-        snapshotSizeIDs = ids
-        // The stored total describes the previous set, so it is dropped with it:
-        // the card states the count alone until the fresh read lands.
-        snapshotTotalBytes = nil
-        snapshotSizeTask?.cancel()
-        guard !ids.isEmpty else {
-            snapshotTotalBytes = nil
-            snapshotSection.applySizes([:])
-            return
-        }
-        let instanceID = instance.id
-        snapshotSizeTask = Task { [weak self] in
-            guard let self else { return }
-            let sizes = await self.viewModel.snapshotOnDiskBytes(for: self.instance)
-            // The pane is reused across route and VM changes, so a read that
-            // lands after the user moved on must not paint the new VM's rows.
-            guard !Task.isCancelled, !self.context.isDismissed, self.instance.id == instanceID
-            else {
-                return
-            }
-            self.snapshotSection?.applySizes(sizes)
-            self.snapshotTotalBytes = sizes.values.reduce(0, +)
-            // The overview states the same total, and this read is issued only
-            // when the snapshot set changes — so the pass that paints it has to
-            // be asked for rather than waited on.
-            self.requestFullRefresh()
-        }
+        // The sizes are a directory walk over gigabyte-scale copies, read off
+        // the main actor by the pane — which states the same total on the card.
+        snapshotSection.applySizes(resolved.snapshotSizes)
     }
-
-    #if DEBUG
-    /// The in-flight size read, so a test awaits it instead of polling the
-    /// total it fills in.
-    var snapshotSizeTaskForTesting: Task<Void, Never>? { snapshotSizeTask }
-    #endif
 
     /// Get Info popover for one snapshot, with its on-disk footprint read off
     /// the main actor first.

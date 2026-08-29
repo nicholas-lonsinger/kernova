@@ -23,7 +23,7 @@ struct VMSettingsGeneralPanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .general
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category,
@@ -221,6 +221,7 @@ struct VMSettingsGeneralPanelTests {
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.general)
 
         #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.state == .on)
     }
@@ -438,7 +439,7 @@ struct VMSettingsGeneralPanelTests {
     func startupWarnsOverTheMacOSLimit() throws {
         let (vc, _) = makeStartupController(guestOS: .macOS, markedMacOSVMs: 3)
         let warning = try #require(
-            VMSettingsGeneralPanelViewController.autoStartCapacityWarning(
+            VMOverviewResolver.autoStartCapacityWarning(
                 isMacOSGuest: true, markedMacOSVMCount: 3))
 
         #expect(visibleLabel(warning, in: vc.view))
@@ -502,7 +503,7 @@ struct VMSettingsGeneralPanelTests {
             CapacityCase(false, 7, false),
         ])
     func autoStartCapacityWarningMatrix(testCase: CapacityCase) {
-        let warning = VMSettingsGeneralPanelViewController.autoStartCapacityWarning(
+        let warning = VMOverviewResolver.autoStartCapacityWarning(
             isMacOSGuest: testCase.isMacOSGuest, markedMacOSVMCount: testCase.marked)
 
         #expect((warning != nil) == testCase.warns)

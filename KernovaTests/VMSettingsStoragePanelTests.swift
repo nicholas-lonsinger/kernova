@@ -24,7 +24,7 @@ struct VMSettingsStoragePanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category,

@@ -131,7 +131,7 @@ struct VMOverviewSummaryTests {
     func networkFoldsModeAndAddress() {
         let instance = makeInstance()
         let resolved = VMOverviewResolved(
-            networkModeTitle: "Shared Network", ipAddress: "192.168.66.4",
+            networkModeTitle: "Shared Network", ipAddress: .reserved("192.168.66.4"),
             portForwardingRuleCount: 1)
         let row = rows(.network, instance, resolved: resolved).first
         #expect(row?.label == "Shared Network")
@@ -162,7 +162,7 @@ struct VMOverviewSummaryTests {
             rows(
                 .network, off,
                 resolved: VMOverviewResolved(
-                    networkModeTitle: "None", ipAddress: "192.168.66.4"))
+                    networkModeTitle: "None", ipAddress: .reserved("192.168.66.4")))
                 == [VMOverviewSummary.Row(label: "Mode", value: "None")])
         // Nothing resolved yet reads the same way.
         #expect(rows(.network, makeInstance()) == [VMOverviewSummary.Row(label: "Mode", value: "None")])

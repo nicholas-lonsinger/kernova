@@ -256,6 +256,11 @@ Constraints the file layout does not show:
   shareable controllers are reused by init parameterization. The settings panels follow the same
   rule: `VMSettingsPanel` is a protocol with default hook bodies, and what they share beyond it is
   a context object and the form atoms.
+- **The settings pane holds one surface at a time.** `VMOverviewResolver` answers, without views,
+  everything the configuration cannot — host state, injected services, and three off-main reads —
+  so the overview's cards need no panel to exist to state a figure, and the panel stating the same
+  figure reads it there rather than resolving it again. A panel is built on the first drill-in and
+  rebuilt when the VM under it moves.
 - **Popover anchors target a wrapper `NSView`, never an inner control**, so
   `NSPopover.preferredEdge` is interpreted in an unflipped coordinate system.
 - **The clipboard window renders inline RTF only, never HTML.**
@@ -270,9 +275,11 @@ NSSplitViewController (MainWindowController)
     ├── VMDisplayBackingView (layered on top; VZVirtualMachineView + overlays)
     └── DetailEmptyStateView ⇆ VMDetailRouterViewController  (routes via DetailRoute.resolve)
             ├── VMSettingsViewController                    (stopped / running-settings; shell)
+            │       ├── VMOverviewResolver                  (view-less; what both surfaces state)
             │       ├── VMSettingsOverviewViewController    (category cards ⇆ VMSettingsOverviewDelegate)
             │       └── VMSettings{General,System,Storage,Network,Sharing,Snapshots}PanelViewController
-            │               (one per VMSettingsCategory; VMSettingsPanel ⇆ VMSettingsPanelHost)
+            │               (one per VMSettingsCategory, built on drill-in;
+            │                VMSettingsPanel ⇆ VMSettingsPanelHost)
             ├── DetailBannerView + VMSettingsViewController (initial boot / error)
             ├── DetailStatusPlaceholderViewController       (preparing / transition)
             ├── GuestSetupProgressViewController            (setup)

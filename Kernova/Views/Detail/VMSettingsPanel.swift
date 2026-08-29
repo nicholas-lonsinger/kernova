@@ -22,12 +22,17 @@ final class VMSettingsPanelContext {
     let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
     let systemSettings: SystemSettingsLink
 
+    /// The one resolution of everything the configuration cannot answer, which
+    /// the overview's cards and the panels stating the same figure both read.
+    let overview: VMOverviewResolver
+
     /// The shell, which owns the write paths a panel shares with the overview.
     weak var host: (any VMSettingsPanelHost)?
 
     /// `true` while the pane is off screen, so an async read that lands late
     /// paints nothing. The shell drives it from its own appearance callbacks;
-    /// AppKit's forwarding to hidden children is not dependable.
+    /// AppKit's forwarding to a child whose view is out of the tree is not
+    /// dependable.
     private(set) var isDismissed = false
 
     init(
@@ -48,6 +53,10 @@ final class VMSettingsPanelContext {
         self.vmnetNetworks = vmnetNetworks
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
+        self.overview = VMOverviewResolver(
+            instance: instance, viewModel: viewModel, entitlements: entitlements,
+            vmnetNetworks: vmnetNetworks, bridgedInterfaces: bridgedInterfaces,
+            micPermissionStatus: micPermissionStatus)
     }
 
     /// Rebinds every panel at once; the shell calls this inside `reconfigure`.
@@ -55,6 +64,7 @@ final class VMSettingsPanelContext {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
+        overview.bind(instance: instance, viewModel: viewModel)
     }
 
     func setDismissed(_ isDismissed: Bool) {
@@ -64,25 +74,22 @@ final class VMSettingsPanelContext {
 
 /// What a panel asks of the settings shell.
 ///
-/// A panel resolves its own sheets and popovers from `view.window` — panels stay
-/// in the view hierarchy while hidden — so the host answers only for state the
-/// shell owns.
+/// A panel resolves its own sheets and popovers from `view.window`, so the host
+/// answers only for state the shell owns.
 @MainActor
 protocol VMSettingsPanelHost: AnyObject {
     /// Routes a mirrored toggle into the shell's one write path for it, the same
     /// one the overview card's switch takes.
     func settingsPanel(
         _ panel: any VMSettingsPanel, setToggle toggle: VMOverviewToggle, to isOn: Bool)
-    /// Re-renders every surface from the model — for a write the panel could not
-    /// complete, or one whose effect reaches beyond the panel.
-    func settingsPanelRequestsFullRefresh()
 }
 
-/// One category's form: builds its sections, refreshes them from the model, and
-/// contributes what its own state adds to the overview.
+/// One category's form: builds its sections and refreshes them from the model.
 ///
-/// Panels never override the appearance callbacks — AppKit's forwarding to a
-/// hidden child view controller is not dependable — so the shell drives
+/// A panel exists only while its category is open, so nothing here runs for a
+/// category the user has not drilled into. Panels never override the appearance
+/// callbacks — AppKit's forwarding to a child view controller whose view is out
+/// of the tree is not dependable — so the shell drives
 /// ``prepareForDisappearance()`` and ``hostDidBecomeActive()`` itself.
 @MainActor
 protocol VMSettingsPanel: NSViewController {
@@ -99,8 +106,6 @@ protocol VMSettingsPanel: NSViewController {
 
     /// Runs against the *outgoing* instance, before the context rebinds.
     func willRebind()
-    /// Adds what this panel resolved to the values the overview cards state.
-    func contribute(to resolved: inout VMOverviewResolved)
     /// The pane is on screen again: re-arm anything ``prepareForDisappearance()``
     /// let go of. Runs after the context is un-dismissed and before `refresh()`.
     func hostDidAppear()
@@ -112,7 +117,6 @@ protocol VMSettingsPanel: NSViewController {
 
 extension VMSettingsPanel {
     func willRebind() {}
-    func contribute(to resolved: inout VMOverviewResolved) {}
     func hostDidAppear() {}
     func prepareForDisappearance() {}
     func hostDidBecomeActive() {}
@@ -122,6 +126,8 @@ extension VMSettingsPanel {
     var instance: VMInstance { context.instance }
     var viewModel: VMLibraryViewModel { context.viewModel }
     var isReadOnly: Bool { context.isReadOnly }
+    /// The figures this panel shares with the overview's cards, resolved once.
+    var resolved: VMOverviewResolved { context.overview.resolved }
 
     /// - Returns: Whether the mutation was applied, so a caller whose control
     ///   already moved can put it back when the view model refused.
@@ -136,8 +142,10 @@ extension VMSettingsPanel {
         context.host?.settingsPanel(self, setToggle: toggle, to: isOn)
     }
 
-    func requestFullRefresh() {
-        context.host?.settingsPanelRequestsFullRefresh()
+    /// Re-resolves ``resolved`` after a write one of its values reads, so the
+    /// panel's own re-render doesn't state what the model held a moment ago.
+    func refreshResolved() {
+        context.overview.refresh()
     }
 }
 
