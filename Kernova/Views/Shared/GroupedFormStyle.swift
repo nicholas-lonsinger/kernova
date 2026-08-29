@@ -441,8 +441,20 @@ final class TintedButton: NSButton {
         didSet { applyTint() }
     }
 
+    // AppKit's press dimming covers template images but not a tinted title, so
+    // the press effect is applied to the tint itself.
+    override func highlight(_ flag: Bool) {
+        super.highlight(flag)
+        applyTint()
+    }
+
     private func applyTint() {
-        contentTintColor = isEnabled ? tint : .disabledControlTextColor
+        guard isEnabled else {
+            contentTintColor = .disabledControlTextColor
+            return
+        }
+        let pressed = cell?.isHighlighted ?? false
+        contentTintColor = pressed ? tint.withSystemEffect(.pressed) : tint
     }
 }
 

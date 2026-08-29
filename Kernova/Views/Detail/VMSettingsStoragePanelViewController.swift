@@ -346,8 +346,12 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// A structural change (rows added, removed, or reordered) rebuilds the
     /// stack; anything else updates the affected rows in place. Only the
     /// structural path tears down an in-progress editing field, so only it is
-    /// skipped while a row is being renamed. The live size is re-read on *every*
-    /// in-place pass, so an out-of-band resize is reflected.
+    /// skipped while a row is being renamed.
+    ///
+    /// The size behind a row is a filesystem walk, so it is re-read on every
+    /// pass only while the guest is running and writing to the disk. A stopped
+    /// VM's sizes cannot move on their own, so those rows are re-read when
+    /// something about them changed and not otherwise.
     private func refreshAttachmentList(
         models: [VMSettingsRenderedRow],
         listStack: NSStackView,
@@ -388,11 +392,14 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         }
 
         self[keyPath: renderedKP] = models
+        let sizesCanMove = instance.status == .running
         let previousByID = Dictionary(
             (previousRows ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for model in models {
             guard let row = self[keyPath: rowsKP][model.id] else { continue }
-            if previousByID[model.id] != model {
+            let changed = previousByID[model.id] != model
+            guard changed || sizesCanMove else { continue }
+            if changed {
                 row.update(
                     title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
                     missingPath: model.missingPath, readOnly: model.readOnly,

@@ -23,7 +23,7 @@ struct VMSettingsSharingPanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .sharing
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category,
@@ -89,6 +89,7 @@ struct VMSettingsSharingPanelTests {
         let vc = VMSettingsViewController(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.sharing)
         return (vc, instance)
     }
 

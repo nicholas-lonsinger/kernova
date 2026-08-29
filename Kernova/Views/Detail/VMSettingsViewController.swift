@@ -7,16 +7,15 @@ import os
 /// Pure-AppKit settings pane for editing a stopped VM's configuration, or
 /// viewing a running VM's configuration in read-only mode.
 ///
-/// Structure that depends on the *instance* (guest-agent section visibility,
-/// OS-specific help text) is fixed per instance and built in ``buildForm()``;
-/// switching VMs rebuilds the form. ``apply()`` only updates
-/// mutable state: control values, lock/enabled state, the dynamic attachment
-/// lists, and the microphone permission warning.
+/// A router over two surfaces: the overview's cards, and one open category's
+/// panel. Only the visible one exists — a panel is built on the first drill-in
+/// and rebuilt when the VM under it changed — so switching VMs costs one
+/// overview build, and the cards state their figures from
+/// ``VMOverviewResolver`` rather than from the panels that would otherwise have
+/// to exist to answer for them.
 ///
-/// Both attachment lists — storage disks and removable media — are served by one
-/// set of row, menu and popover builders parameterized by `AttachmentKind` and
-/// dispatching on an `AttachmentRef(kind:id:)`, never a second implementation
-/// per list.
+/// ``apply()`` refreshes only what is on screen: control values, lock/enabled
+/// state and the dynamic lists of the open panel, or the cards.
 @MainActor
 final class VMSettingsViewController: NSViewController {
     private static let logger = Logger(
@@ -37,7 +36,7 @@ final class VMSettingsViewController: NSViewController {
     private var modelObservation: ObservationLoop?
     // MARK: - Presenters & coordinators
 
-    // MARK: - Persistent chrome (rebuilt per instance in `buildForm`)
+    // MARK: - Persistent chrome
 
     private let formStack = NSStackView()
     /// The scrolling form below the pinned header.
@@ -46,20 +45,23 @@ final class VMSettingsViewController: NSViewController {
     private let headerContent = NSStackView()
     /// The pinned header: the VM's identity on the overview, the open
     /// category's name and the way back inside a panel.
-    private var identityHeader = VMIdentityHeaderView()
+    private let identityHeader = VMIdentityHeaderView()
 
     /// The overview of category cards, shown when no category is open.
     private let overviewVC = VMSettingsOverviewViewController()
-    /// One panel per category, all built up-front and shown one at a time —
-    /// hidden panels stay in the tree so `apply()` keeps them current and a
-    /// drill-in shows the right state immediately.
-    private var panels: [VMSettingsCategory: NSView] = [:]
     /// The per-category panels, each owning its own sections and refresh pass.
+    /// All are installed as child controllers; only the open one holds views.
     private var panelControllers: [VMSettingsCategory: any VMSettingsPanel] = [:]
+    /// The categories whose panels hold views built for the *current* VM — the
+    /// only ones with anything to paint. A VM switch empties it, so the next
+    /// drill-in rebuilds.
+    private var builtPanels: Set<VMSettingsCategory> = []
+    /// The panel currently in `formStack`, and the width constraint holding it
+    /// to the column, both dropped when it leaves.
+    private var installedPanel: VMSettingsCategory?
+    private var installedPanelWidth: NSLayoutConstraint?
     /// The open category, or `nil` for the overview.
     private(set) var selectedCategory: VMSettingsCategory?
-
-    // MARK: - Rendered-list snapshots (early-out keys)
 
     // MARK: - Init
 
@@ -85,6 +87,9 @@ final class VMSettingsViewController: NSViewController {
             systemSettings: systemSettings)
         super.init(nibName: nil, bundle: nil)
         panelContext.host = self
+        panelContext.overview.onCategoryResolved = { [weak self] category in
+            self?.repaint(category)
+        }
     }
 
     @available(*, unavailable)
@@ -105,7 +110,7 @@ final class VMSettingsViewController: NSViewController {
         // read-only flip re-enters `reconfigure` with the same VM, and ending a
         // rename there would commit a half-typed name.
         if instanceChanged {
-            panelControllers.values.forEach { $0.willRebind() }
+            livePanels.forEach { $0.willRebind() }
         }
         self.instance = instance
         self.viewModel = viewModel
@@ -114,25 +119,25 @@ final class VMSettingsViewController: NSViewController {
 
         guard isViewLoaded else { return }
 
-        if instanceChanged {
-            buildForm()
-            // Re-arm the model observation on the new instance: it is one-shot and
-            // re-registers only after it fires, so otherwise the loop stays bound
-            // to the previous instance. Only restart when already observing;
-            // creating it here early would skip the notification observer.
-            if modelObservation != nil {
-                restartModelObservation()
-            }
+        guard instanceChanged else {
+            apply()
+            return
         }
-        apply()
+        // `buildForm` returns to the overview through `show`, which applies.
+        buildForm()
+        // Re-arm the model observation on the new instance: it is one-shot and
+        // re-registers only after it fires, so otherwise the loop stays bound
+        // to the previous instance. Only restart when already observing;
+        // creating it here early would skip the notification observer.
+        if modelObservation != nil {
+            restartModelObservation()
+        }
+    }
 
-        if instanceChanged {
-            // The indicator is reused across VM switches, so without this re-arm
-            // only the first overflowing pane in a session would flash. Force
-            // layout so overflow is measured on the new form's real height.
-            view.layoutSubtreeIfNeeded()
-            scrollMoreIndicator?.rearmFlash()
-        }
+    /// The panels holding views built for the current VM — the only ones with
+    /// anything to paint or settle.
+    private var livePanels: [any VMSettingsPanel] {
+        builtPanels.compactMap { panelControllers[$0] }
     }
 
     // MARK: - Lifecycle
@@ -183,6 +188,10 @@ final class VMSettingsViewController: NSViewController {
 
         overviewVC.delegate = self
         addChild(overviewVC)
+        addPanelContent(overviewVC.view)
+        headerContent.addArrangedSubview(identityHeader)
+        identityHeader.widthAnchor.constraint(equalTo: headerContent.widthAnchor).isActive = true
+        identityHeader.setBackAction(target: self, action: #selector(backToOverview))
         installPanels()
 
         view = root
@@ -192,7 +201,7 @@ final class VMSettingsViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         panelContext.setDismissed(false)
-        panelControllers.values.forEach { $0.hostDidAppear() }
+        livePanels.forEach { $0.hostDidAppear() }
         if modelObservation == nil {
             restartModelObservation()
             NotificationCenter.default.addObserver(
@@ -231,7 +240,10 @@ final class VMSettingsViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         panelContext.setDismissed(true)
+        // Every controller, not only the live ones: a panel built for a VM the
+        // pane has since switched away from can still be holding a sheet open.
         panelControllers.values.forEach { $0.prepareForDisappearance() }
+        panelContext.overview.prepareForDisappearance()
         modelObservation?.cancel()
         modelObservation = nil
         NotificationCenter.default.removeObserver(
@@ -251,29 +263,13 @@ final class VMSettingsViewController: NSViewController {
 // MARK: - Form construction (per-instance structure)
 
 extension VMSettingsViewController {
-    /// Rebuilds the whole form for the current instance.
+    /// Returns the form to the current instance's overview, marking every panel
+    /// as needing a rebuild before it is shown again.
     ///
     /// Called on first load and whenever the bound instance changes.
     private func buildForm() {
-        formStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-
-        panels.removeAll()
-
-        identityHeader = VMIdentityHeaderView()
+        builtPanels.removeAll()
         overviewVC.rebuild(instance: instance)
-        addPanelContent(overviewVC.view)
-
-        for category in VMSettingsCategory.allCases {
-            guard let controller = panelControllers[category] else {
-                Self.logger.fault("No panel for category '\(category.rawValue, privacy: .public)'")
-                assertionFailure("No panel for category: \(category.rawValue)")
-                continue
-            }
-            controller.rebuild()
-            controller.view.isHidden = true
-            addPanelContent(controller.view)
-            panels[category] = controller.view
-        }
         // Through `show`, not by setting `selectedCategory`: the overview's own
         // visibility is written there and nowhere else, so a rebuild that only
         // cleared the category would leave the overview hidden from the previous
@@ -298,9 +294,12 @@ extension VMSettingsViewController {
     }
 
     #if DEBUG
-    /// The panel view for `category`, so a test can scope its search to one
-    /// category rather than the whole pane.
-    func panelForTesting(_ category: VMSettingsCategory) -> NSView? { panels[category] }
+    /// The open panel's view when `category` is the open one, so a test can
+    /// scope its search to that panel; `nil` for a category not drilled into.
+    func panelForTesting(_ category: VMSettingsCategory) -> NSView? {
+        guard installedPanel == category else { return nil }
+        return panelControllers[category]?.view
+    }
 
     /// The overview's card for `category`.
     func overviewCardForTesting(_ category: VMSettingsCategory) -> VMOverviewCardView? {
@@ -312,6 +311,12 @@ extension VMSettingsViewController {
     func settingsPanelForTesting(_ category: VMSettingsCategory) -> (any VMSettingsPanel)? {
         panelControllers[category]
     }
+
+    /// The pane's resolver, so a test awaits its reads instead of polling.
+    var overviewResolverForTesting: VMOverviewResolver { panelContext.overview }
+
+    /// What the cards are currently painted from.
+    var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
     #endif
 
     private func addPanelContent(_ content: NSView) {
@@ -338,50 +343,76 @@ extension VMSettingsViewController {
 
     private func show(_ category: VMSettingsCategory?) {
         // Settle an open field editor before its panel goes: AppKit doesn't
-        // resign first responder on hide, so a half-typed MAC address, display
-        // dimension or inline row title would keep focus inside a hidden panel,
-        // swallowing keystrokes and committing later out of context. Resigning
-        // commits it through the normal end-editing path.
+        // resign first responder when the view leaves, so a half-typed MAC
+        // address, display dimension or inline row title would keep focus in a
+        // panel the user can no longer see, swallowing keystrokes and
+        // committing later out of context. Resigning commits it through the
+        // normal end-editing path.
         if let window = view.window, let responder = window.firstResponder as? NSView,
             responder.isDescendant(of: view)
         {
             window.makeFirstResponder(nil)
         }
         selectedCategory = category
-        overviewVC.view.isHidden = category != nil
-        for (key, panel) in panels {
-            panel.isHidden = key != category
+        if installedPanel != category {
+            removeInstalledPanel()
+            if let category { installPanel(category) }
         }
-        refreshHeader()
-        view.layoutSubtreeIfNeeded()
+        overviewVC.view.isHidden = category != nil
+        apply()
         // A panel opens at its own top, not wherever the previous one was
         // scrolled to.
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        // The indicator is reused across drill-ins and VM switches, so without
+        // this re-arm only the first overflowing pane in a session would flash.
+        // Layout first, or the re-arm measures the outgoing surface's height
+        // and spends the flash on it — the tree holds the one pane on screen,
+        // so this is the only forced pass a navigation costs.
+        view.layoutSubtreeIfNeeded()
         scrollMoreIndicator?.rearmFlash()
     }
 
-    /// Paints the pinned header for the current state, installing it the first
-    /// time and on a VM switch.
+    /// Puts `category`'s panel in the form, building it first when it holds
+    /// nothing for the current VM.
+    private func installPanel(_ category: VMSettingsCategory) {
+        guard let controller = panelControllers[category] else {
+            Self.logger.fault("No panel for category '\(category.rawValue, privacy: .public)'")
+            assertionFailure("No panel for category: \(category.rawValue)")
+            return
+        }
+        if !builtPanels.contains(category) {
+            controller.rebuild()
+            builtPanels.insert(category)
+        }
+        formStack.addArrangedSubview(controller.view)
+        let width = controller.view.widthAnchor.constraint(equalTo: formStack.widthAnchor)
+        width.isActive = true
+        installedPanelWidth = width
+        installedPanel = category
+    }
+
+    /// Takes the open panel's view out of the form, leaving its controller — and
+    /// everything it has resolved — in place for the next drill-in.
+    private func removeInstalledPanel() {
+        guard let installedPanel, let controller = panelControllers[installedPanel] else { return }
+        installedPanelWidth?.isActive = false
+        installedPanelWidth = nil
+        formStack.removeArrangedSubview(controller.view)
+        controller.view.removeFromSuperview()
+        self.installedPanel = nil
+    }
+
+    /// Paints the pinned header for the current state.
     ///
     /// One header serves both states, so a drill-in reconfigures it in place
     /// rather than swapping views.
     private func refreshHeader() {
-        if headerContent.arrangedSubviews.first !== identityHeader {
-            headerContent.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            headerContent.addArrangedSubview(identityHeader)
-            identityHeader.widthAnchor.constraint(equalTo: headerContent.widthAnchor)
-                .isActive = true
-            identityHeader.setBackAction(target: self, action: #selector(backToOverview))
-            // The boot disk's capacity is read here and nowhere else, so the
-            // Storage card repaints when that read lands rather than waiting for
-            // the next model change.
-            identityHeader.onBootDiskCapacityResolved = { [weak self] in self?.refreshOverview() }
-        }
         let chrome = selectedCategory.flatMap { panelControllers[$0]?.chrome }
         identityHeader.configure(
             with: instance,
             mode: selectedCategory.map { .category($0.title) } ?? .identity,
+            bootDiskBytes: panelContext.overview.resolved.bootDiskBytes,
             leadingAccessories: chrome?.leading ?? [],
             trailingAccessories: chrome?.trailing ?? [])
     }
@@ -390,30 +421,39 @@ extension VMSettingsViewController {
 // MARK: - apply() and per-section refresh
 
 extension VMSettingsViewController {
-    /// Idempotently refreshes all mutable chrome from the model.
+    /// Idempotently refreshes the visible surface from the model: the open
+    /// panel, or the overview's cards — never both, and never a panel the user
+    /// has not drilled into.
     private func apply() {
         guard isViewLoaded else { return }
-        panelControllers.values.forEach { $0.refresh() }
-        // After the panels, so the header and the cards state what the
-        // refreshers above just resolved — the open panel's chrome among it —
-        // and the header first, because the Storage card reads the boot-disk
-        // figure the header re-keys here: on the pass a VM's boot disk changes,
-        // the other order pairs the new disk's label with the old one's size.
+        panelContext.overview.refresh()
+        if let selectedCategory, builtPanels.contains(selectedCategory) {
+            panelControllers[selectedCategory]?.refresh()
+        }
+        // After the panel, so the header states what its chrome just resolved.
         refreshHeader()
-        refreshOverview()
+        if selectedCategory == nil { refreshOverview() }
     }
 
-    /// Paints the overview cards from the same pass that refreshed the panels.
-    ///
-    /// Each panel adds what only it resolved; the shell holds no per-category
-    /// state of its own to state here.
     private func refreshOverview() {
-        var resolved = VMOverviewResolved()
-        resolved.bootDiskBytes = identityHeader.bootDiskCapacityBytes
-        for panel in panelControllers.values {
-            panel.contribute(to: &resolved)
+        overviewVC.configure(
+            instance: instance, isReadOnly: isReadOnly,
+            resolved: panelContext.overview.resolved)
+    }
+
+    /// Repaints the one surface an async read moved, rather than the whole pane.
+    private func repaint(_ category: VMSettingsCategory) {
+        guard isViewLoaded else { return }
+        if selectedCategory == category, builtPanels.contains(category) {
+            panelControllers[category]?.refresh()
         }
-        overviewVC.configure(instance: instance, isReadOnly: isReadOnly, resolved: resolved)
+        // The facts line carries the boot disk's capacity, so the header follows
+        // the Storage read in both states.
+        if category == .storage { refreshHeader() }
+        guard selectedCategory == nil else { return }
+        overviewVC.configureCard(
+            category, instance: instance, isReadOnly: isReadOnly,
+            resolved: panelContext.overview.resolved)
     }
 }
 
@@ -484,7 +524,8 @@ extension VMSettingsViewController {
     #endif
 
     @objc private func appDidBecomeActive() {
-        panelControllers.values.forEach { $0.hostDidBecomeActive() }
+        panelContext.overview.rereadMicPermission()
+        livePanels.forEach { $0.hostDidBecomeActive() }
         apply()
     }
 }
@@ -524,10 +565,6 @@ extension VMSettingsViewController: VMSettingsPanelHost {
         _ panel: any VMSettingsPanel, setToggle toggle: VMOverviewToggle, to isOn: Bool
     ) {
         apply(toggle, to: isOn)
-    }
-
-    func settingsPanelRequestsFullRefresh() {
-        apply()
     }
 
     /// The one dispatcher for every mirrored toggle, whichever surface flipped.

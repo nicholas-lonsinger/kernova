@@ -40,16 +40,17 @@ struct ProcessEntitlementReader: EntitlementReading {
 /// signing omits `com.apple.vm.networking` so profile-less builds run — see
 /// docs/BUILD.md "Signing identity".
 struct EntitlementService: Sendable {
-    private let reader: any EntitlementReading
-
     /// The process-wide instance over the real signature reader.
     @MainActor static let shared = EntitlementService()
 
-    init(reader: any EntitlementReading = ProcessEntitlementReader()) {
-        self.reader = reader
-    }
-
     /// Whether VZ networking beyond NAT — bridged, host-only, and app-managed
     /// vmnet networks — is authorized (`com.apple.vm.networking`).
-    var hasVMNetworking: Bool { reader.hasEntitlement("com.apple.vm.networking") }
+    ///
+    /// Resolved once: the answer is a property of the running process's
+    /// signature, which cannot change under it.
+    let hasVMNetworking: Bool
+
+    init(reader: any EntitlementReading = ProcessEntitlementReader()) {
+        hasVMNetworking = reader.hasEntitlement("com.apple.vm.networking")
+    }
 }

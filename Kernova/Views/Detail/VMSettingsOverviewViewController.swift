@@ -72,20 +72,28 @@ final class VMSettingsOverviewViewController: NSViewController {
     /// Paints every card from the model.
     func configure(instance: VMInstance, isReadOnly: Bool, resolved: VMOverviewResolved) {
         rebuild(instance: instance)
-        for (category, card) in cards {
-            card.configure(
-                rows: VMOverviewSummary.rows(
-                    for: category, instance: instance, resolved: resolved),
-                toggles: VMOverviewSummary.toggles(for: category, instance: instance),
-                note: VMOverviewSummary.note(for: category, instance: instance),
-                action: VMOverviewSummary.action(for: category, resolved: resolved),
-                headerSummary: VMOverviewSummary.headerSummary(
-                    for: category, instance: instance, resolved: resolved),
-                // The claim is scoped to the rows that actually lock, so it
-                // stands beside the live controls on the same card.
-                showsLockHint: isReadOnly && category.lockHint != nil,
-                warning: resolved.warnings[category])
+        for category in cards.keys {
+            configureCard(category, instance: instance, isReadOnly: isReadOnly, resolved: resolved)
         }
+    }
+
+    /// Paints one card, for an async read that moved only that category's value.
+    func configureCard(
+        _ category: VMSettingsCategory, instance: VMInstance, isReadOnly: Bool,
+        resolved: VMOverviewResolved
+    ) {
+        guard let card = cards[category] else { return }
+        card.configure(
+            rows: VMOverviewSummary.rows(for: category, instance: instance, resolved: resolved),
+            toggles: VMOverviewSummary.toggles(for: category, instance: instance),
+            note: VMOverviewSummary.note(for: category, instance: instance),
+            action: VMOverviewSummary.action(for: category, resolved: resolved),
+            headerSummary: VMOverviewSummary.headerSummary(
+                for: category, instance: instance, resolved: resolved),
+            // The claim is scoped to the rows that actually lock, so it stands
+            // beside the live controls on the same card.
+            showsLockHint: isReadOnly && category.lockHint != nil,
+            warning: resolved.warnings[category])
     }
 
     #if DEBUG

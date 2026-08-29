@@ -30,7 +30,7 @@ struct VMSettingsNetworkPanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .network
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category,
@@ -77,6 +77,15 @@ struct VMSettingsNetworkPanelTests {
         return (vc, instance)
     }
 
+    /// Opens the Mode picker the way clicking it does, which is what puts the
+    /// host's bridgeable interfaces on the menu — nothing else enumerates them.
+    private func openModeMenu(in vc: VMSettingsViewController) throws -> NSPopUpButton {
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let menu = try #require(popUp.menu)
+        menu.delegate?.menuNeedsUpdate?(menu)
+        return popUp
+    }
+
     // MARK: - IP Address row
 
     @Test("An entitled Shared VM shows its reserved address and takes a reservation slot")
@@ -110,12 +119,13 @@ struct VMSettingsNetworkPanelTests {
         // The address becomes derivable once the network materializes — which
         // the row kicked off itself.
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        await networkPanel(in: vc)?.ipAddressMaterializeTaskForTesting?.value
+        await vc.overviewResolverForTesting.ipMaterializeTaskForTesting?.value
 
         #expect(vmnet.materializeCount == 1)
         #expect(visibleLabel("192.168.64.9", in: vc.view))
         // The Network card states the same address: nothing else re-renders it
-        // for an idle stopped VM, so the materialization has to paint both.
+        // for an idle stopped VM, so the materialization has to reach both.
+        vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
         #expect(findLabel(withText: "192.168.64.9", in: card) != nil)
     }
@@ -126,7 +136,7 @@ struct VMSettingsNetworkPanelTests {
         vmnet.materializeFails = true
         let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
 
-        await networkPanel(in: vc)?.ipAddressMaterializeTaskForTesting?.value
+        await vc.overviewResolverForTesting.ipMaterializeTaskForTesting?.value
 
         #expect(visibleLabel("—", in: vc.view))
         #expect(vmnet.materializeCount == 1)
@@ -172,7 +182,7 @@ struct VMSettingsNetworkPanelTests {
             interfaces: MockBridgedInterfaceProvider(
                 available: [Self.wiFi, Self.ethernet], primary: "en0"))
 
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let popUp = try openModeMenu(in: vc)
         #expect(
             popUp.itemTitles == [
                 "Shared Network", "Host Only", "None", "Bridged", "Automatic", "Wi-Fi (en0)",
@@ -235,7 +245,7 @@ struct VMSettingsNetworkPanelTests {
     func emptyInterfaceListShowsDisabledPlaceholder() throws {
         let (vc, _) = makeNetworkController()
 
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let popUp = try openModeMenu(in: vc)
         let placeholder = try #require(
             popUp.menu?.items.first { $0.title == "No Bridgeable Interfaces" })
         #expect(!placeholder.isEnabled)
@@ -243,18 +253,35 @@ struct VMSettingsNetworkPanelTests {
         #expect(popUp.itemTitles.contains("Automatic"))
     }
 
-    @Test("The interface list is rebuilt each time the menu opens")
+    @Test("The interface list is enumerated when the menu opens, and only then")
     func menuRebuildPicksUpNewInterfaces() throws {
         let provider = MockBridgedInterfaceProvider(available: [Self.wiFi])
         let (vc, _) = makeNetworkController(interfaces: provider)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(!popUp.itemTitles.contains("Ethernet (en1)"))
+        // A picker nobody has opened carries the fixed entries alone.
+        #expect(popUp.itemTitles == ["Shared Network", "Host Only", "None", "Bridged", "Automatic"])
 
         provider.available = [Self.wiFi, Self.ethernet]
         let menu = try #require(popUp.menu)
         menu.delegate?.menuNeedsUpdate?(menu)
 
+        #expect(popUp.itemTitles.contains("Wi-Fi (en0)"))
         #expect(popUp.itemTitles.contains("Ethernet (en1)"))
+    }
+
+    @Test("A bridged VM names its interface before the picker has ever been opened")
+    func unopenedPickerStillNamesTheBridgedInterface() throws {
+        let (vc, _) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en0",
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
+
+        // The row and the card both read the picker's title, so the menu
+        // carries an entry for the current choice without an enumeration.
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        #expect(popUp.titleOfSelectedItem == "Wi-Fi (en0)")
+        vc.showOverview()
+        let card = try #require(vc.overviewCardForTesting(.network))
+        #expect(findLabel(withText: "Wi-Fi (en0)", in: card) != nil)
     }
 
     @Test("Choosing None writes the mode, hides the MAC row, and says there's no device")
@@ -284,7 +311,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(
                 available: [Self.wiFi, Self.ethernet], primary: "en0"))
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let popUp = try openModeMenu(in: vc)
 
         popUp.selectItem(withTitle: "Ethernet (en1)")
         popUp.sendAction(popUp.action, to: popUp.target)
@@ -292,6 +319,11 @@ struct VMSettingsNetworkPanelTests {
         #expect(instance.configuration.networkEnabled == true)
         #expect(instance.configuration.networkMode == .bridged)
         #expect(instance.configuration.bridgedInterfaceIdentifier == "en1")
+        // The pick's own rebuild keeps the interface a live entry: an interface
+        // the user just chose from the open picker is not unavailable.
+        let picked = try #require(popUp.menu?.items.first { $0.title == "Ethernet (en1)" })
+        #expect(picked.isEnabled)
+        #expect(popUp.titleOfSelectedItem == "Ethernet (en1)")
     }
 
     @Test("Choosing Automatic clears the persisted interface")
@@ -373,7 +405,7 @@ struct VMSettingsNetworkPanelTests {
         let (bridgedVC, bridgedInstance) = makeNetworkController(
             networkEnabled: false, macAddress: nil,
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
-        let bridgedPopUp = try #require(settingsNetworkModePopUp(in: bridgedVC.view))
+        let bridgedPopUp = try openModeMenu(in: bridgedVC)
 
         bridgedPopUp.selectItem(withTitle: "Wi-Fi (en0)")
         bridgedPopUp.sendAction(bridgedPopUp.action, to: bridgedPopUp.target)
@@ -687,7 +719,7 @@ struct VMSettingsNetworkPanelTests {
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
             isReadOnly: true, status: .running)
 
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let popUp = try openModeMenu(in: vc)
         #expect(popUp.isEnabled)
         #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == false)
         #expect(popUp.menu?.items.first { $0.title == "Shared Network" }?.isEnabled == true)
@@ -716,7 +748,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
             isReadOnly: true, status: .running)
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let popUp = try openModeMenu(in: vc)
 
         popUp.selectItem(withTitle: "Wi-Fi (en0)")
         popUp.sendAction(popUp.action, to: popUp.target)

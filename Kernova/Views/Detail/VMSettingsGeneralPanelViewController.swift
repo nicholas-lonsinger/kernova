@@ -54,10 +54,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         refreshStartup()
     }
 
-    func contribute(to resolved: inout VMOverviewResolved) {
-        resolved.warnings[.general] = renderedAutoStartWarning
-    }
-
     /// Ends an in-flight name rename for the outgoing instance while it is still
     /// bound: a rebuild resets the session flags without commit/cancel, which
     /// would drop the typed text, strand `activeRename` at the old id
@@ -251,31 +247,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     // MARK: Startup
 
-    /// How many macOS guests macOS itself will run at the same time.
-    ///
-    /// The cap is the platform's, enforced by VZ — a start past it fails, which
-    /// is what ``VMLibraryViewModel/explainedFailure(for:on:)`` explains after
-    /// the fact. Here it is read ahead of time, off the marked set.
-    static let concurrentMacOSGuestLimit = 2
-
     /// Caption under the Startup card: the launch pass walks the library in
     /// sidebar order, so that is the order the marked VMs come up in.
     static let autoStartOrderCaption =
         "Virtual machines start in the order they appear in the sidebar."
-
-    /// Warning for a marked set macOS cannot run at once, or `nil` when it fits.
-    ///
-    /// Shown only on a macOS guest's own pane: it is the guests past the cap
-    /// that fail, and the pane a user is looking at is the one they can act on.
-    /// Linux guests do not count against the macOS cap and never see it.
-    static func autoStartCapacityWarning(
-        isMacOSGuest: Bool, markedMacOSVMCount: Int
-    ) -> String? {
-        guard isMacOSGuest, markedMacOSVMCount > concurrentMacOSGuestLimit else { return nil }
-        return "\(markedMacOSVMCount) macOS virtual machines are set to start when Kernova opens. "
-            + "macOS allows at most two macOS virtual machines to run at once, "
-            + "so the ones after the first two won't start."
-    }
 
     /// The Startup card's two toggles, their captions, and the capacity banner's
     /// container.
@@ -436,9 +411,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         autoStartSwitch.state = instance.configuration.startsAutomaticallyOnLaunch ? .on : .off
         refreshEphemeralMode()
 
-        let message = Self.autoStartCapacityWarning(
-            isMacOSGuest: instance.configuration.guestOS == .macOS,
-            markedMacOSVMCount: viewModel.macOSVMNamesMarkedForAutoStart.count)
+        let message = resolved.warnings[.general]
         guard message != renderedAutoStartWarning else { return }
         renderedAutoStartWarning = message
         autoStartWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }

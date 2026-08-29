@@ -16,16 +16,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private let portForwardingSheetPresenter = SheetPresenter()
     private let panelStack = NSStackView()
 
-    /// What the IP address row currently shows, `nil` while it shows nothing —
-    /// the Network card states the same value without a second resolution.
-    private var resolvedIPAddress: String?
-    /// Whether port forwarding applies, as `refreshNetwork()` decided it.
-    private var networkForwardsPorts = false
-
     /// Injected host state, read through the context.
     private var bridgedInterfaces: any BridgedInterfaceProviding { context.bridgedInterfaces }
     private var entitlements: EntitlementService { context.entitlements }
-    private var vmnetNetworks: any VmnetNetworkProviding { context.vmnetNetworks }
 
     private var networkModePopUp = NSPopUpButton()
     /// The Network Mode row, dimmed on the same terms its header hint is shown.
@@ -43,7 +36,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// What the copy button copies — the reserved address, `nil` while the
     /// row shows anything else.
     private var ipAddressCopyValue: String?
-    private var ipAddressMaterializeTask: Task<Void, Never>?
     /// The Port forwarding block — the rule rows and the Add Rule row — hidden
     /// wherever forwarding cannot apply.
     private var portForwardingRow: GroupedFormCollapsibleRow?
@@ -57,9 +49,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The duplicate-MAC banner's rendered message, `nil` when no banner is
     /// shown, so a pass that changed nothing about it skips the rebuild.
     private var renderedNetworkMACWarning: String?
-    /// The Mode menu's rendered selection, so an `apply()` pass that changed
-    /// nothing about networking skips a rebuild — which enumerates the host's
-    /// bridgeable interfaces and queries the process signature.
+    /// The Mode menu's rendered selection, so a `refresh()` pass that changed
+    /// nothing about networking skips a rebuild.
     private var renderedNetworkChoice: NetworkModeChoice?
     /// The rules (and lock state) the Port forwarding rows were last built for,
     /// so a rebuild happens exactly when one of them changed.
@@ -67,6 +58,11 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The live-switch state the Mode menu was last built for; a change rebuilds
     /// so the None entry's enablement tracks it.
     private var renderedNetworkLiveSwitchable = false
+    /// The host's bridgeable interfaces as the last picker open found them,
+    /// `nil` until one has. Held so a rebuild triggered by the mode the user
+    /// just picked from that list still knows the list — rebuilding blind would
+    /// render their own choice as an unavailable entry.
+    private var enumeratedInterfaces: [BridgedInterface]?
 
     /// Value snapshot of the Port forwarding rows' rendered appearance.
     private struct RenderedPortForwardingRows: Equatable {
@@ -74,16 +70,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let controlsEnabled: Bool
     }
     // MARK: Network
-
-    /// What a Mode menu item selects, carried as the item's `representedObject`.
-    ///
-    /// `bridged`'s payload is the host interface identifier, `nil` for Automatic.
-    private enum NetworkModeChoice: Equatable {
-        case shared
-        case hostOnly
-        case none
-        case bridged(String?)
-    }
 
     private func buildNetworkSection() -> NSView {
         // Deliberately outside `lockableRows`: the picker is the live-switch
@@ -179,82 +165,28 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         return row
     }
 
-    /// Renders the IP address row for the current mode, kicking a
-    /// materialization when the address is not yet derivable — the network's
-    /// addressing is only known once it has materialized, and the reservation
-    /// is meant to be shown even while the VM is stopped.
+    /// Renders the IP address row from the address the pane resolved — absence
+    /// over a visible-but-empty control wherever nothing assigns one.
     private func refreshIPAddressRow() {
-        let config = instance.configuration
-        resolvedIPAddress = nil
-        guard config.networkEnabled else {
-            ipAddressRow?.isHidden = true
-            return
-        }
-
-        let mode = config.networkMode
         ipAddressCopyValue = nil
-        switch mode {
-        case .bridged:
+        switch resolved.ipAddress {
+        case .unavailable:
+            ipAddressRow?.isHidden = true
+        case .externallyAssigned:
             ipAddressRow?.isHidden = false
             ipAddressCopyButton?.isHidden = true
             ipAddressValueLabel?.stringValue = "Assigned by your network"
-            resolvedIPAddress = "Assigned by your network"
-        case .shared, .hostOnly:
-            guard entitlements.hasVMNetworking, let mac = config.macAddress,
-                let kind = VmnetNetworkKind(mode: mode)
-            else {
-                // Without the entitlement (or a MAC to key on) there is no
-                // reservation machinery behind the row — absence over a
-                // visible-but-empty control.
-                ipAddressRow?.isHidden = true
-                return
-            }
+        case .pending:
             ipAddressRow?.isHidden = false
-            vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)
-            if let address = vmnetNetworks.reservedAddress(for: mac, kind: kind) {
-                ipAddressCopyValue = address
-                ipAddressCopyButton?.isHidden = false
-                ipAddressValueLabel?.stringValue = address
-                resolvedIPAddress = address
-            } else {
-                ipAddressCopyButton?.isHidden = true
-                ipAddressValueLabel?.stringValue = "—"
-                materializeForIPAddressDisplay(kind)
-            }
+            ipAddressCopyButton?.isHidden = true
+            ipAddressValueLabel?.stringValue = "—"
+        case .reserved(let address):
+            ipAddressRow?.isHidden = false
+            ipAddressCopyValue = address
+            ipAddressCopyButton?.isHidden = false
+            ipAddressValueLabel?.stringValue = address
         }
     }
-
-    /// Renders a newly-resolved address on both surfaces that state it.
-    ///
-    /// The panel row alone is not enough: the Network card reads the resolved
-    /// address too, and `apply()` — which paints the cards — may never run again
-    /// for an idle stopped VM, leaving the card without the row for good.
-    private func refreshResolvedIPAddress() {
-        refreshIPAddressRow()
-        requestFullRefresh()
-    }
-
-    /// Materializes `kind`'s network off-main so the pending IP address row
-    /// can fill in; re-renders on success. Single-flight — every refresh of a
-    /// still-pending row lands here, and one materialization serves them all.
-    private func materializeForIPAddressDisplay(_ kind: VmnetNetworkKind) {
-        guard ipAddressMaterializeTask == nil else { return }
-        let networks = vmnetNetworks
-        ipAddressMaterializeTask = Task { [weak self] in
-            let materialized = await networks.materializeNetwork(for: kind)
-            // Re-render before clearing the single-flight token: a slot the
-            // materialized network can't serve (subnet capacity, pending
-            // reservation) leaves the address underivable, and re-arming from
-            // that refresh would spin materialize→refresh forever.
-            if materialized { self?.refreshResolvedIPAddress() }
-            self?.ipAddressMaterializeTask = nil
-        }
-    }
-
-    #if DEBUG
-    /// The in-flight IP-row materialization, for event-driven test waits.
-    var ipAddressMaterializeTaskForTesting: Task<Void, Never>? { ipAddressMaterializeTask }
-    #endif
 
     @objc private func copyIPAddressTapped() {
         guard let value = ipAddressCopyValue else { return }
@@ -438,7 +370,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private func writePortForwardingRules(_ rules: [PortForwardingRule]) {
         viewModel.updateConfiguration(of: instance) { $0.portForwardingRules = rules }
         // The rows are built from the configuration, so re-render with the
-        // write rather than waiting for the model-observation pass.
+        // write rather than waiting for the model-observation pass — and the
+        // card counts the same rules.
+        refreshResolved()
         refreshPortForwardingRows()
     }
 
@@ -466,13 +400,18 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     /// Rebuilds the Mode menu and selects the entry matching the configuration.
     ///
-    /// The bridgeable-interface list is live host state, so the menu is rebuilt
-    /// from scratch each time it opens rather than cached at build time.
+    /// The bridgeable list comes from ``enumeratedInterfaces``, which only
+    /// ``menuNeedsUpdate(_:)`` fills in — an enumeration is host state that goes
+    /// stale, so it runs when the picker opens and nowhere else. Before the
+    /// first open the menu still carries every fixed entry plus one standing for
+    /// the current choice, which is what the row and the card read the mode's
+    /// title from.
     private func rebuildNetworkModeMenu() {
+        let interfaces = enumeratedInterfaces
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
         let liveSwitchable = networkModeIsLiveSwitchable
-        let current = currentNetworkChoice
+        let current = NetworkModeChoice(instance.configuration)
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
         if entitlements.hasVMNetworking {
             addNetworkModeItem("Host Only", choice: .hostOnly, to: menu)
@@ -492,24 +431,26 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         if entitlements.hasVMNetworking {
             menu.addItem(.sectionHeader(title: "Bridged"))
             addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
-            let interfaces = bridgedInterfaces.interfaces()
-            if interfaces.isEmpty {
-                addNetworkModePlaceholder("No Bridgeable Interfaces", to: menu)
+            if let interfaces {
+                if interfaces.isEmpty {
+                    addNetworkModePlaceholder("No Bridgeable Interfaces", to: menu)
+                }
+                for interface in interfaces {
+                    addNetworkModeItem(
+                        NetworkModeChoice.interfaceTitle(interface),
+                        choice: .bridged(interface.identifier), to: menu)
+                }
             }
-            for interface in interfaces {
-                addNetworkModeItem(
-                    Self.networkInterfaceTitle(interface),
-                    choice: .bridged(interface.identifier), to: menu)
-            }
-            // Keep an interface the host isn't offering right now on the list, so
-            // the picker shows what the VM is actually set to — only while it IS
-            // what the VM is set to; an identifier merely remembered from an
-            // earlier bridged choice adds no entry.
+            // Keep the interface the VM is bridged over on the list when the
+            // entries above don't already carry it — the whole of the Bridged
+            // list until the picker is first opened, and after that only an
+            // interface the host has stopped offering. An identifier merely
+            // remembered from an earlier bridged choice adds no entry.
             if case .bridged(.some(let persisted)) = current,
-                !interfaces.contains(where: { $0.identifier == persisted })
+                !(interfaces ?? []).contains(where: { $0.identifier == persisted })
             {
                 addNetworkModeItem(
-                    "\(persisted) (unavailable)", choice: .bridged(persisted),
+                    resolved.networkModeTitle ?? persisted, choice: .bridged(persisted),
                     to: menu, enabled: false)
             }
         } else if case .bridged = current {
@@ -542,29 +483,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         menu.addItem(item)
     }
 
-    /// How one bridgeable interface reads in the picker — `Wi-Fi (en0)`, or the
-    /// bare identifier when the host names it nothing else.
-    private static func networkInterfaceTitle(_ interface: BridgedInterface) -> String {
-        guard interface.localizedDisplayName != interface.identifier else { return interface.identifier }
-        return "\(interface.localizedDisplayName) (\(interface.identifier))"
-    }
-
-    /// The entry standing for the current configuration.
-    private var currentNetworkChoice: NetworkModeChoice {
-        let config = instance.configuration
-        guard config.networkEnabled else { return .none }
-        switch config.networkMode {
-        case .shared:
-            return .shared
-        case .hostOnly:
-            return .hostOnly
-        case .bridged:
-            return .bridged(config.bridgedInterfaceIdentifier)
-        }
-    }
-
     private func selectNetworkModeItem() {
-        let choice = currentNetworkChoice
+        let choice = NetworkModeChoice(instance.configuration)
         guard
             let item = networkModePopUp.menu?.items.first(where: {
                 $0.representedObject as? NetworkModeChoice == choice
@@ -581,7 +501,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // `apply()` just showed every lock hint for the read-only pane; a live
         // picker makes this section's hint a false claim, so re-hide it.
         networkLockHint?.isHidden = modeEditable
-        if currentNetworkChoice != renderedNetworkChoice
+        if NetworkModeChoice(instance.configuration) != renderedNetworkChoice
             || liveSwitchable != renderedNetworkLiveSwitchable
         {
             rebuildNetworkModeMenu()
@@ -590,17 +510,10 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // to a caption saying so.
         let hasDevice = instance.configuration.networkEnabled
         refreshMACAddressRow()
-        refreshMACAddressWarning(hasDevice: hasDevice)
+        refreshMACAddressWarning()
         networkNoDeviceCaption.isHidden = hasDevice
         refreshIPAddressRow()
-        // Rules ride the app-managed shared network, and reach the guest at the
-        // address its MAC reserves: an unentitled build attaches system NAT,
-        // which forwards nothing, the other modes carry no forwarding at all,
-        // and without a MAC there is no reservation to forward to.
-        let forwards =
-            hasDevice && instance.configuration.networkMode == .shared
-            && entitlements.hasVMNetworking && instance.configuration.macAddress != nil
-        networkForwardsPorts = forwards
+        let forwards = resolved.portForwardingRuleCount != nil
         portForwardingRow?.isHidden = !forwards
         if forwards { refreshPortForwardingRows() }
     }
@@ -610,20 +523,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// Import, load and reconcile admit a bundle whatever address it arrives
     /// with, so the pair is visible here rather than refused at the door — the
     /// address stays editable, and Generate above the banner moves this VM off
-    /// it. Shown wherever the MAC row is: an address is held while networking
-    /// is off, but nothing shows it there to contradict.
-    private func refreshMACAddressWarning(hasDevice: Bool) {
-        let message: String?
-        if hasDevice, instance.configuration.macAddress != nil {
-            let names = viewModel.vmNamesSharingMACAddress(with: instance)
-            message =
-                names.isEmpty
-                ? nil
-                : "This MAC address is also used by \(names.map { "“\($0)”" }.joined(separator: ", ")). "
-                    + "Each virtual machine needs its own."
-        } else {
-            message = nil
-        }
+    /// it.
+    private func refreshMACAddressWarning() {
+        let message = resolved.warnings[.network]
         guard message != renderedNetworkMACWarning else { return }
         renderedNetworkMACWarning = message
         networkWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -674,7 +576,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // duplicate with an alert about an address no longer in play.
         macAddressField.abortEditing()
         writeConfig { $0.macAddress = VZMACAddress.randomLocallyAdministered().string }
-        refreshMACAddressRow()
+        refreshResolved()
+        refreshNetwork()
     }
 
     @objc private func networkModeChanged() {
@@ -712,6 +615,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         if !accepted { rebuildNetworkModeMenu() }
         // The write flips the card's row visibility; refresh in case the value was
         // already what the model held.
+        refreshResolved()
         refreshNetwork()
     }
 
@@ -767,14 +671,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         refreshNetwork()
     }
 
-    func contribute(to resolved: inout VMOverviewResolved) {
-        resolved.networkModeTitle = networkModePopUp.titleOfSelectedItem
-        resolved.ipAddress = resolvedIPAddress
-        resolved.portForwardingRuleCount =
-            networkForwardsPorts ? instance.configuration.portForwardingRules.count : nil
-        resolved.warnings[.network] = renderedNetworkMACWarning
-    }
-
     func prepareForDisappearance() {
         if portForwardingSheetPresenter.isShown { portForwardingSheetPresenter.close() }
     }
@@ -801,9 +697,11 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 // MARK: - NSMenuDelegate
 
 extension VMSettingsNetworkPanelViewController: NSMenuDelegate {
-    /// Re-reads the host's bridgeable interfaces each time the Mode picker opens.
+    /// Re-reads the host's bridgeable interfaces each time the Mode picker
+    /// opens — the one place that enumeration runs.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === networkModePopUp.menu else { return }
+        enumeratedInterfaces = bridgedInterfaces.interfaces()
         rebuildNetworkModeMenu()
     }
 }

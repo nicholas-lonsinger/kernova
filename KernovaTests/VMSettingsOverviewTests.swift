@@ -149,14 +149,16 @@ struct VMSettingsOverviewTests {
     func drillInAndBack() throws {
         let (vc, _, _) = makeController()
         let storageCard = try card(.storage, in: vc)
-        let panel = try #require(vc.panelForTesting(.storage))
+        // The overview builds no panel, so there is nothing of Storage's in the
+        // form until the drill-in.
+        #expect(vc.panelForTesting(.storage) == nil)
         #expect(isVisible(storageCard, within: vc.view))
-        #expect(!isVisible(panel, within: vc.view))
 
         let show = try #require(showButton(.storage, in: storageCard))
         show.performClick(nil)
 
         #expect(vc.selectedCategory == .storage)
+        let panel = try #require(vc.panelForTesting(.storage))
         #expect(isVisible(panel, within: vc.view))
         #expect(!isVisible(storageCard, within: vc.view))
 
@@ -165,7 +167,34 @@ struct VMSettingsOverviewTests {
 
         #expect(vc.selectedCategory == nil)
         #expect(isVisible(storageCard, within: vc.view))
-        #expect(!isVisible(panel, within: vc.view))
+        // The panel's view leaves the form entirely; its controller — and
+        // everything it resolved — stays for the next drill-in.
+        #expect(panel.superview == nil)
+        #expect(vc.settingsPanelForTesting(.storage) != nil)
+    }
+
+    @Test("A panel is built once per VM: re-opening reuses it, a VM switch rebuilds it")
+    func panelsAreBuiltOnceUntilTheVMMoves() throws {
+        let (vc, _, viewModel) = makeController()
+        /// A section built by the last `rebuild()`, which a rebuild replaces.
+        func firstSection() throws -> NSView {
+            try #require(vc.panelForTesting(.system)?.subviews.first)
+        }
+
+        vc.showCategory(.system)
+        let built = try firstSection()
+        vc.showOverview()
+        vc.showCategory(.system)
+        #expect(try firstSection() === built)
+
+        vc.showOverview()
+        vc.reconfigure(
+            instance: makeInstance(guestOS: .macOS), viewModel: viewModel, isReadOnly: false)
+        vc.showCategory(.system)
+        // The VM under it moved, so the drill-in rebuilt the panel for the new
+        // one rather than showing the previous VM's rows.
+        #expect(try firstSection() !== built)
+        #expect(findLabel(withText: "CPU cores", in: try firstSection()) != nil)
     }
 
     @Test("The open category survives a read-only flip and resets on a VM switch")
@@ -186,8 +215,7 @@ struct VMSettingsOverviewTests {
         let card = try #require(vc.overviewCardForTesting(.network))
         #expect(isVisible(card, within: vc.view))
         for category in VMSettingsCategory.allCases {
-            let panel = try #require(vc.panelForTesting(category))
-            #expect(!isVisible(panel, within: vc.view))
+            #expect(vc.panelForTesting(category) == nil)
         }
     }
 
@@ -290,6 +318,7 @@ struct VMSettingsOverviewTests {
 
         #expect(instance.configuration.startsAutomaticallyOnLaunch == true)
         reapply(vc, (instance, viewModel))
+        vc.showCategory(.general)
         let panelSwitch = try #require(
             firstSubview(NSSwitch.self, in: vc.view) {
                 $0.action.map(NSStringFromSelector) == "autoStartToggled"
@@ -302,6 +331,7 @@ struct VMSettingsOverviewTests {
         let (vc, instance, viewModel) = makeController()
         instance.configuration.clipboardSharingEnabled = true
         reapply(vc, (instance, viewModel))
+        vc.showCategory(.sharing)
         let panelToggle = try #require(
             firstSubview(NSSwitch.self, in: vc.view) {
                 $0.action.map(NSStringFromSelector) == "clipboardPassthroughToggled"
@@ -314,6 +344,7 @@ struct VMSettingsOverviewTests {
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
         #expect(panelToggle.state == .off)
         // The card reads the model, so its line never claimed otherwise.
+        vc.showOverview()
         #expect(
             summaryLine(in: try card(.sharing, in: vc))
                 == "Passthrough off \u{00B7} No shared folders")
@@ -379,6 +410,7 @@ struct VMSettingsOverviewTests {
         #expect(hint.toolTip == "Folders editable when stopped")
         #expect(findLabel(withText: "Folders editable when stopped", in: sharing) != nil)
         // The panel's own Shared Directories hint still states the full text.
+        vc.showCategory(.sharing)
         let panel = try #require(vc.panelForTesting(.sharing))
         #expect(settingsLockHints(in: panel).contains { !$0.isHidden })
     }
@@ -426,10 +458,7 @@ struct VMSettingsOverviewTests {
         // A stopped VM has no address yet, so nothing offers to copy one.
         #expect(copyButton(in: network) == nil)
 
-        let panel = try #require(vc.settingsPanelForTesting(.network))
-        var resolved = VMOverviewResolved()
-        panel.contribute(to: &resolved)
-        let mode = try #require(resolved.networkModeTitle)
+        let mode = try #require(vc.resolvedForTesting.networkModeTitle)
         #expect(findLabel(withText: mode, in: network) != nil)
     }
 
@@ -530,7 +559,7 @@ struct VMSettingsOverviewTests {
         #expect(label.lineBreakMode == .byTruncatingTail)
     }
 
-    @Test("The snapshots' footprint is dropped with the set it described")
+    @Test("The snapshots' footprint is never claimed for a set it doesn't cover")
     func snapshotFootprintNeverOutlivesItsSnapshots() async throws {
         let (vc, instance, viewModel) = makeController()
         let first = VMSnapshot(name: "First")
@@ -539,33 +568,29 @@ struct VMSettingsOverviewTests {
             snapshots: [first, second], currentID: second.id)
         reapply(vc, (instance, viewModel))
 
-        let panel = try #require(
-            vc.settingsPanelForTesting(.snapshots) as? VMSettingsSnapshotsPanelViewController)
-        func contributedTotal() -> UInt64? {
-            var resolved = VMOverviewResolved()
-            panel.contribute(to: &resolved)
-            return resolved.snapshotTotalBytes
-        }
-        await panel.snapshotSizeTaskForTesting?.value
-        #expect(contributedTotal() != nil)
+        let resolver = vc.overviewResolverForTesting
+        await resolver.snapshotSizeTaskForTesting?.value
+        #expect(resolver.resolved.snapshotTotalBytes != nil)
 
-        // Dropping a snapshot leaves the stored total describing a set that no
-        // longer exists, so the card falls back to the count alone.
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [first], currentID: first.id)
+        // Capturing another leaves the set part-measured, so the card states the
+        // count alone until the fresh read covers the newcomer too.
+        let third = VMSnapshot(name: "Third")
+        instance.snapshotManifest = VMSnapshotManifest(
+            snapshots: [first, second, third], currentID: third.id)
         reapply(vc, (instance, viewModel))
-        #expect(contributedTotal() == nil)
+        #expect(resolver.resolved.snapshotTotalBytes == nil)
 
-        await panel.snapshotSizeTaskForTesting?.value
-        #expect(contributedTotal() != nil)
+        await resolver.snapshotSizeTaskForTesting?.value
+        #expect(resolver.resolved.snapshotTotalBytes != nil)
 
-        // Same for a switch to another VM: its count must not land beside the
-        // previous VM's footprint.
+        // A switch to another VM drops the footprint outright: its count must
+        // not land beside the previous VM's.
         let other = makeInstance(guestOS: .macOS)
         let onlySnapshot = VMSnapshot(name: "Other")
         other.snapshotManifest = VMSnapshotManifest(
             snapshots: [onlySnapshot], currentID: onlySnapshot.id)
         vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)
-        #expect(contributedTotal() == nil)
+        #expect(resolver.resolved.snapshotTotalBytes == nil)
         #expect(
             VMOverviewSummary.headerSummary(
                 for: .snapshots, instance: other, resolved: VMOverviewResolved()) == "1")

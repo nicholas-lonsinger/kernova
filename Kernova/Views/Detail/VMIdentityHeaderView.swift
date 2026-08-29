@@ -46,26 +46,13 @@ final class VMIdentityHeaderView: NSView {
     private var accessories: [NSView] = []
 
     /// The facts line as currently rendered, for a surface stating the same
-    /// summary — the disk figure is read here and nowhere else.
+    /// summary.
     private(set) var renderedFactsLine = ""
 
-    /// Fires when the off-main disk read lands, so another surface stating the
-    /// same figure repaints with it.
-    var onBootDiskCapacityResolved: (() -> Void)?
-
     private var instance: VMInstance?
-    /// Boot-disk capacity, once the off-main read lands.
-    private(set) var bootDiskCapacityBytes: UInt64?
-    /// The VM and disk path the capacity was last read for, so a re-render
-    /// re-uses the figure instead of re-reading the file.
-    private var diskReadKey: DiskReadKey?
-    private var diskReadTask: Task<Void, Never>?
-
-    private struct DiskReadKey: Equatable {
-        let instanceID: UUID
-        let path: String
-        let isInternal: Bool
-    }
+    /// The boot disk's capacity as last configured, `nil` while its read is
+    /// still out.
+    private var bootDiskBytes: UInt64?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -84,28 +71,20 @@ final class VMIdentityHeaderView: NSView {
         backButton.action = action
     }
 
-    /// Binds the header to `instance`, painting everything known synchronously
-    /// and filling the disk figure in when its off-main read lands.
+    /// Binds the header to `instance`, painting what the facts line states —
+    /// `bootDiskBytes` among it, once the pane's off-main read has landed.
     ///
     /// `mode` decides what the tile and the title state; a category hosts
     /// `leadingAccessories` beside its title and `trailingAccessories` at the
     /// title row's far edge.
     func configure(
-        with instance: VMInstance, mode: Mode = .identity,
+        with instance: VMInstance, mode: Mode = .identity, bootDiskBytes: UInt64? = nil,
         leadingAccessories: [NSView] = [], trailingAccessories: [NSView] = []
     ) {
         self.instance = instance
         self.mode = mode
+        self.bootDiskBytes = bootDiskBytes
         setAccessories(leadingAccessories, trailingAccessories)
-        let boot = instance.displayedStorageDisks.first
-        let key = boot.map {
-            DiskReadKey(instanceID: instance.id, path: $0.path, isInternal: $0.isInternal)
-        }
-        if key != diskReadKey {
-            diskReadKey = key
-            bootDiskCapacityBytes = nil
-            readBootDiskCapacity(key: key, bundleLayout: instance.bundleLayout)
-        }
         render()
     }
 
@@ -174,26 +153,8 @@ final class VMIdentityHeaderView: NSView {
             osVersion: instance.guestOSVersionDisplay,
             cores: config.cpuCount,
             memoryGB: config.memorySizeInGB,
-            diskBytes: bootDiskCapacityBytes)
+            diskBytes: bootDiskBytes)
         factsLabel.stringValue = renderedFactsLine
-    }
-
-    /// Reads the boot disk's capacity off the main thread, re-rendering when it
-    /// lands. The key tags the read, so a re-bind to another VM — or another
-    /// disk — ignores a result issued for the previous one.
-    private func readBootDiskCapacity(key: DiskReadKey?, bundleLayout: VMBundleLayout) {
-        diskReadTask?.cancel()
-        diskReadTask = nil
-        guard let key else { return }
-        diskReadTask = Task { [weak self] in
-            let sizes = await Task.detached {
-                bundleLayout.diskSizes(forRelativePath: key.path, isInternal: key.isInternal)
-            }.value
-            guard !Task.isCancelled, let self, self.diskReadKey == key else { return }
-            self.bootDiskCapacityBytes = sizes.capacityBytes
-            self.render()
-            self.onBootDiskCapacityResolved?()
-        }
     }
 
     // MARK: - Layout
@@ -228,10 +189,12 @@ final class VMIdentityHeaderView: NSView {
             // Centered on the tile, not pinned to it: AppKit holds an NSButton
             // to a minimum size derived from its image, which outranks edge
             // pins, so a title1 chevron stands a little proud of the tile. The
-            // glyph lands centered either way, and the hit area is the more
-            // generous for it.
+            // floors keep the hit area at least the tile — the visible bezel is
+            // the button, not just the glyph.
             backButton.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
             backButton.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            backButton.widthAnchor.constraint(greaterThanOrEqualTo: tile.widthAnchor),
+            backButton.heightAnchor.constraint(greaterThanOrEqualTo: tile.heightAnchor),
         ])
         backButton.isHidden = true
 
