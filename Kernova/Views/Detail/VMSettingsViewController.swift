@@ -373,6 +373,10 @@ extension VMSettingsViewController {
             identityHeader.widthAnchor.constraint(equalTo: headerContent.widthAnchor)
                 .isActive = true
             identityHeader.setBackAction(target: self, action: #selector(backToOverview))
+            // The boot disk's capacity is read here and nowhere else, so the
+            // Storage card repaints when that read lands rather than waiting for
+            // the next model change.
+            identityHeader.onBootDiskCapacityResolved = { [weak self] in self?.refreshOverview() }
         }
         let chrome = selectedCategory.flatMap { panelControllers[$0]?.chrome }
         identityHeader.configure(
@@ -402,6 +406,7 @@ extension VMSettingsViewController {
     /// state of its own to state here.
     private func refreshOverview() {
         var resolved = VMOverviewResolved()
+        resolved.bootDiskBytes = identityHeader.bootDiskCapacityBytes
         for panel in panelControllers.values {
             panel.contribute(to: &resolved)
         }
@@ -496,6 +501,14 @@ extension VMSettingsViewController: VMSettingsOverviewDelegate {
         _ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool
     ) {
         apply(toggle, to: isOn)
+    }
+
+    /// Runs a card's foot command through the view model's own gate — the same
+    /// one the category's panel runs it through.
+    func overview(_ vc: VMSettingsOverviewViewController, didInvoke action: VMOverviewAction) {
+        switch action {
+        case .takeSnapshot: viewModel.requestTakeSnapshot(instance)
+        }
     }
 }
 

@@ -34,12 +34,19 @@ enum VMSettingsCategory: String, CaseIterable, Sendable {
         }
     }
 
-    /// Whether the panel holds rows only a stopped VM can change, so its card
-    /// carries the "Editable when stopped" hint while the VM runs.
-    var containsLockableRows: Bool {
+    /// What this category's card claims while the VM runs, as the tooltip on its
+    /// lock glyph — `nil` for a category every part of which edits live.
+    ///
+    /// Each claim is scoped to the rows that actually lock, so it stays true
+    /// beside the live controls on the same card: System keeps the serial
+    /// console and auto-resize switches, Storage hot-plugs removable media,
+    /// Network hot-swaps its mode, and every switch on the Sharing card is live.
+    var lockHint: String? {
         switch self {
-        case .general, .snapshots: false
-        case .system, .storage, .network, .sharing: true
+        case .general, .snapshots: nil
+        case .system, .network: "Most editable when stopped"
+        case .storage: "Disks editable when stopped"
+        case .sharing: "Folders editable when stopped"
         }
     }
 

@@ -77,6 +77,13 @@ func settingsLockHints(in view: NSView) -> [NSView] {
     allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
 }
 
+/// An overview card's scoped lock glyph, found by the claim it carries.
+@MainActor
+func cardLockGlyph(_ category: VMSettingsCategory, in card: NSView) -> NSImageView? {
+    guard let hint = category.lockHint else { return nil }
+    return firstSubview(NSImageView.self, in: card) { $0.toolTip == hint }
+}
+
 /// The lock hints on the pinned header, which is where a single-section
 /// category's hint lives while that category is open.
 @MainActor

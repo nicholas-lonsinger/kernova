@@ -20,6 +20,18 @@ enum VMOverviewToggle: String, Sendable {
     }
 }
 
+/// A command a card offers at its foot, run through the same view-model gate the
+/// category's panel runs it through.
+enum VMOverviewAction: String, Sendable {
+    case takeSnapshot
+
+    var title: String {
+        switch self {
+        case .takeSnapshot: "Take Snapshot\u{2026}"
+        }
+    }
+}
+
 /// Card values the settings controller resolves from host state or an async
 /// read, which the configuration alone cannot answer.
 struct VMOverviewResolved: Sendable {
@@ -29,22 +41,43 @@ struct VMOverviewResolved: Sendable {
     var ipAddress: String?
     /// Forwarded-rule count, `nil` wherever forwarding does not apply.
     var portForwardingRuleCount: Int?
-    /// The Input Devices picker's current title, `nil` for a Linux guest.
-    var inputDevicesTitle: String?
-    /// Whether the Mode picker hot-swaps while the VM runs, which makes the
-    /// Network card's lock hint a false claim.
-    var networkIsLiveSwitchable = false
+    /// The boot disk's capacity, once the header's off-main read lands.
+    var bootDiskBytes: UInt64?
+    /// What this VM's snapshots occupy together, once the Snapshots panel's
+    /// off-main read lands.
+    var snapshotTotalBytes: UInt64?
+    /// Whether a capture is offered right now — the panel's own gate.
+    var canTakeSnapshot = false
     /// The banner message a category's panel currently shows, by category.
     var warnings: [VMSettingsCategory: String] = [:]
 }
 
 /// What each overview card states about a VM: the facts answering "what is this
 /// VM right now", never the panel's full row list.
+///
+/// Status, guest OS version, cores, memory and disk capacity are the header's
+/// facts line, so no card repeats them.
 enum VMOverviewSummary {
+    /// A trailing copy button on a row.
+    struct RowCopy: Equatable, Sendable {
+        /// What the button writes to the pasteboard.
+        let value: String
+        /// How the button names itself, in a tooltip and to accessibility.
+        let name: String
+    }
+
     /// One key-value line on a card.
     struct Row: Equatable, Sendable {
         let label: String
         let value: String
+        /// The copy affordance trailing the value, `nil` on a row offering none.
+        let copy: RowCopy?
+
+        init(label: String, value: String, copy: RowCopy? = nil) {
+            self.label = label
+            self.value = value
+            self.copy = copy
+        }
     }
 
     /// A card switch and the state it renders in — `isEnabled` false dims it
@@ -55,6 +88,12 @@ enum VMOverviewSummary {
         let isEnabled: Bool
     }
 
+    /// A card's foot command and whether it can be run right now.
+    struct ActionState: Equatable, Sendable {
+        let action: VMOverviewAction
+        let isEnabled: Bool
+    }
+
     @MainActor
     static func rows(
         for category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
@@ -62,42 +101,39 @@ enum VMOverviewSummary {
         let config = instance.configuration
         switch category {
         case .general:
-            return [
-                Row(label: "Type", value: config.guestOS.displayName),
-                Row(label: "Boot mode", value: config.bootMode.displayName),
-                Row(
-                    label: "Created",
-                    value: config.createdAt.formatted(date: .abbreviated, time: .shortened)),
-            ]
+            // Everything General holds is either on the header — the name and
+            // the status — or one of the card's own two switches.
+            return []
         case .system:
-            var rows = [
-                Row(label: "CPU cores", value: "\(config.cpuCount)"),
-                Row(label: "Memory", value: "\(config.memorySizeInGB) GB"),
+            return [
                 Row(label: "Display", value: displayValue(config)),
                 Row(label: "Audio", value: audioValue(config)),
             ]
-            if let title = resolved.inputDevicesTitle {
-                rows.append(Row(label: "Input devices", value: title))
-            }
-            return rows
         case .storage:
             let disks = instance.displayedStorageDisks
-            var rows: [Row] = []
-            if let boot = disks.first {
-                rows.append(Row(label: "Boot disk", value: boot.label))
+            guard let boot = disks.first else { return [Row(label: "Disks", value: "None")] }
+            let capacity = resolved.bootDiskBytes.map {
+                " \u{00B7} \(DataFormatters.formatBytes($0))"
             }
-            rows.append(Row(label: "Disks", value: "\(disks.count)"))
-            let removable = config.removableMedia ?? []
-            rows.append(
+            return [
+                Row(label: "Boot disk", value: boot.label + (capacity ?? "")),
                 Row(
-                    label: "Removable media",
-                    value: removable.isEmpty ? "None" : "\(removable.count)"))
-            return rows
+                    label: "Other",
+                    value:
+                        "\(otherDisksValue(disks.count - 1)) \u{00B7} \(mediaValue((config.removableMedia ?? []).count))"
+                ),
+            ]
         case .network:
-            var rows = [Row(label: "Mode", value: resolved.networkModeTitle ?? "None")]
-            if let address = resolved.ipAddress {
-                rows.append(Row(label: "IP address", value: address))
+            guard config.networkEnabled, let mode = resolved.networkModeTitle else {
+                return [Row(label: "Mode", value: "None")]
             }
+            // The mode names the row, so the address it hands the guest is the
+            // value beside it rather than a line of its own.
+            var rows = [
+                Row(
+                    label: mode, value: resolved.ipAddress ?? "",
+                    copy: resolved.ipAddress.map { RowCopy(value: $0, name: "Copy IP Address") })
+            ]
             if let count = resolved.portForwardingRuleCount {
                 rows.append(
                     Row(
@@ -109,18 +145,29 @@ enum VMOverviewSummary {
             // Sharing states its facts in the closing line instead — see `note`.
             return []
         case .snapshots:
-            let ordered = instance.snapshotManifest.ordered
-            var rows = [Row(label: "Snapshots", value: "\(ordered.count)")]
-            if let latest = ordered.first {
-                rows.append(
-                    Row(
-                        label: "Latest",
-                        value:
-                            "\(latest.name) \u{2014} \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))"
-                    ))
-            }
-            return rows
+            // The count and the footprint are the card's header summary.
+            guard let latest = instance.snapshotManifest.ordered.first else { return [] }
+            return [
+                Row(
+                    label: "Latest",
+                    value:
+                        "\(latest.name) \u{2014} \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))"
+                )
+            ]
         }
+    }
+
+    /// The small secondary line beside `category`'s title, `nil` where the
+    /// category states none.
+    @MainActor
+    static func headerSummary(
+        for category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
+    ) -> String? {
+        guard category == .snapshots else { return nil }
+        let count = instance.snapshotManifest.ordered.count
+        guard count > 0 else { return nil }
+        guard let bytes = resolved.snapshotTotalBytes else { return "\(count)" }
+        return "\(count) \u{00B7} \(DataFormatters.formatBytes(bytes))"
     }
 
     /// The live switches `category`'s card carries, in card order.
@@ -155,6 +202,17 @@ enum VMOverviewSummary {
         }
     }
 
+    /// The command `category`'s card closes with, `nil` where it offers none.
+    @MainActor
+    static func action(
+        for category: VMSettingsCategory, resolved: VMOverviewResolved
+    ) -> ActionState? {
+        // A capture works on a running VM, so the card offers it whatever the
+        // pane's read-only state — the view model's own gate decides.
+        guard category == .snapshots else { return nil }
+        return ActionState(action: .takeSnapshot, isEnabled: resolved.canTakeSnapshot)
+    }
+
     /// The line `category`'s card closes with, below its switches — one
     /// full-width sentence rather than a key and a value, `nil` where the
     /// category states none.
@@ -178,6 +236,23 @@ enum VMOverviewSummary {
             return "Passthrough \(passthroughRuns ? "on" : "off") \u{00B7} \(folders)"
         case .general, .system, .storage, .network, .snapshots:
             return nil
+        }
+    }
+
+    /// How many disks follow the boot disk.
+    private static func otherDisksValue(_ count: Int) -> String {
+        switch count {
+        case ..<1: "No other disks"
+        case 1: "1 more disk"
+        default: "\(count) more disks"
+        }
+    }
+
+    private static func mediaValue(_ count: Int) -> String {
+        switch count {
+        case ..<1: "No media"
+        case 1: "1 medium"
+        default: "\(count) media"
         }
     }
 

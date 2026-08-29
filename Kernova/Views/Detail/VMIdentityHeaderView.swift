@@ -55,9 +55,13 @@ final class VMIdentityHeaderView: NSView {
     /// summary — the disk figure is read here and nowhere else.
     private(set) var renderedFactsLine = ""
 
+    /// Fires when the off-main disk read lands, so another surface stating the
+    /// same figure repaints with it.
+    var onBootDiskCapacityResolved: (() -> Void)?
+
     private var instance: VMInstance?
     /// Boot-disk capacity, once the off-main read lands.
-    private var diskBytes: UInt64?
+    private(set) var bootDiskCapacityBytes: UInt64?
     /// The VM and disk path the capacity was last read for, so a re-render
     /// re-uses the figure instead of re-reading the file.
     private var diskReadKey: DiskReadKey?
@@ -105,7 +109,7 @@ final class VMIdentityHeaderView: NSView {
         }
         if key != diskReadKey {
             diskReadKey = key
-            diskBytes = nil
+            bootDiskCapacityBytes = nil
             readBootDiskCapacity(key: key, bundleLayout: instance.bundleLayout)
         }
         render()
@@ -148,7 +152,7 @@ final class VMIdentityHeaderView: NSView {
             osVersion: instance.guestOSVersionDisplay,
             cores: config.cpuCount,
             memoryGB: config.memorySizeInGB,
-            diskBytes: diskBytes)
+            diskBytes: bootDiskCapacityBytes)
         factsLabel.stringValue = renderedFactsLine
     }
 
@@ -209,8 +213,9 @@ final class VMIdentityHeaderView: NSView {
                 bundleLayout.diskSizes(forRelativePath: key.path, isInternal: key.isInternal)
             }.value
             guard !Task.isCancelled, let self, self.diskReadKey == key else { return }
-            self.diskBytes = sizes.capacityBytes
+            self.bootDiskCapacityBytes = sizes.capacityBytes
             self.render()
+            self.onBootDiskCapacityResolved?()
         }
     }
 

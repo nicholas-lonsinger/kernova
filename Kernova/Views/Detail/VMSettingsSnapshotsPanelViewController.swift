@@ -17,6 +17,8 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
     /// the set changes rather than on every `refresh()` pass.
     private var snapshotSizeIDs: [UUID]?
     private var snapshotSizeTask: Task<Void, Never>?
+    /// What every snapshot occupies together, from the last size read.
+    private var snapshotTotalBytes: UInt64?
     private let infoPresenter = PopoverPresenter()
 
     private let panelStack = NSStackView()
@@ -76,6 +78,13 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
 
     // MARK: - Refresh
 
+    /// The card states the capture command and the snapshots' footprint, both of
+    /// which only this panel resolves.
+    func contribute(to resolved: inout VMOverviewResolved) {
+        resolved.canTakeSnapshot = viewModel.canTakeSnapshot(instance)
+        resolved.snapshotTotalBytes = snapshotTotalBytes
+    }
+
     func refresh() {
         guard let snapshotSection else { return }
         snapshotSection.update(
@@ -92,6 +101,7 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         snapshotSizeIDs = ids
         snapshotSizeTask?.cancel()
         guard !ids.isEmpty else {
+            snapshotTotalBytes = nil
             snapshotSection.applySizes([:])
             return
         }
@@ -106,6 +116,11 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
                 return
             }
             self.snapshotSection?.applySizes(sizes)
+            self.snapshotTotalBytes = sizes.values.reduce(0, +)
+            // The overview states the same total, and this read is issued only
+            // when the snapshot set changes — so the pass that paints it has to
+            // be asked for rather than waited on.
+            self.requestFullRefresh()
         }
     }
 
