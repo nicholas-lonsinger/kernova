@@ -64,6 +64,7 @@ struct VMCommandEnvelopeTests {
             .ipAddress(selector),
             .snapshots(selector),
             .start(selector, recovery: true),
+            .cancelGuestSetup(selector),
             .stop(selector, disposition: .graceful, confirmed: false),
             .stop(selector, disposition: .resumeThenShutDown, confirmed: true),
             .stop(selector, disposition: .force, confirmed: true),

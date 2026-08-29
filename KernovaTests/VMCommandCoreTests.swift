@@ -429,6 +429,23 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
+    @Test("start refused mid-install names cancelGuestSetup as the way out")
+    func startRefusedMidInstallNamesCancelGuestSetup() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+        instance.setupTask = Task {}
+
+        let error = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+        guard case .invalidState(let vm, let current, let allowed) = error else {
+            Issue.record("expected an invalid-state refusal, got \(error)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(current == .installing)
+        #expect(allowed.contains(.cancelGuestSetup))
+    }
+
     // MARK: - Conflicts
 
     @Test("A start that would put two live guests on one machine identity is refused")

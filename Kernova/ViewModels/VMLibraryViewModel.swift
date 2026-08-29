@@ -155,7 +155,19 @@ final class VMLibraryViewModel {
         commands.isGuestAgentInstallerMounted(on: instance)
     }
 
-    func cancelGuestSetup(_ instance: VMInstance) { commands.cancelGuestSetup(instance) }
+    func cancelGuestSetup(_ instance: VMInstance) {
+        do {
+            try commands.cancelGuestSetup(.id(instance.id))
+        } catch let error as CommandError {
+            // Setup finishing between the button appearing and the click is a
+            // normal race, not something to alert the user about.
+            Self.logger.notice(
+                "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+            )
+        } catch {
+            surfaceError(error.localizedDescription)
+        }
+    }
 
     // MARK: - State
 

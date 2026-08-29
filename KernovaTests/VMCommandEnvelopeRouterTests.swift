@@ -38,14 +38,16 @@ struct VMCommandEnvelopeRouterTests {
         let snapshots: MockVMSnapshotStore
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(
+        installService: any MacOSInstallProviding = MockMacOSInstallService()
+    ) -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
+            installService: installService,
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
             linuxImageResolveService: MockLinuxImageResolveService(),
@@ -217,6 +219,78 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.library.instances.isEmpty)
     }
 
+    // MARK: - Guest Setup
+
+    @Test("Cancelling a running setup crosses the wire and cancels the task")
+    func cancelGuestSetupCrossesTheWire() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+        let cancelStream = AsyncStream<Void>.makeStream()
+        instance.setupTask = Task {
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelStream.continuation.yield(())
+                cancelStream.continuation.finish()
+            }
+        }
+
+        let response = try await harness.transport.send(.cancelGuestSetup(.id(instance.id)))
+
+        #expect(response.result == .ok)
+        for await _ in cancelStream.stream { break }
+    }
+
+    @Test("Cancelling with nothing in flight refuses, and the verb is not offered")
+    func cancelGuestSetupWithNothingInFlightRefuses() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .stopped)
+
+        let response = try await harness.transport.send(.cancelGuestSetup(.id(instance.id)))
+
+        guard case .invalidState(_, _, let allowed)? = response.failure else {
+            Issue.record("expected an invalid state, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(!allowed.contains(.cancelGuestSetup))
+    }
+
+    @Test("A second cancel after the setup task drains refuses, and the VM stays resumable")
+    func repeatedCancelGuestSetupRefusesOnceDrained() async throws {
+        let installService = SuspendingMockMacOSInstallService()
+        let harness = makeHarness(installService: installService)
+        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        let instance = VMInstance(
+            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            preferences: preferences)
+        harness.library.instances.append(instance)
+        harness.storage.bundles[bundleURL] = config
+
+        let started = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        #expect(started.result == .ok)
+        for await _ in installService.installStartedStream { break }
+
+        let firstCancel = try await harness.transport.send(.cancelGuestSetup(.id(instance.id)))
+        #expect(firstCancel.result == .ok)
+
+        // Drain the setup task before asserting or firing the second cancel: the
+        // window between the cancel and the task's `defer { setupTask = nil }`
+        // legitimately still answers `.ok`.
+        await instance.setupTask?.value
+
+        #expect(instance.status == .initialBoot)
+        #expect(instance.configuration.installContext != nil)
+
+        let secondCancel = try await harness.transport.send(.cancelGuestSetup(.id(instance.id)))
+        guard case .invalidState? = secondCancel.failure else {
+            Issue.record("expected an invalid state, got \(String(describing: secondCancel.failure))")
+            return
+        }
+    }
+
     // MARK: - Events
 
     @Test("A clone's settling crosses the wire as an event")
@@ -336,6 +410,7 @@ private final class StubCommands: VMCommanding {
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] { [] }
 
     func start(_ selector: VMSelector, recovery: Bool) async throws {}
+    func cancelGuestSetup(_ selector: VMSelector) throws {}
     func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {}
     func pause(_ selector: VMSelector) async throws {
         throw CommandError.unsupported(capability: "pausing")

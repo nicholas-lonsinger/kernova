@@ -33,6 +33,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case ipAddress
     case snapshots
     case start
+    case cancelGuestSetup
     case stop
     case pause
     case resume
@@ -61,6 +62,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .ipAddress: "Get IP Address"
         case .snapshots: "List Snapshots"
         case .start: "Start"
+        case .cancelGuestSetup: "Cancel Setup"
         case .stop: "Stop"
         case .pause: "Pause"
         case .resume: "Resume"
@@ -87,9 +89,9 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     public var isRead: Bool {
         switch self {
         case .list, .info, .ipAddress, .snapshots: true
-        case .start, .stop, .pause, .resume, .suspend, .restart, .open, .takeSnapshot,
-            .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
-            .rename, .delete, .importVM, .cancelPreparing:
+        case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
+            .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
+            .clone, .rename, .delete, .importVM, .cancelPreparing:
             false
         }
     }

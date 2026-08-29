@@ -318,9 +318,11 @@ extension VMCommandCore {
     ///
     /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
     /// bundle is preserved — this is the non-destructive cancel.
-    func cancelGuestSetup(_ instance: VMInstance) {
+    func cancelGuestSetup(_ selector: VMSelector) throws {
+        let instance = try resolve(selector)
+        guard let task = instance.setupTask else { throw invalidState(instance) }
         Self.logger.info("Cancelling setup for '\(instance.name, privacy: .public)'")
-        instance.setupTask?.cancel()
+        task.cancel()
         // `runGuestSetup`'s cancel catch owns the status transition and
         // `setupState` cleanup — don't duplicate it here.
     }

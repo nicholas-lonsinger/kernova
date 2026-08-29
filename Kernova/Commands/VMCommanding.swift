@@ -45,6 +45,13 @@ protocol VMCommanding: AnyObject {
     /// `recovery` cold-boots a stopped macOS guest into macOS Recovery.
     func start(_ selector: VMSelector, recovery: Bool) async throws
 
+    /// Cancels the guest setup a first start is running — a macOS install, or a
+    /// Linux installer image being fetched or verified.
+    ///
+    /// The bundle is preserved and the VM returns to `.initialBoot`, so a later
+    /// start resumes it. A VM with no setup in flight refuses.
+    func cancelGuestSetup(_ selector: VMSelector) throws
+
     /// Stops the VM the way `disposition` names.
     ///
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`

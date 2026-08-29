@@ -80,6 +80,9 @@ struct VMCommandEnvelopeRouter {
         case .start(let selector, let recovery):
             try await commands.start(selector, recovery: recovery)
             return .ok
+        case .cancelGuestSetup(let selector):
+            try commands.cancelGuestSetup(selector)
+            return .ok
         case .stop(let selector, let disposition, let confirmed):
             try await commands.stop(selector, disposition: disposition, confirmed: confirmed)
             return .ok
