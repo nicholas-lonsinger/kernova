@@ -38,14 +38,16 @@ struct VMCommandEnvelopeRouterTests {
         let snapshots: MockVMSnapshotStore
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(
+        installService: any MacOSInstallProviding = MockMacOSInstallService()
+    ) -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
+            installService: installService,
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
             linuxImageResolveService: MockLinuxImageResolveService(),
@@ -217,6 +219,160 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.library.instances.isEmpty)
     }
 
+    // MARK: - Guest Setup
+
+    @Test("An unconfirmed cancel refuses with the confirmation naming the running step")
+    func cancelGuestSetupWithoutConsentRefuses() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+        instance.setupTask = Task {}
+        instance.setupState = .macOSInstall(hasDownloadStep: false)
+
+        let response = try await harness.transport.send(
+            .cancelGuestSetup(.id(instance.id), confirmed: false))
+
+        guard case .confirmationRequired(let prompt)? = response.failure else {
+            Issue.record("expected a consent refusal, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(prompt.kind == .cancelGuestSetup)
+        #expect(prompt.title == "Cancel Installation?")
+    }
+
+    @Test("A confirmed cancel of a running setup crosses the wire and cancels the task")
+    func cancelGuestSetupCrossesTheWire() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+        let cancelStream = AsyncStream<Void>.makeStream()
+        instance.setupTask = Task {
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelStream.continuation.yield(())
+                cancelStream.continuation.finish()
+            }
+        }
+
+        let response = try await harness.transport.send(
+            .cancelGuestSetup(.id(instance.id), confirmed: true))
+
+        #expect(response.result == .ok)
+        for await _ in cancelStream.stream { break }
+    }
+
+    @Test("Cancelling with nothing in flight refuses, and the verb is not offered")
+    func cancelGuestSetupWithNothingInFlightRefuses() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .stopped)
+
+        let response = try await harness.transport.send(
+            .cancelGuestSetup(.id(instance.id), confirmed: true))
+
+        guard case .invalidState(_, _, let allowed)? = response.failure else {
+            Issue.record("expected an invalid state, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(!allowed.contains(.cancelGuestSetup))
+    }
+
+    @Test("A second cancel after the setup task drains refuses, and the VM stays resumable")
+    func repeatedCancelGuestSetupRefusesOnceDrained() async throws {
+        let installService = SuspendingMockMacOSInstallService()
+        let harness = makeHarness(installService: installService)
+        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        let instance = VMInstance(
+            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            preferences: preferences)
+        harness.library.instances.append(instance)
+        harness.storage.bundles[bundleURL] = config
+
+        let started = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        #expect(started.result == .ok)
+        for await _ in installService.installStartedStream { break }
+
+        // The gate covers exactly the setup phase: while the install pipeline
+        // is still running, cancelGuestSetup is offered and cancelling it works.
+        let firstCancel = try await harness.transport.send(
+            .cancelGuestSetup(.id(instance.id), confirmed: true))
+        #expect(firstCancel.result == .ok)
+
+        // Drain the setup task before asserting or firing the second cancel: the
+        // window between the cancel and the task's `defer { setupTask = nil }`
+        // legitimately still answers `.ok`.
+        await instance.setupTask?.value
+
+        #expect(instance.status == .initialBoot)
+        #expect(instance.configuration.installContext != nil)
+
+        let secondCancel = try await harness.transport.send(
+            .cancelGuestSetup(.id(instance.id), confirmed: true))
+        guard case .invalidState? = secondCancel.failure else {
+            Issue.record("expected an invalid state, got \(String(describing: secondCancel.failure))")
+            return
+        }
+    }
+
+    @Test("The cancelGuestSetup gate clears before the chained auto-boot, not after it")
+    func cancelGuestSetupGateClosesBeforeAutoBoot() async throws {
+        let storage = MockVMStorageService()
+        let snapshots = MockVMSnapshotStore()
+        let fileSystem = MockFileSystem()
+        let virtualization = SuspendingMockVirtualizationService()
+        let lifecycle = VMLifecycleCoordinator(
+            virtualizationService: virtualization,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            linuxImageResolveService: MockLinuxImageResolveService(),
+            downloadService: MockDownloadService(),
+            fileSystem: fileSystem
+        )
+        let library = VMLibrary(
+            storageService: storage,
+            snapshotStore: snapshots,
+            lifecycle: lifecycle,
+            fileSystem: fileSystem,
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(),
+            isVMNetworkingEntitled: true
+        )
+        let core = VMCommandCore(
+            library: library, lifecycle: lifecycle, storageService: storage,
+            snapshotStore: snapshots, fileSystem: fileSystem, preferences: preferences)
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: core))
+
+        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        let instance = VMInstance(
+            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            preferences: preferences)
+        library.instances.append(instance)
+        storage.bundles[bundleURL] = config
+
+        let started = try await transport.send(.start(.id(instance.id), recovery: false))
+        #expect(started.result == .ok)
+
+        // The install completes synchronously (`MockMacOSInstallService` has no
+        // suspension), so by the time the chained auto-boot reaches the
+        // suspending virtualization service's `start`, the setup phase is over
+        // and the gate should already be closed.
+        await virtualization.waitUntilSuspended()
+
+        let response = try await transport.send(.cancelGuestSetup(.id(instance.id), confirmed: true))
+        guard case .invalidState(_, _, let allowed)? = response.failure else {
+            Issue.record("expected an invalid state, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(!allowed.contains(.cancelGuestSetup))
+
+        virtualization.resumeSuspended()
+    }
+
     // MARK: - Events
 
     @Test("A clone's settling crosses the wire as an event")
@@ -336,6 +492,7 @@ private final class StubCommands: VMCommanding {
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] { [] }
 
     func start(_ selector: VMSelector, recovery: Bool) async throws {}
+    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {}
     func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {}
     func pause(_ selector: VMSelector) async throws {
         throw CommandError.unsupported(capability: "pausing")

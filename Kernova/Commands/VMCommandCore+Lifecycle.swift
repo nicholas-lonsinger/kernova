@@ -247,6 +247,7 @@ extension VMCommandCore {
                 Self.logger.notice(
                     "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
+                return
             } catch {
                 // Same teardown reason as the cancel branch: an attached VM from a
                 // partial install must not bleed into the next retry.
@@ -278,6 +279,12 @@ extension VMCommandCore {
             // removable-attachment recovery, which a flattened title-and-message
             // into a plain alert.
             instance.setupState = nil
+            // Cleared here, ahead of the trailing `defer`: the gate this backs
+            // (`allowedVerbs`' `.cancelGuestSetup`, and the cancel refusal
+            // itself) covers exactly the setup phase, not the boot chained
+            // after it — a cancel landing in that window would answer `.ok`
+            // while touching a task no longer doing anything cancellable.
+            instance.setupTask = nil
             do {
                 try await self.start(instance)
             } catch let failure as CommandError {
@@ -318,11 +325,44 @@ extension VMCommandCore {
     ///
     /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
     /// bundle is preserved — this is the non-destructive cancel.
-    func cancelGuestSetup(_ instance: VMInstance) {
+    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
+        let instance = try resolve(selector)
+        guard let task = instance.setupTask else { throw invalidState(instance) }
+        guard confirmed else {
+            throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
+        }
         Self.logger.info("Cancelling setup for '\(instance.name, privacy: .public)'")
-        instance.setupTask?.cancel()
+        task.cancel()
         // `runGuestSetup`'s cancel catch owns the status transition and
         // `setupState` cleanup — don't duplicate it here.
+    }
+
+    /// The confirmation a guest-setup cancel raises, worded for the step
+    /// running now: a download's progress resumes, an install restarts from
+    /// the beginning (the image stays cached), a verify is simply redone.
+    static func cancelGuestSetupPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+        let title: String
+        let message: String
+        let confirmTitle: String
+        switch instance.setupState?.currentStep?.id {
+        case .install:
+            title = "Cancel Installation?"
+            message =
+                "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
+            confirmTitle = "Cancel Installation"
+        case .verify:
+            title = "Cancel Verification?"
+            message =
+                "The downloaded image is kept, and it will be checked again the next time you start the virtual machine."
+            confirmTitle = "Cancel Verification"
+        case .download, nil:
+            title = "Cancel Download?"
+            message =
+                "The download progress will be saved and resumed the next time you start the virtual machine."
+            confirmTitle = "Cancel Download"
+        }
+        return ConfirmationPrompt(
+            kind: .cancelGuestSetup, title: title, message: message, confirmTitle: confirmTitle)
     }
 
     // MARK: - Stop

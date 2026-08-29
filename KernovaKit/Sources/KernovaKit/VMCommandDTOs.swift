@@ -150,6 +150,9 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case revertToSnapshot
     /// Stopping a clone or import that is still copying.
     case cancelPreparing
+    /// Interrupting a running guest setup — a macOS install, or a Linux
+    /// installer image being fetched or verified.
+    case cancelGuestSetup
 }
 
 /// A second way to satisfy a confirmation, beside its own confirm action.

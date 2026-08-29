@@ -429,6 +429,61 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
+    @Test("start refused mid-install names cancelGuestSetup as the way out")
+    func startRefusedMidInstallNamesCancelGuestSetup() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+        instance.setupTask = Task {}
+
+        let error = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+        guard case .invalidState(let vm, let current, let allowed) = error else {
+            Issue.record("expected an invalid-state refusal, got \(error)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(current == .installing)
+        #expect(allowed.contains(.cancelGuestSetup))
+    }
+
+    @Test("cancelGuestSetup without consent refuses with the confirmation naming the running step")
+    func cancelGuestSetupWithoutConsentNamesTheStep() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+        instance.setupTask = Task {}
+        instance.setupState = .macOSInstall(hasDownloadStep: true)
+
+        let error = try #require(
+            commandError { try harness.core.cancelGuestSetup(.id(instance.id), confirmed: false) })
+        guard case .confirmationRequired(let prompt) = error else {
+            Issue.record("expected a consent refusal, got \(error)")
+            return
+        }
+        #expect(prompt.kind == .cancelGuestSetup)
+        #expect(prompt.title == "Cancel Download?")
+    }
+
+    @Test("cancelGuestSetup's prompt names what a cancel costs at each step")
+    func cancelGuestSetupPromptVariesByStep() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .installing)
+
+        instance.setupState = .macOSInstall(hasDownloadStep: false)
+        let install = VMCommandCore.cancelGuestSetupPrompt(instance)
+        #expect(install.title == "Cancel Installation?")
+        #expect(install.confirmTitle == "Cancel Installation")
+
+        instance.setupState = .linuxImage(hasVerifyStep: true)
+        instance.setupState?.advance(progress: .fraction(0))
+        let verify = VMCommandCore.cancelGuestSetupPrompt(instance)
+        #expect(verify.title == "Cancel Verification?")
+        #expect(verify.confirmTitle == "Cancel Verification")
+
+        instance.setupState = nil
+        let fallback = VMCommandCore.cancelGuestSetupPrompt(instance)
+        #expect(fallback.title == "Cancel Download?")
+    }
+
     // MARK: - Conflicts
 
     @Test("A start that would put two live guests on one machine identity is refused")

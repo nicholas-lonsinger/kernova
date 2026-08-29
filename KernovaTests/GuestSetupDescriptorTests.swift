@@ -16,27 +16,6 @@ struct GuestSetupDescriptorTests {
         #expect(descriptor.icon == .named(NSImage.computerName))
     }
 
-    @Test("The macOS install's cancel copy says what a cancel costs at each step")
-    func macOSCancelCopy() {
-        let download = GuestSetupDescriptor.macOSInstall.copy(for: .download).cancelPrompt
-        #expect(download.title == "Cancel Download?")
-        #expect(
-            download.message
-                == "The download progress will be saved and resumed the next time you start the virtual machine."
-        )
-        #expect(download.confirmTitle == "Cancel Download")
-        #expect(download.dismissTitle == "Keep Downloading")
-
-        let install = GuestSetupDescriptor.macOSInstall.copy(for: .install).cancelPrompt
-        #expect(install.title == "Cancel Installation?")
-        #expect(
-            install.message
-                == "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
-        )
-        #expect(install.confirmTitle == "Cancel Installation")
-        #expect(install.dismissTitle == "Keep Installing")
-    }
-
     @Test("The macOS install's subtitle verbs name each step's work")
     func macOSDetailVerbs() {
         #expect(GuestSetupDescriptor.macOSInstall.copy(for: .download).detailVerb == "Downloading")
@@ -54,27 +33,6 @@ struct GuestSetupDescriptorTests {
         #expect(descriptor.icon == .symbol("opticaldisc"))
         #expect(descriptor.copy(for: .download).detailVerb == "Downloading")
         #expect(descriptor.copy(for: .verify).detailVerb == "Verifying")
-    }
-
-    @Test("A cancelled Linux download keeps its partial bytes, and a cancelled check keeps the file")
-    func linuxCancelCopy() {
-        let descriptor = GuestSetupDescriptor.linuxImage(named: "Debian 13")
-
-        let download = descriptor.copy(for: .download).cancelPrompt
-        #expect(download.title == "Cancel Download?")
-        #expect(
-            download.message
-                == "The download progress will be saved and resumed the next time you start the virtual machine."
-        )
-
-        let verify = descriptor.copy(for: .verify).cancelPrompt
-        #expect(verify.title == "Cancel Verification?")
-        #expect(
-            verify.message
-                == "The downloaded image is kept, and it will be checked again the next time you start the virtual machine."
-        )
-        #expect(verify.confirmTitle == "Cancel Verification")
-        #expect(verify.dismissTitle == "Keep Verifying")
     }
 
     // MARK: - Selection

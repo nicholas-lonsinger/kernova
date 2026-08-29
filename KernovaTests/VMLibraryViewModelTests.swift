@@ -3228,7 +3228,8 @@ struct VMLibraryViewModelTests {
         // suppressed the error — leaving the VM in `.error` with no dialog
         // and no path back to `.initialBoot`. The fix normalizes that case
         // to the cancel outcome.
-        let raceInstaller = CancelRaceInstallService()
+        let raceInstaller = SuspendingMockMacOSInstallService(
+            terminalError: DownloadError.downloadFailed(URLError(.badServerResponse)))
         let storage = MockVMStorageService()
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -5889,43 +5890,6 @@ struct VMLibraryViewModelTests {
 }
 
 // MARK: - Test helpers
-
-/// Drives the "cancel raced a non-cancellation error" path in
-/// `VMLibraryViewModel.runGuestSetup`.
-///
-/// The mock signals via `installStartedStream` once `install` has parked, so
-/// the test can `cancelGuestSetup` against a known-running install rather
-/// than a race-prone "did the task even start yet?" guess. After
-/// `Task.isCancelled` flips, the mock throws a non-CancellationError to
-/// mimic the production case where a network error reaches the catch before
-/// the cancellation propagates (e.g. an IPSW download that errors out at
-/// roughly the same instant the user clicked Cancel).
-@MainActor
-private final class CancelRaceInstallService: MacOSInstallProviding {
-    let installStartedStream: AsyncStream<Void>
-    private let installStartedContinuation: AsyncStream<Void>.Continuation
-
-    init() {
-        let stream = AsyncStream<Void>.makeStream()
-        self.installStartedStream = stream.stream
-        self.installStartedContinuation = stream.continuation
-    }
-
-    func install(
-        into instance: VMInstance,
-        restoreImageURL: URL,
-        progressHandler: @MainActor @Sendable @escaping (Double) -> Void
-    ) async throws -> InstalledImage {
-        installStartedContinuation.yield(())
-        installStartedContinuation.finish()
-        // Park until the surrounding Task is cancelled. `try? await
-        // Task.sleep` returns immediately on cancel without propagating
-        // the CancellationError, which is what we want — we WANT to throw
-        // a *different* error to exercise the race-recovery branch.
-        try? await Task.sleep(for: .seconds(60))
-        throw DownloadError.downloadFailed(URLError(.badServerResponse))
-    }
-}
 
 extension Result {
     fileprivate var isFailure: Bool {

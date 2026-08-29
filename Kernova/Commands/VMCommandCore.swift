@@ -157,6 +157,7 @@ final class VMCommandCore: VMCommanding {
         var verbs: [VMVerb] = [.info, .ipAddress, .snapshots]
         guard !instance.isPreparing else { return verbs + [.cancelPreparing] }
         if instance.status.canStart { verbs.append(.start) }
+        if instance.setupTask != nil { verbs.append(.cancelGuestSetup) }
         if instance.status.canStop { verbs.append(.stop) }
         if instance.canStop { verbs.append(.restart) }
         if instance.canForceStop && !verbs.contains(.stop) { verbs.append(.stop) }

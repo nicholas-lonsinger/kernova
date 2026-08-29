@@ -49,7 +49,9 @@ final class VMInstance {
     /// or a Linux installer image being fetched and verified.
     var setupState: GuestSetupState?
 
-    /// The guest-setup pipeline in flight, owned by `VMLibraryViewModel`.
+    /// The guest-setup pipeline in flight, owned by `VMCommandCore` — armed for
+    /// exactly the setup phase, so its presence is also `allowedVerbs(for:)`'s
+    /// gate for offering `.cancelGuestSetup`.
     var setupTask: Task<Void, Never>?
 
     // MARK: - Preparing State (Clone/Import)

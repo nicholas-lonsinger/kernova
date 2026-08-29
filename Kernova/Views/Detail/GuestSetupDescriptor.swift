@@ -20,16 +20,6 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     struct StepCopy: Sendable, Equatable {
         /// Verb the subtitle's first line leads with ("Downloading").
         let detailVerb: String
-        /// The confirmation raised when Cancel is clicked during this step.
-        let cancelPrompt: CancelPrompt
-    }
-
-    /// The cancel confirmation for one step.
-    struct CancelPrompt: Sendable, Equatable {
-        let title: String
-        let message: String
-        let confirmTitle: String
-        let dismissTitle: String
     }
 
     let title: String
@@ -43,14 +33,7 @@ struct GuestSetupDescriptor: Sendable, Equatable {
                 "No setup copy for step '\(step.rawValue, privacy: .public)' under '\(self.title, privacy: .public)'"
             )
             assertionFailure("No setup copy for step '\(step.rawValue)' under '\(title)'")
-            return StepCopy(
-                detailVerb: "Working",
-                cancelPrompt: CancelPrompt(
-                    title: "Cancel?",
-                    message:
-                        "This step will start over the next time you start the virtual machine.",
-                    confirmTitle: "Cancel",
-                    dismissTitle: "Continue"))
+            return StepCopy(detailVerb: "Working")
         }
         return copy
     }
@@ -63,22 +46,8 @@ struct GuestSetupDescriptor: Sendable, Equatable {
         title: "Installing macOS",
         icon: .named(NSImage.computerName),
         stepCopy: [
-            .download: StepCopy(
-                detailVerb: "Downloading",
-                cancelPrompt: CancelPrompt(
-                    title: "Cancel Download?",
-                    message:
-                        "The download progress will be saved and resumed the next time you start the virtual machine.",
-                    confirmTitle: "Cancel Download",
-                    dismissTitle: "Keep Downloading")),
-            .install: StepCopy(
-                detailVerb: "Installing macOS",
-                cancelPrompt: CancelPrompt(
-                    title: "Cancel Installation?",
-                    message:
-                        "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again.",
-                    confirmTitle: "Cancel Installation",
-                    dismissTitle: "Keep Installing")),
+            .download: StepCopy(detailVerb: "Downloading"),
+            .install: StepCopy(detailVerb: "Installing macOS"),
         ])
 
     /// A Linux installer image: downloaded from where it is served, then
@@ -88,22 +57,8 @@ struct GuestSetupDescriptor: Sendable, Equatable {
             title: "Downloading \(image)",
             icon: .symbol("opticaldisc"),
             stepCopy: [
-                .download: StepCopy(
-                    detailVerb: "Downloading",
-                    cancelPrompt: CancelPrompt(
-                        title: "Cancel Download?",
-                        message:
-                            "The download progress will be saved and resumed the next time you start the virtual machine.",
-                        confirmTitle: "Cancel Download",
-                        dismissTitle: "Keep Downloading")),
-                .verify: StepCopy(
-                    detailVerb: "Verifying",
-                    cancelPrompt: CancelPrompt(
-                        title: "Cancel Verification?",
-                        message:
-                            "The downloaded image is kept, and it will be checked again the next time you start the virtual machine.",
-                        confirmTitle: "Cancel Verification",
-                        dismissTitle: "Keep Verifying")),
+                .download: StepCopy(detailVerb: "Downloading"),
+                .verify: StepCopy(detailVerb: "Verifying"),
             ])
     }
 
