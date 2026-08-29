@@ -76,6 +76,19 @@ enum AgentStatus: Equatable, Sendable {
         return upstream
     }
 
+    /// The name automation surfaces read this status by, without the versions
+    /// the UI renders alongside it.
+    var wireName: String {
+        switch self {
+        case .waiting: "waiting"
+        case .current: "current"
+        case .outdated: "outdated"
+        case .unresponsive: "unresponsive"
+        case .expectedMissing: "expectedMissing"
+        case .connecting: "connecting"
+        }
+    }
+
     /// Whether a freshly-observed agent `version` is at least the `bundled`
     /// version — i.e. resolves to `.current` rather than `.outdated`.
     ///

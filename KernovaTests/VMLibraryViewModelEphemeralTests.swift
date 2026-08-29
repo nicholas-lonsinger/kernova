@@ -286,7 +286,7 @@ struct VMLibraryViewModelEphemeralTests {
     func forceStopFromColdPausedReverts() async throws {
         let harness = try await makeHarness(status: .paused)
 
-        await harness.viewModel.forceStopConfirmed(harness.instance)
+        await harness.viewModel.forceStop(harness.instance)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(harness.virtualization.forceStopCallCount == 0)
@@ -311,10 +311,10 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(!harness.viewModel.canDeleteSnapshot(harness.instance, snapshot: harness.baseline))
         #expect(harness.viewModel.canDeleteSnapshot(harness.instance, snapshot: harness.later))
 
-        harness.viewModel.confirmDeleteSnapshot(harness.instance, snapshot: harness.baseline)
+        harness.viewModel.requestDeleteSnapshot(harness.instance, snapshot: harness.baseline)
         #expect(presenter.deleteSnapshots.isEmpty)
 
-        await harness.viewModel.deleteSnapshotConfirmed(harness.instance, snapshot: harness.baseline)
+        await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.baseline)
             .value
         #expect(harness.snapshots.discardedIDs.isEmpty)
         #expect(harness.instance.snapshotManifest.snapshots.count == 2)
@@ -327,7 +327,7 @@ struct VMLibraryViewModelEphemeralTests {
 
         #expect(harness.viewModel.canDeleteSnapshot(harness.instance, snapshot: harness.baseline))
 
-        await harness.viewModel.deleteSnapshotConfirmed(harness.instance, snapshot: harness.baseline)
+        await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.baseline)
             .value
 
         #expect(harness.snapshots.discardedIDs == [harness.baseline.id])
@@ -337,7 +337,7 @@ struct VMLibraryViewModelEphemeralTests {
     func otherSnapshotsStayDeletable() async throws {
         let harness = try await makeHarness()
 
-        await harness.viewModel.deleteSnapshotConfirmed(harness.instance, snapshot: harness.later)
+        await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.later)
             .value
 
         #expect(harness.snapshots.discardedIDs == [harness.later.id])

@@ -623,6 +623,18 @@ final class VMLibrary {
         vmnetNetworks.releaseAddressReservation(for: target.mac, kind: target.kind)
     }
 
+    /// The address this VM's MAC reserves on the app-managed network it joins,
+    /// or `nil` when it has none to report — networking off, Bridged (where
+    /// external DHCP owns addressing), a build without the reservation
+    /// machinery, or a slot whose network has not been materialized yet.
+    ///
+    /// Reads the reservation store without taking a slot: the sync at every
+    /// configuration change is what claims one.
+    func reservedAddress(for config: VMConfiguration) -> String? {
+        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return nil }
+        return vmnetNetworks.reservedAddress(for: target.mac, kind: target.kind)
+    }
+
     /// Keeps the VM's port-forwarding rules in step with its configuration: a
     /// Shared Network VM declares its rules on that network, a VM in any other
     /// mode declares none. Runs wherever ``syncAddressReservation(for:)`` does.
@@ -750,7 +762,7 @@ final class VMLibrary {
     /// Host Only and Bridged are separate networks. Two bridged VMs compare as
     /// one network whatever interface each names — Automatic resolves at start,
     /// so which link they land on is not knowable in advance.
-    private func liveMACAddressConflict(
+    func liveMACAddressConflict(
         for config: VMConfiguration, excluding instance: VMInstance
     ) -> VMInstance? {
         guard config.networkEnabled, let mac = config.macAddress else { return nil }
