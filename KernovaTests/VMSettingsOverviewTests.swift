@@ -494,6 +494,87 @@ struct VMSettingsOverviewTests {
         #expect(presenter.takeSnapshotSheetInstances.map(\.id) == [instance.id])
     }
 
+    @Test("A long network mode gives up its width before the address beside it")
+    func longModeTitleYieldsToTheAddress() throws {
+        // A bridged mode carries a host interface's name, which is unbounded —
+        // and a half-width card leaves the row around 278 points.
+        let mode = "Thunderbolt Bridge (bridge0)"
+        let card = VMOverviewCardView(category: .network, toggles: [])
+        card.configure(
+            rows: [
+                VMOverviewSummary.Row(
+                    label: mode, value: "192.168.66.4",
+                    copy: VMOverviewSummary.RowCopy(
+                        value: "192.168.66.4", name: "Copy IP Address"))
+            ],
+            toggles: [], note: nil, action: nil, headerSummary: nil, showsLockHint: false,
+            warning: nil)
+
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 302, height: 200))
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = host
+        host.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let value = try #require(
+            firstSubview(NSTextField.self, in: card) { $0.stringValue == "192.168.66.4" })
+        let copy = try #require(copyButton(in: card))
+        let label = try #require(firstSubview(NSTextField.self, in: card) { $0.toolTip == mode })
+        // The address and its copy button stay whole; the mode truncates, and
+        // keeps the whole of itself in the tooltip.
+        #expect(value.frame.width >= value.intrinsicContentSize.width - 1)
+        #expect(copy.frame.width >= copy.intrinsicContentSize.width - 1)
+        #expect(copy.frame.width > 0)
+        #expect(label.frame.width < label.intrinsicContentSize.width)
+        #expect(label.lineBreakMode == .byTruncatingTail)
+    }
+
+    @Test("The snapshots' footprint is dropped with the set it described")
+    func snapshotFootprintNeverOutlivesItsSnapshots() async throws {
+        let (vc, instance, viewModel) = makeController()
+        let first = VMSnapshot(name: "First")
+        let second = VMSnapshot(name: "Second")
+        instance.snapshotManifest = VMSnapshotManifest(
+            snapshots: [first, second], currentID: second.id)
+        reapply(vc, (instance, viewModel))
+
+        let panel = try #require(
+            vc.settingsPanelForTesting(.snapshots) as? VMSettingsSnapshotsPanelViewController)
+        func contributedTotal() -> UInt64? {
+            var resolved = VMOverviewResolved()
+            panel.contribute(to: &resolved)
+            return resolved.snapshotTotalBytes
+        }
+        await panel.snapshotSizeTaskForTesting?.value
+        #expect(contributedTotal() != nil)
+
+        // Dropping a snapshot leaves the stored total describing a set that no
+        // longer exists, so the card falls back to the count alone.
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [first], currentID: first.id)
+        reapply(vc, (instance, viewModel))
+        #expect(contributedTotal() == nil)
+
+        await panel.snapshotSizeTaskForTesting?.value
+        #expect(contributedTotal() != nil)
+
+        // Same for a switch to another VM: its count must not land beside the
+        // previous VM's footprint.
+        let other = makeInstance(guestOS: .macOS)
+        let onlySnapshot = VMSnapshot(name: "Other")
+        other.snapshotManifest = VMSnapshotManifest(
+            snapshots: [onlySnapshot], currentID: onlySnapshot.id)
+        vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)
+        #expect(contributedTotal() == nil)
+        #expect(
+            VMOverviewSummary.headerSummary(
+                for: .snapshots, instance: other, resolved: VMOverviewResolved()) == "1")
+    }
+
     @Test("The capture command dims when the VM is in no state to be captured")
     func takeSnapshotFollowsTheViewModelGate() throws {
         let (vc, instance, viewModel) = makeController()

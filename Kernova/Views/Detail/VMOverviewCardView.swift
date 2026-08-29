@@ -175,10 +175,22 @@ final class VMOverviewCardView: NSView {
     }
 
     /// One key-value line, with the copy affordance its value carries.
+    ///
+    /// Half-width cards leave a row around 278 points, and a key here can be
+    /// model-supplied and unbounded — the Network row is named by the mode,
+    /// which carries a host interface's name. So the key gives up its width
+    /// first (keeping the whole of it in its tooltip) and the value, which is
+    /// what the row was read for, stays whole.
     private func makeValueRow(_ row: VMOverviewSummary.Row) -> NSView {
         let value = makeGroupedFormValueLabel(row.value)
+        let yieldFirst: (NSTextField) -> Void = { label in
+            label.maximumNumberOfLines = 1
+            label.lineBreakMode = .byTruncatingTail
+            label.toolTip = row.label
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
         guard let copy = row.copy else {
-            return makeGroupedFormCardRow(row.label, control: value)
+            return makeGroupedFormCardRow(row.label, control: value, titleLabel: yieldFirst)
         }
         let button = CopyValueButton(value: copy.value)
         button.image = .systemSymbol("doc.on.doc", accessibilityDescription: copy.name)
@@ -191,11 +203,12 @@ final class VMOverviewCardView: NSView {
         button.target = self
         button.action = #selector(copyTapped(_:))
         button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
         let control = NSStackView(views: [value, button])
         control.orientation = .horizontal
         control.alignment = .centerY
         control.spacing = Spacing.tight
-        return makeGroupedFormCardRow(row.label, control: control)
+        return makeGroupedFormCardRow(row.label, control: control, titleLabel: yieldFirst)
     }
 
     /// The card's foot command: a borderless accent-tinted button on a row of
