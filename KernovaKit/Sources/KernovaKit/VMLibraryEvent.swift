@@ -2,10 +2,10 @@ import Foundation
 
 /// One change to the VM library, for a caller that cannot observe the model.
 ///
-/// The `@Observable` UI reads the model directly; this stream exists for
-/// everything else — a CLI waiting on a state, an App Intent reporting
-/// completion. Intermediate states may be coalesced: the stream reports what a
-/// VM reached, not every value it passed through.
+/// The `@Observable` UI reads the model directly; this stream exists for a wire
+/// client, which waits on a state it cannot watch. Intermediate states may be
+/// coalesced: the stream reports what a VM reached, not every value it passed
+/// through.
 ///
 /// A case exists when its subject has a definite moment and an owner that
 /// knows it: the model diff below for anything the model keeps, the failing

@@ -341,7 +341,7 @@ final class GuestSetupProgressViewController: NSViewController {
                 AlertButton(prompt.confirmTitle, role: .default) { [weak self] in
                     self?.onCancel()
                 },
-                AlertButton("Continue", role: .cancel),
+                AlertButton(prompt.dismissTitle, role: .cancel),
             ])
         presentSheetAlert(config, in: window)
     }

@@ -4,10 +4,10 @@ import KernovaKit
 /// Every VM verb Kernova offers, typed end to end.
 ///
 /// One method per verb, addressing VMs by ``VMSelector`` and refusing with
-/// ``CommandError``. Every front door — the AppKit UI, AppleScript, the
-/// `kernova://` URL scheme, the CLI, App Intents — reaches VMs through this and
-/// nothing else, so they inherit identical addressing, state gates, and consent
-/// semantics.
+/// ``CommandError``. Every front door reaches VMs through this and nothing
+/// else — the AppKit UI in process, a wire client through
+/// ``VMCommandEnvelopeRouter`` — so each inherits identical addressing, state
+/// gates, and consent semantics.
 ///
 /// Consent is a parameter, never a presentation: a destructive verb called
 /// without it refuses with ``CommandError/confirmationRequired(_:)`` describing

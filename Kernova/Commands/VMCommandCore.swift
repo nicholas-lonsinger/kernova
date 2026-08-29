@@ -171,7 +171,10 @@ final class VMCommandCore: VMCommanding {
             verbs.append(contentsOf: [.deleteSnapshot, .renameSnapshot, .setSnapshotNotes])
         }
         if instance.status.canEditSettings { verbs.append(.clone) }
-        if instance.status.canRename { verbs.append(.rename) }
+        // Not gated on the editing affordance: a rename rewrites the name and
+        // nothing a running operation reads, so every state admits one except
+        // the revert that would overwrite it.
+        if instance.status.renamePersists { verbs.append(.rename) }
         if instance.canDelete { verbs.append(.delete) }
         return verbs
     }

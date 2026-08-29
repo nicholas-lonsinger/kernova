@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# The VM command core is what every automation surface — AppleScript, the
-# kernova:// scheme, the CLI, App Intents — reaches VMs through, so it has to
-# stay callable from a process with no UI. Nothing in the compiler enforces
-# that: an `import AppKit` under Kernova/Commands compiles fine inside the app
-# target and only fails once a headless client tries to link the same code.
-# Fails lint when one appears, and when the wire router reaches for the AppKit
-# adapter or the concrete core instead of the facade it is meant to depend on.
+# Checks exactly two things about the VM command core, both of which the
+# compiler is happy to let slide inside a single app target:
+#
+#   1. No file under Kernova/Commands imports AppKit, Cocoa or SwiftUI. That
+#      keeps the core's own sources UI-free; it does not make the core headless,
+#      because its collaborators still reach AppKit transitively.
+#   2. The wire router names neither the AppKit adapter nor the concrete core,
+#      only the facade it is meant to depend on.
 
 set -uo pipefail
 
@@ -21,8 +22,19 @@ if [ ! -d "$core_dir" ]; then
     exit 1
 fi
 
+# Every spelling of an import Swift accepts, since a plain anchored match on
+# `import AppKit` catches only one of them: attributes with and without
+# arguments (`@preconcurrency`, `@_spi(Private)`), access-level modifiers
+# (`internal`, `public`), an import kind (`import class AppKit.NSImage`),
+# submodules, and anything trailing on the line such as a comment.
+attribute='@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?[[:space:]]+'
+access='(public|package|internal|fileprivate|private)[[:space:]]+'
+kind='(class|struct|enum|protocol|typealias|func|var|let)[[:space:]]+'
+module='(AppKit|Cocoa|SwiftUI)([.][A-Za-z_][A-Za-z0-9_]*)*'
+import_pattern="^[[:space:]]*($attribute)*($access)?import[[:space:]]+($kind)?$module([[:space:]]|\$)"
+
 while IFS= read -r file; do
-    if grep -Eq '^import (AppKit|Cocoa|SwiftUI)$' "$file"; then
+    if grep -Eq "$import_pattern" "$file"; then
         echo "check-headless-core: $file imports a UI framework" >&2
         status=1
     fi

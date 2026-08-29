@@ -20,9 +20,9 @@ enum CommandRecovery: Sendable, Equatable {
 
 /// Why a command did not run, in the one vocabulary every front door inherits.
 ///
-/// Each case is a refusal a surface renders in its own idiom — a CLI exit code,
-/// an Apple Event error, an App Intents error, an AppKit alert. The mapping
-/// belongs to each transport; the vocabulary lives here.
+/// Each case is a refusal a surface renders in its own idiom — an AppKit alert
+/// in process, a ``CommandErrorDTO`` on the wire. The mapping belongs to each
+/// transport; the vocabulary lives here.
 enum CommandError: Error, Sendable, Equatable {
     /// No VM answers to the selector.
     case notFound(VMSelector)
@@ -151,8 +151,9 @@ extension CommandError {
             .unsupported(capability: capability)
         case .conflict(let vm, let other, let reason):
             .conflict(vm: vm, with: other, reason: reason)
-        case .operationFailed(let verb, _, let message, let recovery):
-            .operationFailed(verb: verb, message: message, recovery: recovery?.dto)
+        case .operationFailed(let verb, let title, let message, let recovery):
+            .operationFailed(
+                verb: verb, title: title, message: message, recovery: recovery?.dto)
         }
     }
 }

@@ -93,6 +93,16 @@ enum VMStatus: String, Sendable {
     var canEditSettings: Bool { self == .stopped || self == .error || self == .initialBoot }
     var canRename: Bool { !isTransitioning }
 
+    /// Whether a rename committed in this state survives.
+    ///
+    /// `.restoring` is the one that does not: a revert reads the configuration
+    /// it will assign back before it starts writing files
+    /// (``VirtualizationService/revertToSnapshot(_:snapshot:store:)``), so a
+    /// name written while it runs is overwritten when it lands. Every other
+    /// state leaves the configuration alone, so a rename typed into a field
+    /// editor that was open when the VM moved is kept rather than refused.
+    var renamePersists: Bool { self != .restoring }
+
     /// Whether the VM has a live display session that a backing view should present.
     var hasActiveDisplay: Bool {
         switch self {

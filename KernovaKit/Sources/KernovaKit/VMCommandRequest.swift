@@ -4,8 +4,7 @@ import Foundation
 ///
 /// Serialization only: every case maps 1:1 onto a method of the in-process
 /// facade, so a transport translates and decides nothing. A door that can call
-/// the facade directly — the AppKit UI, an App Intents handler, an
-/// `NSScriptCommand` — never builds one of these.
+/// the facade directly — the AppKit UI — never builds one of these.
 public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than

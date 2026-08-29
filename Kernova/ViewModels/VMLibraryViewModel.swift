@@ -690,8 +690,9 @@ final class VMLibraryViewModel {
         do {
             try commands.cancelPreparing(.id(instance.id), confirmed: true)
         } catch let error as CommandError {
-            // The copy settled — or the row went — while the confirmation was
-            // up. The operation the user asked to stop is already over.
+            // The row went while the confirmation was up — a settled copy is
+            // cleaned up rather than refused, so what reaches here is a VM that
+            // is no longer in the library, or one that is no longer at rest.
             Self.logger.notice(
                 "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
             )
@@ -1353,19 +1354,25 @@ final class VMLibraryViewModel {
 
     /// Opens the sheet that gathers the consent a refusal is asking for.
     ///
-    /// One refusal reaches here: a Stop the user asked for that only the core
-    /// can tell is impossible, because the guest is paused. Every other
-    /// confirmation is raised by the `request…` method that opens its own sheet
-    /// and knows the arguments — which VM, which snapshot, Trash or immediate —
-    /// that the prompt alone does not carry.
+    /// Two refusals reach here, both raised by a Stop the user asked for that
+    /// only the core can tell is destructive: a live-paused guest that cannot
+    /// receive the request, and a cold-paused Ephemeral VM whose stop discards
+    /// its suspended session. Every other confirmation is raised by the
+    /// `request…` method that opens its own sheet and knows the arguments —
+    /// which VM, which snapshot, Trash or immediate — that the prompt alone
+    /// does not carry.
     private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance?) {
-        guard let instance, prompt.kind == .stopPaused else {
+        guard let instance else { return }
+        switch prompt.kind {
+        case .stopPaused:
+            presenter?.presentStopPaused(for: instance)
+        case .forceStop:
+            presenter?.presentForceStop(for: instance)
+        default:
             Self.logger.debug(
                 "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public)"
             )
-            return
         }
-        presenter?.presentStopPaused(for: instance)
     }
 
     func presentError(_ error: Error) {
