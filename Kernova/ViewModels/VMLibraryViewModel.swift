@@ -284,8 +284,10 @@ final class VMLibraryViewModel {
         library.onAgentBecameCurrent = { [weak self] instance in
             self?.unmountGuestAgentInstaller(from: instance)
         }
-        commands.onFailure = { [weak self] title, message in
-            self?.surfaceError(message, title: title)
+        // The same routing a call site gets, so a failure nobody awaited still
+        // reaches the sheet or the recovery alert its type asks for.
+        commands.onFailure = { [weak self] failure, instance in
+            self?.present(failure, for: instance)
         }
         commands.surfaceDisplay = { [weak self] instance in
             self?.surfaceDisplay(for: instance)
@@ -725,7 +727,18 @@ final class VMLibraryViewModel {
     /// the pending session), and clearing unconditionally would wipe the newer
     /// rename's marker before its UI ever opened.
     func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
-        runSync(on: instance) { try self.commands.rename(.id(instance.id), to: newName) }
+        do {
+            try commands.rename(.id(instance.id), to: newName)
+        } catch let error as CommandError where error.isOperationFailure {
+            // The configuration funnel already told the user the write failed;
+            // the verb throws so a wire client hears about it, and a second
+            // alert saying the same thing is not what the user needs.
+            Self.logger.error(
+                "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message, privacy: .public)"
+            )
+        } catch {
+            present(error, for: instance)
+        }
         clearRename(ifOwnedBy: surface.target(for: instance))
     }
 

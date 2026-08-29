@@ -49,6 +49,50 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case delete
     case importVM
     case cancelPreparing
+
+    /// What a person calls this verb.
+    ///
+    /// The raw value is the name a transport parses; this is the name a
+    /// sentence puts in front of a user, and no surface should show the other.
+    public var displayName: String {
+        switch self {
+        case .list: "List"
+        case .info: "Get Info"
+        case .ipAddress: "Get IP Address"
+        case .snapshots: "List Snapshots"
+        case .start: "Start"
+        case .stop: "Stop"
+        case .pause: "Pause"
+        case .resume: "Resume"
+        case .suspend: "Suspend"
+        case .restart: "Restart"
+        case .open: "Open"
+        case .takeSnapshot: "Take Snapshot"
+        case .revertToSnapshot: "Revert to Snapshot"
+        case .deleteSnapshot: "Delete Snapshot"
+        case .renameSnapshot: "Rename Snapshot"
+        case .setSnapshotNotes: "Edit Snapshot Note"
+        case .clone: "Clone"
+        case .rename: "Rename"
+        case .delete: "Delete"
+        case .importVM: "Import"
+        case .cancelPreparing: "Cancel"
+        }
+    }
+
+    /// Whether the verb only answers a question.
+    ///
+    /// A read is admitted in every state, so naming one among the verbs a VM
+    /// "accepts now" tells a user nothing.
+    public var isRead: Bool {
+        switch self {
+        case .list, .info, .ipAddress, .snapshots: true
+        case .start, .stop, .pause, .resume, .suspend, .restart, .open, .takeSnapshot,
+            .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
+            .rename, .delete, .importVM, .cancelPreparing:
+            false
+        }
+    }
 }
 
 /// How a stop should reach a powered-off guest.

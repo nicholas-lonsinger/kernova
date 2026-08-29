@@ -76,10 +76,16 @@ extension CommandError {
                 + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
                 + "."
         case .invalidState(let vm, let current, let allowed):
-            "\u{201C}\(vm.name)\u{201D} is \(current.displayName.lowercased()). "
-                + (allowed.isEmpty
-                    ? "Nothing can be done with it in that state."
-                    : "What it accepts now: \(allowed.map(\.rawValue).joined(separator: ", ")).")
+            // Display names, never the raw values: those are the wire's
+            // vocabulary, and this sentence goes in front of a person. Reads are
+            // left out — every state admits them, so naming them says nothing.
+            {
+                let offered = allowed.filter { !$0.isRead }.map(\.displayName)
+                return "\u{201C}\(vm.name)\u{201D} is \(current.displayName.lowercased()). "
+                    + (offered.isEmpty
+                        ? "Nothing can be done with it in that state."
+                        : "What it accepts now: \(offered.joined(separator: ", ")).")
+            }()
         case .busy(let vm, let operation):
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
         case .confirmationRequired(let prompt):
@@ -105,6 +111,13 @@ extension CommandError {
     /// Whether the VM already had work in flight that this verb would race.
     var isBusy: Bool {
         if case .busy = self { return true }
+        return false
+    }
+
+    /// Whether the verb ran and did not complete, as opposed to being refused
+    /// before it started.
+    var isOperationFailure: Bool {
+        if case .operationFailed = self { return true }
         return false
     }
 

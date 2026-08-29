@@ -59,10 +59,70 @@ struct VMCommandCoreTests {
             virtualization: virtualization, snapshots: snapshots, fileSystem: fileSystem)
     }
 
+    private struct SuspendingHarness {
+        let core: VMCommandCore
+        let library: VMLibrary
+        let storage: MockVMStorageService
+        let virtualization: SuspendingMockVirtualizationService
+        let snapshots: MockVMSnapshotStore
+    }
+
+    /// A core whose virtualization service holds one operation suspended, so a
+    /// test can look at the world while a VZ call is still in flight.
+    private func makeSuspendingHarness() -> SuspendingHarness {
+        let storage = MockVMStorageService()
+        let snapshots = MockVMSnapshotStore()
+        let fileSystem = MockFileSystem()
+        let virtualization = SuspendingMockVirtualizationService()
+        let lifecycle = VMLifecycleCoordinator(
+            virtualizationService: virtualization,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            linuxImageResolveService: MockLinuxImageResolveService(),
+            downloadService: MockDownloadService(),
+            fileSystem: fileSystem
+        )
+        let library = VMLibrary(
+            storageService: storage,
+            snapshotStore: snapshots,
+            lifecycle: lifecycle,
+            fileSystem: fileSystem,
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(),
+            isVMNetworkingEntitled: true
+        )
+        let core = VMCommandCore(
+            library: library,
+            lifecycle: lifecycle,
+            storageService: storage,
+            snapshotStore: snapshots,
+            fileSystem: fileSystem,
+            preferences: preferences
+        )
+        return SuspendingHarness(
+            core: core, library: library, storage: storage, virtualization: virtualization,
+            snapshots: snapshots)
+    }
+
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String = "Core VM", status: VMStatus = .stopped,
         guestOS: VMGuestOS = .linux
+    ) -> VMInstance {
+        register(name: name, status: status, guestOS: guestOS, in: harness.library, harness.storage)
+    }
+
+    @discardableResult
+    private func makeInstance(
+        in harness: SuspendingHarness, name: String = "Core VM", status: VMStatus = .stopped
+    ) -> VMInstance {
+        register(name: name, status: status, guestOS: .linux, in: harness.library, harness.storage)
+    }
+
+    private func register(
+        name: String, status: VMStatus, guestOS: VMGuestOS, in library: VMLibrary,
+        _ storage: MockVMStorageService
     ) -> VMInstance {
         var config = VMConfiguration(
             name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
@@ -71,8 +131,12 @@ struct VMCommandCoreTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
             configuration: config, bundleURL: bundleURL, status: status, preferences: preferences)
-        harness.library.instances.append(instance)
-        harness.storage.bundles[bundleURL] = config
+        storage.bundles[bundleURL] = config
+        // Wired the way every real construction site is, so the per-instance
+        // hooks a verb answers — the power-off that starts an Ephemeral revert,
+        // above all — are actually connected.
+        library.wirePersistence(for: instance)
+        library.instances.append(instance)
         return instance
     }
 
@@ -919,14 +983,59 @@ struct VMCommandCoreTests {
         #expect(message == "The disk went away")
     }
 
-    // MARK: - Headlessness
+    // MARK: - Where failures go
 
-    @Test("The core reports its failures rather than presenting them")
-    func failuresLeaveThroughTheHook() async throws {
+    @Test("A revert that failed is thrown to the caller that awaited it")
+    func failedRevertThrowsToItsCaller() async throws {
         let harness = makeHarness()
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
-        var reported: [(title: String, message: String)] = []
-        harness.core.onFailure = { reported.append((title: $0, message: $1)) }
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let instance = makeInstance(in: harness, name: "Reverter", status: .running)
+        let snapshot = VMSnapshot(name: "Clean")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.revertToSnapshot(
+                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
+                    confirmed: true)
+            })
+
+        #expect(error.isOperationFailure)
+        // Thrown, not reported: a rollback that did not happen must not read as
+        // `ok` to whoever asked for it.
+        #expect(reported.isEmpty)
+        #expect(instance.snapshotManifest.currentID == nil)
+    }
+
+    @Test("A cold-paused ephemeral stop throws when its baseline could not come back")
+    func failedDiscardRevertThrowsFromStop() async throws {
+        let harness = makeHarness()
+        harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
+        let instance = makeInstance(in: harness, name: "Ephemeral", status: .paused)
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .graceful, confirmed: false)
+            })
+
+        #expect(error.isOperationFailure)
+        #expect(harness.virtualization.stopCallCount == 0)
+    }
+
+    @Test("A revert nobody awaited reports through the hook, typed")
+    func unawaitedRevertFailureLeavesThroughTheHook() async throws {
+        let harness = makeHarness()
+        harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
 
         let instance = makeInstance(in: harness, name: "Ephemeral", status: .running)
         let baseline = VMSnapshot(name: "Clean install")
@@ -940,7 +1049,91 @@ struct VMCommandCoreTests {
         await harness.library.waitForRevertsToSettle()
 
         #expect(reported.count == 1)
-        #expect(reported.first?.title == "Error")
+        #expect(reported.first?.isOperationFailure == true)
+    }
+
+    @Test("A rename that did not reach disk is reported rather than answered ok")
+    func failedRenameIsReported() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Before")
+        harness.storage.saveConfigurationError = VMStorageError.bundleNotFound(instance.bundleURL)
+
+        let error = try #require(
+            commandError { try harness.core.rename(.id(instance.id), to: "After") })
+
+        #expect(error.isOperationFailure)
+    }
+
+    @Test("A rename that changes nothing is a no-op even mid-operation")
+    func unchangedRenameIsNotRefused() throws {
+        let harness = makeHarness()
+        // Both inline-rename surfaces commit on end-editing whether or not the
+        // text changed, so an unchanged commit landing here must not refuse.
+        let instance = makeInstance(in: harness, name: "Steady", status: .saving)
+
+        #expect(commandError { try harness.core.rename(.id(instance.id), to: "Steady") } == nil)
+        #expect(commandError { try harness.core.rename(.id(instance.id), to: "   ") } == nil)
+        #expect(
+            commandError { try harness.core.rename(.id(instance.id), to: "Moved") }?.isInvalidState
+                == true)
+    }
+
+    @Test("The invalid-state message names verbs the way a person does")
+    func invalidStateMessageReadsAsCopy() throws {
+        let harness = makeHarness()
+        // Stopped: there is no display to open, and the state admits both a
+        // start and a disks-only capture, so the sentence has something to list.
+        let instance = makeInstance(in: harness, name: "Resting", status: .stopped)
+
+        let error = try #require(commandError { try harness.core.open(.id(instance.id)) })
+
+        // A wire name never reaches a user, and a read is admitted in every
+        // state, so naming one says nothing.
+        #expect(error.message.contains("Take Snapshot"))
+        #expect(!error.message.contains("takeSnapshot"))
+        #expect(!error.message.contains("ipAddress"))
+    }
+
+    @Test("A restart waits out the baseline revert its own shutdown started")
+    func restartWaitsOutTheEphemeralRevert() async throws {
+        let harness = makeSuspendingHarness()
+        harness.virtualization.shouldSuspendOnRevert = true
+        let instance = makeInstance(in: harness, name: "Ephemeral", status: .running)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        let restart = Task { try await harness.core.restart(.id(instance.id)) }
+        // The stop powers the guest off, which queues the baseline revert; the
+        // revert then parks mid-copy. The VM already reads `.stopped` here, so
+        // only the revert registry holds the restart back.
+        await harness.virtualization.waitUntilSuspended()
+        #expect(harness.library.hasRevertInFlight(for: instance.id))
+        #expect(instance.status == .stopped)
+
+        harness.virtualization.resumeSuspended()
+        try await restart.value
+
+        // The baseline handed the VM back suspended on its own memory image, so
+        // the restart resumed it rather than waiting for a `.stopped` that was
+        // never coming.
+        #expect(instance.status == .running)
+        #expect(!harness.library.hasRevertInFlight(for: instance.id))
+    }
+
+    @Test("A restart of an ordinary VM boots it once the power-off settles")
+    func restartBootsAnOrdinaryVM() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Plain", status: .running)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+
+        try await harness.core.restart(.id(instance.id))
+
+        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
     }
 }
 

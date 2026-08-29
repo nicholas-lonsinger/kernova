@@ -36,12 +36,25 @@ extension VMCommandCore {
 
     func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
-        guard instance.status.canRename else { throw invalidState(instance) }
+        // Ahead of the state gate: both inline-rename surfaces commit on
+        // end-editing whether or not the text changed, so a field resigning
+        // while the VM transitions would otherwise raise an alert about a
+        // rename nobody made.
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
+        guard instance.status.canRename else { throw invalidState(instance) }
         Self.logger.debug(
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
-        library.updateConfiguration(of: instance) { $0.name = trimmed }
+        guard library.updateConfiguration(of: instance, mutate: { $0.name = trimmed }) else {
+            // The new name is in memory but not on disk, so the next library
+            // read takes it back. Answering `ok` here would report a rename the
+            // user is about to lose.
+            throw CommandError.operationFailed(
+                verb: .rename,
+                message:
+                    "\u{201C}\(instance.name)\u{201D} could not be renamed — the change was not saved."
+            )
+        }
     }
 
     // MARK: - Clone
@@ -474,7 +487,9 @@ extension VMCommandCore {
             Self.logger.warning(
                 "Failed to delete external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
             )
-            onFailure?("Error", message)
+            // No instance to name: the VM was evicted before these ran, which is
+            // the whole point of doing them after the bundle.
+            report(.operationFailed(verb: .delete, message: message), on: nil)
         }
     }
 

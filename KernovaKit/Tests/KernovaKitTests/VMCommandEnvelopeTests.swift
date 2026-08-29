@@ -9,8 +9,10 @@ import Testing
 @Suite("VM Command Envelope Tests")
 struct VMCommandEnvelopeTests {
     private let selector = VMSelector.idOrName("Alpha")
-    private let vmID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
-    private let snapshotID = UUID(uuidString: "66666666-7777-8888-9999-000000000000")!
+    // Built from their bytes rather than parsed: a literal that has to be
+    // unwrapped is a literal that can be mistyped into a crash.
+    private let vmID = UUID(uuid: (1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5))
+    private let snapshotID = UUID(uuid: (6, 6, 7, 7, 8, 8, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0))
 
     private var summary: VMSummary {
         VMSummary(id: vmID, name: "Alpha", status: "running")
@@ -111,7 +113,6 @@ struct VMCommandEnvelopeTests {
             .event(.added(summary)),
             .event(.removed(id: vmID, name: "Alpha")),
             .event(.statusChanged(id: vmID, name: "Alpha", from: "stopped", to: "running")),
-            .event(.ipAcquired(id: vmID, name: "Alpha", address: "192.168.66.2")),
             .event(.agentStatusChanged(id: vmID, name: "Alpha", status: "current")),
             .event(.failure(id: vmID, name: "Alpha", message: "the disk went away")),
         ]

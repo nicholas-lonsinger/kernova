@@ -269,7 +269,8 @@ struct VMCommandEnvelopeRouterTests {
 private final class StubCommands: VMCommanding {
     static let listed = [
         VMSummary(
-            id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!, name: "Stub",
+            id: UUID(uuid: (0xAA, 0xAA, 0xBB, 0xBB, 0xCC, 0xCC, 0xDD, 0xDD, 0xEE, 0xEE, 0, 0, 0, 0, 0, 0)),
+            name: "Stub",
             status: "stopped")
     ]
 

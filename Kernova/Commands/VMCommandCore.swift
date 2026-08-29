@@ -38,8 +38,13 @@ final class VMCommandCore: VMCommanding {
 
     /// Receives every failure raised with no command call waiting on it — an
     /// Ephemeral baseline revert a power-off started, an external file that
-    /// could not be trashed after its VM was deleted.
-    var onFailure: ((_ title: String, _ message: String) -> Void)?
+    /// could not be trashed after its VM was deleted, the boot chained off a
+    /// finished install.
+    ///
+    /// Typed rather than flattened to a title and a message, so a failure that
+    /// reaches a user this way offers the same recovery it would have offered a
+    /// caller — the removable attachment a start failure names, above all.
+    var onFailure: ((_ failure: CommandError, _ instance: VMInstance?) -> Void)?
 
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
@@ -61,7 +66,6 @@ final class VMCommandCore: VMCommanding {
     private struct ObservedState: Equatable {
         let name: String
         let status: VMStatus
-        let ipAddress: String?
         let agentStatus: AgentStatus
         let errorMessage: String?
     }
@@ -277,7 +281,6 @@ final class VMCommandCore: VMCommanding {
             states[instance.instanceID] = ObservedState(
                 name: instance.name,
                 status: instance.status,
-                ipAddress: library.reservedAddress(for: instance.configuration),
                 agentStatus: instance.agentStatus,
                 errorMessage: instance.errorMessage)
         }
@@ -314,9 +317,6 @@ final class VMCommandCore: VMCommanding {
                                 ?? "The virtual machine stopped with an error."))
                 }
             }
-            if before.ipAddress == nil, let address = now.ipAddress {
-                broadcaster.emit(.ipAcquired(id: id, name: now.name, address: address))
-            }
             if before.agentStatus != now.agentStatus {
                 broadcaster.emit(
                     .agentStatusChanged(
@@ -332,11 +332,7 @@ final class VMCommandCore: VMCommanding {
     // MARK: - Failure Surfacing
 
     /// Hands a failure that no command call is waiting on to ``onFailure``.
-    func surfaceFailure(_ error: Error, title: String = "Error") {
-        if let command = error as? CommandError {
-            onFailure?(command.alertTitle, command.message)
-        } else {
-            onFailure?(title, error.localizedDescription)
-        }
+    func report(_ failure: CommandError, on instance: VMInstance?) {
+        onFailure?(failure, instance)
     }
 }

@@ -236,8 +236,6 @@ extension VMCommandCore {
             defer { instance.setupTask = nil }
             do {
                 try await pipeline(self.lifecycle)
-                instance.setupState = nil
-                try await self.start(instance)
             } catch is CancellationError {
                 // Tear down a VM the install attached before cancellation fired: a
                 // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
@@ -264,10 +262,30 @@ extension VMCommandCore {
                         "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
                     )
                 } else if let explained = self.explainedFailure(for: error, on: instance) {
-                    self.onFailure?(explained.title, explained.message)
+                    self.report(
+                        .operationFailed(
+                            verb: .start, title: explained.title, message: explained.message),
+                        on: instance)
                 } else {
-                    self.surfaceFailure(error)
+                    self.report(
+                        .operationFailed(verb: .start, message: error.localizedDescription),
+                        on: instance)
                 }
+                return
+            }
+            // Setup is done; the boot that follows is an ordinary start, and its
+            // failure is reported the same way a direct one's is — including the
+            // removable-attachment recovery, which a flattened title-and-message
+            // into a plain alert.
+            instance.setupState = nil
+            do {
+                try await self.start(instance)
+            } catch let failure as CommandError {
+                self.report(failure, on: instance)
+            } catch {
+                self.report(
+                    .operationFailed(verb: .start, message: error.localizedDescription),
+                    on: instance)
             }
         }
     }
@@ -330,7 +348,7 @@ extension VMCommandCore {
                 return
             }
             guard instance.status.canStop else { throw invalidState(instance) }
-            if await discardedSavedStateAsEphemeralRevert(instance) { return }
+            if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
                 try await lifecycle.stop(instance)
             } catch {
@@ -348,7 +366,7 @@ extension VMCommandCore {
             guard confirmed else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
-            if await discardedSavedStateAsEphemeralRevert(instance) { return }
+            if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
                 try await lifecycle.forceStop(instance)
                 Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
@@ -484,12 +502,31 @@ extension VMCommandCore {
     /// gate and refusal the two verbs already state. The wait for the power-off
     /// is unbounded, matching what a graceful shutdown means: a guest that
     /// refuses to shut down is not restarted behind the user's back.
+    ///
+    /// The wait outlasts `.stopped`, which arrives first: `resetToStopped()`
+    /// settles the status and *then* fires the power-off hook, so an Ephemeral
+    /// VM's baseline revert is registered a turn later — and starting into it
+    /// would either be refused as busy or boot off disks the revert is still
+    /// overwriting.
+    ///
+    /// Where the VM lands decides which verb brings it back up. A power-off
+    /// normally lands it stopped, but an Ephemeral VM's baseline revert can hand
+    /// it back suspended on the baseline's memory image, and that is the state
+    /// the mode promises — so it is resumed rather than booted, and never waited
+    /// on for a `.stopped` that is not coming.
     func restart(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
         guard instance.canStop else { throw invalidState(instance) }
         try await stop(instance, disposition: .graceful, confirmed: true)
-        await waitForObservedChange { instance.status.canStart }
-        try await start(instance)
+        await waitForObservedChange { [library] in
+            !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
+                && (instance.status.canStart || instance.status.canResume)
+        }
+        if instance.status.canStart {
+            try await start(instance)
+        } else {
+            try await resume(.id(instance.id))
+        }
     }
 
     // MARK: - Open
