@@ -66,6 +66,7 @@ final class VMCommandCore: VMCommanding {
     private struct ObservedState: Equatable {
         let name: String
         let status: VMStatus
+        let isPreparing: Bool
         let agentStatus: AgentStatus
         let errorMessage: String?
     }
@@ -128,8 +129,24 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
+    /// The wire status a VM copying into place through a clone or import
+    /// reports in place of its real ``VMStatus``.
+    static let preparingWireStatus = "preparing"
+
+    /// `instance`'s status as it crosses the wire — ``preparingWireStatus``
+    /// while a clone or import is still copying its bundle, its real
+    /// ``VMStatus`` otherwise.
+    func wireStatus(_ instance: VMInstance) -> String {
+        instance.isPreparing ? Self.preparingWireStatus : instance.status.rawValue
+    }
+
+    /// ``ObservedState``'s wire status, by the same rule as ``wireStatus(_:)``.
+    private func wireStatus(for state: ObservedState) -> String {
+        state.isPreparing ? Self.preparingWireStatus : state.status.rawValue
+    }
+
     func summary(_ instance: VMInstance) -> VMSummary {
-        VMSummary(id: instance.instanceID, name: instance.name, status: instance.status.rawValue)
+        VMSummary(id: instance.instanceID, name: instance.name, status: wireStatus(instance))
     }
 
     // MARK: - State Gates
@@ -159,8 +176,17 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// The refusal for a verb the VM's current state does not admit.
+    ///
+    /// A preparing row's real ``VMStatus`` never explains what is blocking
+    /// it — the copy does — so this reports the same ``busy`` refusal
+    /// ``refuseIfPreparing(_:)`` throws rather than naming a status the
+    /// summary already reports as `"preparing"`, which every caller of this
+    /// shared helper inherits without gating individually.
     func invalidState(_ instance: VMInstance) -> CommandError {
-        .invalidState(
+        if let state = instance.preparingState {
+            return preparingBusyError(instance, state: state)
+        }
+        return .invalidState(
             vm: summary(instance), current: instance.status,
             allowed: allowedVerbs(for: instance))
     }
@@ -168,8 +194,15 @@ final class VMCommandCore: VMCommanding {
     /// Refuses while a clone or import is still writing into the VM's bundle.
     func refuseIfPreparing(_ instance: VMInstance) throws {
         guard let state = instance.preparingState else { return }
-        throw CommandError.busy(
-            vm: summary(instance), operation: state.operation.displayNoun.lowercased())
+        throw preparingBusyError(instance, state: state)
+    }
+
+    /// The refusal a verb gets while `instance` is still copying, shared by
+    /// ``refuseIfPreparing(_:)`` and ``invalidState(_:)``.
+    private func preparingBusyError(
+        _ instance: VMInstance, state: VMInstance.PreparingState
+    ) -> CommandError {
+        .busy(vm: summary(instance), operation: state.operation.displayNoun.lowercased())
     }
 
     /// Maps an error a lifecycle call threw into the command vocabulary.
@@ -204,7 +237,7 @@ final class VMCommandCore: VMCommanding {
         return VMInfo(
             id: instance.instanceID,
             name: instance.name,
-            status: instance.status.rawValue,
+            status: wireStatus(instance),
             guestOS: config.guestOS.rawValue,
             cpuCount: config.cpuCount,
             memoryBytes: config.memorySizeInBytes,
@@ -270,6 +303,7 @@ final class VMCommandCore: VMCommanding {
         for instance in library.instances {
             _ = instance.configuration.name
             _ = instance.status
+            _ = instance.isPreparing
             _ = instance.errorMessage
             _ = instance.agentStatus
         }
@@ -281,6 +315,7 @@ final class VMCommandCore: VMCommanding {
             states[instance.instanceID] = ObservedState(
                 name: instance.name,
                 status: instance.status,
+                isPreparing: instance.isPreparing,
                 agentStatus: instance.agentStatus,
                 errorMessage: instance.errorMessage)
         }
@@ -301,14 +336,14 @@ final class VMCommandCore: VMCommanding {
             guard let now = current[id] else { continue }
             guard let before = lastObserved[id] else {
                 broadcaster.emit(
-                    .added(VMSummary(id: id, name: now.name, status: now.status.rawValue)))
+                    .added(VMSummary(id: id, name: now.name, status: wireStatus(for: now))))
                 continue
             }
-            if before.status != now.status {
+            if before.status != now.status || before.isPreparing != now.isPreparing {
                 broadcaster.emit(
                     .statusChanged(
-                        id: id, name: now.name, from: before.status.rawValue,
-                        to: now.status.rawValue))
+                        id: id, name: now.name, from: wireStatus(for: before),
+                        to: wireStatus(for: now)))
                 if now.status == .error {
                     broadcaster.emit(
                         .failure(
@@ -322,6 +357,9 @@ final class VMCommandCore: VMCommanding {
                     .agentStatusChanged(
                         id: id, name: now.name, status: now.agentStatus.wireName))
             }
+            if before.name != now.name {
+                broadcaster.emit(.renamed(id: id, from: before.name, to: now.name))
+            }
         }
         for (id, before) in lastObserved where current[id] == nil {
             broadcaster.emit(.removed(id: id, name: before.name))
@@ -334,5 +372,18 @@ final class VMCommandCore: VMCommanding {
     /// Hands a failure that no command call is waiting on to ``onFailure``.
     func report(_ failure: CommandError, on instance: VMInstance?) {
         onFailure?(failure, instance)
+    }
+
+    /// Reports a clone or import copy that failed after registering its
+    /// preparing row.
+    ///
+    /// `phantom` is evicted by the time this runs, so the diffing observation
+    /// in ``emitLibraryChanges()`` can only ever see it vanish — this message
+    /// reaches no observable field and no diff can ever produce it, which is
+    /// why it is emitted directly rather than left to the loop.
+    func reportPreparingFailure(_ error: Error, verb: VMVerb, phantom: VMInstance) {
+        broadcaster.emit(
+            .failure(id: phantom.instanceID, name: phantom.name, message: error.localizedDescription))
+        report(.operationFailed(verb: verb, message: error.localizedDescription), on: nil)
     }
 }

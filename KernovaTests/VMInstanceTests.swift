@@ -495,6 +495,27 @@ struct VMInstanceTests {
         #expect(instance.canDelete == false)
     }
 
+    // MARK: - canRename
+
+    @Test("canRename agrees with VMStatus.canRename while at rest")
+    func canRenameAtRest() {
+        let instance = makeInstance(status: .stopped)
+        #expect(instance.canRename == true)
+    }
+
+    @Test("canRename is false while an import or clone is writing into the bundle")
+    func canRenamePreparing() {
+        // The sidebar and detail panel's inline-rename affordances read this
+        // predicate without a preparing guard of their own, so the check has
+        // to live here to hold on every surface.
+        let instance = makeInstance(status: .stopped)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+        #expect(instance.isPreparing == true)
+        #expect(instance.canRename == false)
+    }
+
     // MARK: - Bundle Paths
 
     @Test("Bundle path URLs are correctly derived from bundleURL")

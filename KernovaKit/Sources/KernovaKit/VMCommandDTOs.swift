@@ -10,7 +10,9 @@ public struct VMSummary: Codable, Sendable, Hashable {
     public let id: UUID
     /// The VM's display name, which is not unique.
     public let name: String
-    /// The VM's runtime status, as its stable wire name.
+    /// The VM's runtime status, as its stable wire name. A VM whose bundle is
+    /// still being copied by a clone or import reports `preparing`, which is
+    /// not a ``VMStatus`` value.
     public let status: String
 
     /// Names one VM.
@@ -27,7 +29,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let id: UUID
     /// The VM's display name.
     public let name: String
-    /// The VM's runtime status, as its stable wire name.
+    /// The VM's runtime status, as its stable wire name. A VM whose bundle is
+    /// still being copied by a clone or import reports `preparing`, which is
+    /// not a ``VMStatus`` value.
     public let status: String
     /// Which guest the VM runs, as its stable wire name.
     public let guestOS: String

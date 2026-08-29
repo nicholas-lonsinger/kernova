@@ -405,7 +405,8 @@ final class VMLibrary {
         _ phantom: VMInstance,
         operation: VMInstance.PreparingOperation,
         copyWork: @escaping () async throws -> Void,
-        onSuccess: @escaping () -> Void
+        onSuccess: @escaping () -> Void,
+        onFailure: @escaping (Error) -> Void
     ) {
         registerPhantom(phantom)
         let fileSystem = fileSystem
@@ -443,7 +444,7 @@ final class VMLibrary {
                     Self.logger.error(
                         "Failed to \(operation.displayNoun.lowercased(), privacy: .public) VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
-                    self.presentError(error)
+                    onFailure(error)
                 }
             }
         }

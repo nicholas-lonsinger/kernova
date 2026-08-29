@@ -235,8 +235,9 @@ session down without that hook, so a suspended session survives to revert at its
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
   `surfaceDisplay` hook, an unawaited failure through `onFailure` — and `events()` vends an
-  `AsyncStream<VMLibraryEvent>` fed by one diffing observation, for callers that cannot observe the
-  model. Clone and import register a preparing "phantom" `VMInstance` **synchronously, before any
+  `AsyncStream<VMLibraryEvent>` fed by one diffing observation plus the clone/import copy failures
+  no model field survives to hold, for callers that cannot observe the model. Clone and import
+  register a preparing "phantom" `VMInstance` **synchronously, before any
   `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
   imports and clones cannot claim the same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
