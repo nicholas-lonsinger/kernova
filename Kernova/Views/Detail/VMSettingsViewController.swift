@@ -394,10 +394,13 @@ extension VMSettingsViewController {
     private func apply() {
         guard isViewLoaded else { return }
         panelControllers.values.forEach { $0.refresh() }
-        // Last, so the cards and the header state what the refreshers above
-        // just resolved — the open panel's chrome among it.
-        refreshOverview()
+        // After the panels, so the header and the cards state what the
+        // refreshers above just resolved — the open panel's chrome among it —
+        // and the header first, because the Storage card reads the boot-disk
+        // figure the header re-keys here: on the pass a VM's boot disk changes,
+        // the other order pairs the new disk's label with the old one's size.
         refreshHeader()
+        refreshOverview()
     }
 
     /// Paints the overview cards from the same pass that refreshed the panels.

@@ -83,6 +83,38 @@ struct VMIdentityHeaderViewTests {
         #expect(factsFrame.maxY <= titleFrame.minY)
         #expect(hintFrame.midY > titleFrame.minY)
         #expect(hintFrame.midY < titleFrame.maxY)
+        // A trailing accessory sits at the header's far edge, not crowded up
+        // against the title.
+        #expect(hintFrame.maxX >= header.bounds.maxX - 1)
+        #expect(hintFrame.minX > titleFrame.maxX)
+    }
+
+    @Test("A category row narrower than its content squeezes the accessories, not the title")
+    func narrowCategoryRowKeepsTheTitle() throws {
+        let header = VMIdentityHeaderView()
+        // The panel chrome the Network category hands over, built to hold its
+        // width against a section title.
+        let hint = makeGroupedFormLockHint()
+        header.configure(
+            with: makeInstance(), mode: .category("Network"), trailingAccessories: [hint])
+        // Narrower than the title row's content — the tile, the category's name
+        // and the hint together — so something has to give.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        container.addSubview(header)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            header.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        container.layoutSubtreeIfNeeded()
+
+        let hintLabel = try #require(findLabel(withText: groupedFormLockHintText, in: hint))
+        let title = try #require(findLabel(withText: "Network", in: header))
+        // The hint gives up the width the row is short, truncating its tail…
+        #expect(hintLabel.frame.width < hintLabel.intrinsicContentSize.width)
+        #expect(hintLabel.lineBreakMode == .byTruncatingTail)
+        // …and the name of what the header states stays whole.
+        #expect(title.frame.width >= title.intrinsicContentSize.width - 0.5)
     }
 
     @Test("Re-binding to another VM re-renders from the new one")

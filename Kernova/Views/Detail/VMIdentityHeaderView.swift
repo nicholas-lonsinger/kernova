@@ -23,6 +23,15 @@ final class VMIdentityHeaderView: NSView {
     /// Side of the square icon tile.
     private static let tileSize: CGFloat = 44
 
+    /// What a category's accessory text resists being squeezed at, one step
+    /// below the title's own `.defaultLow`.
+    ///
+    /// Panel chrome is built for a section header, where a trailing hint holds
+    /// its width against a section title, so on this row a narrow pane would
+    /// otherwise truncate the category's name away and keep a static hint whole.
+    private static let accessoryCompressionResistance = NSLayoutConstraint.Priority(
+        NSLayoutConstraint.Priority.defaultLow.rawValue - 1)
+
     private let iconView = NSImageView()
     private let tile = NSBox()
     private let backButton = HeaderBackButton()
@@ -123,7 +132,25 @@ final class VMIdentityHeaderView: NSView {
         }
         accessories.forEach { $0.removeFromSuperview() }
         accessories = wanted
+        (leading + trailing).forEach(applySqueezePolicy)
         wanted.forEach { titleRow.addArrangedSubview($0) }
+    }
+
+    /// Sets the title row's squeeze order on an accessory: its text truncates
+    /// tail below the title's own resistance, so a narrow pane takes the width
+    /// it is short out of the accessories rather than out of the name of the
+    /// thing the header states.
+    ///
+    /// Fixed-size affordances — the info button's 16-point square — are held by
+    /// their own constraints and give up nothing either way.
+    private func applySqueezePolicy(to view: NSView) {
+        if let label = view as? NSTextField {
+            label.maximumNumberOfLines = 1
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(
+                Self.accessoryCompressionResistance, for: .horizontal)
+        }
+        view.subviews.forEach(applySqueezePolicy)
     }
 
     private func render() {
@@ -206,6 +233,7 @@ final class VMIdentityHeaderView: NSView {
             backButton.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
             backButton.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
         ])
+        backButton.isHidden = true
 
         nameLabel.font = Typography.title
         nameLabel.lineBreakMode = .byTruncatingTail
@@ -258,7 +286,9 @@ final class VMIdentityHeaderView: NSView {
             column.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
             hugsContent,
         ])
-        titleRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+        // The title row spans the column, so a category's trailing spacer has
+        // the width to push its trailing accessories to the header's far edge.
+        titleRow.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         statusRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
     }
 }
