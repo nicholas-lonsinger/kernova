@@ -77,7 +77,7 @@ struct VMSettingsOverviewTests {
         firstSubview(CopyValueButton.self, in: card)
     }
 
-    /// The panel header's bezeled back button, which carries no title.
+    /// The tile's back button, which carries a glyph and no title.
     private func backButton(in header: NSView) -> NSButton? {
         firstSubview(NSButton.self, in: header) { $0.toolTip == "Show all settings" }
     }
@@ -109,34 +109,27 @@ struct VMSettingsOverviewTests {
         #expect(summaryLine(in: sharing) != nil)
     }
 
-    @Test("The cards pair off two to a row, in category order")
-    func cardsLayOutTwoPerRow() throws {
+    @Test("The cards stack one per row, at the column's full width, in category order")
+    func cardsStackInOneColumn() throws {
         let (vc, _, _) = makeController()
         let window = makeTestWindow(styleMask: [.titled, .resizable])
         window.contentViewController = vc
-        window.setContentSize(NSSize(width: 900, height: 1200))
+        window.setContentSize(NSSize(width: 900, height: 1600))
         vc.view.layoutSubtreeIfNeeded()
 
-        let pairs: [(VMSettingsCategory, VMSettingsCategory)] = [
-            (.general, .system), (.storage, .network), (.sharing, .snapshots),
-        ]
-        for (leading, trailing) in pairs {
-            let left = try card(leading, in: vc)
-            let right = try card(trailing, in: vc)
-            let leftFrame = left.convert(left.bounds, to: vc.view)
-            let rightFrame = right.convert(right.bounds, to: vc.view)
-            #expect(rightFrame.minX > leftFrame.maxX)
-            // Tops align on a row — the pane's views are unflipped, so that is
-            // `maxY` — while the heights stay each card's own business.
-            #expect(abs(rightFrame.maxY - leftFrame.maxY) < 1)
-            #expect(abs(leftFrame.width - rightFrame.width) < 1)
+        var previous: NSRect?
+        for category in VMSettingsCategory.allCases {
+            let card = try self.card(category, in: vc)
+            let frame = card.convert(card.bounds, to: vc.view)
+            #expect(frame.width == GroupedFormStyle.columnWidth)
+            if let previous {
+                // The pane's views are unflipped, so each card sits below the
+                // one before it — no two share a row.
+                #expect(frame.maxY <= previous.minY)
+                #expect(abs(frame.minX - previous.minX) < 1)
+            }
+            previous = frame
         }
-        // The pairs stack down the column rather than running on.
-        let general = try card(.general, in: vc)
-        let storage = try card(.storage, in: vc)
-        #expect(
-            storage.convert(storage.bounds, to: vc.view).maxY
-                <= general.convert(general.bounds, to: vc.view).minY)
     }
 
     @Test("A card's drill-in reads Edit, in the accent color")
@@ -222,8 +215,8 @@ struct VMSettingsOverviewTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
-    @Test("A drilled-in header is one row: the way back, the title, the facts trailing")
-    func panelHeaderIsOneRowBehindTheBackButton() throws {
+    @Test("Drilling in morphs the one header anatomy rather than swapping another in")
+    func panelHeaderMorphsTheTileInPlace() throws {
         let (vc, instance, _) = makeController()
         let window = makeTestWindow(styleMask: [.titled])
         window.setContentSize(NSSize(width: 700, height: 400))
@@ -232,10 +225,11 @@ struct VMSettingsOverviewTests {
         vc.view.layoutSubtreeIfNeeded()
         let facts = header.renderedFactsLine
         #expect(!facts.isEmpty)
-        // The overview states the VM's name over the same facts line, on its tile.
+        // The overview states the VM's name over the facts line, on its tile.
         #expect(findLabel(withText: instance.name, in: header) != nil)
         let tile = try #require(firstSubview(NSBox.self, in: header))
         #expect(isVisible(tile, within: header))
+        #expect(backButton(in: header)?.isHidden == true)
 
         vc.showCategory(.system)
         vc.view.layoutSubtreeIfNeeded()
@@ -246,23 +240,22 @@ struct VMSettingsOverviewTests {
         let title = try #require(findLabel(withText: "System", in: header))
         let factsLabel = try #require(findLabel(withText: facts, in: header))
         #expect(back.accessibilityLabel() == "Back")
-        // A real bezeled control in the accent color, not a hand-drawn chevron.
-        #expect(back.isBordered)
-        #expect(back.bezelStyle == .push)
+        // The tile stays; only the glyph it carries changes, in the accent color
+        // the cards' Edit affordances use.
+        #expect(isVisible(tile, within: header))
+        #expect(!back.isHidden)
+        #expect(!back.isBordered)
         #expect(back.contentTintColor == .controlAccentColor)
-        #expect(back.frame.size == NSSize(width: 28, height: 24))
-        // No tile: the row leads with the button, the title following it.
-        #expect(!isVisible(tile, within: header))
         #expect(findLabel(withText: instance.name, in: header) == nil)
         #expect(title.font == Typography.title)
+        let tileFrame = tile.convert(tile.bounds, to: header)
         let backFrame = back.convert(back.bounds, to: header)
         let titleFrame = title.convert(title.bounds, to: header)
         let factsFrame = factsLabel.convert(factsLabel.bounds, to: header)
-        #expect(titleFrame.minX > backFrame.maxX)
-        // The facts line trails the title on that same row, not below it.
-        #expect(factsFrame.minX > titleFrame.maxX)
-        #expect(factsFrame.midY > titleFrame.minY)
-        #expect(factsFrame.midY < titleFrame.maxY)
+        // The glyph sits on the tile, the title beside it, the facts below.
+        #expect(abs(backFrame.midX - tileFrame.midX) < 1)
+        #expect(titleFrame.minX > tileFrame.maxX)
+        #expect(factsFrame.maxY <= titleFrame.minY)
     }
 
     @Test("A single-section panel states its name once, keeping the section's affordances")
@@ -345,29 +338,31 @@ struct VMSettingsOverviewTests {
 
     // MARK: - Lock hints and warnings
 
-    @Test("A card's lock glyph shows only while read-only, and only where rows lock")
-    func cardLockGlyphsTrackReadOnly() throws {
+    @Test("A card's lock hint shows only while read-only, and only where rows lock")
+    func cardLockHintsTrackReadOnly() throws {
         let (readOnlyVC, _, _) = makeController(isReadOnly: true)
         for category in VMSettingsCategory.allCases {
             let card = try self.card(category, in: readOnlyVC)
-            guard let hint = category.lockHint else {
+            guard let claim = category.lockHint else {
                 // Nothing in General or Snapshots is stopped-only, so neither
                 // card claims a lock at all.
-                #expect(firstSubview(NSImageView.self, in: card) { $0.toolTip != nil } == nil)
+                #expect(findLabel(containing: "editable when stopped", in: card) == nil)
                 continue
             }
-            let glyph = try #require(cardLockGlyph(category, in: card))
-            #expect(!glyph.isHidden)
-            #expect(glyph.toolTip == hint)
-            // Glyph only: a two-column card has no room for the hint's text.
-            #expect(findLabel(withText: hint, in: card) == nil)
+            let hint = try #require(cardLockHint(category, in: card))
+            #expect(!hint.isHidden)
+            #expect(hint.toolTip == claim)
+            // The scoped claim reads inline, not only in the tooltip.
+            #expect(findLabel(withText: claim, in: card) != nil)
+            // Never the panels' unscoped text, which a card's live controls
+            // would contradict.
             #expect(findLabel(withText: groupedFormLockHintText, in: card) == nil)
         }
 
         let (editableVC, _, _) = makeController(isReadOnly: false)
         for category in VMSettingsCategory.allCases {
             let card = try self.card(category, in: editableVC)
-            #expect(cardLockGlyph(category, in: card)?.isHidden != false)
+            #expect(cardLockHint(category, in: card)?.isHidden != false)
         }
     }
 
@@ -376,12 +371,13 @@ struct VMSettingsOverviewTests {
         let (vc, _, _) = makeController(isReadOnly: true)
         let sharing = try card(.sharing, in: vc)
 
-        // Every switch on the Sharing card edits live; the glyph claims only
+        // Every switch on the Sharing card edits live; the hint claims only
         // that the folders lock, so it contradicts nothing beside it.
         #expect(cardSwitch(.clipboardSharing, in: sharing) != nil)
-        let glyph = try #require(cardLockGlyph(.sharing, in: sharing))
-        #expect(!glyph.isHidden)
-        #expect(glyph.toolTip == "Folders editable when stopped")
+        let hint = try #require(cardLockHint(.sharing, in: sharing))
+        #expect(!hint.isHidden)
+        #expect(hint.toolTip == "Folders editable when stopped")
+        #expect(findLabel(withText: "Folders editable when stopped", in: sharing) != nil)
         // The panel's own Shared Directories hint still states the full text.
         let panel = try #require(vc.panelForTesting(.sharing))
         #expect(settingsLockHints(in: panel).contains { !$0.isHidden })
@@ -416,9 +412,9 @@ struct VMSettingsOverviewTests {
 
         // The mode picker live-switches on a running VM, but the MAC address and
         // the forwarding rules still lock — which is all the claim says.
-        let glyph = try #require(cardLockGlyph(.network, in: try card(.network, in: vc)))
-        #expect(!glyph.isHidden)
-        #expect(glyph.toolTip == "Most editable when stopped")
+        let hint = try #require(cardLockHint(.network, in: try card(.network, in: vc)))
+        #expect(!hint.isHidden)
+        #expect(hint.toolTip == "Most editable when stopped")
     }
 
     // MARK: - Card contents
@@ -496,8 +492,8 @@ struct VMSettingsOverviewTests {
 
     @Test("A long network mode gives up its width before the address beside it")
     func longModeTitleYieldsToTheAddress() throws {
-        // A bridged mode carries a host interface's name, which is unbounded —
-        // and a half-width card leaves the row around 278 points.
+        // A bridged mode carries a host interface's name, which is unbounded,
+        // and the pane fills a container narrower than the column cap.
         let mode = "Thunderbolt Bridge (bridge0)"
         let card = VMOverviewCardView(category: .network, toggles: [])
         card.configure(
@@ -510,7 +506,7 @@ struct VMSettingsOverviewTests {
             toggles: [], note: nil, action: nil, headerSummary: nil, showsLockHint: false,
             warning: nil)
 
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: 302, height: 200))
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = host
         host.addSubview(card)

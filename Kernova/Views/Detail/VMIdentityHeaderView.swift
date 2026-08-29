@@ -1,11 +1,12 @@
 import AppKit
 
-/// The header above the settings form.
+/// The header above the settings form: a tile, a title, and a status dot beside
+/// a one-line facts summary.
 ///
-/// The overview states the VM: an icon tile beside its name, over a status dot
-/// and a one-line facts summary. A category states itself on a single row — a
-/// bezeled back button, the category's title, its own affordances, and the same
-/// facts line trailing.
+/// One anatomy serves both states, so drilling into a category morphs the header
+/// in place rather than swapping in a second view laid out to match by hand: the
+/// tile's glyph turns from the guest OS's into the way back, and the title from
+/// the VM's name into the category's. The facts line is the same line in both.
 ///
 /// A plain view plus a pure summary function, holding no concern of the surface
 /// that hosts it.
@@ -15,41 +16,25 @@ final class VMIdentityHeaderView: NSView {
     enum Mode: Equatable {
         /// The VM's name, over its own icon tile.
         case identity
-        /// The open category's name, on one row behind the way back.
+        /// The open category's name, the tile becoming the way back.
         case category(String)
     }
 
     /// Side of the square icon tile.
     private static let tileSize: CGFloat = 44
 
-    /// What a category's accessory text resists being squeezed at, one step
-    /// below the facts line's own `.defaultLow`.
-    ///
-    /// Panel chrome is built for a section header, where a trailing hint holds
-    /// its width against a section title, so a narrow pane would take the whole
-    /// shortfall out of the facts line and leave a static hint at full width.
-    /// On this row the VM's live state outranks the panel's fixed text.
-    private static let accessoryCompressionResistance = NSLayoutConstraint.Priority(
-        NSLayoutConstraint.Priority.defaultLow.rawValue - 1)
-
     private let iconView = NSImageView()
     private let tile = NSBox()
-    /// Carries the tile, so hiding it takes the glyph with it.
-    private let tileWell = NSView()
     private let backButton = HeaderBackButton()
     private let nameLabel = NSTextField(labelWithString: "")
-    private let headerRow = NSStackView()
     private let titleRow = NSStackView()
-    private let column = NSStackView()
-    private let statusRow = NSStackView()
     private let trailingSpacer = NSView()
     private let statusDot = NSImageView()
     private let factsLabel = NSTextField(labelWithString: "")
 
     private var mode: Mode = .identity
     /// Views handed over by the open panel, removed when another one opens.
-    private var leadingAccessories: [NSView] = []
-    private var trailingAccessories: [NSView] = []
+    private var accessories: [NSView] = []
 
     /// The facts line as currently rendered, for a surface stating the same
     /// summary — the disk figure is read here and nowhere else.
@@ -83,7 +68,8 @@ final class VMIdentityHeaderView: NSView {
         fatalError("VMIdentityHeaderView does not support NSCoder")
     }
 
-    /// Routes the back button to the host that owns the way out of a panel.
+    /// Routes the tile's back button to the host that owns the way out of a
+    /// panel.
     func setBackAction(target: AnyObject?, action: Selector) {
         backButton.target = target
         backButton.action = action
@@ -92,17 +78,16 @@ final class VMIdentityHeaderView: NSView {
     /// Binds the header to `instance`, painting everything known synchronously
     /// and filling the disk figure in when its off-main read lands.
     ///
-    /// `mode` decides the anatomy and the title; a category hosts
-    /// `leadingAccessories` beside its title and `trailingAccessories` before
-    /// the facts line at the row's far edge.
+    /// `mode` decides what the tile and the title state; a category hosts
+    /// `leadingAccessories` beside its title and `trailingAccessories` at the
+    /// title row's far edge.
     func configure(
         with instance: VMInstance, mode: Mode = .identity,
         leadingAccessories: [NSView] = [], trailingAccessories: [NSView] = []
     ) {
         self.instance = instance
         self.mode = mode
-        self.leadingAccessories = leadingAccessories
-        self.trailingAccessories = trailingAccessories
+        setAccessories(leadingAccessories, trailingAccessories)
         let boot = instance.displayedStorageDisks.first
         let key = boot.map {
             DiskReadKey(instanceID: instance.id, path: $0.path, isInternal: $0.isInternal)
@@ -130,6 +115,17 @@ final class VMIdentityHeaderView: NSView {
 
     // MARK: - Rendering
 
+    /// Hands the title row the panel's views, in place of the previous panel's.
+    private func setAccessories(_ leading: [NSView], _ trailing: [NSView]) {
+        let wanted = leading.isEmpty && trailing.isEmpty ? [] : leading + [trailingSpacer] + trailing
+        guard wanted.map(ObjectIdentifier.init) != accessories.map(ObjectIdentifier.init) else {
+            return
+        }
+        accessories.forEach { $0.removeFromSuperview() }
+        accessories = wanted
+        wanted.forEach { titleRow.addArrangedSubview($0) }
+    }
+
     private func render() {
         guard let instance else { return }
         let config = instance.configuration
@@ -141,10 +137,9 @@ final class VMIdentityHeaderView: NSView {
         case .category(let title):
             nameLabel.stringValue = title
         }
-        let drilledIn = mode != .identity
-        tileWell.isHidden = drilledIn
-        backButton.isHidden = !drilledIn
-        arrange(drilledIn: drilledIn)
+        // The tile is the same tile either way — only what it carries changes.
+        iconView.isHidden = mode != .identity
+        backButton.isHidden = mode == .identity
         statusDot.contentTintColor = instance.statusDisplayNSColor
         statusDot.setAccessibilityLabel(instance.statusDisplayName)
         renderedFactsLine = Self.factsLine(
@@ -154,51 +149,6 @@ final class VMIdentityHeaderView: NSView {
             memoryGB: config.memorySizeInGB,
             diskBytes: bootDiskCapacityBytes)
         factsLabel.stringValue = renderedFactsLine
-    }
-
-    /// Puts the title row's contents in the order the current state states them,
-    /// the facts line trailing that row inside a panel and sitting below it on
-    /// the overview.
-    private func arrange(drilledIn: Bool) {
-        let wanted: [NSView] =
-            drilledIn
-            ? [nameLabel] + leadingAccessories + [trailingSpacer] + trailingAccessories
-                + [statusRow]
-            : [nameLabel]
-        guard wanted.map(ObjectIdentifier.init) != titleRow.arrangedSubviews.map(ObjectIdentifier.init)
-        else { return }
-        (leadingAccessories + trailingAccessories).forEach(applySqueezePolicy)
-        detach(statusRow, from: column)
-        titleRow.arrangedSubviews.forEach { detach($0, from: titleRow) }
-        wanted.forEach { titleRow.addArrangedSubview($0) }
-        if !drilledIn { column.addArrangedSubview(statusRow) }
-    }
-
-    /// Sets the row's squeeze order on an accessory: its text truncates tail at
-    /// ``accessoryCompressionResistance``, so a narrow pane takes the width it
-    /// is short out of the accessories before the facts line.
-    ///
-    /// Fixed-size affordances — the info button's 16-point square — are held by
-    /// their own constraints and give up nothing either way.
-    private func applySqueezePolicy(to view: NSView) {
-        if let label = view as? NSTextField {
-            label.maximumNumberOfLines = 1
-            label.lineBreakMode = .byTruncatingTail
-        }
-        if view is NSTextField || view is NSStackView {
-            view.setContentCompressionResistancePriority(
-                Self.accessoryCompressionResistance, for: .horizontal)
-        }
-        view.subviews.forEach(applySqueezePolicy)
-    }
-
-    /// Takes `view` out of `stack` and out of the view tree, so re-adding it
-    /// elsewhere lands it in one arranged list only.
-    private func detach(_ view: NSView, from stack: NSStackView) {
-        if stack.arrangedSubviews.contains(where: { $0 === view }) {
-            stack.removeArrangedSubview(view)
-        }
-        view.removeFromSuperview()
     }
 
     /// Reads the boot disk's capacity off the main thread, re-rendering when it
@@ -237,18 +187,24 @@ final class VMIdentityHeaderView: NSView {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        tileWell.translatesAutoresizingMaskIntoConstraints = false
-        tileWell.addSubview(tile)
-        tileWell.addSubview(iconView)
+        addSubview(tile)
+        addSubview(iconView)
+        addSubview(backButton)
         NSLayoutConstraint.activate([
             tile.widthAnchor.constraint(equalToConstant: Self.tileSize),
             tile.heightAnchor.constraint(equalToConstant: Self.tileSize),
-            tile.leadingAnchor.constraint(equalTo: tileWell.leadingAnchor),
-            tile.trailingAnchor.constraint(equalTo: tileWell.trailingAnchor),
-            tile.topAnchor.constraint(equalTo: tileWell.topAnchor),
-            tile.bottomAnchor.constraint(equalTo: tileWell.bottomAnchor),
+            tile.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tile.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
+            tile.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconView.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            // Centered on the tile, not pinned to it: AppKit holds an NSButton
+            // to a minimum size derived from its image, which outranks edge
+            // pins, so a title1 chevron stands a little proud of the tile. The
+            // glyph lands centered either way, and the hit area is the more
+            // generous for it.
+            backButton.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            backButton.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
         ])
 
         nameLabel.font = Typography.title
@@ -256,7 +212,6 @@ final class VMIdentityHeaderView: NSView {
         nameLabel.maximumNumberOfLines = 1
         nameLabel.isSelectable = false
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        nameLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
         statusDot.image = .systemSymbol("circle.fill", accessibilityDescription: "")
         statusDot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
@@ -269,12 +224,10 @@ final class VMIdentityHeaderView: NSView {
         factsLabel.isSelectable = false
         factsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        let statusRow = NSStackView(views: [statusDot, factsLabel])
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
         statusRow.spacing = Spacing.small
-        statusRow.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        statusRow.addArrangedSubview(statusDot)
-        statusRow.addArrangedSubview(factsLabel)
 
         trailingSpacer.translatesAutoresizingMaskIntoConstraints = false
         trailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -286,62 +239,50 @@ final class VMIdentityHeaderView: NSView {
         titleRow.spacing = Spacing.small
         titleRow.addArrangedSubview(nameLabel)
 
+        let column = NSStackView(views: [titleRow, statusRow])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = Spacing.tight
-        column.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        column.addArrangedSubview(titleRow)
-        column.addArrangedSubview(statusRow)
+        column.translatesAutoresizingMaskIntoConstraints = false
 
-        headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
-        headerRow.spacing = Spacing.medium
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        headerRow.addArrangedSubview(tileWell)
-        headerRow.addArrangedSubview(backButton)
-        headerRow.addArrangedSubview(column)
-        headerRow.setCustomSpacing(Spacing.standard, after: backButton)
-        backButton.isHidden = true
-
-        addSubview(headerRow)
+        addSubview(column)
+        // The header is as tall as the taller of the two — the tile at ordinary
+        // text sizes, the column once the system scales type past it — with a
+        // weak height pulling it no taller than that.
+        let hugsContent = heightAnchor.constraint(equalToConstant: 0)
+        hugsContent.priority = .defaultLow
         NSLayoutConstraint.activate([
-            headerRow.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headerRow.trailingAnchor.constraint(equalTo: trailingAnchor),
-            headerRow.topAnchor.constraint(equalTo: topAnchor),
-            headerRow.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // The title row spans the column, so a category's trailing spacer
-            // has the width to push the facts line to the header's far edge.
-            titleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
+            column.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: Spacing.medium),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor),
+            column.centerYAnchor.constraint(equalTo: centerYAnchor),
+            column.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
+            hugsContent,
         ])
+        titleRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+        statusRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
     }
 }
 
-/// The way back out of a category: a small bezeled button carrying a
-/// `chevron.left` in the accent color, as a navigation control reads elsewhere
-/// on the system.
+/// The tile's glyph while a category is open: a `chevron.left` at the guest-OS
+/// icon's size, so the tile reads the same either way and only its glyph changes.
+///
+/// Accent-tinted, as the navigation control it is — the same tint the cards'
+/// Edit affordances carry. Borderless: the tile behind it is the whole bezel,
+/// and AppKit's own press dimming is the feedback, which leaves the tile's fill
+/// untouched in every state.
 @MainActor
 private final class HeaderBackButton: NSButton {
-    /// The bezel, sized for a chevron beside a title rather than for a label.
-    private static let size = NSSize(width: 28, height: 24)
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         image = NSImage.systemSymbol("chevron.left", accessibilityDescription: "")
-            .withSymbolConfiguration(
-                NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(textStyle: .title1))
         imagePosition = .imageOnly
-        bezelStyle = .push
-        isBordered = true
+        isBordered = false
         setButtonType(.momentaryPushIn)
         contentTintColor = .controlAccentColor
         toolTip = "Show all settings"
         setAccessibilityLabel("Back")
         translatesAutoresizingMaskIntoConstraints = false
-        setContentHuggingPriority(.required, for: .horizontal)
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Self.size.width),
-            heightAnchor.constraint(equalToConstant: Self.size.height),
-        ])
     }
 
     @available(*, unavailable)

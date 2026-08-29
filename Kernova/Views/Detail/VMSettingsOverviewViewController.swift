@@ -8,19 +8,14 @@ protocol VMSettingsOverviewDelegate: AnyObject {
     func overview(_ vc: VMSettingsOverviewViewController, didInvoke action: VMOverviewAction)
 }
 
-/// The detail pane's overview: one card per ``VMSettingsCategory``, each stating
-/// the category's current facts and offering the drill-in to its panel.
-///
-/// The cards pair off two to a row in category order, so the whole set reads
-/// without scrolling on the capped column the pane already lays out.
+/// The detail pane's overview: one card per ``VMSettingsCategory``, stacked down
+/// the pane's column in category order, each stating the category's current
+/// facts and offering the drill-in to its panel.
 ///
 /// Holds no VM state — ``configure(instance:isReadOnly:resolved:)`` paints every
 /// card from the model on the settings pane's own refresh pass.
 @MainActor
 final class VMSettingsOverviewViewController: NSViewController {
-    /// Gap between the two cards on a row.
-    private static let gutter = Spacing.large
-
     weak var delegate: VMSettingsOverviewDelegate?
 
     private let stack = NSStackView()
@@ -46,9 +41,10 @@ final class VMSettingsOverviewViewController: NSViewController {
         builtGuestOS = guestOS
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         cards.removeAll()
-        let built = VMSettingsCategory.allCases.map { makeCard(for: $0, instance: instance) }
-        for pair in stride(from: 0, to: built.count, by: 2) {
-            addRow(Array(built[pair..<min(pair + 2, built.count)]))
+        for category in VMSettingsCategory.allCases {
+            let card = makeCard(for: category, instance: instance)
+            stack.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
     }
 
@@ -71,19 +67,6 @@ final class VMSettingsOverviewViewController: NSViewController {
         }
         cards[category] = card
         return card
-    }
-
-    /// Lays one pair of cards side by side: equal widths, tops aligned, heights
-    /// left to each card's own content.
-    private func addRow(_ rowCards: [VMOverviewCardView]) {
-        let row = NSStackView(views: rowCards)
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.distribution = .fillEqually
-        row.spacing = Self.gutter
-        row.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     /// Paints every card from the model.

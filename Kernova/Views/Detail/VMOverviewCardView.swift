@@ -25,9 +25,9 @@ final class VMOverviewCardView: NSView {
     /// The count and footprint beside the title, hidden while the category has
     /// none to state.
     private let headerSummaryLabel: NSTextField
-    /// Glyph only, its scoped claim in the tooltip: a two-column card has no
-    /// room for the panel headers' full-text hint.
-    private let lockGlyph: NSImageView
+    /// The lock claim: a glyph beside the scoped text naming what actually
+    /// locks, so it stands beside live controls without contradicting them.
+    private let lockHint: NSView
     private let warningGlyph: NSImageView
     /// The switch rows this card can show, built once so a rebuild of the card's
     /// values never drops a control mid-interaction.
@@ -54,8 +54,7 @@ final class VMOverviewCardView: NSView {
 
     init(category: VMSettingsCategory, toggles: [VMOverviewToggle]) {
         self.category = category
-        lockGlyph = NSImageView(
-            image: .systemSymbol("lock.fill", accessibilityDescription: category.lockHint ?? ""))
+        lockHint = Self.makeLockHint(category.lockHint)
         warningGlyph = NSImageView(
             image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: ""))
         headerSummaryLabel = NSTextField(labelWithString: "")
@@ -71,7 +70,7 @@ final class VMOverviewCardView: NSView {
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         headerRow = NSStackView(views: [
-            icon, title, headerSummaryLabel, spacer, warningGlyph, lockGlyph,
+            icon, title, headerSummaryLabel, spacer, warningGlyph, lockHint,
         ])
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
@@ -83,7 +82,7 @@ final class VMOverviewCardView: NSView {
         headerSummaryLabel.textColor = .secondaryLabelColor
         headerSummaryLabel.lineBreakMode = .byTruncatingTail
         headerSummaryLabel.isSelectable = false
-        // A narrow card squeezes the summary before the title it follows.
+        // A squeezed card gives up the summary before the title it follows.
         headerSummaryLabel.setContentCompressionResistancePriority(
             .defaultLow, for: .horizontal)
         headerSummaryLabel.isHidden = true
@@ -91,12 +90,7 @@ final class VMOverviewCardView: NSView {
         warningGlyph.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
         warningGlyph.setContentHuggingPriority(.required, for: .horizontal)
         warningGlyph.isHidden = true
-        lockGlyph.contentTintColor = .secondaryLabelColor
-        lockGlyph.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
-        lockGlyph.setContentHuggingPriority(.required, for: .horizontal)
-        lockGlyph.toolTip = category.lockHint
-        lockGlyph.setAccessibilityLabel(category.lockHint)
-        lockGlyph.isHidden = true
+        lockHint.isHidden = true
 
         // The Edit button is the affordance; the whole header row takes the
         // click so the target is not a caption-sized label. It names the
@@ -139,7 +133,7 @@ final class VMOverviewCardView: NSView {
     ) {
         headerSummaryLabel.stringValue = headerSummary ?? ""
         headerSummaryLabel.isHidden = headerSummary == nil
-        lockGlyph.isHidden = !showsLockHint
+        lockHint.isHidden = !showsLockHint
         warningGlyph.isHidden = warning == nil
         warningGlyph.toolTip = warning
         warningGlyph.setAccessibilityLabel(warning)
@@ -176,11 +170,10 @@ final class VMOverviewCardView: NSView {
 
     /// One key-value line, with the copy affordance its value carries.
     ///
-    /// Half-width cards leave a row around 278 points, and a key here can be
-    /// model-supplied and unbounded — the Network row is named by the mode,
-    /// which carries a host interface's name. So the key gives up its width
-    /// first (keeping the whole of it in its tooltip) and the value, which is
-    /// what the row was read for, stays whole.
+    /// A key here can be model-supplied and unbounded — the Network row is named
+    /// by the mode, which carries a host interface's name. So the key gives up
+    /// its width first (keeping the whole of it in its tooltip) and the value,
+    /// which is what the row was read for, stays whole.
     private func makeValueRow(_ row: VMOverviewSummary.Row) -> NSView {
         let value = makeGroupedFormValueLabel(row.value)
         let yieldFirst: (NSTextField) -> Void = { label in
@@ -227,6 +220,29 @@ final class VMOverviewCardView: NSView {
         row.alignment = .centerY
         row.spacing = Spacing.standard
         return row
+    }
+
+    /// The card's lock claim: a `lock.fill` beside the scoped text, or an empty
+    /// placeholder for a category nothing locks.
+    private static func makeLockHint(_ text: String?) -> NSView {
+        guard let text else { return NSView() }
+        let icon = NSImageView(image: .systemSymbol("lock.fill", accessibilityDescription: text))
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+        icon.contentTintColor = .secondaryLabelColor
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+
+        let label = NSTextField(labelWithString: text)
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.textColor = .secondaryLabelColor
+        label.isSelectable = false
+
+        let hint = NSStackView(views: [icon, label])
+        hint.orientation = .horizontal
+        hint.alignment = .centerY
+        hint.spacing = Spacing.tight
+        hint.toolTip = text
+        hint.setContentHuggingPriority(.required, for: .horizontal)
+        return hint
     }
 
     /// The card's closing line: one secondary sentence spanning the row, with no

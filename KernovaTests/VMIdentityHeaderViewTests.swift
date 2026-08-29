@@ -56,17 +56,14 @@ struct VMIdentityHeaderViewTests {
         #expect(findLabel(containing: instance.statusDisplayName, in: header) != nil)
     }
 
-    @Test("A category row narrower than its content squeezes the accessories, not the facts")
-    func narrowCategoryRowKeepsTheFactsLine() throws {
+    @Test("A category hosts its panel's affordances beside the title it states")
+    func categoryHostsPanelAccessories() throws {
         let header = VMIdentityHeaderView()
-        // The panel chrome the Network category hands over, built to hold its
-        // width against a section title.
+        // The panel chrome the Network category hands over.
         let hint = makeGroupedFormLockHint()
         header.configure(
             with: makeInstance(), mode: .category("Network"), trailingAccessories: [hint])
-        // Narrower than the row's content: the detail pane at its minimum, less
-        // the form's margins.
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 60))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 60))
         container.addSubview(header)
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -75,13 +72,17 @@ struct VMIdentityHeaderViewTests {
         ])
         container.layoutSubtreeIfNeeded()
 
-        let hintLabel = try #require(findLabel(withText: groupedFormLockHintText, in: hint))
+        let title = try #require(findLabel(withText: "Network", in: header))
         let factsLabel = try #require(findLabel(withText: header.renderedFactsLine, in: header))
-        // The hint gives up the width the row is short, truncating its tail…
-        #expect(hintLabel.frame.width < hintLabel.intrinsicContentSize.width)
-        #expect(hintLabel.lineBreakMode == .byTruncatingTail)
-        // …and the VM's live state stays whole.
-        #expect(factsLabel.frame.width >= factsLabel.intrinsicContentSize.width - 0.5)
+        #expect(hint.isDescendant(of: header))
+        // The facts line keeps its own row below the title, as it does on the
+        // overview — the accessories share the title's row instead.
+        let titleFrame = title.convert(title.bounds, to: header)
+        let factsFrame = factsLabel.convert(factsLabel.bounds, to: header)
+        let hintFrame = hint.convert(hint.bounds, to: header)
+        #expect(factsFrame.maxY <= titleFrame.minY)
+        #expect(hintFrame.midY > titleFrame.minY)
+        #expect(hintFrame.midY < titleFrame.maxY)
     }
 
     @Test("Re-binding to another VM re-renders from the new one")
