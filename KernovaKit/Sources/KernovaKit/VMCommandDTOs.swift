@@ -176,8 +176,8 @@ public struct ConfirmationAlternative: Codable, Sendable, Hashable {
 /// What confirming a refused command entails, as data.
 ///
 /// The core presents nothing: it describes the confirmation and leaves each
-/// surface to gather it — an AppKit sheet, a `--yes` flag, an App Intents
-/// dialog — then re-issue the verb with `confirmed: true`.
+/// surface to gather it — an AppKit sheet, a wire client's own consent — then
+/// re-issue the verb with `confirmed: true`.
 public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     /// Which confirmation this is.
     public let kind: ConfirmationKind
@@ -187,6 +187,9 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     public let message: String
     /// The confirm action's title.
     public let confirmTitle: String
+    /// The title of the action that walks away, worded for what declining
+    /// leaves running.
+    public let dismissTitle: String
     /// Other ways to satisfy the confirmation, each re-issuing the verb
     /// differently.
     public let alternatives: [ConfirmationAlternative]
@@ -197,12 +200,14 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
         title: String,
         message: String,
         confirmTitle: String,
+        dismissTitle: String,
         alternatives: [ConfirmationAlternative] = []
     ) {
         self.kind = kind
         self.title = title
         self.message = message
         self.confirmTitle = confirmTitle
+        self.dismissTitle = dismissTitle
         self.alternatives = alternatives
     }
 }
@@ -228,8 +233,10 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case unsupported(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
-    /// The verb ran and did not complete.
-    case operationFailed(verb: VMVerb, message: String, recovery: CommandRecoveryDTO?)
+    /// The verb ran and did not complete. `title` is the heading the failure
+    /// names for itself, `nil` when it has none of its own.
+    case operationFailed(
+        verb: VMVerb, title: String?, message: String, recovery: CommandRecoveryDTO?)
 }
 
 /// A recovery a failed command offers, named for a caller that cannot hold the

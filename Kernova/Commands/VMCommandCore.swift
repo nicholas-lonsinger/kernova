@@ -171,7 +171,10 @@ final class VMCommandCore: VMCommanding {
             verbs.append(contentsOf: [.deleteSnapshot, .renameSnapshot, .setSnapshotNotes])
         }
         if instance.status.canEditSettings { verbs.append(.clone) }
-        if instance.status.canRename { verbs.append(.rename) }
+        // No status gate: a rename rewrites the configuration's name and
+        // nothing a running operation reads, so every state a row still copying
+        // is not admits one.
+        verbs.append(.rename)
         if instance.canDelete { verbs.append(.delete) }
         return verbs
     }

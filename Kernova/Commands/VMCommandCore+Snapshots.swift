@@ -178,6 +178,7 @@ extension VMCommandCore {
             title: "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
             message: revertMessage(snapshot, instance),
             confirmTitle: "Revert",
+            dismissTitle: "Cancel",
             alternatives: alternatives)
     }
 
@@ -330,6 +331,16 @@ extension VMCommandCore {
         return startRevert(instance, to: baseline, outcome: outcome)
     }
 
+    /// Whether stopping this VM discards a suspended session as a baseline
+    /// revert rather than shutting a guest down.
+    ///
+    /// The one read both stop dispositions gate their consent on, so the
+    /// graceful route cannot perform destructively what the force route
+    /// refuses to perform unconfirmed.
+    func discardsSavedStateAsEphemeralRevert(_ instance: VMInstance) -> Bool {
+        instance.isColdPaused && instance.ephemeralBaselineSnapshot != nil
+    }
+
     /// Routes a cold-paused ephemeral VM's Discard Saved State through the
     /// baseline revert instead, and reports whether it took the request.
     ///
@@ -339,9 +350,9 @@ extension VMCommandCore {
     /// Throws what the revert failed with: the caller asked for a stop, and a
     /// baseline that did not come back is not one.
     func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async throws -> Bool {
-        guard instance.isColdPaused, let baseline = instance.ephemeralBaselineSnapshot else {
-            return false
-        }
+        guard discardsSavedStateAsEphemeralRevert(instance),
+            let baseline = instance.ephemeralBaselineSnapshot
+        else { return false }
         let outcome = RevertOutcome()
         await revertToEphemeralBaseline(instance, baseline, outcome: outcome).value
         if let failure = outcome.failure { throw failure }
@@ -393,35 +404,39 @@ extension VMCommandCore {
             message:
                 "Moves this snapshot\u{2019}s saved state and disk copies to the Trash. "
                 + "\u{201C}\(instance.name)\u{201D} keeps the state it has now.",
-            confirmTitle: "Delete")
+            confirmTitle: "Delete",
+            dismissTitle: "Cancel")
     }
 
     // MARK: - Metadata
 
-    /// Renames a snapshot; an empty or unchanged name is a no-op. A
-    /// metadata-only manifest write: no VM operation reads it mid-flight, so
-    /// it lands whether or not the VM is busy.
+    /// Renames a snapshot; an empty name, an unchanged one, and one naming a
+    /// snapshot the manifest no longer lists are all no-ops. A metadata-only
+    /// manifest write: no VM operation reads it mid-flight, so it lands whether
+    /// or not the VM is busy.
+    ///
+    /// What decides is whether the write would change anything, rather than
+    /// whether the snapshot is still there: the inline field commits on
+    /// end-editing whether or not the text changed, so a row deleted while its
+    /// editor was open must not raise an alert about a rename nobody made.
     func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
         let instance = try resolve(selector)
-        let snapshot = try requireSnapshot(id, on: instance, verb: .renameSnapshot)
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != snapshot.name else { return }
+        guard !trimmed.isEmpty else { return }
         var manifest = instance.snapshotManifest
         manifest.rename(id: id, to: trimmed)
         guard manifest != instance.snapshotManifest else { return }
         try writeSnapshotManifest(manifest, for: instance, verb: .renameSnapshot)
     }
 
-    /// Replaces a snapshot's note; an unchanged value is a no-op. A
-    /// metadata-only manifest write, like a rename.
+    /// Replaces a snapshot's note; a metadata-only manifest write, and a write
+    /// that would change nothing is a no-op on the same terms a rename's is.
     ///
     /// Unlike a name, an empty note is a legitimate value — it clears the note.
     /// Leading and trailing whitespace is trimmed; interior newlines are kept.
     func setSnapshotNotes(_ selector: VMSelector, snapshot id: UUID, notes: String) throws {
         let instance = try resolve(selector)
-        let snapshot = try requireSnapshot(id, on: instance, verb: .setSnapshotNotes)
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != snapshot.notes else { return }
         var manifest = instance.snapshotManifest
         manifest.setNotes(id: id, to: trimmed)
         guard manifest != instance.snapshotManifest else { return }

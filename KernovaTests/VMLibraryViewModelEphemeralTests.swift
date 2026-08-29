@@ -259,37 +259,42 @@ struct VMLibraryViewModelEphemeralTests {
 
     // MARK: - Discard Saved State
 
-    @Test("Discarding a suspended ephemeral session reverts to the baseline")
+    @Test("A Stop aimed at a suspended ephemeral session asks before discarding it")
+    func discardSavedStateAsksBeforeReverting() async throws {
+        let harness = try await makeHarness(status: .paused)
+
+        // Nothing to shut down: the revert deletes the suspended session and
+        // rolls the disks back, so it takes the same consent the force path does.
+        await harness.viewModel.stop(harness.instance)
+
+        #expect(presenter.forceStopInstances.map(\.id) == [harness.instance.id])
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
+        #expect(harness.virtualization.stopCallCount == 0)
+    }
+
+    @Test("A confirmed discard of a suspended ephemeral session reverts to the baseline")
     func discardSavedStateReverts() async throws {
         let harness = try await makeHarness(status: .paused)
 
-        await harness.viewModel.stop(harness.instance)
+        await harness.viewModel.forceStop(harness.instance)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
-        // The plain discard path was not taken.
+        // Neither plain discard path was taken.
         #expect(harness.virtualization.stopCallCount == 0)
+        #expect(harness.virtualization.forceStopCallCount == 0)
     }
 
     @Test("Discarding a suspended session still routes through a disks-only baseline")
     func discardSavedStateRevertsToAColdBaseline() async throws {
         let harness = try await makeHarness(status: .paused, baselineKind: .cold)
 
-        await harness.viewModel.stop(harness.instance)
+        await harness.viewModel.forceStop(harness.instance)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(harness.instance.status == .stopped)
         #expect(harness.virtualization.stopCallCount == 0)
-    }
-
-    @Test("Force-stopping a suspended ephemeral session reverts to the baseline")
-    func forceStopFromColdPausedReverts() async throws {
-        let harness = try await makeHarness(status: .paused)
-
-        await harness.viewModel.forceStop(harness.instance)
-
-        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
-        #expect(harness.virtualization.forceStopCallCount == 0)
     }
 
     @Test("A suspended VM that is not ephemeral still just discards")

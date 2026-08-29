@@ -245,7 +245,7 @@ session down without that hook, so a suspended session survives to revert at its
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommandCore` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the
-  settings edits no automation surface speaks yet, forwards the library's reads so UI sees one
+  settings edits the facade does not cover, forwards the library's reads so UI sees one
   surface, and drives alerts, sheets and the wizard by calling its `VMLibraryPresenting` delegate
   imperatively rather than toggling observed flags.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
@@ -370,8 +370,8 @@ vsock wire protocol, the clipboard domain model and file staging/archive, and cr
 helpers. **New host/guest-identical code belongs here**, not copied into both targets.
 
 It also carries the VM command vocabulary — `VMSelector`, `VMVerb`, the result and refusal types,
-and the `VMCommandRequest`/`VMCommandResponse` envelope — so a future out-of-process client links
-the same declarations the app throws and returns, rather than a mirror of them.
+and the `VMCommandRequest`/`VMCommandResponse` envelope — so an out-of-process client links the same
+declarations the app throws and returns, rather than a mirror of them.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into

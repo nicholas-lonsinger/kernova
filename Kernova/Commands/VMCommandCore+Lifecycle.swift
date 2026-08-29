@@ -236,6 +236,12 @@ extension VMCommandCore {
             defer { instance.setupTask = nil }
             do {
                 try await pipeline(self.lifecycle)
+                // A cancel accepted while the pipeline was drawing to a close
+                // still means the VM must not boot. Raised inside this `do` so
+                // it takes the cancel branch below rather than falling through
+                // into the chained start, and after the last suspension point
+                // the pipeline has, so nothing can slip between the two.
+                try Task.checkCancellation()
             } catch is CancellationError {
                 // Tear down a VM the install attached before cancellation fired: a
                 // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
@@ -344,25 +350,30 @@ extension VMCommandCore {
         let title: String
         let message: String
         let confirmTitle: String
+        let dismissTitle: String
         switch instance.setupState?.currentStep?.id {
         case .install:
             title = "Cancel Installation?"
             message =
                 "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
             confirmTitle = "Cancel Installation"
+            dismissTitle = "Keep Installing"
         case .verify:
             title = "Cancel Verification?"
             message =
                 "The downloaded image is kept, and it will be checked again the next time you start the virtual machine."
             confirmTitle = "Cancel Verification"
+            dismissTitle = "Keep Verifying"
         case .download, nil:
             title = "Cancel Download?"
             message =
                 "The download progress will be saved and resumed the next time you start the virtual machine."
             confirmTitle = "Cancel Download"
+            dismissTitle = "Keep Downloading"
         }
         return ConfirmationPrompt(
-            kind: .cancelGuestSetup, title: title, message: message, confirmTitle: confirmTitle)
+            kind: .cancelGuestSetup, title: title, message: message, confirmTitle: confirmTitle,
+            dismissTitle: dismissTitle)
     }
 
     // MARK: - Stop
@@ -388,6 +399,13 @@ extension VMCommandCore {
                 return
             }
             guard instance.status.canStop else { throw invalidState(instance) }
+            // A cold-paused Ephemeral VM has no guest to shut down: this stop
+            // deletes its suspended session and rolls the disks back to the
+            // baseline. Same outcome as the force path, so it asks for the same
+            // consent rather than performing it on a request for a shutdown.
+            guard confirmed || !discardsSavedStateAsEphemeralRevert(instance) else {
+                throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
+            }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
                 try await lifecycle.stop(instance)
@@ -439,6 +457,7 @@ extension VMCommandCore {
             message:
                 "\"\(instance.name)\" is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).",
             confirmTitle: "Resume and Shut Down",
+            dismissTitle: "Cancel",
             alternatives: [ConfirmationAlternative(title: "Force Stop", disposition: .force)])
     }
 
@@ -477,6 +496,7 @@ extension VMCommandCore {
             title: instance.isColdPaused ? "Discard Saved State" : "Force Stop Virtual Machine",
             message: message,
             confirmTitle: confirmTitle,
+            dismissTitle: "Cancel",
             alternatives: alternatives)
     }
 
@@ -574,6 +594,10 @@ extension VMCommandCore {
 
     func open(_ selector: VMSelector) throws {
         let instance = try resolve(selector)
+        // An imported bundle carrying a save file rests its phantom `.paused`,
+        // which reads as having a display while the copy is still writing —
+        // and `allowedVerbs` offers a preparing row nothing but its cancel.
+        try refuseIfPreparing(instance)
         guard instance.status.hasActiveDisplay else { throw invalidState(instance) }
         surfaceDisplay?(instance)
     }

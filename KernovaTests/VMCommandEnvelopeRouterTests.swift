@@ -1,12 +1,13 @@
 import Foundation
 import KernovaKit
 import Testing
+import Virtualization
 
 @testable import Kernova
 
 /// A stand-in for a wire transport: it encodes a request, hands the bytes to
-/// the router, and decodes what comes back — the same round trip the CLI's pipe
-/// will make, with no pipe.
+/// the router, and decodes what comes back — the same round trip a transport
+/// makes, with no transport.
 @MainActor
 private struct TestTransport {
     let router: VMCommandEnvelopeRouter
@@ -210,6 +211,7 @@ struct VMCommandEnvelopeRouterTests {
         }
         #expect(prompt.kind == .deleteVM)
         #expect(prompt.confirmTitle == "Move to Trash")
+        #expect(prompt.dismissTitle == "Cancel")
         #expect(harness.library.instances.count == 1)
 
         let confirmed = try await harness.transport.send(
@@ -217,6 +219,26 @@ struct VMCommandEnvelopeRouterTests {
 
         #expect(confirmed.result == .ok)
         #expect(harness.library.instances.isEmpty)
+    }
+
+    @Test("A failure that names its own heading crosses the wire carrying it")
+    func operationFailureTitleCrossesTheWire() async throws {
+        let harness = makeHarness()
+        harness.virtualization.startError = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+        let instance = makeInstance(in: harness, name: "Capped")
+
+        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+
+        guard case .operationFailed(_, let title, _, _)? = response.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
+            return
+        }
+        // The heading an in-process caller reads off `CommandError.alertTitle`
+        // (pinned by `startFailureNamesItsOwnHeading`), not the generic "Error"
+        // a dropped title leaves a wire caller with.
+        #expect(title == "Couldn't Start \u{201C}Capped\u{201D}")
     }
 
     // MARK: - Guest Setup

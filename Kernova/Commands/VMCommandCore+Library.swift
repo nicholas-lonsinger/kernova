@@ -34,16 +34,18 @@ extension VMCommandCore {
 
     // MARK: - Rename
 
+    /// Renames a VM; an empty or unchanged name is a no-op.
+    ///
+    /// A bundle a clone or import is still writing into is the one state that
+    /// refuses. Every other is taken: the rename rewrites the name in the
+    /// configuration and touches nothing a running operation reads, so a VM
+    /// that started or began suspending while the field editor was open keeps
+    /// the name the user typed rather than trading it for an alert.
     func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
-        // Ahead of the state gate: both inline-rename surfaces commit on
-        // end-editing whether or not the text changed, so a field resigning
-        // while the VM transitions would otherwise raise an alert about a
-        // rename nobody made.
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
         try refuseIfPreparing(instance)
-        guard instance.status.canRename else { throw invalidState(instance) }
         Self.logger.debug(
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
         guard library.updateConfiguration(of: instance, mutate: { $0.name = trimmed }) else {
@@ -307,15 +309,27 @@ extension VMCommandCore {
 
     // MARK: - Cancel Preparing
 
+    /// Stops a clone or import that is still copying, and removes what it has
+    /// written.
+    ///
+    /// The copy can settle while the confirmation is up, so a confirmed cancel
+    /// covers both: an in-flight copy is marked "Cancelling…" for the copy task
+    /// to clean up, and a settled one is cleaned up here — the row removed and
+    /// the finished bundle trashed. Only an unconsented cancel needs a copy in
+    /// flight, because that is what there is a confirmation to describe.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
         let instance = try resolve(selector)
-        // Only a row still copying may be cancelled. A confirmation that
-        // arrives after the copy settled names an ordinary VM, and trashing a
-        // completed bundle out from under one is what Delete is for.
-        guard var state = instance.preparingState else { throw invalidState(instance) }
         guard confirmed else {
+            guard let state = instance.preparingState else { throw invalidState(instance) }
             throw CommandError.confirmationRequired(
                 Self.cancelPreparingPrompt(state.operation, on: instance))
+        }
+        guard var state = instance.preparingState else {
+            Self.logger.notice(
+                "Cancel confirmed after the copy settled for '\(instance.name, privacy: .public)' — removing the row and trashing the bundle"
+            )
+            library.cleanupPhantomInstance(instance)
+            return
         }
         guard !state.isCancelling else { return }  // already cancelling
 
@@ -340,7 +354,8 @@ extension VMCommandCore {
             title: operation.cancelAlertTitle,
             message:
                 "The operation will be stopped and any partially copied files will be removed.",
-            confirmTitle: operation.cancelLabel)
+            confirmTitle: operation.cancelLabel,
+            dismissTitle: "Continue")
     }
 
     // MARK: - Delete
@@ -420,7 +435,8 @@ extension VMCommandCore {
             message: permanently
                 ? "The virtual machine bundle is deleted immediately, bypassing the Trash. External files are only removed when you name them."
                 : "The virtual machine bundle is moved to the Trash. External files are only moved when you name them.",
-            confirmTitle: permanently ? "Delete Immediately" : "Move to Trash")
+            confirmTitle: permanently ? "Delete Immediately" : "Move to Trash",
+            dismissTitle: "Cancel")
     }
 
     /// Trashes any in-progress image download bundle for a VM that's being

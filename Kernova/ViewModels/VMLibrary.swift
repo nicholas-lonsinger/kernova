@@ -425,8 +425,8 @@ final class VMLibrary {
                     return
                 }
                 if Task.isCancelled {
-                    // Cancelled mid-copy: `cancelPreparingConfirmed` left the "Cancelling…" row in
-                    // place, so remove it and trash the settled bundle now that the copy is done.
+                    // Cancelled mid-copy: `VMCommandCore.cancelPreparing` left the "Cancelling…" row
+                    // in place, so remove it and trash the settled bundle now that the copy is done.
                     self.cleanupPhantomInstance(phantom)
                     return
                 }

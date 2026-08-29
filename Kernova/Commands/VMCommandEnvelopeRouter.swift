@@ -61,8 +61,8 @@ struct VMCommandEnvelopeRouter {
             return VMCommandResponse(
                 result: .failure(
                     .operationFailed(
-                        verb: request.verb.verb, message: error.localizedDescription,
-                        recovery: nil)))
+                        verb: request.verb.verb, title: nil,
+                        message: error.localizedDescription, recovery: nil)))
         }
     }
 

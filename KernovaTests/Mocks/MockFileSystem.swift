@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTestSupport
 
 @testable import Kernova
 
@@ -23,6 +24,10 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
 
     private let lock = NSLock()
     private var state = State()
+
+    /// Fires after each recorded trash or remove, so a test can wait on a
+    /// cleanup production runs from a detached task instead of polling for it.
+    let recorded = AsyncGate()
 
     /// URLs passed to `trashItem(at:)`, in call order.
     ///
@@ -57,6 +62,7 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
             if let error = state.trashError { throw error }
             state.trashedURLs.append(url)
         }
+        recorded.notify()
     }
 
     func removeItem(at url: URL) throws {
@@ -64,5 +70,6 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
             if let error = state.removeError { throw error }
             state.removedURLs.append(url)
         }
+        recorded.notify()
     }
 }

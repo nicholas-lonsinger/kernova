@@ -131,6 +131,7 @@ struct VMCommandEnvelopeTests {
             title: "Stop Paused Virtual Machine",
             message: "Resume it to send a graceful shutdown, or force stop it.",
             confirmTitle: "Resume and Shut Down",
+            dismissTitle: "Cancel",
             alternatives: [
                 ConfirmationAlternative(title: "Force Stop", disposition: .force),
                 ConfirmationAlternative(title: "Take Snapshot, Then Revert", takesCheckpoint: true),
@@ -144,9 +145,13 @@ struct VMCommandEnvelopeTests {
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),
             .conflict(vm: summary, with: summary, reason: .macAddress),
-            .operationFailed(verb: .start, message: "could not open the disk", recovery: nil),
             .operationFailed(
-                verb: .start, message: "could not open the disk",
+                verb: .start, title: nil, message: "could not open the disk", recovery: nil),
+            .operationFailed(
+                verb: .start, title: "Couldn\u{2019}t Start \u{201C}Alpha\u{201D}",
+                message: "could not open the disk", recovery: nil),
+            .operationFailed(
+                verb: .start, title: nil, message: "could not open the disk",
                 recovery: .removeStartFailedAttachment(id: snapshotID, label: "Installer")),
         ]
         for failure in failures {
@@ -155,6 +160,23 @@ struct VMCommandEnvelopeTests {
             #expect(decoded == response)
             #expect(decoded.failure == failure)
         }
+    }
+
+    @Test("A failure's own heading survives the wire")
+    func operationFailureTitleRoundTrips() throws {
+        let heading = "Couldn\u{2019}t Start \u{201C}Alpha\u{201D}"
+        let response = VMCommandResponse(
+            result: .failure(
+                .operationFailed(
+                    verb: .start, title: heading, message: "the limit was reached",
+                    recovery: nil)))
+
+        guard case .operationFailed(_, let title, _, _) = try #require(roundTrip(response).failure)
+        else {
+            Issue.record("expected an operation failure")
+            return
+        }
+        #expect(title == heading)
     }
 
     @Test("A successful response carries no failure")

@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import Testing
+import Virtualization
 
 @testable import Kernova
 
@@ -345,6 +346,24 @@ struct VMCommandCoreTests {
         #expect(surfaced == 0)
     }
 
+    @Test("open refuses a phantom whose bundle is still being copied")
+    func openRefusesAPreparingVM() throws {
+        let harness = makeHarness()
+        // An imported bundle carrying a save file rests its phantom `.paused`,
+        // which reads as having a display while the copy is still writing.
+        let instance = makeInstance(in: harness, name: "Copying", status: .paused)
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        var surfaced = 0
+        harness.core.surfaceDisplay = { _ in surfaced += 1 }
+
+        let error = try #require(commandError { try harness.core.open(.id(instance.id)) })
+
+        #expect(error.isBusy)
+        #expect(surfaced == 0)
+        #expect(!harness.core.allowedVerbs(for: instance).contains(.open))
+        instance.preparingState = nil
+    }
+
     // MARK: - State gates
 
     @Test("start refuses a VM that is already running")
@@ -472,16 +491,79 @@ struct VMCommandCoreTests {
         let install = VMCommandCore.cancelGuestSetupPrompt(instance)
         #expect(install.title == "Cancel Installation?")
         #expect(install.confirmTitle == "Cancel Installation")
+        #expect(install.dismissTitle == "Keep Installing")
 
         instance.setupState = .linuxImage(hasVerifyStep: true)
         instance.setupState?.advance(progress: .fraction(0))
         let verify = VMCommandCore.cancelGuestSetupPrompt(instance)
         #expect(verify.title == "Cancel Verification?")
         #expect(verify.confirmTitle == "Cancel Verification")
+        #expect(verify.dismissTitle == "Keep Verifying")
+
+        instance.setupState = .macOSInstall(hasDownloadStep: true)
+        let download = VMCommandCore.cancelGuestSetupPrompt(instance)
+        #expect(download.title == "Cancel Download?")
+        #expect(download.confirmTitle == "Cancel Download")
+        #expect(download.dismissTitle == "Keep Downloading")
 
         instance.setupState = nil
         let fallback = VMCommandCore.cancelGuestSetupPrompt(instance)
         #expect(fallback.title == "Cancel Download?")
+        #expect(fallback.dismissTitle == "Keep Downloading")
+    }
+
+    @Test("A cancel accepted as the pipeline finishes stops the chained auto-boot")
+    func cancelAtTheTailOfSetupDoesNotBoot() async throws {
+        let storage = MockVMStorageService()
+        let snapshots = MockVMSnapshotStore()
+        let fileSystem = MockFileSystem()
+        let virtualization = MockVirtualizationService()
+        // Returns normally once released, so the pipeline succeeds *after* the
+        // cancel lands — the window a `CancellationError` never reports.
+        let installService = ReleasableMockMacOSInstallService()
+        let lifecycle = VMLifecycleCoordinator(
+            virtualizationService: virtualization,
+            installService: installService,
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            linuxImageResolveService: MockLinuxImageResolveService(),
+            downloadService: MockDownloadService(),
+            fileSystem: fileSystem
+        )
+        let library = VMLibrary(
+            storageService: storage,
+            snapshotStore: snapshots,
+            lifecycle: lifecycle,
+            fileSystem: fileSystem,
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(),
+            isVMNetworkingEntitled: true
+        )
+        let core = VMCommandCore(
+            library: library, lifecycle: lifecycle, storageService: storage,
+            snapshotStore: snapshots, fileSystem: fileSystem, preferences: preferences)
+
+        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        let instance = VMInstance(
+            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            preferences: preferences)
+        library.wirePersistence(for: instance)
+        library.instances.append(instance)
+        storage.bundles[bundleURL] = config
+
+        try await core.start(.id(instance.id), recovery: false)
+        for await _ in installService.installStartedStream { break }
+
+        try core.cancelGuestSetup(.id(instance.id), confirmed: true)
+        installService.release()
+        await instance.setupTask?.value
+
+        #expect(virtualization.startCallCount == 0)
+        #expect(instance.status == .initialBoot)
     }
 
     // MARK: - Conflicts
@@ -636,6 +718,32 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.stopCallCount == 1)
     }
 
+    @Test("A cold-paused Ephemeral VM's graceful stop asks the consent its force path does")
+    func gracefulStopOfAColdPausedEphemeralVMAsksForConsent() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Ephemeral", status: .paused)
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        // Nothing to shut down: this stop deletes the suspended session and
+        // rolls the disks back, which is what the force path refuses unconfirmed.
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .graceful, confirmed: false)
+            })
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .forceStop)
+        #expect(prompt.title == "Discard Saved State")
+        #expect(prompt.confirmTitle == "Revert to Baseline")
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: true)
+        #expect(harness.virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+    }
+
     @Test("A VM delete with no consent refuses and touches nothing")
     func deleteAsksForConsent() async throws {
         let harness = makeHarness()
@@ -729,15 +837,32 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
-    @Test("A cancel aimed at a VM that is not copying is refused rather than run")
+    @Test("A cancel aimed at a VM that is not copying has no confirmation to ask for")
     func cancelPreparingRefusesAnOrdinaryVM() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Settled")
 
         let error = try #require(
-            commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: true) })
+            commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: false) })
         #expect(error.isInvalidState)
         #expect(harness.library.instances.count == 1)
+    }
+
+    @Test("A cancel confirmed after the copy settled still removes the row and the bundle")
+    func cancelPreparingAfterTheCopySettledCleansUp() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Copied")
+        // The confirmation sheet is window-modal but nothing pauses the copy, so
+        // it can finish while the sheet is up — leaving a completed VM behind
+        // that the user has just asked not to have.
+        instance.preparingState = nil
+
+        try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
+
+        #expect(harness.library.instances.isEmpty)
+        try await harness.fileSystem.recorded.wait {
+            harness.fileSystem.trashedURLs == [instance.bundleURL]
+        }
     }
 
     // MARK: - Snapshots
@@ -861,6 +986,39 @@ struct VMCommandCoreTests {
                 == "New")
     }
 
+    @Test("A metadata edit that would change nothing is a no-op, snapshot listed or not")
+    func snapshotMetadataNoOpNeedsNoSnapshot() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let snapshot = VMSnapshot(name: "Kept", notes: "a note")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+
+        // Unchanged commits against a listed snapshot write nothing.
+        #expect(
+            commandError {
+                try harness.core.renameSnapshot(.id(instance.id), snapshot: snapshot.id, to: "Kept")
+            } == nil)
+        #expect(
+            commandError {
+                try harness.core.setSnapshotNotes(
+                    .id(instance.id), snapshot: snapshot.id, notes: "a note")
+            } == nil)
+
+        // The row can be deleted while its field editor is open, and the
+        // end-editing commit that follows names a snapshot that is gone: still
+        // nothing to write, so still no alert naming a raw identifier.
+        let gone = UUID()
+        #expect(
+            commandError {
+                try harness.core.renameSnapshot(.id(instance.id), snapshot: gone, to: "Kept")
+            } == nil)
+        #expect(
+            commandError {
+                try harness.core.setSnapshotNotes(.id(instance.id), snapshot: gone, notes: "a note")
+            } == nil)
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
+    }
+
     // MARK: - Library verbs
 
     @Test("rename writes the trimmed name through the configuration funnel")
@@ -873,15 +1031,29 @@ struct VMCommandCoreTests {
         #expect(instance.name == "After")
     }
 
-    @Test("rename refuses a VM mid-operation")
-    func renameRefusesATransitioningVM() throws {
+    @Test("rename lands on a VM that started transitioning while the field was open")
+    func renamePersistsThroughATransition() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Before", status: .saving)
 
+        // The rename rewrites the configuration's name and nothing the suspend
+        // reads, so the typed name lands rather than being traded for an alert.
+        try harness.core.rename(.id(instance.id), to: "After")
+
+        #expect(instance.name == "After")
+        #expect(harness.core.allowedVerbs(for: instance).contains(.rename))
+    }
+
+    @Test("rename refuses only a VM whose clone or import is still copying")
+    func renameRefusesAPreparingVM() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Copying")
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+
         #expect(
-            commandError { try harness.core.rename(.id(instance.id), to: "After") }?
-                .isInvalidState == true)
-        #expect(instance.name == "Before")
+            commandError { try harness.core.rename(.id(instance.id), to: "After") }?.isBusy == true)
+        #expect(instance.name == "Copying")
+        instance.preparingState = nil
     }
 
     @Test("clone registers a copying row and refuses a VM that is not at rest")
@@ -1226,7 +1398,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.stop(
-                    .id(instance.id), disposition: .graceful, confirmed: false)
+                    .id(instance.id), disposition: .graceful, confirmed: true)
             })
 
         #expect(error.isOperationFailure)
@@ -1255,6 +1427,22 @@ struct VMCommandCoreTests {
         #expect(reported.first?.isOperationFailure == true)
     }
 
+    @Test("A start failure that names its own heading carries it to the caller")
+    func startFailureNamesItsOwnHeading() async throws {
+        let harness = makeHarness()
+        harness.virtualization.startError = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+        let instance = makeInstance(in: harness, name: "Capped")
+
+        let error = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+
+        // The heading a wire caller must get too — pinned there by
+        // `operationFailureTitleCrossesTheWire`.
+        #expect(error.alertTitle == "Couldn't Start \u{201C}Capped\u{201D}")
+    }
+
     @Test("A rename that did not reach disk is reported rather than answered ok")
     func failedRenameIsReported() throws {
         let harness = makeHarness()
@@ -1276,9 +1464,7 @@ struct VMCommandCoreTests {
 
         #expect(commandError { try harness.core.rename(.id(instance.id), to: "Steady") } == nil)
         #expect(commandError { try harness.core.rename(.id(instance.id), to: "   ") } == nil)
-        #expect(
-            commandError { try harness.core.rename(.id(instance.id), to: "Moved") }?.isInvalidState
-                == true)
+        #expect(instance.name == "Steady")
     }
 
     @Test("The invalid-state message names verbs the way a person does")

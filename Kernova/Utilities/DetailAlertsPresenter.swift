@@ -371,7 +371,7 @@ final class DetailAlertsPresenter: NSObject {
                 AlertButton(prompt?.confirmTitle ?? "Cancel", role: .destructive) {
                     [weak self] in self?.viewModel.cancelPreparing(instance)
                 },
-                AlertButton("Continue", role: .cancel),
+                AlertButton(prompt?.dismissTitle ?? "Continue", role: .cancel),
             ])
     }
 
@@ -399,7 +399,7 @@ final class DetailAlertsPresenter: NSObject {
                 guard let self else { return }
                 Task { await self.viewModel.revert(vm, to: snapshot) }
             })
-        buttons.append(AlertButton("Cancel", role: .cancel))
+        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel))
 
         return AlertConfiguration(
             title: prompt.title, message: prompt.message, buttons: buttons)
@@ -416,7 +416,7 @@ final class DetailAlertsPresenter: NSObject {
                 AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
                     self?.viewModel.deleteSnapshot(vm, snapshot: snapshot)
                 },
-                AlertButton("Cancel", role: .cancel),
+                AlertButton(prompt.dismissTitle, role: .cancel),
             ])
     }
 
@@ -434,7 +434,7 @@ final class DetailAlertsPresenter: NSObject {
                 Task { await self.viewModel.stop(vm) }
             }
         }
-        buttons.append(AlertButton("Cancel", role: .cancel))
+        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel))
         return AlertConfiguration(
             title: prompt.title, message: prompt.message, buttons: buttons)
     }
@@ -472,7 +472,7 @@ final class DetailAlertsPresenter: NSObject {
                 Task { await self.viewModel.forceStop(vm) }
             }
         }
-        buttons.append(AlertButton("Cancel", role: .cancel))
+        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel))
         return AlertConfiguration(
             title: prompt.title, message: prompt.message, buttons: buttons)
     }
