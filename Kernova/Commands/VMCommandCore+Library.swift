@@ -36,16 +36,18 @@ extension VMCommandCore {
 
     /// Renames a VM; an empty or unchanged name is a no-op.
     ///
-    /// A bundle a clone or import is still writing into is the one state that
-    /// refuses. Every other is taken: the rename rewrites the name in the
-    /// configuration and touches nothing a running operation reads, so a VM
-    /// that started or began suspending while the field editor was open keeps
-    /// the name the user typed rather than trading it for an alert.
+    /// Two states refuse: a bundle a clone or import is still writing into, and
+    /// a revert that will assign a whole configuration back over this one
+    /// (``VMStatus/renamePersists``). Every other is taken — the rename
+    /// rewrites the name and touches nothing else, so a VM that started or
+    /// began suspending while the field editor was open keeps the name the user
+    /// typed rather than trading it for an alert.
     func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
         try refuseIfPreparing(instance)
+        guard instance.status.renamePersists else { throw invalidState(instance) }
         Self.logger.debug(
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
         guard library.updateConfiguration(of: instance, mutate: { $0.name = trimmed }) else {
@@ -317,6 +319,12 @@ extension VMCommandCore {
     /// to clean up, and a settled one is cleaned up here — the row removed and
     /// the finished bundle trashed. Only an unconsented cancel needs a copy in
     /// flight, because that is what there is a confirmation to describe.
+    ///
+    /// The settled cleanup is gated exactly as ``delete(_:permanently:alsoRemoving:confirmed:)``
+    /// is, and for the same reason: the sheet leaves the menu key equivalents
+    /// live, so the finished clone can have been started before the confirm
+    /// landed, and trashing its bundle would pull the disks out from under a
+    /// guest that is running or about to be.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
         let instance = try resolve(selector)
         guard confirmed else {
@@ -325,6 +333,11 @@ extension VMCommandCore {
                 Self.cancelPreparingPrompt(state.operation, on: instance))
         }
         guard var state = instance.preparingState else {
+            guard instance.canDelete else { throw invalidState(instance) }
+            guard !lifecycle.hasActiveOperation(for: instance.id) else {
+                throw CommandError.busy(
+                    vm: summary(instance), operation: instance.status.displayName.lowercased())
+            }
             Self.logger.notice(
                 "Cancel confirmed after the copy settled for '\(instance.name, privacy: .public)' — removing the row and trashing the bundle"
             )

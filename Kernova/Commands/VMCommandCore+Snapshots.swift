@@ -331,16 +331,6 @@ extension VMCommandCore {
         return startRevert(instance, to: baseline, outcome: outcome)
     }
 
-    /// Whether stopping this VM discards a suspended session as a baseline
-    /// revert rather than shutting a guest down.
-    ///
-    /// The one read both stop dispositions gate their consent on, so the
-    /// graceful route cannot perform destructively what the force route
-    /// refuses to perform unconfirmed.
-    func discardsSavedStateAsEphemeralRevert(_ instance: VMInstance) -> Bool {
-        instance.isColdPaused && instance.ephemeralBaselineSnapshot != nil
-    }
-
     /// Routes a cold-paused ephemeral VM's Discard Saved State through the
     /// baseline revert instead, and reports whether it took the request.
     ///
@@ -350,9 +340,9 @@ extension VMCommandCore {
     /// Throws what the revert failed with: the caller asked for a stop, and a
     /// baseline that did not come back is not one.
     func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async throws -> Bool {
-        guard discardsSavedStateAsEphemeralRevert(instance),
-            let baseline = instance.ephemeralBaselineSnapshot
-        else { return false }
+        guard instance.isColdPaused, let baseline = instance.ephemeralBaselineSnapshot else {
+            return false
+        }
         let outcome = RevertOutcome()
         await revertToEphemeralBaseline(instance, baseline, outcome: outcome).value
         if let failure = outcome.failure { throw failure }

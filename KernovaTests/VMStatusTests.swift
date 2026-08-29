@@ -96,6 +96,17 @@ struct VMStatusTests {
         #expect(VMStatus.installing.canRename == false)
     }
 
+    @Test("A committed rename survives every state but the revert that assigns a config back")
+    func renamePersists() {
+        for status in [
+            VMStatus.stopped, .starting, .running, .paused, .saving, .snapshotting, .installing,
+            .initialBoot, .error,
+        ] {
+            #expect(status.renamePersists == true)
+        }
+        #expect(VMStatus.restoring.renamePersists == false)
+    }
+
     @Test("canForceStop returns true for running, paused, starting, saving, restoring")
     func canForceStop() {
         #expect(VMStatus.running.canForceStop == true)

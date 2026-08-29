@@ -22,9 +22,16 @@ if [ ! -d "$core_dir" ]; then
     exit 1
 fi
 
-# Attributes (`@preconcurrency import AppKit`) and submodule imports
-# (`import AppKit.NSImage`) are the spellings a plain anchored match misses.
-import_pattern='^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)*import[[:space:]]+(AppKit|Cocoa|SwiftUI)([.][A-Za-z_][A-Za-z0-9_]*)*[[:space:]]*$'
+# Every spelling of an import Swift accepts, since a plain anchored match on
+# `import AppKit` catches only one of them: attributes with and without
+# arguments (`@preconcurrency`, `@_spi(Private)`), access-level modifiers
+# (`internal`, `public`), an import kind (`import class AppKit.NSImage`),
+# submodules, and anything trailing on the line such as a comment.
+attribute='@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?[[:space:]]+'
+access='(public|package|internal|fileprivate|private)[[:space:]]+'
+kind='(class|struct|enum|protocol|typealias|func|var|let)[[:space:]]+'
+module='(AppKit|Cocoa|SwiftUI)([.][A-Za-z_][A-Za-z0-9_]*)*'
+import_pattern="^[[:space:]]*($attribute)*($access)?import[[:space:]]+($kind)?$module([[:space:]]|\$)"
 
 while IFS= read -r file; do
     if grep -Eq "$import_pattern" "$file"; then

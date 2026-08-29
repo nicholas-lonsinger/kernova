@@ -718,6 +718,28 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.stopCallCount == 1)
     }
 
+    @Test("A cold-paused VM's graceful stop asks the consent its force path does")
+    func gracefulStopOfAColdPausedVMAsksForConsent() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Suspended", status: .paused)
+
+        // Not a shutdown at heart: `VirtualizationService.stop` discards the
+        // save file for any cold-paused VM, ephemeral or not.
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .graceful, confirmed: false)
+            })
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .forceStop)
+        #expect(prompt.title == "Discard Saved State")
+        #expect(prompt.confirmTitle == "Discard")
+        #expect(harness.virtualization.stopCallCount == 0)
+
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: true)
+        #expect(harness.virtualization.stopCallCount == 1)
+    }
+
     @Test("A cold-paused Ephemeral VM's graceful stop asks the consent its force path does")
     func gracefulStopOfAColdPausedEphemeralVMAsksForConsent() async throws {
         let harness = makeHarness()
@@ -863,6 +885,24 @@ struct VMCommandCoreTests {
         try await harness.fileSystem.recorded.wait {
             harness.fileSystem.trashedURLs == [instance.bundleURL]
         }
+    }
+
+    @Test("A cancel confirmed after the settled clone was started refuses rather than trashing it")
+    func cancelPreparingAfterTheCopySettledRefusesALiveVM() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Copied")
+        // The sheet leaves the menu key equivalents live, so the finished clone
+        // can be running by the time the stale confirm lands — and its bundle
+        // holds the disks that guest is booted off.
+        instance.preparingState = nil
+        instance.status = .running
+
+        let error = try #require(
+            commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: true) })
+
+        #expect(error.isInvalidState)
+        #expect(harness.library.instances.count == 1)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
     // MARK: - Snapshots
@@ -1042,6 +1082,21 @@ struct VMCommandCoreTests {
 
         #expect(instance.name == "After")
         #expect(harness.core.allowedVerbs(for: instance).contains(.rename))
+    }
+
+    @Test("rename refuses during a revert, which would assign the old name back")
+    func renameRefusesDuringARestore() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Before", status: .restoring)
+
+        // The revert reads the configuration it assigns back before it starts
+        // writing, so a name landing now would be silently overwritten —
+        // answering `ok` for a rename the user is about to lose.
+        #expect(
+            commandError { try harness.core.rename(.id(instance.id), to: "After") }?
+                .isInvalidState == true)
+        #expect(instance.name == "Before")
+        #expect(!harness.core.allowedVerbs(for: instance).contains(.rename))
     }
 
     @Test("rename refuses only a VM whose clone or import is still copying")

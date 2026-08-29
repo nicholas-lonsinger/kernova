@@ -399,11 +399,12 @@ extension VMCommandCore {
                 return
             }
             guard instance.status.canStop else { throw invalidState(instance) }
-            // A cold-paused Ephemeral VM has no guest to shut down: this stop
-            // deletes its suspended session and rolls the disks back to the
-            // baseline. Same outcome as the force path, so it asks for the same
-            // consent rather than performing it on a request for a shutdown.
-            guard confirmed || !discardsSavedStateAsEphemeralRevert(instance) else {
+            // A cold-paused VM has no guest to send the request to, so this is
+            // not a shutdown at all: it deletes the suspended session exactly as
+            // the force path does, and an Ephemeral VM's rolls the disks back to
+            // the baseline on top of that. Same outcome, so the same consent —
+            // which is also what the UI asks for at every cold-paused Stop.
+            guard confirmed || !instance.isColdPaused else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }

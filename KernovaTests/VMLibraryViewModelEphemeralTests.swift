@@ -297,14 +297,21 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.stopCallCount == 0)
     }
 
-    @Test("A suspended VM that is not ephemeral still just discards")
+    @Test("A suspended VM that is not ephemeral is asked about too, then just discards")
     func nonEphemeralDiscardIsUnchanged() async throws {
         let harness = try await makeHarness(ephemeral: false, status: .paused)
 
+        // The session a plain discard deletes is no less lost for the VM not
+        // being ephemeral, so the consent is the same.
         await harness.viewModel.stop(harness.instance)
 
+        #expect(presenter.forceStopInstances.map(\.id) == [harness.instance.id])
+        #expect(harness.virtualization.stopCallCount == 0)
+
+        await harness.viewModel.forceStop(harness.instance)
+
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
-        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(harness.virtualization.forceStopCallCount == 1)
     }
 
     // MARK: - Baseline protection
