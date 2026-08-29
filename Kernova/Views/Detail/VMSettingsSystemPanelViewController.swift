@@ -71,8 +71,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     func contribute(to resolved: inout VMOverviewResolved) {
-        resolved.inputDevicesTitle =
-            instance.configuration.guestOS == .macOS ? inputDevicesPopUp.titleOfSelectedItem : nil
         if renderedAudioWarning == .denied {
             resolved.warnings[.system] = Self.micPermissionDeniedWarning
         }

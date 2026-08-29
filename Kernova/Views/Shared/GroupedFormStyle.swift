@@ -426,31 +426,58 @@ func makeGroupedFormCaption(_ text: String) -> NSTextField {
     return label
 }
 
-/// A borderless button that reads as a link.
+/// A borderless button drawn in a fixed tint.
 ///
-/// `.linkColor` barely desaturates when AppKit disables a borderless button, so
-/// the tint is driven from `isEnabled` — otherwise a disabled link reads as
-/// clickable and clicking it does nothing.
+/// A tint barely desaturates when AppKit disables a borderless button, so it is
+/// driven from `isEnabled` — otherwise a disabled button reads as clickable and
+/// clicking it does nothing.
 @MainActor
-final class LinkButton: NSButton {
+final class TintedButton: NSButton {
+    var tint: NSColor = .linkColor {
+        didSet { applyTint() }
+    }
+
     override var isEnabled: Bool {
-        didSet { contentTintColor = isEnabled ? .linkColor : .disabledControlTextColor }
+        didSet { applyTint() }
+    }
+
+    private func applyTint() {
+        contentTintColor = isEnabled ? tint : .disabledControlTextColor
     }
 }
 
+/// A borderless button in `tint`, optionally trailed by a symbol.
 @MainActor
-func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
-    let button = LinkButton(frame: .zero)
+func makeTintedButton(
+    _ title: String,
+    tint: NSColor,
+    font: NSFont = .preferredFont(forTextStyle: .caption1),
+    trailingSymbolName: String? = nil,
+    target: AnyObject,
+    action: Selector
+) -> NSButton {
+    let button = TintedButton(frame: .zero)
     button.setButtonType(.momentaryPushIn)
     button.title = title
     button.target = target
     button.action = action
     button.isBordered = false
     button.bezelStyle = .badge
-    button.font = .preferredFont(forTextStyle: .caption1)
-    button.contentTintColor = .linkColor
+    button.font = font
+    if let trailingSymbolName {
+        button.image = .systemSymbol(trailingSymbolName, accessibilityDescription: "")
+        button.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+        button.imagePosition = .imageTrailing
+    }
+    button.tint = tint
     button.setContentHuggingPriority(.required, for: .horizontal)
     return button
+}
+
+/// A borderless button that reads as a link.
+@MainActor
+func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
+    makeTintedButton(title, tint: .linkColor, target: target, action: action)
 }
 
 // MARK: - Boxes & banners

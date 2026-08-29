@@ -69,11 +69,15 @@ struct VMSettingsOverviewTests {
         firstSubview(NSButton.self, in: card) { $0.toolTip == "Show \(category.title)" }
     }
 
-    private func lockHints(in view: NSView) -> [NSView] {
-        allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
+    private func actionButton(_ action: VMOverviewAction, in card: NSView) -> NSButton? {
+        firstSubview(NSButton.self, in: card) { $0.identifier?.rawValue == action.rawValue }
     }
 
-    /// The panel header's bezeled back button, which carries no title.
+    private func copyButton(in card: NSView) -> CopyValueButton? {
+        firstSubview(CopyValueButton.self, in: card)
+    }
+
+    /// The tile's back button, which carries a glyph and no title.
     private func backButton(in header: NSView) -> NSButton? {
         firstSubview(NSButton.self, in: header) { $0.toolTip == "Show all settings" }
     }
@@ -89,23 +93,54 @@ struct VMSettingsOverviewTests {
         }
     }
 
-    @Test("A macOS card set states the input devices and offers drag and drop")
-    func macOSCardsCoverGuestOnlyRows() throws {
+    @Test("A macOS card set offers drag and drop")
+    func macOSCardsCoverGuestOnlySwitches() throws {
         let (vc, _, _) = makeController(guestOS: .macOS)
-
-        #expect(findLabel(withText: "Input devices", in: try card(.system, in: vc)) != nil)
         #expect(cardSwitch(.dropFiles, in: try card(.sharing, in: vc)) != nil)
     }
 
-    @Test("A Linux card set drops the macOS-only rows and keeps the clipboard switch")
-    func linuxCardsDropMacOSOnlyRows() throws {
+    @Test("A Linux card set drops the macOS-only switch and keeps the clipboard one")
+    func linuxCardsDropMacOSOnlySwitches() throws {
         let (vc, _, _) = makeController(guestOS: .linux)
         let sharing = try card(.sharing, in: vc)
 
-        #expect(findLabel(withText: "Input devices", in: try card(.system, in: vc)) == nil)
         #expect(cardSwitch(.dropFiles, in: sharing) == nil)
         #expect(cardSwitch(.clipboardSharing, in: sharing) != nil)
         #expect(summaryLine(in: sharing) != nil)
+    }
+
+    @Test("The cards stack one per row, at the column's full width, in category order")
+    func cardsStackInOneColumn() throws {
+        let (vc, _, _) = makeController()
+        let window = makeTestWindow(styleMask: [.titled, .resizable])
+        window.contentViewController = vc
+        window.setContentSize(NSSize(width: 900, height: 1600))
+        vc.view.layoutSubtreeIfNeeded()
+
+        var previous: NSRect?
+        for category in VMSettingsCategory.allCases {
+            let card = try self.card(category, in: vc)
+            let frame = card.convert(card.bounds, to: vc.view)
+            #expect(frame.width == GroupedFormStyle.columnWidth)
+            if let previous {
+                // The pane's views are unflipped, so each card sits below the
+                // one before it — no two share a row.
+                #expect(frame.maxY <= previous.minY)
+                #expect(abs(frame.minX - previous.minX) < 1)
+            }
+            previous = frame
+        }
+    }
+
+    @Test("A card's drill-in reads Edit, in the accent color")
+    func cardEditAffordanceIsAnAccentButton() throws {
+        let (vc, _, _) = makeController()
+        let edit = try #require(showButton(.system, in: try card(.system, in: vc)))
+        #expect(edit.title == "Edit")
+        #expect(!edit.isBordered)
+        #expect(edit.contentTintColor == .controlAccentColor)
+        #expect(edit.imagePosition == .imageTrailing)
+        #expect(edit.accessibilityLabel() == "Show System")
     }
 
     // MARK: - Drill-in
@@ -180,8 +215,8 @@ struct VMSettingsOverviewTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
-    @Test("A drilled-in header is one row: the way back, the title, the facts trailing")
-    func panelHeaderIsOneRowBehindTheBackButton() throws {
+    @Test("Drilling in morphs the one header anatomy rather than swapping another in")
+    func panelHeaderMorphsTheTileInPlace() throws {
         let (vc, instance, _) = makeController()
         let window = makeTestWindow(styleMask: [.titled])
         window.setContentSize(NSSize(width: 700, height: 400))
@@ -190,10 +225,11 @@ struct VMSettingsOverviewTests {
         vc.view.layoutSubtreeIfNeeded()
         let facts = header.renderedFactsLine
         #expect(!facts.isEmpty)
-        // The overview states the VM's name over the same facts line, on its tile.
+        // The overview states the VM's name over the facts line, on its tile.
         #expect(findLabel(withText: instance.name, in: header) != nil)
         let tile = try #require(firstSubview(NSBox.self, in: header))
         #expect(isVisible(tile, within: header))
+        #expect(backButton(in: header)?.isHidden == true)
 
         vc.showCategory(.system)
         vc.view.layoutSubtreeIfNeeded()
@@ -204,23 +240,22 @@ struct VMSettingsOverviewTests {
         let title = try #require(findLabel(withText: "System", in: header))
         let factsLabel = try #require(findLabel(withText: facts, in: header))
         #expect(back.accessibilityLabel() == "Back")
-        // A real bezeled control in the accent color, not a hand-drawn chevron.
-        #expect(back.isBordered)
-        #expect(back.bezelStyle == .push)
+        // The tile stays; only the glyph it carries changes, in the accent color
+        // the cards' Edit affordances use.
+        #expect(isVisible(tile, within: header))
+        #expect(!back.isHidden)
+        #expect(!back.isBordered)
         #expect(back.contentTintColor == .controlAccentColor)
-        #expect(back.frame.size == NSSize(width: 28, height: 24))
-        // No tile: the row leads with the button, the title following it.
-        #expect(!isVisible(tile, within: header))
         #expect(findLabel(withText: instance.name, in: header) == nil)
         #expect(title.font == Typography.title)
+        let tileFrame = tile.convert(tile.bounds, to: header)
         let backFrame = back.convert(back.bounds, to: header)
         let titleFrame = title.convert(title.bounds, to: header)
         let factsFrame = factsLabel.convert(factsLabel.bounds, to: header)
-        #expect(titleFrame.minX > backFrame.maxX)
-        // The facts line trails the title on that same row, not below it.
-        #expect(factsFrame.minX > titleFrame.maxX)
-        #expect(factsFrame.midY > titleFrame.minY)
-        #expect(factsFrame.midY < titleFrame.maxY)
+        // The glyph sits on the tile, the title beside it, the facts below.
+        #expect(abs(backFrame.midX - tileFrame.midX) < 1)
+        #expect(titleFrame.minX > tileFrame.maxX)
+        #expect(factsFrame.maxY <= titleFrame.minY)
     }
 
     @Test("A single-section panel states its name once, keeping the section's affordances")
@@ -303,35 +338,47 @@ struct VMSettingsOverviewTests {
 
     // MARK: - Lock hints and warnings
 
-    @Test("Card lock hints show for lockable categories only while read-only")
+    @Test("A card's lock hint shows only while read-only, and only where rows lock")
     func cardLockHintsTrackReadOnly() throws {
-        let (readOnlyVC, instance, _) = makeController(isReadOnly: true)
+        let (readOnlyVC, _, _) = makeController(isReadOnly: true)
         for category in VMSettingsCategory.allCases {
-            // A card carrying live switches makes no lock claim, whatever its
-            // panel holds — covered on its own in `cardWithLiveSwitchesMakesNoLockClaim`.
-            let claimsLock =
-                category.containsLockableRows
-                && VMOverviewSummary.toggles(for: category, instance: instance).isEmpty
-            let hints = settingsLockHints(in: try card(category, in: readOnlyVC))
-            #expect(hints.allSatisfy { $0.isHidden != claimsLock })
+            let card = try self.card(category, in: readOnlyVC)
+            guard let claim = category.lockHint else {
+                // Nothing in General or Snapshots is stopped-only, so neither
+                // card claims a lock at all.
+                #expect(findLabel(containing: "editable when stopped", in: card) == nil)
+                continue
+            }
+            let hint = try #require(cardLockHint(category, in: card))
+            #expect(!hint.isHidden)
+            #expect(hint.toolTip == claim)
+            // The scoped claim reads inline, not only in the tooltip.
+            #expect(findLabel(withText: claim, in: card) != nil)
+            // Never the panels' unscoped text, which a card's live controls
+            // would contradict.
+            #expect(findLabel(withText: groupedFormLockHintText, in: card) == nil)
         }
 
         let (editableVC, _, _) = makeController(isReadOnly: false)
         for category in VMSettingsCategory.allCases {
-            #expect(settingsLockHints(in: try card(category, in: editableVC)).allSatisfy(\.isHidden))
+            let card = try self.card(category, in: editableVC)
+            #expect(cardLockHint(category, in: card)?.isHidden != false)
         }
     }
 
-    @Test("A card carrying live switches states no lock hint")
-    func cardWithLiveSwitchesMakesNoLockClaim() throws {
+    @Test("The scoped claim stands beside a card's live switches")
+    func scopedLockClaimStandsBesideLiveSwitches() throws {
         let (vc, _, _) = makeController(isReadOnly: true)
+        let sharing = try card(.sharing, in: vc)
 
-        // Sharing locks only its Shared Directories section, and its card offers
-        // clipboard sharing and drag and drop as live switches — so the card
-        // cannot claim the category is editable only when stopped.
-        #expect(settingsLockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
-        #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
-        // The panel's own Shared Directories hint still states the lock.
+        // Every switch on the Sharing card edits live; the hint claims only
+        // that the folders lock, so it contradicts nothing beside it.
+        #expect(cardSwitch(.clipboardSharing, in: sharing) != nil)
+        let hint = try #require(cardLockHint(.sharing, in: sharing))
+        #expect(!hint.isHidden)
+        #expect(hint.toolTip == "Folders editable when stopped")
+        #expect(findLabel(withText: "Folders editable when stopped", in: sharing) != nil)
+        // The panel's own Shared Directories hint still states the full text.
         let panel = try #require(vc.panelForTesting(.sharing))
         #expect(settingsLockHints(in: panel).contains { !$0.isHidden })
     }
@@ -353,8 +400,8 @@ struct VMSettingsOverviewTests {
         #expect(form.frame.width == GroupedFormStyle.columnWidth)
     }
 
-    @Test("The Network card drops its lock hint while the picker hot-swaps")
-    func networkCardHintFollowsLiveSwitchability() throws {
+    @Test("The Network card keeps its claim while the picker hot-swaps")
+    func networkCardClaimSurvivesLiveSwitching() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
         instance.status = .running
@@ -363,9 +410,176 @@ struct VMSettingsOverviewTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
 
-        #expect(settingsLockHints(in: try card(.network, in: vc)).allSatisfy(\.isHidden))
-        // Every other lockable category still states the lock.
-        #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
+        // The mode picker live-switches on a running VM, but the MAC address and
+        // the forwarding rules still lock — which is all the claim says.
+        let hint = try #require(cardLockHint(.network, in: try card(.network, in: vc)))
+        #expect(!hint.isHidden)
+        #expect(hint.toolTip == "Most editable when stopped")
+    }
+
+    // MARK: - Card contents
+
+    @Test("The Network card folds the address into the mode row, with a copy button")
+    func networkCardCopiesTheAddress() throws {
+        let (vc, _, _) = makeController(guestOS: .linux)
+        let network = try card(.network, in: vc)
+        // A stopped VM has no address yet, so nothing offers to copy one.
+        #expect(copyButton(in: network) == nil)
+
+        let panel = try #require(vc.settingsPanelForTesting(.network))
+        var resolved = VMOverviewResolved()
+        panel.contribute(to: &resolved)
+        let mode = try #require(resolved.networkModeTitle)
+        #expect(findLabel(withText: mode, in: network) != nil)
+    }
+
+    @Test("The Storage card names the boot disk and folds the rest into one line")
+    func storageCardStatesBootDiskAndTheRest() throws {
+        let (vc, instance, _) = makeController()
+        let storage = try card(.storage, in: vc)
+        #expect(findLabel(withText: "Boot disk", in: storage) != nil)
+        #expect(findLabel(withText: instance.displayedStorageDisks[0].label, in: storage) != nil)
+        #expect(findLabel(withText: "No other disks · No media", in: storage) != nil)
+        // Cores, memory and the disk figure belong to the header's facts line.
+        #expect(findLabel(withText: "CPU cores", in: try card(.system, in: vc)) == nil)
+        #expect(findLabel(withText: "Memory", in: try card(.system, in: vc)) == nil)
+    }
+
+    @Test("The General card is its two switches and nothing else")
+    func generalCardIsSwitchesOnly() throws {
+        let (vc, _, _) = makeController()
+        let general = try card(.general, in: vc)
+        #expect(cardSwitch(.autoStart, in: general) != nil)
+        #expect(cardSwitch(.ephemeralMode, in: general) != nil)
+        for label in ["Type", "Boot mode", "Created"] {
+            #expect(findLabel(withText: label, in: general) == nil)
+        }
+    }
+
+    @Test("The Snapshots card counts them in its header and offers the capture at its foot")
+    func snapshotCardHeaderAndCaptureCommand() throws {
+        let (vc, instance, viewModel) = makeController()
+        let snapshots = try card(.snapshots, in: vc)
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+
+        // Nothing captured yet: no count beside the title, and no count row.
+        #expect(findLabel(withText: "Snapshots", in: snapshots) != nil)
+        #expect(findLabel(withText: "Latest", in: snapshots) == nil)
+
+        let snapshot = VMSnapshot(name: "Base")
+        instance.snapshotManifest = VMSnapshotManifest(
+            snapshots: [snapshot], currentID: snapshot.id)
+        reapply(vc, (instance, viewModel))
+
+        // The count sits beside the title, the footprint joining it once the
+        // panel's off-main size read lands.
+        #expect(
+            firstSubview(NSTextField.self, in: snapshots) {
+                $0.stringValue == "1" || $0.stringValue.hasPrefix("1 \u{00B7} ")
+            } != nil)
+        #expect(findLabel(withText: "Latest", in: snapshots) != nil)
+
+        // A stopped VM can be captured, and the card runs the same view-model
+        // gate the panel's own button runs.
+        let take = try #require(actionButton(.takeSnapshot, in: snapshots))
+        #expect(take.title == "Take Snapshot\u{2026}")
+        #expect(take.contentTintColor == .controlAccentColor)
+        #expect(take.isEnabled)
+        take.performClick(nil)
+        #expect(presenter.takeSnapshotSheetInstances.map(\.id) == [instance.id])
+    }
+
+    @Test("A long network mode gives up its width before the address beside it")
+    func longModeTitleYieldsToTheAddress() throws {
+        // A bridged mode carries a host interface's name, which is unbounded,
+        // and the pane fills a container narrower than the column cap.
+        let mode = "Thunderbolt Bridge (bridge0)"
+        let card = VMOverviewCardView(category: .network, toggles: [])
+        card.configure(
+            rows: [
+                VMOverviewSummary.Row(
+                    label: mode, value: "192.168.66.4",
+                    copy: VMOverviewSummary.RowCopy(
+                        value: "192.168.66.4", name: "Copy IP Address"))
+            ],
+            toggles: [], note: nil, action: nil, headerSummary: nil, showsLockHint: false,
+            warning: nil)
+
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = host
+        host.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let value = try #require(
+            firstSubview(NSTextField.self, in: card) { $0.stringValue == "192.168.66.4" })
+        let copy = try #require(copyButton(in: card))
+        let label = try #require(firstSubview(NSTextField.self, in: card) { $0.toolTip == mode })
+        // The address and its copy button stay whole; the mode truncates, and
+        // keeps the whole of itself in the tooltip.
+        #expect(value.frame.width >= value.intrinsicContentSize.width - 1)
+        #expect(copy.frame.width >= copy.intrinsicContentSize.width - 1)
+        #expect(copy.frame.width > 0)
+        #expect(label.frame.width < label.intrinsicContentSize.width)
+        #expect(label.lineBreakMode == .byTruncatingTail)
+    }
+
+    @Test("The snapshots' footprint is dropped with the set it described")
+    func snapshotFootprintNeverOutlivesItsSnapshots() async throws {
+        let (vc, instance, viewModel) = makeController()
+        let first = VMSnapshot(name: "First")
+        let second = VMSnapshot(name: "Second")
+        instance.snapshotManifest = VMSnapshotManifest(
+            snapshots: [first, second], currentID: second.id)
+        reapply(vc, (instance, viewModel))
+
+        let panel = try #require(
+            vc.settingsPanelForTesting(.snapshots) as? VMSettingsSnapshotsPanelViewController)
+        func contributedTotal() -> UInt64? {
+            var resolved = VMOverviewResolved()
+            panel.contribute(to: &resolved)
+            return resolved.snapshotTotalBytes
+        }
+        await panel.snapshotSizeTaskForTesting?.value
+        #expect(contributedTotal() != nil)
+
+        // Dropping a snapshot leaves the stored total describing a set that no
+        // longer exists, so the card falls back to the count alone.
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [first], currentID: first.id)
+        reapply(vc, (instance, viewModel))
+        #expect(contributedTotal() == nil)
+
+        await panel.snapshotSizeTaskForTesting?.value
+        #expect(contributedTotal() != nil)
+
+        // Same for a switch to another VM: its count must not land beside the
+        // previous VM's footprint.
+        let other = makeInstance(guestOS: .macOS)
+        let onlySnapshot = VMSnapshot(name: "Other")
+        other.snapshotManifest = VMSnapshotManifest(
+            snapshots: [onlySnapshot], currentID: onlySnapshot.id)
+        vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)
+        #expect(contributedTotal() == nil)
+        #expect(
+            VMOverviewSummary.headerSummary(
+                for: .snapshots, instance: other, resolved: VMOverviewResolved()) == "1")
+    }
+
+    @Test("The capture command dims when the VM is in no state to be captured")
+    func takeSnapshotFollowsTheViewModelGate() throws {
+        let (vc, instance, viewModel) = makeController()
+        instance.status = .starting
+        reapply(vc, (instance, viewModel))
+
+        let take = try #require(actionButton(.takeSnapshot, in: try card(.snapshots, in: vc)))
+        #expect(!take.isEnabled)
+        #expect(!viewModel.canTakeSnapshot(instance))
     }
 
     @Test("A duplicate MAC address raises the Network card's warning glyph")

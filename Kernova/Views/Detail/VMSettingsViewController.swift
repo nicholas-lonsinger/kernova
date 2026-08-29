@@ -373,6 +373,10 @@ extension VMSettingsViewController {
             identityHeader.widthAnchor.constraint(equalTo: headerContent.widthAnchor)
                 .isActive = true
             identityHeader.setBackAction(target: self, action: #selector(backToOverview))
+            // The boot disk's capacity is read here and nowhere else, so the
+            // Storage card repaints when that read lands rather than waiting for
+            // the next model change.
+            identityHeader.onBootDiskCapacityResolved = { [weak self] in self?.refreshOverview() }
         }
         let chrome = selectedCategory.flatMap { panelControllers[$0]?.chrome }
         identityHeader.configure(
@@ -390,10 +394,13 @@ extension VMSettingsViewController {
     private func apply() {
         guard isViewLoaded else { return }
         panelControllers.values.forEach { $0.refresh() }
-        // Last, so the cards and the header state what the refreshers above
-        // just resolved — the open panel's chrome among it.
-        refreshOverview()
+        // After the panels, so the header and the cards state what the
+        // refreshers above just resolved — the open panel's chrome among it —
+        // and the header first, because the Storage card reads the boot-disk
+        // figure the header re-keys here: on the pass a VM's boot disk changes,
+        // the other order pairs the new disk's label with the old one's size.
         refreshHeader()
+        refreshOverview()
     }
 
     /// Paints the overview cards from the same pass that refreshed the panels.
@@ -402,6 +409,7 @@ extension VMSettingsViewController {
     /// state of its own to state here.
     private func refreshOverview() {
         var resolved = VMOverviewResolved()
+        resolved.bootDiskBytes = identityHeader.bootDiskCapacityBytes
         for panel in panelControllers.values {
             panel.contribute(to: &resolved)
         }
@@ -496,6 +504,14 @@ extension VMSettingsViewController: VMSettingsOverviewDelegate {
         _ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool
     ) {
         apply(toggle, to: isOn)
+    }
+
+    /// Runs a card's foot command through the view model's own gate — the same
+    /// one the category's panel runs it through.
+    func overview(_ vc: VMSettingsOverviewViewController, didInvoke action: VMOverviewAction) {
+        switch action {
+        case .takeSnapshot: viewModel.requestTakeSnapshot(instance)
+        }
     }
 }
 

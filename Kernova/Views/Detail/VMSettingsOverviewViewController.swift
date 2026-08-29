@@ -5,13 +5,15 @@ import AppKit
 protocol VMSettingsOverviewDelegate: AnyObject {
     func overview(_ vc: VMSettingsOverviewViewController, didSelect category: VMSettingsCategory)
     func overview(_ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool)
+    func overview(_ vc: VMSettingsOverviewViewController, didInvoke action: VMOverviewAction)
 }
 
-/// The detail pane's overview: one card per ``VMSettingsCategory``, each stating
-/// the category's current facts and offering the drill-in to its panel.
+/// The detail pane's overview: one card per ``VMSettingsCategory``, stacked down
+/// the pane's column in category order, each stating the category's current
+/// facts and offering the drill-in to its panel.
 ///
-/// Holds no VM state — ``configure(instance:isReadOnly:networkIsLiveSwitchable:resolved:)``
-/// paints every card from the model on the settings pane's own refresh pass.
+/// Holds no VM state — ``configure(instance:isReadOnly:resolved:)`` paints every
+/// card from the model on the settings pane's own refresh pass.
 @MainActor
 final class VMSettingsOverviewViewController: NSViewController {
     weak var delegate: VMSettingsOverviewDelegate?
@@ -40,47 +42,48 @@ final class VMSettingsOverviewViewController: NSViewController {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         cards.removeAll()
         for category in VMSettingsCategory.allCases {
-            let toggles = VMOverviewSummary.toggles(for: category, instance: instance).map(\.toggle)
-            let card = VMOverviewCardView(category: category, toggles: toggles)
-            card.onShow = { [weak self] in
-                guard let self else { return }
-                self.delegate?.overview(self, didSelect: category)
-            }
-            card.onToggle = { [weak self] toggle, isOn in
-                guard let self else { return }
-                self.delegate?.overview(self, didSet: toggle, to: isOn)
-            }
+            let card = makeCard(for: category, instance: instance)
             stack.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            cards[category] = card
         }
     }
 
+    private func makeCard(for category: VMSettingsCategory, instance: VMInstance)
+        -> VMOverviewCardView
+    {
+        let toggles = VMOverviewSummary.toggles(for: category, instance: instance).map(\.toggle)
+        let card = VMOverviewCardView(category: category, toggles: toggles)
+        card.onShow = { [weak self] in
+            guard let self else { return }
+            self.delegate?.overview(self, didSelect: category)
+        }
+        card.onToggle = { [weak self] toggle, isOn in
+            guard let self else { return }
+            self.delegate?.overview(self, didSet: toggle, to: isOn)
+        }
+        card.onAction = { [weak self] action in
+            guard let self else { return }
+            self.delegate?.overview(self, didInvoke: action)
+        }
+        cards[category] = card
+        return card
+    }
+
     /// Paints every card from the model.
-    ///
-    /// `resolved.networkIsLiveSwitchable` mirrors the Network panel's rule: a
-    /// picker that hot-swaps while the VM runs makes the section's lock hint a
-    /// false claim.
     func configure(instance: VMInstance, isReadOnly: Bool, resolved: VMOverviewResolved) {
-        let networkIsLiveSwitchable = resolved.networkIsLiveSwitchable
         rebuild(instance: instance)
         for (category, card) in cards {
-            let toggles = VMOverviewSummary.toggles(for: category, instance: instance)
-            // A card states the lock only when nothing on it contradicts the
-            // claim: a card carrying live switches (Sharing, whose clipboard and
-            // drag-and-drop toggles edit while the VM runs, even though its
-            // Shared Directories section locks) would otherwise say "Editable
-            // when stopped" above controls that are editable right now — the
-            // same false-claim rule the live-switchable Network picker gets.
-            let locked =
-                category.containsLockableRows && isReadOnly && toggles.isEmpty
-                && !(category == .network && networkIsLiveSwitchable)
             card.configure(
                 rows: VMOverviewSummary.rows(
                     for: category, instance: instance, resolved: resolved),
-                toggles: toggles,
+                toggles: VMOverviewSummary.toggles(for: category, instance: instance),
                 note: VMOverviewSummary.note(for: category, instance: instance),
-                showsLockHint: locked,
+                action: VMOverviewSummary.action(for: category, resolved: resolved),
+                headerSummary: VMOverviewSummary.headerSummary(
+                    for: category, instance: instance, resolved: resolved),
+                // The claim is scoped to the rows that actually lock, so it
+                // stands beside the live controls on the same card.
+                showsLockHint: isReadOnly && category.lockHint != nil,
                 warning: resolved.warnings[category])
         }
     }

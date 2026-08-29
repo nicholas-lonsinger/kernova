@@ -772,7 +772,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         resolved.ipAddress = resolvedIPAddress
         resolved.portForwardingRuleCount =
             networkForwardsPorts ? instance.configuration.portForwardingRules.count : nil
-        resolved.networkIsLiveSwitchable = networkModeIsLiveSwitchable
         resolved.warnings[.network] = renderedNetworkMACWarning
     }
 

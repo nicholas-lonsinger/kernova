@@ -17,6 +17,8 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
     /// the set changes rather than on every `refresh()` pass.
     private var snapshotSizeIDs: [UUID]?
     private var snapshotSizeTask: Task<Void, Never>?
+    /// What every snapshot occupies together, from the last size read.
+    private var snapshotTotalBytes: UInt64?
     private let infoPresenter = PopoverPresenter()
 
     private let panelStack = NSStackView()
@@ -69,12 +71,22 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         snapshotSection = section
         chrome = VMSettingsPanelChrome(
             leading: [section.infoButton], trailing: [section.sizeReadout])
-        // A fresh section has no sizes yet, so the read must be re-issued.
+        // A fresh section has no sizes yet, so the read must be re-issued — and
+        // the total goes with it, or the card would state the outgoing VM's
+        // footprint beside the incoming VM's count.
         snapshotSizeIDs = nil
+        snapshotTotalBytes = nil
         return section
     }
 
     // MARK: - Refresh
+
+    /// The card states the capture command and the snapshots' footprint, both of
+    /// which only this panel resolves.
+    func contribute(to resolved: inout VMOverviewResolved) {
+        resolved.canTakeSnapshot = viewModel.canTakeSnapshot(instance)
+        resolved.snapshotTotalBytes = snapshotTotalBytes
+    }
 
     func refresh() {
         guard let snapshotSection else { return }
@@ -90,8 +102,12 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         let ids = instance.snapshotManifest.ordered.map(\.id)
         guard ids != snapshotSizeIDs else { return }
         snapshotSizeIDs = ids
+        // The stored total describes the previous set, so it is dropped with it:
+        // the card states the count alone until the fresh read lands.
+        snapshotTotalBytes = nil
         snapshotSizeTask?.cancel()
         guard !ids.isEmpty else {
+            snapshotTotalBytes = nil
             snapshotSection.applySizes([:])
             return
         }
@@ -106,8 +122,19 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
                 return
             }
             self.snapshotSection?.applySizes(sizes)
+            self.snapshotTotalBytes = sizes.values.reduce(0, +)
+            // The overview states the same total, and this read is issued only
+            // when the snapshot set changes — so the pass that paints it has to
+            // be asked for rather than waited on.
+            self.requestFullRefresh()
         }
     }
+
+    #if DEBUG
+    /// The in-flight size read, so a test awaits it instead of polling the
+    /// total it fills in.
+    var snapshotSizeTaskForTesting: Task<Void, Never>? { snapshotSizeTask }
+    #endif
 
     /// Get Info popover for one snapshot, with its on-disk footprint read off
     /// the main actor first.
