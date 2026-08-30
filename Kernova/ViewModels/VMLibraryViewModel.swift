@@ -214,20 +214,40 @@ final class VMLibraryViewModel {
     /// flushed when one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
-            guard presenter != nil, !bufferedErrors.isEmpty else { return }
-            let buffered = bufferedErrors
-            bufferedErrors.removeAll()
-            buffered.forEach { presenter?.presentError($0.message, title: $0.title) }
+            guard presenter != nil else { return }
+            if !bufferedErrors.isEmpty {
+                let buffered = bufferedErrors
+                bufferedErrors.removeAll()
+                buffered.forEach { presenter?.presentError($0.message, title: $0.title) }
+            }
+            if let id = bufferedDisplayFocus {
+                bufferedDisplayFocus = nil
+                if let instance = instances.first(where: { $0.id == id }) {
+                    presenter?.focusGuestDisplay(for: instance)
+                }
+            }
         }
     }
 
     @ObservationIgnored private var bufferedErrors: [(title: String, message: String)] = []
+
+    /// The VM an inline surface was asked for before any window existed, focused
+    /// when the presenter attaches — the same buffering `bufferedErrors` does,
+    /// for the same reason.
+    @ObservationIgnored private var bufferedDisplayFocus: UUID?
 
     var activeRename: RenameTarget?
 
     /// Called when a VM with a non-inline `displayPreference` is about to start or resume,
     /// allowing the app delegate to pre-create the display window with a spinner.
     @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
+
+    /// Asks for the library window, for an inline surface with nowhere to land.
+    ///
+    /// The inline display lives inside the main window, so a verb surfacing one
+    /// on a process that has never opened a window — an intent on the headless
+    /// launch path — has to bring that window up first or do nothing at all.
+    @ObservationIgnored var onSurfaceLibrary: (() -> Void)?
 
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
@@ -377,7 +397,14 @@ final class VMLibraryViewModel {
             // VM only arms a focus that the next display-state pass clears.
             // Detached windows are their own surface and need no selection.
             selectedID = instance.id
-            presenter?.focusGuestDisplay(for: instance)
+            guard let presenter else {
+                // No window has ever been created, so there is no inline display
+                // to focus yet. Ask for one and focus when it attaches.
+                bufferedDisplayFocus = instance.id
+                onSurfaceLibrary?()
+                return
+            }
+            presenter.focusGuestDisplay(for: instance)
         }
     }
 

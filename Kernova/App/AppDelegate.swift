@@ -31,6 +31,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// already reached — the one inside VZ at that moment still finishes, and a
     /// quit does not wait on a `.starting` VM.
     private var autoStartPass: Task<Void, Never>?
+    /// Latched once ``armAutoStartPassIfNeeded()`` has armed the pass, so the
+    /// first interactive bring-up of an automation-launched process runs it and
+    /// no later one runs it a second time.
+    private var hasArmedAutoStartPass = false
+    /// How this process was brought up, decided once in
+    /// `applicationDidFinishLaunching`. Resident app only.
+    private var launchProvenance: LaunchProvenance = .user
+    /// The App Intents front door, retained so the aliveness decision can ask
+    /// whether an intent is still running. `AppDependencyManager` owns the copy
+    /// intents resolve.
+    private var intentGateway: VMIntentGateway?
+    /// Whether any GUI surface has been put on screen this run.
+    ///
+    /// What separates an automation-launched process that is still headless from
+    /// one a person has since summoned: only the former may idle-quit, and only
+    /// the former still owes the auto-start pass.
+    private var hasPresentedInterface = false
+    /// Whether `applicationOpenUntitledFile(_:)` ran, latched before
+    /// `applicationDidFinishLaunching` reads it — see ``launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:isLoginItemLaunch:isDefaultLaunch:)``.
+    private var didOpenUntitledFile = false
+    /// Whether `application(_:open:)` ran with a launch document, latched the
+    /// same way.
+    private var didOpenLaunchDocuments = false
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var clipboardObservers: [UUID: Any] = [:]
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
@@ -39,9 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Watches the residency toggle so the status item and the reconcile follow it
     /// live. Resident app only.
     private var residencyObservation: ObservationLoop?
-    /// Latched once the reconcile has asked to terminate, so a window closing
-    /// during the async save can't request a second termination.
-    private var isQuittingOnLastWindowClose = false
+    /// Latched once a reconcile has asked to terminate for want of anything to
+    /// do, so a second one — a window closing during the async save, or an
+    /// intent settling behind the last window — can't request a second
+    /// termination.
+    private var hasRequestedIdleTermination = false
     /// Latched once the termination gate has replied `.terminateLater`, so a
     /// second quit can't start a second save pass: its `trySave` would come back
     /// as `operationInProgress` and the catch would force-stop a VM mid-save.
@@ -300,6 +325,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         super.init()
 
+        viewModel.onSurfaceLibrary = { [weak self] in
+            guard let self, !self.isTestHost else { return }
+            self.presentSummonedInterface()
+        }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.openDisplayWindow(for: instance)
         }
@@ -340,8 +369,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             awaitReady: { [weak self] in
                 guard let load = await self?.libraryLoad else { return }
                 await load.value
-            })
+            },
+            onIdle: { [weak self] in self?.reconcileIdleTermination() })
+        intentGateway = gateway
         AppDependencyManager.shared.add(dependency: gateway)
+    }
+
+    /// Records that Launch Services asked for the app's default surface.
+    ///
+    /// AppKit sends this while handling the launch `kAEOpenApplication`, which
+    /// it does *between* `applicationWillFinishLaunching` and
+    /// `applicationDidFinishLaunching` — so the latch is always settled by the
+    /// time `launchProvenance` reads it. The window itself is not opened here:
+    /// `startResidentApp` owns presentation, and answering `true` only reports
+    /// that the request was taken.
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        didOpenUntitledFile = true
+        return true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -376,20 +420,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             mainWindowController = windowController
             observeForTermination()
         } else {
-            startResidentApp()
+            startResidentApp(provenance: readLaunchProvenance(notification))
         }
+    }
+
+    /// Reads the launch's raw signals and classifies them.
+    ///
+    /// The only place any of them is read: everything downstream takes the
+    /// decided ``LaunchProvenance``, so a second front door (a CLI, #309) marks
+    /// its own launches rather than adding a second detection mechanism.
+    private func readLaunchProvenance(_ notification: Notification) -> LaunchProvenance {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        let isOpenEvent =
+            event.map { descriptor in
+                descriptor.eventClass == AEEventClass(kCoreEventClass)
+                    && (descriptor.eventID == AEEventID(kAEOpenApplication)
+                        || descriptor.eventID == AEEventID(kAEOpenDocuments))
+            } ?? false
+        let isLoginItem =
+            event.map { descriptor in
+                descriptor.eventID == AEEventID(kAEOpenApplication)
+                    && descriptor.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+                        == keyAELaunchedAsLogInItem
+            } ?? false
+        // Absent means unknown, and unknown resolves to the interactive launch.
+        let isDefaultLaunch =
+            notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
+
+        return Self.launchProvenance(
+            openedUntitledFile: didOpenUntitledFile,
+            openedDocuments: didOpenLaunchDocuments,
+            hasOpenAppleEvent: isOpenEvent,
+            isLoginItemLaunch: isLoginItem,
+            isDefaultLaunch: isDefaultLaunch)
     }
 
     // MARK: - Resident App
 
-    /// Brings up the resident app with its library window on screen.
+    /// Who brought this process up, as decided by ``launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:isLoginItemLaunch:isDefaultLaunch:)``.
+    enum LaunchProvenance: Equatable {
+        /// A person opened the app — a double-click, `open`, the Dock.
+        case user
+        /// The system opened it at login, on the user's standing request.
+        case loginItem
+        /// Something opened it to service automation, with nobody present.
+        case automation
+    }
+
+    /// Classifies a launch from the signals AppKit settles before
+    /// `applicationDidFinishLaunching`.
     ///
-    /// VMs appear at their last-logout state, except those marked
-    /// `VMConfiguration.startsAutomaticallyOnLaunch`, which come up once the
-    /// library read lands. Idle termination is not armed: while *Continue running
-    /// in Status Bar* is on the app stays resident until an explicit Quit, with
-    /// any running VMs executing headless.
-    private func startResidentApp() {
+    /// **Positive identification only.** A user launch that came up headless —
+    /// no window for a double-click — is far worse than an automation launch
+    /// that showed one, so `.automation` is returned solely when *every* signal
+    /// of a person having asked is absent, and anything unrecognized resolves to
+    /// `.user`.
+    ///
+    /// What makes that separable: an App Intents cold launch carries no open
+    /// Apple Event at all, opens no untitled file, and reports
+    /// `NSApplicationLaunchIsDefaultLaunchKey` as `false` (measured on macOS 27,
+    /// 2026-08-29), where every Launch Services open — foreground, backgrounded
+    /// with `open -g -j`, or a login item — carries `kAEOpenApplication`.
+    nonisolated static func launchProvenance(
+        openedUntitledFile: Bool,
+        openedDocuments: Bool,
+        hasOpenAppleEvent: Bool,
+        isLoginItemLaunch: Bool,
+        isDefaultLaunch: Bool
+    ) -> LaunchProvenance {
+        if isLoginItemLaunch { return .loginItem }
+        if openedUntitledFile || openedDocuments || hasOpenAppleEvent || isDefaultLaunch {
+            return .user
+        }
+        return .automation
+    }
+
+    /// Brings the resident app up, presenting only for a launch a person asked
+    /// for.
+    ///
+    /// The status item, the residency observation and the window-close reconcile
+    /// are set up for every provenance — they are what the process needs to be
+    /// reachable and to answer for itself, whoever started it.
+    ///
+    /// A `.user` or `.loginItem` launch additionally puts the library on screen
+    /// and arms the auto-start pass, so VMs marked
+    /// `VMConfiguration.startsAutomaticallyOnLaunch` come up once the library
+    /// read lands. An `.automation` launch does neither: nobody asked for a
+    /// window, and booting guests is not what servicing a read verb means. It
+    /// drops straight to `.accessory` — deliberately *not* through
+    /// `syncAgentActivationPolicy()`, whose `.quit` branch would terminate the
+    /// process out from under the very intent that launched it whenever
+    /// *Continue running in Status Bar* is off.
+    private func startResidentApp(provenance: LaunchProvenance) {
+        launchProvenance = provenance
         syncStatusItem()
         observeResidencyPreference()
 
@@ -408,24 +531,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         }
 
-        let provenance = Self.residentProvenanceLine(
+        let line = Self.residentProvenanceLine(
             bundlePath: Bundle.main.bundlePath,
             build: Self.buildNumber,
             configuration: Self.buildConfiguration,
-            vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking)
-        Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
+            vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking,
+            launch: provenance)
+        Self.logger.notice("Kernova resident app ready — \(line, privacy: .public)")
 
-        // Presentation only, not `summonUserInterface`: whoever launched the
-        // process (Launch Services, a login-item start, Finder) already
-        // requested activation, so a launch leg requests none of its own —
-        // `requestSummonActivation`'s `!NSApp.isActive` guard doesn't cover
-        // this moment, since the app isn't active yet this early in launch.
-        presentSummonedInterface()
+        switch provenance {
+        case .user, .loginItem:
+            // Presentation only, not `summonUserInterface`: whoever launched the
+            // process (Launch Services, a login-item start, Finder) already
+            // requested activation, so a launch leg requests none of its own —
+            // `requestSummonActivation`'s `!NSApp.isActive` guard doesn't cover
+            // this moment, since the app isn't active yet this early in launch.
+            // Arming the auto-start pass rides along with it.
+            presentSummonedInterface()
+        case .automation:
+            setAgentActivationPolicy(.accessory)
+            // Nothing else will reconcile a process that never opens a window:
+            // this is what lets it leave once the guest an intent started stops.
+            observeForTermination()
+        }
+    }
 
-        // After the summon, not before: its deferred window show runs while the
-        // library read is still doing its off-main-actor file I/O, so a VM
-        // booting here finds the measurable surface `applyMatchWindowBootResolution`
-        // needs. The marked VMs only exist in `instances` once that read applies.
+    /// Arms the launch pass that brings up the VMs marked to start
+    /// automatically, once per process.
+    ///
+    /// Deferred rather than skipped for an automation launch: a nightly
+    /// automation must not cost the user *Start automatically on launch* for the
+    /// rest of the process's life, so the first interactive bring-up — a reopen,
+    /// a document open, a status-item summon — runs the pass it never got. The
+    /// pass is safe to run late because `VMLibraryViewModel.autoStartStep`
+    /// re-reads each instance when it acts and skips one already running.
+    private func armAutoStartPassIfNeeded() {
+        guard !isTestHost, !hasArmedAutoStartPass else { return }
+        hasArmedAutoStartPass = true
         autoStartPass = Task { @MainActor in
             await self.libraryLoad?.value
             await self.viewModel.startAutomaticVMsForLaunch()
@@ -513,10 +655,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Formats the resident-app startup provenance line.
     nonisolated static func residentProvenanceLine(
-        bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool
+        bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool,
+        launch: LaunchProvenance
     ) -> String {
-        "bundle=\(bundlePath) build=\(build) config=\(configuration) "
-            + "vmNetworking=\(vmNetworkingEntitled ? "entitled" : "unentitled")"
+        let launchName =
+            switch launch {
+            case .user: "user"
+            case .loginItem: "loginItem"
+            case .automation: "automation"
+            }
+        return "bundle=\(bundlePath) build=\(build) config=\(configuration) "
+            + "vmNetworking=\(vmNetworkingEntitled ? "entitled" : "unentitled") "
+            + "launch=\(launchName)"
     }
 
     /// What a GUI summon puts on screen.
@@ -666,6 +816,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// redundant activation request — and on the reopen leg, our own self-open
     /// would loop.
     private func presentSummonedInterface(showing target: SummonTarget = .library) {
+        hasPresentedInterface = true
         // Idempotent — re-asserted here since a reopen can arrive with the
         // policy already `.regular`.
         setAgentActivationPolicy(.regular)
@@ -697,6 +848,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // bleeds into the menu bar the morph just installed. Clear it.
             NSApp.mainMenu?.cancelTracking()
         }
+        // After the presentation is enqueued, not before: the pass's first act
+        // is to await the library read, so the deferred window show above still
+        // runs first and a VM booting here finds the measurable surface
+        // `applyMatchWindowBootResolution` needs. The marked VMs only exist in
+        // `instances` once that read applies.
+        markInterfacePresented()
+    }
+
+    /// Records that a GUI surface is going on screen: the process has joined the
+    /// window reconcile, and owes the auto-start pass an automation launch
+    /// deferred.
+    ///
+    /// Both must happen together at every presenting path. Latching the flag
+    /// alone would end idle-quit *and* leave the pass unarmed for the rest of
+    /// the process's life, so a display window an intent asked for would
+    /// silently cost the user *Start automatically on launch*.
+    private func markInterfacePresented() {
+        hasPresentedInterface = true
+        armAutoStartPassIfNeeded()
     }
 
     /// Re-asserts `.regular` before a window is shown, so a window can never be
@@ -705,6 +875,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// No-op in the test host, which is always `.regular`.
     private func ensureRegularActivationIfAgent() {
         guard !isTestHost else { return }
+        // The chokepoint every window that bypasses `presentSummonedInterface`
+        // passes through — a display window an `open` verb asked for, a
+        // clipboard window, Settings.
+        markInterfacePresented()
         setAgentActivationPolicy(.regular)
     }
 
@@ -835,6 +1009,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return .quit
     }
 
+    /// What becomes of an automation-launched process once its work settles.
+    enum AutomationIdleOutcome: Equatable {
+        /// Keep running — headless, reachable through the status item.
+        case stayResident
+        /// Quit through `applicationShouldTerminate`, save-suspending anything live.
+        case quit
+    }
+
+    /// Decides whether a process nobody asked to see still has a reason to run.
+    ///
+    /// The window reconcile (`residencyOutcome`) cannot answer this: it keys on
+    /// windows, and this process has never had one, so nothing it watches will
+    /// ever fire. This is the counterpart trigger — every other state hands back
+    /// to the window reconcile by answering `.stayResident`.
+    ///
+    /// A live guest or work in flight always holds the process, whatever the
+    /// residency preference: an intent that started a VM must not have it
+    /// save-suspended the moment the intent returns. With *Continue running in
+    /// Status Bar* on, the process stays as the user asked; with it off there is
+    /// neither Dock icon nor status item, so a process that keeps running would
+    /// be unreachable — it leaves instead.
+    nonisolated static func automationIdleOutcome(
+        isAutomationLaunch: Bool,
+        hasPresentedInterface: Bool,
+        hasVisibleUserWindow: Bool,
+        keepInMenuBar: Bool,
+        hasUninterruptibleWork: Bool,
+        hasLiveGuest: Bool,
+        hasIntentInFlight: Bool
+    ) -> AutomationIdleOutcome {
+        guard isAutomationLaunch, !hasPresentedInterface, !hasVisibleUserWindow else {
+            return .stayResident
+        }
+        if hasIntentInFlight || hasLiveGuest || hasUninterruptibleWork { return .stayResident }
+        return keepInMenuBar ? .stayResident : .quit
+    }
+
     /// What the termination gate does with a quit request.
     enum TerminationOutcome: Equatable {
         /// Downgrade the quit to a GUI close; the app stays resident.
@@ -913,14 +1124,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return hasUnsettledOperation ? .waitForOperation : .save
     }
 
+    /// Whether the aliveness question belongs to `automationIdleOutcome` rather
+    /// than to the window reconcile.
+    ///
+    /// True for an automation launch that has never put a surface on screen —
+    /// the process `residencyOutcome` cannot speak for, because it decides from
+    /// windows and this one has none and never will until someone summons it.
+    private var isUnpresentedAutomationLaunch: Bool {
+        launchProvenance == .automation && !hasPresentedInterface && !hasVisibleUserWindow
+    }
+
     /// Reconciles the resident app with its open windows: `.regular` (Dock icon)
     /// while any user window is on screen, and when none are, either `.accessory`
     /// (status-item only) or a quit — see `residencyOutcome`.
     ///
     /// Re-run on every window open and close so a partial close can never strand
     /// the policy. No-op in the test host.
+    ///
+    /// An unpresented automation launch is routed away from `residencyOutcome`
+    /// entirely: that decision reads neither provenance nor in-flight intents,
+    /// so a *Start VM* intent raising `hasUninterruptibleWork` would give the
+    /// headless process a Dock icon, and the same work settling would quit it —
+    /// save-suspending the guest the intent had just started.
     private func syncAgentActivationPolicy() {
         guard !isTestHost else { return }
+        guard !isUnpresentedAutomationLaunch else {
+            reconcileIdleTermination()
+            return
+        }
         switch Self.residencyOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
             isHidden: NSApp.isHidden,
@@ -935,8 +1166,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // Latched: `applicationShouldTerminate` replies `.terminateLater` while
             // VMs save, and a window closing during that window would otherwise
             // re-enter with a reply already outstanding.
-            guard !isQuittingOnLastWindowClose else { return }
-            isQuittingOnLastWindowClose = true
+            guard !hasRequestedIdleTermination else { return }
+            hasRequestedIdleTermination = true
             Self.logger.notice("Last window closed with the app set to quit — terminating")
             NSApp.terminate(nil)
         }
@@ -1390,6 +1621,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Open URLs (Finder double-click / dock icon drop)
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        // A launch document arrives between `applicationWillFinishLaunching` and
+        // `applicationDidFinishLaunching`, so this latch is settled in time to
+        // classify the launch — a double-clicked bundle is a person asking, and
+        // carries no `kAEOpenApplication` of its own to say so.
+        didOpenLaunchDocuments = true
         importVMs(from: urls)
         // A double-click while the app is already resident+headless gets no
         // reopen — macOS sends no reopen for a document open — so surface the
@@ -1620,7 +1856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     NotificationCenter.default.removeObserver(token)
                 }
                 self[keyPath: windowsKP].removeValue(forKey: vmID)
-                self.terminateIfIdle()
+                self.reconcileIdleTermination()
             }
         }
         self[keyPath: observersPath][vmID] = token
@@ -1769,7 +2005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 switch closeReason {
                 case .appDismissal:
                     // VM stopped/errored/cold-paused, or the GUI was dismissed.
-                    self.terminateIfIdle()
+                    self.reconcileIdleTermination()
                 case .userClose:
                     // The VM keeps running headless and nothing pops back in; the
                     // library window shows the "Display Closed" placeholder.
@@ -1856,11 +2092,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return !viewModel.instances.contains(where: \.isKeepingAppAlive)
     }
 
-    /// Terminates the app if `isIdle` is true.
+    /// Re-decides whether the process still has a reason to run.
     ///
-    /// Only the test host idle-quits. The resident app never does — closing the
-    /// last window drops it to `.accessory` via
-    /// `applicationShouldTerminateAfterLastWindowClosed`, keeping VMs running.
+    /// The test host idle-quits on `isIdle`. The resident app answers this only
+    /// for an automation launch that has never presented — a windowed resident
+    /// app is the window reconcile's to decide, and one the user has summoned
+    /// has joined it.
+    private func reconcileIdleTermination() {
+        guard !isTestHost else {
+            terminateIfIdle()
+            return
+        }
+        switch Self.automationIdleOutcome(
+            isAutomationLaunch: launchProvenance == .automation,
+            hasPresentedInterface: hasPresentedInterface,
+            hasVisibleUserWindow: hasVisibleUserWindow,
+            keepInMenuBar: viewModel.keepInMenuBarOnQuit,
+            hasUninterruptibleWork: viewModel.hasUninterruptibleWork,
+            hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive),
+            hasIntentInFlight: intentGateway?.hasIntentInFlight ?? false
+        ) {
+        case .stayResident:
+            break
+        case .quit:
+            guard !hasRequestedIdleTermination else { return }
+            hasRequestedIdleTermination = true
+            Self.logger.notice(
+                "Automation launch settled with nothing left to run — terminating")
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Terminates the test host if `isIdle` is true.
+    ///
+    /// `isIdle` reads `isMainWindowDismissed`, which answers `false` when no main
+    /// window was ever created — so it can never speak for an automation launch.
+    /// `automationIdleOutcome` covers that case on `hasVisibleUserWindow`.
     private func terminateIfIdle() {
         guard isTestHost else { return }
         guard isIdle else { return }
@@ -1868,8 +2135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApp.terminate(nil)
     }
 
-    /// Observes each instance's `isKeepingAppAlive` state so the app can terminate
+    /// Observes each instance's `isKeepingAppAlive` state so the app can settle
     /// when the last one flips to inactive.
+    ///
+    /// Armed for the test host and for an automation-launched resident app: it
+    /// is what lets a process an intent started a VM in leave once that guest
+    /// stops, hours later and with nothing else watching.
     private func observeForTermination() {
         terminationObservation = observeRecurring(
             track: { [weak self] in
@@ -1879,7 +2150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 }
             },
             apply: { [weak self] in
-                self?.terminateIfIdle()
+                self?.reconcileIdleTermination()
             }
         )
     }

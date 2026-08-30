@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -404,6 +405,114 @@ struct VMIntentGatewayTests {
         #expect(log.count == 1)
         #expect(await gateway.vms().isEmpty)
     }
+
+    // MARK: - Idle Reporting
+
+    /// A ready gateway over a seeded mock, reporting every idle transition
+    /// into `log` and noting any that arrived while work was outstanding.
+    private func makeIdleReportingGateway(
+        _ commands: MockVMCommanding, log: IdleLog
+    ) -> VMIntentGateway {
+        let box = GatewayBox()
+        let gateway = VMIntentGateway(
+            commands: commands,
+            awaitReady: {},
+            refreshShortcutVocabulary: {},
+            onIdle: {
+                if box.gateway?.hasIntentInFlight == true { log.reportedWhileBusy = true }
+                log.count += 1
+                log.gate.notify()
+            })
+        box.gateway = gateway
+        return gateway
+    }
+
+    @Test("One intent reports the process idle once, and not before its result is built")
+    func singleIntentReportsIdleOnce() async throws {
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+
+        gateway.beginIntent()
+        #expect(gateway.hasIntentInFlight)
+        gateway.endIntent()
+        // Deferred, so the value the intent has just built reaches the framework
+        // before anything can act on the process being idle.
+        #expect(log.count == 0)
+        #expect(!gateway.hasIntentInFlight)
+
+        try await log.gate.wait { log.count == 1 }
+        #expect(!log.reportedWhileBusy)
+    }
+
+    @Test("Overlapping intents report idle once, at the end of the last one")
+    func overlappingIntentsReportIdleOnce() async throws {
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+
+        gateway.beginIntent()
+        gateway.beginIntent()
+        gateway.endIntent()
+        #expect(gateway.hasIntentInFlight)
+
+        gateway.endIntent()
+        try await log.gate.wait { log.count == 1 }
+        #expect(log.count == 1)
+        #expect(!log.reportedWhileBusy)
+    }
+
+    @Test("An intent arriving behind a finished one is never reported idle through")
+    func reportIsCancelledByLaterIntent() async throws {
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+
+        // The second intent lands on the same turn the first one's report was
+        // scheduled from; re-testing the count is what keeps it from firing.
+        gateway.beginIntent()
+        gateway.endIntent()
+        gateway.beginIntent()
+        gateway.endIntent()
+
+        try await log.gate.wait { log.count >= 1 }
+        #expect(!log.reportedWhileBusy)
+    }
+
+    @Test("Reads the system issues on its own never report idle")
+    func systemIssuedReadsDoNotReportIdle() async throws {
+        let vm = UUID()
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Wired", id: vm)]
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(commands, log: log)
+
+        // `VMEntityQuery` and `SnapshotEntityQuery` reach these to resolve a
+        // parameter or refresh Siri's vocabulary. Both arrive unbidden, so
+        // counting either would report the process idle before the intent being
+        // resolved for had been delivered.
+        #expect(await gateway.vms().count == 1)
+        #expect(await gateway.vms(matching: "Wired").count == 1)
+        #expect(await gateway.vms(withIDs: [vm]).count == 1)
+        #expect(try await gateway.snapshots(ofVM: vm).isEmpty)
+
+        #expect(log.count == 0)
+        #expect(!gateway.hasIntentInFlight)
+    }
+}
+
+/// Holds the gateway the idle callback inspects, which cannot be captured
+/// before it exists.
+@MainActor
+private final class GatewayBox {
+    weak var gateway: VMIntentGateway?
+}
+
+/// How many times the gateway reported every intent finished.
+@MainActor
+private final class IdleLog {
+    var count = 0
+    /// Set if a report ever arrived while an intent was still executing — the
+    /// one thing that must never happen, since `NSApp.terminate` does not return.
+    var reportedWhileBusy = false
+    let gate = AsyncGate()
 }
 
 /// Counts calls arriving from whatever isolation the value under test uses.

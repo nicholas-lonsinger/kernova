@@ -18,8 +18,10 @@ struct AppDelegateProvenanceTests {
                 bundlePath: "/Applications/Kernova.app",
                 build: "142",
                 configuration: "Release",
-                vmNetworkingEntitled: true)
-                == "bundle=/Applications/Kernova.app build=142 config=Release vmNetworking=entitled")
+                vmNetworkingEntitled: true,
+                launch: .user)
+                == "bundle=/Applications/Kernova.app build=142 config=Release "
+                + "vmNetworking=entitled launch=user")
     }
 
     @Test("reports an unentitled signature")
@@ -29,8 +31,10 @@ struct AppDelegateProvenanceTests {
                 bundlePath: "/Applications/Kernova.app",
                 build: "142",
                 configuration: "Debug",
-                vmNetworkingEntitled: false)
-                == "bundle=/Applications/Kernova.app build=142 config=Debug vmNetworking=unentitled")
+                vmNetworkingEntitled: false,
+                launch: .loginItem)
+                == "bundle=/Applications/Kernova.app build=142 config=Debug "
+                + "vmNetworking=unentitled launch=loginItem")
     }
 
     @Test("tolerates a missing build number without crashing")
@@ -40,7 +44,9 @@ struct AppDelegateProvenanceTests {
                 bundlePath: "/Applications/Kernova.app",
                 build: "?",
                 configuration: "Debug",
-                vmNetworkingEntitled: false)
-                == "bundle=/Applications/Kernova.app build=? config=Debug vmNetworking=unentitled")
+                vmNetworkingEntitled: false,
+                launch: .automation)
+                == "bundle=/Applications/Kernova.app build=? config=Debug "
+                + "vmNetworking=unentitled launch=automation")
     }
 }

@@ -1245,6 +1245,46 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
     }
 
+    /// The inline display lives inside the main window, so an intent surfacing
+    /// one on a process that has never opened a window — the headless launch
+    /// path — has nowhere to land and used to do nothing at all.
+    @Test("Surfacing an inline VM with no window asks for the library, then focuses it")
+    func openWithNoWindowRequestsTheLibraryFirst() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = makeInstance(name: "Wanted")
+        wanted.status = .running
+        viewModel.instances.append(wanted)
+        // No main window has been created, which is what leaves `presenter` nil.
+        viewModel.presenter = nil
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        try viewModel.commands.open(.id(wanted.id))
+
+        #expect(libraryRequests == 1)
+        #expect(viewModel.selectedID == wanted.id)
+
+        // Attaching the presenter is what the requested window does on arrival.
+        viewModel.presenter = presenter
+        #expect(presenter.focusGuestDisplayInstances.last === wanted)
+    }
+
+    @Test("A buffered surface request is dropped when its VM leaves before the window arrives")
+    func bufferedSurfaceRequestSurvivesAVanishedVM() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = makeInstance(name: "Wanted")
+        wanted.status = .running
+        viewModel.instances.append(wanted)
+        viewModel.presenter = nil
+        viewModel.onSurfaceLibrary = {}
+
+        try viewModel.commands.open(.id(wanted.id))
+        viewModel.instances.removeAll()
+        viewModel.presenter = presenter
+
+        #expect(presenter.focusGuestDisplayInstances.isEmpty)
+    }
+
     @Test("Surfacing a pop-out VM's display leaves the selection where it was")
     func openOfAPopOutVMLeavesTheSelectionAlone() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()

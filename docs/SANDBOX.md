@@ -30,3 +30,5 @@ The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, s
 ## Launch model
 
 Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper. A login launch is an ordinary Launch Services open, so the app comes up with its library window like any double-click.
+
+A launch the system performs to service an App Intent usually carries no open Apple Event, and one that carries none comes up headless — `.accessory`, no window, no auto-start pass — then stays resident or leaves per `AppDelegate.automationIdleOutcome`. A minority arrive bearing `kAEOpenApplication` from the Shortcuts runner, indistinguishable from a double-click, and present like one (#1012).
