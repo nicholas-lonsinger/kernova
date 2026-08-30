@@ -1226,6 +1226,41 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.isEmpty)
     }
 
+    /// The inline display renders the selected VM, so surfacing one that is not
+    /// selected has to select it first — `focusGuestDisplay` on an unselected VM
+    /// only arms a focus the next display-state pass clears, which is how
+    /// `open` on an arbitrary VM used to leave the previous one on screen.
+    @Test("Surfacing an inline VM's display selects it, whatever was selected before")
+    func openSelectsTheVMItSurfaces() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let onScreen = makeInstance(name: "OnScreen")
+        let wanted = makeInstance(name: "Wanted")
+        wanted.status = .running
+        viewModel.instances.append(contentsOf: [onScreen, wanted])
+        viewModel.selectedID = onScreen.id
+
+        try viewModel.commands.open(.id(wanted.id))
+
+        #expect(viewModel.selectedID == wanted.id)
+        #expect(presenter.focusGuestDisplayInstances.last === wanted)
+    }
+
+    @Test("Surfacing a pop-out VM's display leaves the selection where it was")
+    func openOfAPopOutVMLeavesTheSelectionAlone() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let onScreen = makeInstance(name: "OnScreen")
+        let wanted = makeInstance(name: "Wanted")
+        wanted.status = .running
+        wanted.configuration.displayPreference = .popOut
+        viewModel.instances.append(contentsOf: [onScreen, wanted])
+        viewModel.selectedID = onScreen.id
+
+        try viewModel.commands.open(.id(wanted.id))
+
+        #expect(viewModel.selectedID == onScreen.id)
+        #expect(presenter.focusGuestDisplayInstances.isEmpty)
+    }
+
     @Test("save delegates to lifecycle coordinator")
     func saveDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()

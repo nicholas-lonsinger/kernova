@@ -97,58 +97,76 @@ final class VMIntentGateway {
     }
 
     func info(_ id: UUID) async throws -> VMInfo {
-        await ready()
-        return try commands.info(.id(id))
+        try await perform(.info, on: id) { try self.commands.info(.id(id)) }
     }
 
     func ipAddress(of id: UUID) async throws -> String? {
-        await ready()
-        return try commands.ipAddress(of: .id(id))
+        try await perform(.ipAddress, on: id) { try self.commands.ipAddress(of: .id(id)) }
     }
 
     // MARK: - Lifecycle
 
     func start(_ id: UUID, recovery: Bool) async throws {
-        await ready()
-        try await commands.start(.id(id), recovery: recovery)
+        try await perform(.start, on: id) {
+            try await self.commands.start(.id(id), recovery: recovery)
+        }
     }
 
     func stop(_ id: UUID, disposition: StopDisposition, confirmed: Bool) async throws {
-        await ready()
-        try await commands.stop(.id(id), disposition: disposition, confirmed: confirmed)
+        try await perform(.stop, on: id) {
+            try await self.commands.stop(
+                .id(id), disposition: disposition, confirmed: confirmed)
+        }
     }
 
     func pause(_ id: UUID) async throws {
-        await ready()
-        try await commands.pause(.id(id))
+        try await perform(.pause, on: id) { try await self.commands.pause(.id(id)) }
     }
 
     func resume(_ id: UUID) async throws {
-        await ready()
-        try await commands.resume(.id(id))
+        try await perform(.resume, on: id) { try await self.commands.resume(.id(id)) }
     }
 
     func suspend(_ id: UUID) async throws {
-        await ready()
-        try await commands.suspend(.id(id))
+        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
     }
 
     func restart(_ id: UUID) async throws {
-        await ready()
-        try await commands.restart(.id(id))
+        try await perform(.restart, on: id) { try await self.commands.restart(.id(id)) }
     }
 
     func open(_ id: UUID) async throws {
-        await ready()
-        try commands.open(.id(id))
+        try await perform(.open, on: id) { try self.commands.open(.id(id)) }
     }
 
     // MARK: - Snapshots
 
     @discardableResult
     func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
+        try await perform(.takeSnapshot, on: id) {
+            try await self.commands.takeSnapshot(.id(id), name: name, notes: notes)
+        }
+    }
+
+    // MARK: - Dispatch
+
+    /// Runs `verb` once the library read has landed, logging any refusal.
+    ///
+    /// The log line is the only trace an App Intents failure leaves: the
+    /// framework shows it to whoever ran the intent and reports it nowhere
+    /// else — no alert, no window, nothing a later session can read back.
+    private func perform<T>(
+        _ verb: VMVerb, on id: UUID, _ body: () async throws -> T
+    ) async throws -> T {
         await ready()
-        return try await commands.takeSnapshot(.id(id), name: name, notes: notes)
+        do {
+            return try await body()
+        } catch let failure as CommandError {
+            Self.logger.notice(
+                "Intent \(verb.rawValue, privacy: .public) refused for \(id.uuidString, privacy: .public): \(failure.message, privacy: .public)"
+            )
+            throw failure
+        }
     }
 
     // MARK: - Shortcut Vocabulary
@@ -159,6 +177,7 @@ final class VMIntentGateway {
         Task { @MainActor [weak self] in
             guard let self, self.isVocabularyStale else { return }
             self.isVocabularyStale = false
+            Self.logger.debug("Rebuilding App Shortcut parameter vocabulary")
             self.refreshShortcutVocabulary()
         }
     }

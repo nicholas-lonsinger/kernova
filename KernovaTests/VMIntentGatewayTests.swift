@@ -217,7 +217,43 @@ struct VMIntentGatewayTests {
         #expect(commands.stopCalls.map(\.confirmed) == [false, true])
     }
 
-    @Test("A prompt offering alternatives is refused rather than answered for the user")
+    /// A running VM's force stop carries the gentler "Shut Down" alternative
+    /// (`VMCommandCore.forceStopPrompt`), so it is the shape that proves the
+    /// retry is not gated on a prompt having no alternatives — keying on that
+    /// would leave Force Stop permanently unreachable for a hung guest.
+    @Test("Force-stopping a running VM confirms, alternative or not")
+    func consentRetriesAForceStopThatOffersShutDown() async throws {
+        let commands = MockVMCommanding()
+        let id = UUID()
+        commands.stopConsentPrompt = ConfirmationPrompt(
+            kind: .forceStop,
+            title: "Force Stop Virtual Machine",
+            message: "\u{201C}Hung\u{201D} will be immediately terminated.",
+            confirmTitle: "Force Stop",
+            dismissTitle: "Cancel",
+            alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
+        let gateway = makeGateway(commands)
+        var asked = 0
+
+        try await VMIntentConsent.run(prompting: { _ in asked += 1 }) { confirmed in
+            try await gateway.stop(id, disposition: .force, confirmed: confirmed)
+        }
+
+        #expect(asked == 1)
+        #expect(commands.stopCalls.map(\.confirmed) == [false, true])
+        #expect(commands.stopCalls.map(\.disposition) == [.force, .force])
+    }
+
+    @Test("Only a prompt that confirms to something else is refused for the user")
+    func onlyStopPausedIsRefused() {
+        for kind in ConfirmationKind.allCases {
+            let prompt = ConfirmationPrompt(
+                kind: kind, title: "T", message: "M", confirmTitle: "C", dismissTitle: "D")
+            #expect(VMIntentConsent.isAnsweredByConfirming(prompt) == (kind != .stopPaused))
+        }
+    }
+
+    @Test("A prompt that confirms to a different verb is refused rather than answered")
     func consentRefusesToChooseAmongAlternatives() async throws {
         let commands = MockVMCommanding()
         commands.stopConsentPrompt = ConfirmationPrompt(

@@ -4,8 +4,11 @@ import KernovaKit
 
 struct StartVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Start Virtual Machine"
+    // A machine that still owes guest setup does not boot here: `start`
+    // dispatches the install or image download and returns, so this action
+    // reports before the setup it began has finished, and says so.
     static let description = IntentDescription(
-        "Starts a virtual machine, running any guest setup it still owes first.",
+        "Starts a virtual machine, or begins the guest setup one still owes — which carries on after this reports.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")

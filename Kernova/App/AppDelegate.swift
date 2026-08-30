@@ -328,7 +328,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// the process. It takes `libraryLoad` as its readiness await: an intent can
     /// arrive while the first library read is still in flight, and a verb run
     /// against a library that has not landed yet finds no VM to address.
+    ///
+    /// Not in the test host, with the rest of the resident-app machinery: the
+    /// gateway rebuilds Siri's parameter vocabulary, which writes to the
+    /// developer's own Shortcuts database, and holds an events subscription that
+    /// keeps the core's observation loop armed for every test.
     private func registerIntentGateway() {
+        guard !isTestHost else { return }
         let gateway = VMIntentGateway(
             commands: viewModel.commands,
             awaitReady: { [weak self] in
