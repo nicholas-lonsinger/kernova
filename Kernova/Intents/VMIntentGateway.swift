@@ -78,9 +78,26 @@ final class VMIntentGateway {
 
     // MARK: - Reads
 
+    /// Every VM in the library, each read in full.
+    ///
+    /// A ``VMEntity`` carries the whole `info` read, so the listing pairs each
+    /// row with its own. Both calls are synchronous main-actor reads of state
+    /// already in memory, with no suspension between them — a row that lists
+    /// and then fails to read is a programming error, not a race, so it is
+    /// asserted and skipped rather than being taken for a VM that left.
     func vms() async -> [VMEntity] {
         await ready()
-        return commands.list().map(VMEntity.init)
+        return commands.list().compactMap { summary in
+            do {
+                return VMEntity(try commands.info(.id(summary.id)))
+            } catch {
+                Self.logger.fault(
+                    "Listed VM \(summary.id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
+                )
+                assertionFailure("Listed VM \(summary.id.uuidString) has no info read: \(error)")
+                return nil
+            }
+        }
     }
 
     /// The VMs `ids` names, in library order, skipping any that have since left.
@@ -102,6 +119,13 @@ final class VMIntentGateway {
 
     func ipAddress(of id: UUID) async throws -> String? {
         try await perform(.ipAddress, on: id) { try self.commands.ipAddress(of: .id(id)) }
+    }
+
+    /// The VM's named restore points, newest first.
+    func snapshots(ofVM id: UUID) async throws -> [SnapshotEntity] {
+        try await perform(.snapshots, on: id) {
+            try self.commands.snapshots(of: .id(id)).map { SnapshotEntity($0, vm: id) }
+        }
     }
 
     // MARK: - Lifecycle
@@ -139,12 +163,108 @@ final class VMIntentGateway {
         try await perform(.open, on: id) { try self.commands.open(.id(id)) }
     }
 
+    func cancelGuestSetup(_ id: UUID, confirmed: Bool) async throws {
+        try await perform(.cancelGuestSetup, on: id) {
+            try self.commands.cancelGuestSetup(.id(id), confirmed: confirmed)
+        }
+    }
+
     // MARK: - Snapshots
 
     @discardableResult
     func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
         try await perform(.takeSnapshot, on: id) {
             try await self.commands.takeSnapshot(.id(id), name: name, notes: notes)
+        }
+    }
+
+    func revertToSnapshot(
+        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, confirmed: Bool
+    ) async throws {
+        try await perform(.revertToSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .revertToSnapshot)
+            try await self.commands.revertToSnapshot(
+                .id(id), snapshot: listed, takingCheckpoint: takingCheckpoint,
+                confirmed: confirmed)
+        }
+    }
+
+    func deleteSnapshot(_ id: UUID, snapshot: SnapshotEntityID, confirmed: Bool) async throws {
+        try await perform(.deleteSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .deleteSnapshot)
+            try await self.commands.deleteSnapshot(
+                .id(id), snapshot: listed, confirmed: confirmed)
+        }
+    }
+
+    func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
+        try await perform(.renameSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .renameSnapshot)
+            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: newName)
+        }
+    }
+
+    func setSnapshotNotes(_ id: UUID, snapshot: SnapshotEntityID, notes: String) async throws {
+        try await perform(.setSnapshotNotes, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .setSnapshotNotes)
+            try self.commands.setSnapshotNotes(.id(id), snapshot: listed, notes: notes)
+        }
+    }
+
+    /// The snapshot `picked` names, refusing one belonging to another VM.
+    ///
+    /// The VM parameter is authoritative — a Shortcut that changes it after
+    /// picking a snapshot must not act on the VM the stale pick names — and
+    /// this is where that is enforced for every snapshot verb, not only the
+    /// ones the core happens to catch. A revert or delete would be refused
+    /// there anyway; a rename or a note edit would not, because both are
+    /// documented no-ops for an identifier the manifest does not list, so the
+    /// mismatch would report success having changed nothing.
+    private func listedSnapshot(
+        _ picked: SnapshotEntityID, on vm: UUID, verb: VMVerb
+    ) throws -> UUID {
+        guard picked.vm != vm else { return picked.snapshot }
+        let name = (try? commands.info(.id(vm)).name) ?? vm.uuidString
+        throw CommandError.operationFailed(
+            verb: verb,
+            message:
+                "\u{201C}\(name)\u{201D} has no snapshot with the identifier \(picked.snapshot.uuidString)."
+        )
+    }
+
+    // MARK: - Library
+
+    /// Copies the VM's bundle, answering the row the copy fills.
+    ///
+    /// The clone registers its phantom row before returning and the `info` read
+    /// is the same main-actor turn, so the row is always there to describe.
+    func clone(_ id: UUID, machineIdentity: CloneMachineIdentity) async throws -> VMEntity {
+        try await perform(.clone, on: id) {
+            let copy = try self.commands.clone(.id(id), machineIdentity: machineIdentity)
+            return VMEntity(try self.commands.info(.id(copy.id)))
+        }
+    }
+
+    func rename(_ id: UUID, to newName: String) async throws {
+        try await perform(.rename, on: id) { try self.commands.rename(.id(id), to: newName) }
+    }
+
+    /// Moves the VM's bundle to the Trash.
+    ///
+    /// The permanent delete and the external files a delete can also remove are
+    /// both left to the app's own sheet: one is a user-confirmed exception to
+    /// the project's file-deletion rule, and the other names files this surface
+    /// never showed the user.
+    func delete(_ id: UUID, confirmed: Bool) async throws {
+        try await perform(.delete, on: id) {
+            try await self.commands.delete(
+                .id(id), permanently: false, alsoRemoving: [], confirmed: confirmed)
+        }
+    }
+
+    func cancelPreparing(_ id: UUID, confirmed: Bool) async throws {
+        try await perform(.cancelPreparing, on: id) {
+            try self.commands.cancelPreparing(.id(id), confirmed: confirmed)
         }
     }
 
