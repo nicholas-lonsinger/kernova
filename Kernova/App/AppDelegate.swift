@@ -344,7 +344,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         AppDependencyManager.shared.add(dependency: gateway)
     }
 
+    private var probeOpenUntitledFired = false
+
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        probeOpenUntitledFired = true
+        Self.logger.notice("PROBE openUntitled fired")
+        return true
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        probeLaunchSignals(notification)
         setupMainMenu()
 
         // Reclaim orphaned clipboard staging files from a previous run or crash —
@@ -378,6 +387,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else {
             startResidentApp()
         }
+    }
+
+    private func probeLaunchSignals(_ notification: Notification) {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        let cls = event?.eventClass
+        let eid = event?.eventID
+        let prop = event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+        func fourCC(_ v: OSType?) -> String {
+            guard let v else { return "nil" }
+            let bytes = [UInt8((v >> 24) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+            return String(bytes: bytes, encoding: .macOSRoman) ?? "?"
+        }
+        let isDefault = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool
+        let ppid = getppid()
+        let parent = NSRunningApplication(processIdentifier: ppid)?.bundleIdentifier ?? "n/a"
+        var parentName = [UInt8](repeating: 0, count: 4096)
+        let len = proc_pidpath(ppid, &parentName, UInt32(parentName.count))
+        let parentPath = String(decoding: parentName[0..<Int(max(len, 0))], as: UTF8.self)
+        Self.logger.notice(
+            """
+            PROBE launch: openUntitled=\(self.probeOpenUntitledFired, privacy: .public) \
+            aeClass=\(fourCC(cls), privacy: .public) aeID=\(fourCC(eid), privacy: .public) \
+            aeProp=\(fourCC(prop), privacy: .public) \
+            isDefaultLaunch=\(isDefault.map(String.init) ?? "absent", privacy: .public) \
+            policy=\(NSApp.activationPolicy().rawValue, privacy: .public) \
+            active=\(NSApp.isActive, privacy: .public) \
+            ppid=\(ppid, privacy: .public) parentBundle=\(parent, privacy: .public) \
+            parentPath=\(parentPath, privacy: .public)
+            """
+        )
     }
 
     // MARK: - Resident App

@@ -86,6 +86,7 @@ final class VMIntentGateway {
     /// and then fails to read is a programming error, not a race, so it is
     /// asserted and skipped rather than being taken for a VM that left.
     func vms() async -> [VMEntity] {
+        Self.logger.notice("PROBE gateway vms() entered")
         await ready()
         return commands.list().compactMap { summary in
             do {
@@ -278,6 +279,7 @@ final class VMIntentGateway {
     private func perform<T>(
         _ verb: VMVerb, on id: UUID, _ body: () async throws -> T
     ) async throws -> T {
+        Self.logger.notice("PROBE gateway perform \(verb.rawValue, privacy: .public)")
         await ready()
         do {
             return try await body()
