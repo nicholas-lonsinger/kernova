@@ -409,147 +409,110 @@ struct VMIntentGatewayTests {
     // MARK: - Idle Reporting
 
     /// A ready gateway over a seeded mock, reporting every idle transition
-    /// into `log`.
+    /// into `log` and noting any that arrived while work was outstanding.
     private func makeIdleReportingGateway(
         _ commands: MockVMCommanding, log: IdleLog
     ) -> VMIntentGateway {
-        VMIntentGateway(
+        let box = GatewayBox()
+        let gateway = VMIntentGateway(
             commands: commands,
             awaitReady: {},
             refreshShortcutVocabulary: {},
             onIdle: {
+                if box.gateway?.hasIntentInFlight == true { log.reportedWhileBusy = true }
                 log.count += 1
                 log.gate.notify()
             })
+        box.gateway = gateway
+        return gateway
     }
 
-    @Test("One verb reports the process idle exactly once, on its way out")
-    func singleVerbReportsIdleOnce() async throws {
-        let id = UUID()
-        let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "Wired", id: id)]
+    @Test("One intent reports the process idle once, and not before its result is built")
+    func singleIntentReportsIdleOnce() async throws {
         let log = IdleLog()
-        let gateway = makeIdleReportingGateway(commands, log: log)
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
 
-        try await gateway.pause(id)
-
-        try await log.gate.wait { log.count == 1 }
-        #expect(commands.pauseSelectors.count == 1)
-    }
-
-    @Test("A refused verb still reports idle, so a refusal can't strand the process")
-    func refusedVerbReportsIdle() async throws {
-        let id = UUID()
-        let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "Wired", id: id)]
-        commands.pauseError = CommandError.operationFailed(verb: .pause, message: "nope")
-        let log = IdleLog()
-        let gateway = makeIdleReportingGateway(commands, log: log)
-
-        await #expect(throws: CommandError.self) { try await gateway.pause(id) }
-
-        try await log.gate.wait { log.count == 1 }
-    }
-
-    @Test("Overlapping verbs report idle once, and never while one is still running")
-    func overlappingVerbsReportIdleOnceAtTheEnd() async throws {
-        let id = UUID()
-        let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "Wired", id: id)]
-        let log = IdleLog()
-        let gateway = makeIdleReportingGateway(commands, log: log)
-        let barrier = VerbBarrier()
-        commands.verbBarrier = { await barrier.hold() }
-
-        async let first: Void = gateway.pause(id)
-        async let second: Void = gateway.resume(id)
-
-        // Both verbs are inside the funnel and held, so the count that follows
-        // reads a genuine overlap rather than two runs that never met.
-        try await barrier.gate.wait { barrier.heldCount == 2 }
+        gateway.beginIntent()
+        #expect(gateway.hasIntentInFlight)
+        gateway.endIntent()
+        // Deferred, so the value the intent has just built reaches the framework
+        // before anything can act on the process being idle.
         #expect(log.count == 0)
-
-        barrier.release()
-        _ = try await (first, second)
+        #expect(!gateway.hasIntentInFlight)
 
         try await log.gate.wait { log.count == 1 }
-        // A per-verb report would have landed a second one by now.
-        #expect(log.count == 1)
+        #expect(!log.reportedWhileBusy)
     }
 
-    @Test("The entity query the system issues on its own never reports idle")
-    func vocabularyQueriesDoNotReportIdle() async throws {
+    @Test("Overlapping intents report idle once, at the end of the last one")
+    func overlappingIntentsReportIdleOnce() async throws {
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+
+        gateway.beginIntent()
+        gateway.beginIntent()
+        gateway.endIntent()
+        #expect(gateway.hasIntentInFlight)
+
+        gateway.endIntent()
+        try await log.gate.wait { log.count == 1 }
+        #expect(log.count == 1)
+        #expect(!log.reportedWhileBusy)
+    }
+
+    @Test("An intent arriving behind a finished one is never reported idle through")
+    func reportIsCancelledByLaterIntent() async throws {
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+
+        // The second intent lands on the same turn the first one's report was
+        // scheduled from; re-testing the count is what keeps it from firing.
+        gateway.beginIntent()
+        gateway.endIntent()
+        gateway.beginIntent()
+        gateway.endIntent()
+
+        try await log.gate.wait { log.count >= 1 }
+        #expect(!log.reportedWhileBusy)
+    }
+
+    @Test("Reads the system issues on its own never report idle")
+    func systemIssuedReadsDoNotReportIdle() async throws {
+        let vm = UUID()
         let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "Wired")]
+        commands.library = [makeSummary(name: "Wired", id: vm)]
         let log = IdleLog()
         let gateway = makeIdleReportingGateway(commands, log: log)
 
-        // `vms()` is the entity query's read — a vocabulary refresh arrives
-        // unbidden, and counting it would report a process idle before the
-        // intent that launched it had been delivered.
+        // `VMEntityQuery` and `SnapshotEntityQuery` reach these to resolve a
+        // parameter or refresh Siri's vocabulary. Both arrive unbidden, so
+        // counting either would report the process idle before the intent being
+        // resolved for had been delivered.
         #expect(await gateway.vms().count == 1)
         #expect(await gateway.vms(matching: "Wired").count == 1)
-        #expect(log.count == 0)
+        #expect(await gateway.vms(withIDs: [vm]).count == 1)
+        #expect(try await gateway.snapshots(ofVM: vm).isEmpty)
 
-        // The same read reached as the *Find Virtual Machines* intent does.
-        #expect(await gateway.listVMs().count == 1)
-        try await log.gate.wait { log.count == 1 }
+        #expect(log.count == 0)
+        #expect(!gateway.hasIntentInFlight)
     }
+}
+
+/// Holds the gateway the idle callback inspects, which cannot be captured
+/// before it exists.
+@MainActor
+private final class GatewayBox {
+    weak var gateway: VMIntentGateway?
 }
 
 /// How many times the gateway reported every intent finished.
 @MainActor
 private final class IdleLog {
     var count = 0
+    /// Set if a report ever arrived while an intent was still executing — the
+    /// one thing that must never happen, since `NSApp.terminate` does not return.
+    var reportedWhileBusy = false
     let gate = AsyncGate()
-}
-
-/// Holds every verb that reaches it until the test releases them, counting how
-/// many are held.
-///
-/// What makes the in-flight window observable without a sleep: the test waits
-/// for the count it expects rather than for time to pass.
-private final class VerbBarrier: @unchecked Sendable {
-    let gate = AsyncGate()
-    private let lock = NSLock()
-    private var isReleased = false
-    private var held = 0
-
-    var heldCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return held
-    }
-
-    private var isOpen: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return isReleased
-    }
-
-    func release() {
-        lock.lock()
-        isReleased = true
-        lock.unlock()
-        gate.notify()
-    }
-
-    func hold() async {
-        guard enter() else { return }
-        gate.notify()
-        try? await gate.wait { self.isOpen }
-    }
-
-    /// Registers a held verb, answering `false` when the barrier is already
-    /// released and there is nothing to wait for. Synchronous so the lock is
-    /// never taken across a suspension.
-    private func enter() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isReleased else { return false }
-        held += 1
-        return true
-    }
 }
 
 /// Counts calls arriving from whatever isolation the value under test uses.

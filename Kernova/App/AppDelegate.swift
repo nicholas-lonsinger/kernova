@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// How this process was brought up, decided once in
     /// `applicationDidFinishLaunching`. Resident app only.
     private var launchProvenance: LaunchProvenance = .user
+    /// The App Intents front door, retained so the aliveness decision can ask
+    /// whether an intent is still running. `AppDependencyManager` owns the copy
+    /// intents resolve.
+    private var intentGateway: VMIntentGateway?
     /// Whether any GUI surface has been put on screen this run.
     ///
     /// What separates an automation-launched process that is still headless from
@@ -321,6 +325,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         super.init()
 
+        viewModel.onSurfaceLibrary = { [weak self] in
+            guard let self, !self.isTestHost else { return }
+            self.presentSummonedInterface()
+        }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.openDisplayWindow(for: instance)
         }
@@ -363,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 await load.value
             },
             onIdle: { [weak self] in self?.reconcileIdleTermination() })
+        intentGateway = gateway
         AppDependencyManager.shared.add(dependency: gateway)
     }
 
@@ -844,6 +853,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // runs first and a VM booting here finds the measurable surface
         // `applyMatchWindowBootResolution` needs. The marked VMs only exist in
         // `instances` once that read applies.
+        markInterfacePresented()
+    }
+
+    /// Records that a GUI surface is going on screen: the process has joined the
+    /// window reconcile, and owes the auto-start pass an automation launch
+    /// deferred.
+    ///
+    /// Both must happen together at every presenting path. Latching the flag
+    /// alone would end idle-quit *and* leave the pass unarmed for the rest of
+    /// the process's life, so a display window an intent asked for would
+    /// silently cost the user *Start automatically on launch*.
+    private func markInterfacePresented() {
+        hasPresentedInterface = true
         armAutoStartPassIfNeeded()
     }
 
@@ -855,8 +877,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard !isTestHost else { return }
         // The chokepoint every window that bypasses `presentSummonedInterface`
         // passes through — a display window an `open` verb asked for, a
-        // clipboard window, Settings — so the latch means what it says.
-        hasPresentedInterface = true
+        // clipboard window, Settings.
+        markInterfacePresented()
         setAgentActivationPolicy(.regular)
     }
 
@@ -1014,12 +1036,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         hasVisibleUserWindow: Bool,
         keepInMenuBar: Bool,
         hasUninterruptibleWork: Bool,
-        hasLiveGuest: Bool
+        hasLiveGuest: Bool,
+        hasIntentInFlight: Bool
     ) -> AutomationIdleOutcome {
         guard isAutomationLaunch, !hasPresentedInterface, !hasVisibleUserWindow else {
             return .stayResident
         }
-        if hasLiveGuest || hasUninterruptibleWork { return .stayResident }
+        if hasIntentInFlight || hasLiveGuest || hasUninterruptibleWork { return .stayResident }
         return keepInMenuBar ? .stayResident : .quit
     }
 
@@ -1101,14 +1124,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return hasUnsettledOperation ? .waitForOperation : .save
     }
 
+    /// Whether the aliveness question belongs to `automationIdleOutcome` rather
+    /// than to the window reconcile.
+    ///
+    /// True for an automation launch that has never put a surface on screen —
+    /// the process `residencyOutcome` cannot speak for, because it decides from
+    /// windows and this one has none and never will until someone summons it.
+    private var isUnpresentedAutomationLaunch: Bool {
+        launchProvenance == .automation && !hasPresentedInterface && !hasVisibleUserWindow
+    }
+
     /// Reconciles the resident app with its open windows: `.regular` (Dock icon)
     /// while any user window is on screen, and when none are, either `.accessory`
     /// (status-item only) or a quit — see `residencyOutcome`.
     ///
     /// Re-run on every window open and close so a partial close can never strand
     /// the policy. No-op in the test host.
+    ///
+    /// An unpresented automation launch is routed away from `residencyOutcome`
+    /// entirely: that decision reads neither provenance nor in-flight intents,
+    /// so a *Start VM* intent raising `hasUninterruptibleWork` would give the
+    /// headless process a Dock icon, and the same work settling would quit it —
+    /// save-suspending the guest the intent had just started.
     private func syncAgentActivationPolicy() {
         guard !isTestHost else { return }
+        guard !isUnpresentedAutomationLaunch else {
+            reconcileIdleTermination()
+            return
+        }
         switch Self.residencyOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
             isHidden: NSApp.isHidden,
@@ -2066,7 +2109,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             hasVisibleUserWindow: hasVisibleUserWindow,
             keepInMenuBar: viewModel.keepInMenuBarOnQuit,
             hasUninterruptibleWork: viewModel.hasUninterruptibleWork,
-            hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive)
+            hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive),
+            hasIntentInFlight: intentGateway?.hasIntentInFlight ?? false
         ) {
         case .stayResident:
             break

@@ -31,12 +31,19 @@ final class VMIntentGateway {
     /// How many intents are executing.
     ///
     /// What holds a process the system launched purely to service an intent:
-    /// nothing else is watching one that never opens a window. Deliberately
-    /// counts only intent execution — the ``VMEntityQuery`` reads the system
-    /// issues on its own to refresh Siri's vocabulary are *not* counted, because
-    /// they arrive unbidden and would otherwise report the process idle before
-    /// the intent that launched it had even been delivered.
+    /// nothing else is watching one that never opens a window.
+    ///
+    /// Counted at the ``AppIntent/perform()`` boundary and nowhere else, so it
+    /// spans the whole of one intent — the consent round trip and the result
+    /// the framework has yet to collect included — and so the reads the system
+    /// issues on its own, to resolve a parameter or refresh Siri's vocabulary,
+    /// are not counted at all. Those arrive unbidden, in volume, and counting
+    /// one would report the process idle before the intent it was resolving for
+    /// had been delivered.
     private var intentsInFlight = 0
+
+    /// Whether any intent is executing.
+    var hasIntentInFlight: Bool { intentsInFlight > 0 }
 
     /// The single readiness await, memoized so an intent storm waits on one task.
     private var readiness: Task<Void, Never>?
@@ -92,31 +99,35 @@ final class VMIntentGateway {
 
     // MARK: - In-Flight Accounting
 
-    /// Runs `body` as one intent, reporting the process idle when it is the last
-    /// one to finish.
+    /// Marks one intent as executing, holding the process open.
     ///
-    /// The idle report is what an automation-launched process is waiting for to
-    /// decide whether to stay resident or leave, so it fires on the way out of
-    /// every path — a refusal included.
-    private func asIntent<T>(_ body: () async throws -> T) async rethrows -> T {
+    /// Every ``AppIntent/perform()`` calls this first and pairs it with
+    /// ``endIntent()`` in a `defer`, which is what makes the hold span the
+    /// whole intent rather than one gateway call: a destructive verb's refusal
+    /// returns here long before `requestConfirmation` has asked the question,
+    /// and a read's value is built after its call has returned. Releasing at
+    /// either point would let the process quit mid-intent — and `NSApp.terminate`
+    /// does not come back.
+    func beginIntent() {
         intentsInFlight += 1
-        defer {
-            intentsInFlight -= 1
-            if intentsInFlight == 0 { onIdle() }
+    }
+
+    /// Marks one intent as finished, reporting the process idle when it was the
+    /// last.
+    ///
+    /// The report is deferred to a later main-actor turn and re-tests the count,
+    /// so the result the intent just built reaches the framework first and a
+    /// second intent arriving in between cancels it.
+    func endIntent() {
+        intentsInFlight -= 1
+        guard intentsInFlight == 0 else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.intentsInFlight == 0 else { return }
+            self.onIdle()
         }
-        return try await body()
     }
 
     // MARK: - Reads
-
-    /// Every VM in the library, answering the *Find Virtual Machines* intent.
-    ///
-    /// Separate from ``vms()``, which the entity query shares: this is intent
-    /// execution and holds the process, that is the system reading vocabulary
-    /// and does not.
-    func listVMs() async -> [VMEntity] {
-        await asIntent { await vms() }
-    }
 
     /// Every VM in the library, each read in full.
     ///
@@ -318,16 +329,14 @@ final class VMIntentGateway {
     private func perform<T>(
         _ verb: VMVerb, on id: UUID, _ body: () async throws -> T
     ) async throws -> T {
-        try await asIntent {
-            await ready()
-            do {
-                return try await body()
-            } catch let failure as CommandError {
-                Self.logger.notice(
-                    "Intent \(verb.rawValue, privacy: .public) refused for \(id.uuidString, privacy: .public): \(failure.message, privacy: .public)"
-                )
-                throw failure
-            }
+        await ready()
+        do {
+            return try await body()
+        } catch let failure as CommandError {
+            Self.logger.notice(
+                "Intent \(verb.rawValue, privacy: .public) refused for \(id.uuidString, privacy: .public): \(failure.message, privacy: .public)"
+            )
+            throw failure
         }
     }
 

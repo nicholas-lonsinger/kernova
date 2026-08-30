@@ -111,7 +111,8 @@ struct AppDelegateLaunchProvenanceTests {
         hasVisibleUserWindow: Bool = false,
         keepInMenuBar: Bool = false,
         hasUninterruptibleWork: Bool = false,
-        hasLiveGuest: Bool = false
+        hasLiveGuest: Bool = false,
+        hasIntentInFlight: Bool = false
     ) -> AppDelegate.AutomationIdleOutcome {
         AppDelegate.automationIdleOutcome(
             isAutomationLaunch: isAutomationLaunch,
@@ -119,7 +120,8 @@ struct AppDelegateLaunchProvenanceTests {
             hasVisibleUserWindow: hasVisibleUserWindow,
             keepInMenuBar: keepInMenuBar,
             hasUninterruptibleWork: hasUninterruptibleWork,
-            hasLiveGuest: hasLiveGuest)
+            hasLiveGuest: hasLiveGuest,
+            hasIntentInFlight: hasIntentInFlight)
     }
 
     @Test("A headless automation launch with nothing left to run and no status item quits")
@@ -156,5 +158,23 @@ struct AppDelegateLaunchProvenanceTests {
     @Test("A window on screen holds the process even before anything marks it presented")
     func visibleWindowHolds() {
         #expect(idleOutcome(hasVisibleUserWindow: true) == .stayResident)
+    }
+
+    @Test("An intent still running holds the process, whatever else is settled")
+    func intentInFlightHolds() {
+        // The decision has three triggers and only the gateway's idle report
+        // knows an intent is running, so in-flight state has to be a condition
+        // of the answer rather than merely the reason it was asked.
+        #expect(idleOutcome(hasIntentInFlight: true) == .stayResident)
+    }
+
+    @Test("The library read landing mid-intent cannot quit the process it launched")
+    func libraryReadDuringFirstIntentHolds() {
+        // `observeForTermination` is armed before the library read populates
+        // `instances`, so it wakes while the launching intent is still awaiting
+        // readiness: no guest yet, no work yet, and residency off.
+        #expect(
+            idleOutcome(keepInMenuBar: false, hasLiveGuest: false, hasIntentInFlight: true)
+                == .stayResident)
     }
 }
