@@ -19,12 +19,20 @@ final class MockVMCommanding: VMCommanding {
     /// The snapshot `takeSnapshot` answers with, built from its arguments when
     /// left unset.
     var snapshotToReturn: SnapshotSummary?
+    /// What `info` answers for a VM, overriding the value synthesized from its
+    /// summary — for tests that vary a field the library alone doesn't carry.
+    var infoByID: [UUID: VMInfo] = [:]
+    /// What `snapshots(of:)` answers per VM.
+    var snapshotsByVM: [UUID: [SnapshotSummary]] = [:]
+    /// The row `clone` answers with, synthesized from the source when unset.
+    var cloneResult: VMSummary?
 
     // MARK: - Recorded calls
 
     private(set) var listCallCount = 0
     private(set) var infoSelectors: [VMSelector] = []
     private(set) var ipAddressSelectors: [VMSelector] = []
+    private(set) var snapshotsSelectors: [VMSelector] = []
     private(set) var startCalls: [(selector: VMSelector, recovery: Bool)] = []
     private(set) var stopCalls: [(selector: VMSelector, disposition: StopDisposition, confirmed: Bool)] =
         []
@@ -33,13 +41,26 @@ final class MockVMCommanding: VMCommanding {
     private(set) var suspendSelectors: [VMSelector] = []
     private(set) var restartSelectors: [VMSelector] = []
     private(set) var openSelectors: [VMSelector] = []
+    private(set) var cancelGuestSetupCalls: [(selector: VMSelector, confirmed: Bool)] = []
     private(set) var takeSnapshotCalls: [(selector: VMSelector, name: String, notes: String)] = []
+    private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool)] = []
+    private(set) var deleteSnapshotCalls: [(selector: VMSelector, snapshot: UUID, confirmed: Bool)] =
+        []
+    private(set) var renameSnapshotCalls: [(selector: VMSelector, snapshot: UUID, newName: String)] =
+        []
+    private(set) var setSnapshotNotesCalls: [(selector: VMSelector, snapshot: UUID, notes: String)] =
+        []
+    private(set) var cloneCalls: [(selector: VMSelector, machineIdentity: CloneMachineIdentity)] = []
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
+    private(set) var deleteCalls:
+        [(selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool)] = []
+    private(set) var cancelPreparingCalls: [(selector: VMSelector, confirmed: Bool)] = []
 
     // MARK: - Error injection
 
     var infoError: (any Error)?
     var ipAddressError: (any Error)?
+    var snapshotsError: (any Error)?
     var startError: (any Error)?
     var stopError: (any Error)?
     var pauseError: (any Error)?
@@ -47,11 +68,30 @@ final class MockVMCommanding: VMCommanding {
     var suspendError: (any Error)?
     var restartError: (any Error)?
     var openError: (any Error)?
+    var cancelGuestSetupError: (any Error)?
     var takeSnapshotError: (any Error)?
+    var revertError: (any Error)?
+    var deleteSnapshotError: (any Error)?
+    var renameSnapshotError: (any Error)?
+    var setSnapshotNotesError: (any Error)?
+    var cloneError: (any Error)?
+    var renameError: (any Error)?
+    var deleteError: (any Error)?
+    var cancelPreparingError: (any Error)?
 
     /// Refuses `stop` until it is called with `confirmed: true`, then succeeds —
     /// the consent round trip every destructive verb performs.
     var stopConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `revertToSnapshot`.
+    var revertConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `deleteSnapshot`.
+    var deleteSnapshotConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `delete`.
+    var deleteConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `cancelPreparing`.
+    var cancelPreparingConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `cancelGuestSetup`.
+    var cancelGuestSetupConsentPrompt: ConfirmationPrompt?
 
     // MARK: - Events
 
@@ -73,6 +113,7 @@ final class MockVMCommanding: VMCommanding {
         infoSelectors.append(selector)
         if let infoError { throw infoError }
         let summary = try resolve(selector)
+        if let seeded = infoByID[summary.id] { return seeded }
         return VMInfo(
             id: summary.id,
             name: summary.name,
@@ -99,8 +140,9 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
-        _ = try resolve(selector)
-        return []
+        snapshotsSelectors.append(selector)
+        if let snapshotsError { throw snapshotsError }
+        return snapshotsByVM[try resolve(selector).id] ?? []
     }
 
     // MARK: - Lifecycle
@@ -110,7 +152,13 @@ final class MockVMCommanding: VMCommanding {
         if let startError { throw startError }
     }
 
-    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {}
+    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
+        cancelGuestSetupCalls.append((selector, confirmed))
+        if let cancelGuestSetupError { throw cancelGuestSetupError }
+        if let cancelGuestSetupConsentPrompt, !confirmed {
+            throw CommandError.confirmationRequired(cancelGuestSetupConsentPrompt)
+        }
+    }
 
     func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {
         stopCalls.append((selector, disposition, confirmed))
@@ -160,33 +208,73 @@ final class MockVMCommanding: VMCommanding {
 
     func revertToSnapshot(
         _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool
-    ) async throws {}
+    ) async throws {
+        revertCalls.append((selector, snapshot, takingCheckpoint, confirmed))
+        if let revertError { throw revertError }
+        if let revertConsentPrompt, !confirmed {
+            throw CommandError.confirmationRequired(revertConsentPrompt)
+        }
+    }
 
-    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, confirmed: Bool) async throws {}
+    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, confirmed: Bool) async throws {
+        deleteSnapshotCalls.append((selector, snapshot, confirmed))
+        if let deleteSnapshotError { throw deleteSnapshotError }
+        if let deleteSnapshotConsentPrompt, !confirmed {
+            throw CommandError.confirmationRequired(deleteSnapshotConsentPrompt)
+        }
+    }
 
-    func renameSnapshot(_ selector: VMSelector, snapshot: UUID, to newName: String) throws {}
+    func renameSnapshot(_ selector: VMSelector, snapshot: UUID, to newName: String) throws {
+        renameSnapshotCalls.append((selector, snapshot, newName))
+        if let renameSnapshotError { throw renameSnapshotError }
+    }
 
-    func setSnapshotNotes(_ selector: VMSelector, snapshot: UUID, notes: String) throws {}
+    func setSnapshotNotes(_ selector: VMSelector, snapshot: UUID, notes: String) throws {
+        setSnapshotNotesCalls.append((selector, snapshot, notes))
+        if let setSnapshotNotesError { throw setSnapshotNotesError }
+    }
 
     // MARK: - Library
 
     func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary {
-        throw CommandError.unsupported(capability: "cloning")
+        cloneCalls.append((selector, machineIdentity))
+        if let cloneError { throw cloneError }
+        let source = try resolve(selector)
+        let copy =
+            cloneResult
+            ?? VMSummary(id: UUID(), name: "\(source.name) copy", status: source.status)
+        // The core registers the copy's phantom row before answering, so a
+        // caller that reads it back on the same turn finds it.
+        library.append(copy)
+        return copy
     }
 
     func rename(_ selector: VMSelector, to newName: String) throws {
         renameCalls.append((selector, newName))
+        if let renameError { throw renameError }
     }
 
     func delete(
         _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool
-    ) async throws {}
+    ) async throws {
+        deleteCalls.append((selector, permanently, alsoRemoving, confirmed))
+        if let deleteError { throw deleteError }
+        if let deleteConsentPrompt, !confirmed {
+            throw CommandError.confirmationRequired(deleteConsentPrompt)
+        }
+    }
 
     func importVM(from url: URL) throws -> VMSummary {
         throw CommandError.unsupported(capability: "importing")
     }
 
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {}
+    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
+        cancelPreparingCalls.append((selector, confirmed))
+        if let cancelPreparingError { throw cancelPreparingError }
+        if let cancelPreparingConsentPrompt, !confirmed {
+            throw CommandError.confirmationRequired(cancelPreparingConsentPrompt)
+        }
+    }
 
     // MARK: - Observation
 

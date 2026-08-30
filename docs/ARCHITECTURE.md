@@ -243,7 +243,7 @@ session down without that hook, so a suspended session survives to revert at its
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
   encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
 - `VMIntentGateway` — the App Intents boundary, published through `AppDependencyManager` so every
-  intent and the `VMEntity` query resolve the same one. Addresses VMs by `.id` alone (the entity
+  intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity
   carries the resolved identifier), and awaits the app's first library read before any verb or read,
   since an intent can be delivered while that read is still in flight. It presents nothing: a
   `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is

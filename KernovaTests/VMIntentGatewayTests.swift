@@ -34,14 +34,26 @@ struct VMIntentGatewayTests {
 
     // MARK: - Entity
 
-    @Test("An entity carries the summary's identity and reads its status back in words")
+    @Test("An entity carries the whole info read, and reads its status back in words")
     func entityDescribesItsSummary() throws {
-        let summary = makeSummary(name: "Sonoma", status: "running")
-        let entity = VMEntity(summary)
+        let info = VMIntentFixtures.info(name: "Sonoma", status: "running", snapshotCount: 3)
+        let entity = VMEntity(info)
 
-        #expect(entity.id == summary.id)
+        #expect(entity.id == info.id)
         #expect(entity.name == "Sonoma")
         #expect(entity.status == "running")
+        #expect(entity.guestOS == info.guestOS)
+        #expect(entity.cpuCount == info.cpuCount)
+        #expect(entity.memoryBytes == Int(info.memoryBytes))
+        #expect(entity.diskSizeInGB == info.diskSizeInGB)
+        #expect(entity.networkMode == info.networkMode)
+        #expect(entity.macAddress == info.macAddress)
+        #expect(entity.ipAddress == info.ipAddress)
+        #expect(entity.agentStatus == info.agentStatus)
+        #expect(entity.hasSavedState == info.hasSavedState)
+        #expect(entity.isEphemeral == info.isEphemeral)
+        #expect(entity.snapshotCount == 3)
+        #expect(entity.bundlePath == info.bundlePath)
         #expect(String(localized: entity.displayRepresentation.title) == "Sonoma")
         let subtitle = try #require(entity.displayRepresentation.subtitle)
         #expect(String(localized: subtitle) == "Running")
@@ -105,6 +117,68 @@ struct VMIntentGatewayTests {
         let all = await makeGateway(commands).vms()
 
         #expect(all.map(\.name) == ["First", "Second"])
+    }
+
+    // MARK: - Filtering and Sorting
+
+    /// The library the property query narrows, in the order the sidebar shows.
+    private var mixedLibrary: [VMEntity] {
+        [
+            VMEntity(VMIntentFixtures.info(name: "Ubuntu", status: "running", snapshotCount: 2)),
+            VMEntity(VMIntentFixtures.info(name: "sonoma", status: "stopped", snapshotCount: 5)),
+            VMEntity(VMIntentFixtures.info(name: "Tahoe", status: "paused", snapshotCount: 0)),
+        ]
+    }
+
+    @Test("Naming no filter asks for the library, under either mode")
+    func narrowingWithoutComparatorsKeepsEverything() {
+        for mode in [EntityQueryComparatorMode.and, .or] {
+            let kept = VMEntityQuery.narrowed(
+                mixedLibrary, matching: [], mode: mode, sortedBy: [], limit: nil)
+
+            #expect(kept.map(\.name) == ["Ubuntu", "sonoma", "Tahoe"])
+        }
+    }
+
+    @Test("Every filter has to match under and; any one is enough under or")
+    func narrowingHonoursTheComparatorMode() {
+        let running: VMEntityQuery.ComparatorMappingType = { $0.status == "running" }
+        let manySnapshots: VMEntityQuery.ComparatorMappingType = { $0.snapshotCount >= 2 }
+
+        let all = VMEntityQuery.narrowed(
+            mixedLibrary, matching: [running, manySnapshots], mode: .and, sortedBy: [], limit: nil)
+        let any = VMEntityQuery.narrowed(
+            mixedLibrary, matching: [running, manySnapshots], mode: .or, sortedBy: [], limit: nil)
+
+        #expect(all.map(\.name) == ["Ubuntu"])
+        #expect(any.map(\.name) == ["Ubuntu", "sonoma"])
+    }
+
+    @Test("A limit truncates what the filter kept")
+    func narrowingHonoursTheLimit() {
+        let kept = VMEntityQuery.narrowed(
+            mixedLibrary, matching: [], mode: .and, sortedBy: [], limit: 2)
+
+        #expect(kept.map(\.name) == ["Ubuntu", "sonoma"])
+    }
+
+    @Test("Each offered sort orders both ways; anything else leaves library order")
+    func sortingOrdersByEveryOfferedProperty() {
+        let byName = VMEntityQuery.sorted(mixedLibrary, by: \VMEntity.$name, ascending: true)
+        let byNameDescending = VMEntityQuery.sorted(
+            mixedLibrary, by: \VMEntity.$name, ascending: false)
+        let byStatus = VMEntityQuery.sorted(mixedLibrary, by: \VMEntity.$status, ascending: true)
+        let bySnapshots = VMEntityQuery.sorted(
+            mixedLibrary, by: \VMEntity.$snapshotCount, ascending: true)
+        let byNothingOffered = VMEntityQuery.sorted(
+            mixedLibrary, by: \VMEntity.$bundlePath, ascending: true)
+
+        // Case-insensitive: a spoken library is not sorted by ASCII.
+        #expect(byName.map(\.name) == ["sonoma", "Tahoe", "Ubuntu"])
+        #expect(byNameDescending.map(\.name) == ["Ubuntu", "Tahoe", "sonoma"])
+        #expect(byStatus.map(\.status) == ["paused", "running", "stopped"])
+        #expect(bySnapshots.map(\.snapshotCount) == [0, 2, 5])
+        #expect(byNothingOffered.map(\.name) == ["Ubuntu", "sonoma", "Tahoe"])
     }
 
     // MARK: - Readiness
