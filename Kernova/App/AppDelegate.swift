@@ -1,3 +1,4 @@
+import AppIntents
 import Cocoa
 import Darwin
 import KernovaKit
@@ -317,6 +318,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// yields, and its file I/O is off the main actor either way.
     func applicationWillFinishLaunching(_ notification: Notification) {
         libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
+        registerIntentGateway()
+    }
+
+    /// Publishes the App Intents front door, so an intent delivered during
+    /// launch resolves it rather than failing for a missing dependency.
+    ///
+    /// The gateway is retained by the dependency manager and lives as long as
+    /// the process. It takes `libraryLoad` as its readiness await: an intent can
+    /// arrive while the first library read is still in flight, and a verb run
+    /// against a library that has not landed yet finds no VM to address.
+    private func registerIntentGateway() {
+        let gateway = VMIntentGateway(
+            commands: viewModel.commands,
+            awaitReady: { [weak self] in
+                guard let load = await self?.libraryLoad else { return }
+                await load.value
+            })
+        AppDependencyManager.shared.add(dependency: gateway)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

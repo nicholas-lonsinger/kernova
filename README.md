@@ -72,6 +72,8 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 
 Pure AppKit in the Liquid Glass design language: a source-list sidebar with drag reordering and inline rename, a customizable toolbar, a Settings window (⌘,), and a deletion sheet that offers to trash a VM's external attachments alongside it.
 
+VMs are also drivable without the window: App Intents put start, stop, pause, resume, suspend, restart, open, and snapshot capture in Siri, the Shortcuts app, and Spotlight, with each VM as a typed entity you pick or name out loud.
+
 ## Development setup
 
 Everything below is for building and working on Kernova itself. You'll need Xcode 26 and Swift 6 on top of the requirements above.
