@@ -247,7 +247,9 @@ session down without that hook, so a suspended session survives to revert at its
   carries the resolved identifier), and awaits the app's first library read before any verb or read,
   since an intent can be delivered while that read is still in flight. It presents nothing: a
   `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
-  gathered by re-issuing the verb with `confirmed: true`.
+  gathered by re-issuing the verb with `confirmed: true`. It also counts intents in flight and
+  reports the process idle to `AppDelegate` when the last one finishes — the only signal a process
+  the system launched to service an intent, and which therefore has no window, can settle on.
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommandCore` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the
@@ -350,6 +352,7 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
 A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
 
 Siri / Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
+                                              VMIntentGateway ──idle───→ AppDelegate
 
 VMCommandCore ──reads/writes──→ VMLibrary
               ──delegates────→ VMLifecycleCoordinator ──→ Services

@@ -25,6 +25,18 @@ final class VMIntentGateway {
     private let awaitReady: @Sendable () async -> Void
     /// Re-reads the VM names Siri matches spoken phrases against.
     private let refreshShortcutVocabulary: @MainActor () -> Void
+    /// Called on the main actor whenever the last intent in flight finishes.
+    private let onIdle: @MainActor () -> Void
+
+    /// How many intents are executing.
+    ///
+    /// What holds a process the system launched purely to service an intent:
+    /// nothing else is watching one that never opens a window. Deliberately
+    /// counts only intent execution — the ``VMEntityQuery`` reads the system
+    /// issues on its own to refresh Siri's vocabulary are *not* counted, because
+    /// they arrive unbidden and would otherwise report the process idle before
+    /// the intent that launched it had even been delivered.
+    private var intentsInFlight = 0
 
     /// The single readiness await, memoized so an intent storm waits on one task.
     private var readiness: Task<Void, Never>?
@@ -40,11 +52,13 @@ final class VMIntentGateway {
         awaitReady: @escaping @Sendable () async -> Void,
         refreshShortcutVocabulary: @escaping @MainActor () -> Void = {
             KernovaShortcuts.updateAppShortcutParameters()
-        }
+        },
+        onIdle: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.awaitReady = awaitReady
         self.refreshShortcutVocabulary = refreshShortcutVocabulary
+        self.onIdle = onIdle
         libraryEvents = Task { [weak self] in
             guard let stream = self?.commands.events() else { return }
             for await event in stream {
@@ -76,7 +90,33 @@ final class VMIntentGateway {
         await task.value
     }
 
+    // MARK: - In-Flight Accounting
+
+    /// Runs `body` as one intent, reporting the process idle when it is the last
+    /// one to finish.
+    ///
+    /// The idle report is what an automation-launched process is waiting for to
+    /// decide whether to stay resident or leave, so it fires on the way out of
+    /// every path — a refusal included.
+    private func asIntent<T>(_ body: () async throws -> T) async rethrows -> T {
+        intentsInFlight += 1
+        defer {
+            intentsInFlight -= 1
+            if intentsInFlight == 0 { onIdle() }
+        }
+        return try await body()
+    }
+
     // MARK: - Reads
+
+    /// Every VM in the library, answering the *Find Virtual Machines* intent.
+    ///
+    /// Separate from ``vms()``, which the entity query shares: this is intent
+    /// execution and holds the process, that is the system reading vocabulary
+    /// and does not.
+    func listVMs() async -> [VMEntity] {
+        await asIntent { await vms() }
+    }
 
     /// Every VM in the library, each read in full.
     ///
@@ -278,14 +318,16 @@ final class VMIntentGateway {
     private func perform<T>(
         _ verb: VMVerb, on id: UUID, _ body: () async throws -> T
     ) async throws -> T {
-        await ready()
-        do {
-            return try await body()
-        } catch let failure as CommandError {
-            Self.logger.notice(
-                "Intent \(verb.rawValue, privacy: .public) refused for \(id.uuidString, privacy: .public): \(failure.message, privacy: .public)"
-            )
-            throw failure
+        try await asIntent {
+            await ready()
+            do {
+                return try await body()
+            } catch let failure as CommandError {
+                Self.logger.notice(
+                    "Intent \(verb.rawValue, privacy: .public) refused for \(id.uuidString, privacy: .public): \(failure.message, privacy: .public)"
+                )
+                throw failure
+            }
         }
     }
 

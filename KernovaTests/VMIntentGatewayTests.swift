@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -403,6 +404,151 @@ struct VMIntentGatewayTests {
         for await _ in refreshes.stream { break }
         #expect(log.count == 1)
         #expect(await gateway.vms().isEmpty)
+    }
+
+    // MARK: - Idle Reporting
+
+    /// A ready gateway over a seeded mock, reporting every idle transition
+    /// into `log`.
+    private func makeIdleReportingGateway(
+        _ commands: MockVMCommanding, log: IdleLog
+    ) -> VMIntentGateway {
+        VMIntentGateway(
+            commands: commands,
+            awaitReady: {},
+            refreshShortcutVocabulary: {},
+            onIdle: {
+                log.count += 1
+                log.gate.notify()
+            })
+    }
+
+    @Test("One verb reports the process idle exactly once, on its way out")
+    func singleVerbReportsIdleOnce() async throws {
+        let id = UUID()
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Wired", id: id)]
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(commands, log: log)
+
+        try await gateway.pause(id)
+
+        try await log.gate.wait { log.count == 1 }
+        #expect(commands.pauseSelectors.count == 1)
+    }
+
+    @Test("A refused verb still reports idle, so a refusal can't strand the process")
+    func refusedVerbReportsIdle() async throws {
+        let id = UUID()
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Wired", id: id)]
+        commands.pauseError = CommandError.operationFailed(verb: .pause, message: "nope")
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(commands, log: log)
+
+        await #expect(throws: CommandError.self) { try await gateway.pause(id) }
+
+        try await log.gate.wait { log.count == 1 }
+    }
+
+    @Test("Overlapping verbs report idle once, and never while one is still running")
+    func overlappingVerbsReportIdleOnceAtTheEnd() async throws {
+        let id = UUID()
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Wired", id: id)]
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(commands, log: log)
+        let barrier = VerbBarrier()
+        commands.verbBarrier = { await barrier.hold() }
+
+        async let first: Void = gateway.pause(id)
+        async let second: Void = gateway.resume(id)
+
+        // Both verbs are inside the funnel and held, so the count that follows
+        // reads a genuine overlap rather than two runs that never met.
+        try await barrier.gate.wait { barrier.heldCount == 2 }
+        #expect(log.count == 0)
+
+        barrier.release()
+        _ = try await (first, second)
+
+        try await log.gate.wait { log.count == 1 }
+        // A per-verb report would have landed a second one by now.
+        #expect(log.count == 1)
+    }
+
+    @Test("The entity query the system issues on its own never reports idle")
+    func vocabularyQueriesDoNotReportIdle() async throws {
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Wired")]
+        let log = IdleLog()
+        let gateway = makeIdleReportingGateway(commands, log: log)
+
+        // `vms()` is the entity query's read — a vocabulary refresh arrives
+        // unbidden, and counting it would report a process idle before the
+        // intent that launched it had been delivered.
+        #expect(await gateway.vms().count == 1)
+        #expect(await gateway.vms(matching: "Wired").count == 1)
+        #expect(log.count == 0)
+
+        // The same read reached as the *Find Virtual Machines* intent does.
+        #expect(await gateway.listVMs().count == 1)
+        try await log.gate.wait { log.count == 1 }
+    }
+}
+
+/// How many times the gateway reported every intent finished.
+@MainActor
+private final class IdleLog {
+    var count = 0
+    let gate = AsyncGate()
+}
+
+/// Holds every verb that reaches it until the test releases them, counting how
+/// many are held.
+///
+/// What makes the in-flight window observable without a sleep: the test waits
+/// for the count it expects rather than for time to pass.
+private final class VerbBarrier: @unchecked Sendable {
+    let gate = AsyncGate()
+    private let lock = NSLock()
+    private var isReleased = false
+    private var held = 0
+
+    var heldCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return held
+    }
+
+    private var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isReleased
+    }
+
+    func release() {
+        lock.lock()
+        isReleased = true
+        lock.unlock()
+        gate.notify()
+    }
+
+    func hold() async {
+        guard enter() else { return }
+        gate.notify()
+        try? await gate.wait { self.isOpen }
+    }
+
+    /// Registers a held verb, answering `false` when the barrier is already
+    /// released and there is nothing to wait for. Synchronous so the lock is
+    /// never taken across a suspension.
+    private func enter() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isReleased else { return false }
+        held += 1
+        return true
     }
 }
 

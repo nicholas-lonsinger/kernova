@@ -17,7 +17,7 @@ struct ListVMsIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<[VMEntity]> {
-        .result(value: await gateway.vms())
+        .result(value: await gateway.listVMs())
     }
 }
 

@@ -79,6 +79,10 @@ final class MockVMCommanding: VMCommanding {
     var deleteError: (any Error)?
     var cancelPreparingError: (any Error)?
 
+    /// Awaited at the top of every suspending verb, so a test can hold one
+    /// inside the subject and overlap another against it.
+    var verbBarrier: (@MainActor () async -> Void)?
+
     /// Refuses `stop` until it is called with `confirmed: true`, then succeeds —
     /// the consent round trip every destructive verb performs.
     var stopConsentPrompt: ConfirmationPrompt?
@@ -149,6 +153,7 @@ final class MockVMCommanding: VMCommanding {
 
     func start(_ selector: VMSelector, recovery: Bool) async throws {
         startCalls.append((selector, recovery))
+        await verbBarrier?()
         if let startError { throw startError }
     }
 
@@ -162,6 +167,7 @@ final class MockVMCommanding: VMCommanding {
 
     func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {
         stopCalls.append((selector, disposition, confirmed))
+        await verbBarrier?()
         if let stopError { throw stopError }
         if let stopConsentPrompt, !confirmed {
             throw CommandError.confirmationRequired(stopConsentPrompt)
@@ -170,21 +176,25 @@ final class MockVMCommanding: VMCommanding {
 
     func pause(_ selector: VMSelector) async throws {
         pauseSelectors.append(selector)
+        await verbBarrier?()
         if let pauseError { throw pauseError }
     }
 
     func resume(_ selector: VMSelector) async throws {
         resumeSelectors.append(selector)
+        await verbBarrier?()
         if let resumeError { throw resumeError }
     }
 
     func suspend(_ selector: VMSelector) async throws {
         suspendSelectors.append(selector)
+        await verbBarrier?()
         if let suspendError { throw suspendError }
     }
 
     func restart(_ selector: VMSelector) async throws {
         restartSelectors.append(selector)
+        await verbBarrier?()
         if let restartError { throw restartError }
     }
 
