@@ -372,6 +372,11 @@ final class VMLibraryViewModel {
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
         } else {
+            // The inline display renders whichever VM is selected, so selecting
+            // is what surfacing *is* here — `focusGuestDisplay` on an unselected
+            // VM only arms a focus that the next display-state pass clears.
+            // Detached windows are their own surface and need no selection.
+            selectedID = instance.id
             presenter?.focusGuestDisplay(for: instance)
         }
     }

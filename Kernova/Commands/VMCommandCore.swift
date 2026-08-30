@@ -131,7 +131,7 @@ final class VMCommandCore: VMCommanding {
 
     /// The wire status a VM copying into place through a clone or import
     /// reports in place of its real ``VMStatus``.
-    static let preparingWireStatus = "preparing"
+    nonisolated static let preparingWireStatus = "preparing"
 
     /// `instance`'s status as it crosses the wire — ``preparingWireStatus``
     /// while a clone or import is still copying its bundle, its real

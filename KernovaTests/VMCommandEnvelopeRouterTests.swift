@@ -486,67 +486,15 @@ struct VMCommandEnvelopeRouterTests {
         // Compiling at all is the assertion: the router takes `any VMCommanding`,
         // so a double with no library, no lifecycle coordinator and no VM behind
         // it answers the same envelope the core does.
-        let double = StubCommands()
+        let double = MockVMCommanding()
+        double.library = [VMSummary(id: UUID(), name: "Stub", status: "stopped")]
+        double.pauseError = CommandError.unsupported(capability: "pausing")
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
 
         let listed = try await transport.send(.list)
-        #expect(listed.result == .summaries(StubCommands.listed))
+        #expect(listed.result == .summaries(double.library))
 
         let refused = try await transport.send(.pause(.name("Anything")))
         #expect(refused.failure == .unsupported(capability: "pausing"))
     }
-}
-
-/// A ``VMCommanding`` that holds no VMs at all — enough to show the wire
-/// boundary depends on the protocol and nothing under it.
-@MainActor
-private final class StubCommands: VMCommanding {
-    static let listed = [
-        VMSummary(
-            id: UUID(uuid: (0xAA, 0xAA, 0xBB, 0xBB, 0xCC, 0xCC, 0xDD, 0xDD, 0xEE, 0xEE, 0, 0, 0, 0, 0, 0)),
-            name: "Stub",
-            status: "stopped")
-    ]
-
-    func list() -> [VMSummary] { Self.listed }
-    func info(_ selector: VMSelector) throws -> VMInfo { throw CommandError.notFound(selector) }
-    func ipAddress(of selector: VMSelector) throws -> String? { nil }
-    func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] { [] }
-
-    func start(_ selector: VMSelector, recovery: Bool) async throws {}
-    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {}
-    func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {}
-    func pause(_ selector: VMSelector) async throws {
-        throw CommandError.unsupported(capability: "pausing")
-    }
-    func resume(_ selector: VMSelector) async throws {}
-    func suspend(_ selector: VMSelector) async throws {}
-    func restart(_ selector: VMSelector) async throws {}
-    func open(_ selector: VMSelector) throws {}
-
-    func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
-        -> SnapshotSummary
-    {
-        throw CommandError.notFound(selector)
-    }
-    func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool
-    ) async throws {}
-    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, confirmed: Bool) async throws {}
-    func renameSnapshot(_ selector: VMSelector, snapshot: UUID, to newName: String) throws {}
-    func setSnapshotNotes(_ selector: VMSelector, snapshot: UUID, notes: String) throws {}
-
-    func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary {
-        throw CommandError.notFound(selector)
-    }
-    func rename(_ selector: VMSelector, to newName: String) throws {}
-    func delete(
-        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool
-    ) async throws {}
-    func importVM(from url: URL) throws -> VMSummary {
-        throw CommandError.notFound(.name(url.lastPathComponent))
-    }
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {}
-
-    func events() -> AsyncStream<VMLibraryEvent> { AsyncStream { $0.finish() } }
 }

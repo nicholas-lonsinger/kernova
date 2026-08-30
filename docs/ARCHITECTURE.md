@@ -242,6 +242,12 @@ session down without that hook, so a suspended session survives to revert at its
   imports and clones cannot claim the same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
   encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
+- `VMIntentGateway` — the App Intents boundary, published through `AppDependencyManager` so every
+  intent and the `VMEntity` query resolve the same one. Addresses VMs by `.id` alone (the entity
+  carries the resolved identifier), and awaits the app's first library read before any verb or read,
+  since an intent can be delivered while that read is still in flight. It presents nothing: a
+  `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
+  gathered by re-issuing the verb with `confirmed: true`.
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommandCore` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the
@@ -342,6 +348,8 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
 
 A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
+
+Siri / Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
 
 VMCommandCore ──reads/writes──→ VMLibrary
               ──delegates────→ VMLifecycleCoordinator ──→ Services
