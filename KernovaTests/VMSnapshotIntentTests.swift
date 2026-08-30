@@ -111,14 +111,15 @@ struct VMSnapshotIntentTests {
         let commands = MockVMCommanding()
         let vm = UUID()
         let snapshot = UUID()
+        let picked = SnapshotEntityID(vm: vm, snapshot: snapshot)
         seed(commands, vm: vm)
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
-            vm, snapshot: snapshot, takingCheckpoint: true, confirmed: true)
-        try await gateway.deleteSnapshot(vm, snapshot: snapshot, confirmed: true)
-        try await gateway.renameSnapshot(vm, snapshot: snapshot, to: "Renamed")
-        try await gateway.setSnapshotNotes(vm, snapshot: snapshot, notes: "a note")
+            vm, snapshot: picked, takingCheckpoint: true, confirmed: true)
+        try await gateway.deleteSnapshot(vm, snapshot: picked, confirmed: true)
+        try await gateway.renameSnapshot(vm, snapshot: picked, to: "Renamed")
+        try await gateway.setSnapshotNotes(vm, snapshot: picked, notes: "a note")
 
         #expect(commands.revertCalls.map(\.selector) == [.id(vm)])
         #expect(commands.revertCalls.map(\.snapshot) == [snapshot])
@@ -130,23 +131,69 @@ struct VMSnapshotIntentTests {
         #expect(commands.setSnapshotNotesCalls.map(\.notes) == ["a note"])
     }
 
-    /// The VM parameter is authoritative, not the VM half of the snapshot's own
-    /// identifier — a Shortcut editing its VM after picking a snapshot must not
-    /// silently act on the VM the stale pick names. The core refuses the
-    /// mismatch readably (`VMCommandCore.requireSnapshot`).
-    @Test("A snapshot picked from another VM still addresses the VM that was named")
-    func theVMParameterDecidesWhoIsAddressed() async throws {
+    /// The VM parameter is authoritative, and the refusal is the surface's own:
+    /// a rename or a note edit is a documented no-op for an identifier the
+    /// manifest does not list, so without this the mismatch would reach the
+    /// core, change nothing, and report success.
+    @Test("A snapshot picked from another VM is refused by every verb, never quietly dropped")
+    func aSnapshotFromAnotherVMIsRefused() async throws {
         let commands = MockVMCommanding()
         let named = UUID()
-        let other = UUID()
         seed(commands, vm: named)
-        let stale = SnapshotEntity(VMIntentFixtures.snapshot(), vm: other)
+        let stale = SnapshotEntity(VMIntentFixtures.snapshot(), vm: UUID()).id
+        let gateway = makeGateway(commands)
 
-        try await makeGateway(commands).deleteSnapshot(
-            named, snapshot: stale.id.snapshot, confirmed: true)
+        await #expect(throws: CommandError.self) {
+            try await gateway.revertToSnapshot(
+                named, snapshot: stale, takingCheckpoint: false, confirmed: true)
+        }
+        await #expect(throws: CommandError.self) {
+            try await gateway.deleteSnapshot(named, snapshot: stale, confirmed: true)
+        }
+        await #expect(throws: CommandError.self) {
+            try await gateway.renameSnapshot(named, snapshot: stale, to: "Renamed")
+        }
+        await #expect(throws: CommandError.self) {
+            try await gateway.setSnapshotNotes(named, snapshot: stale, notes: "a note")
+        }
 
-        #expect(commands.deleteSnapshotCalls.map(\.selector) == [.id(named)])
-        #expect(stale.id.vm == other)
+        #expect(commands.revertCalls.isEmpty)
+        #expect(commands.deleteSnapshotCalls.isEmpty)
+        #expect(commands.renameSnapshotCalls.isEmpty)
+        #expect(commands.setSnapshotNotesCalls.isEmpty)
+    }
+
+    // MARK: - Checkpoint
+
+    /// The confirmation is labelled with the route the action chose, so a user
+    /// confirming a checkpointed revert is not shown the plain one's words.
+    @Test("The revert's confirm action names the route the checkpoint parameter chose")
+    func theRevertConfirmationNamesTheChosenRoute() {
+        let offered = ConfirmationPrompt(
+            kind: .revertToSnapshot, title: "Revert?", message: "Guest changes are lost.",
+            confirmTitle: "Revert", dismissTitle: "Cancel",
+            alternatives: [
+                ConfirmationAlternative(title: "Take Snapshot, Then Revert", takesCheckpoint: true)
+            ])
+
+        #expect(
+            VMIntentConsent.revertAction(offered, takingCheckpoint: true)
+                == "Take Snapshot, Then Revert")
+        #expect(VMIntentConsent.revertAction(offered, takingCheckpoint: false) == "Revert")
+    }
+
+    /// A VM that can be reverted but can no longer be captured — one that
+    /// failed to start, where reverting is the way out — is offered no
+    /// checkpoint alternative, and that absence is what the intent refuses on
+    /// rather than letting the capture fail after consent.
+    @Test("A checkpoint the VM cannot take has no action to confirm")
+    func aCheckpointThatCannotBeTakenHasNoAction() {
+        let unoffered = ConfirmationPrompt(
+            kind: .revertToSnapshot, title: "Revert?", message: "Guest changes are lost.",
+            confirmTitle: "Revert", dismissTitle: "Cancel")
+
+        #expect(VMIntentConsent.revertAction(unoffered, takingCheckpoint: true) == nil)
+        #expect(VMIntentConsent.revertAction(unoffered, takingCheckpoint: false) == "Revert")
     }
 
     // MARK: - Consent
@@ -156,7 +203,7 @@ struct VMSnapshotIntentTests {
         for takingCheckpoint in [true, false] {
             let commands = MockVMCommanding()
             let vm = UUID()
-            let snapshot = UUID()
+            let snapshot = SnapshotEntityID(vm: vm, snapshot: UUID())
             seed(commands, vm: vm)
             commands.revertConsentPrompt = ConfirmationPrompt(
                 kind: .revertToSnapshot,
@@ -185,13 +232,11 @@ struct VMSnapshotIntentTests {
         }
     }
 
-    /// The core takes the checkpoint after the confirmation lands, so a VM that
-    /// can revert but can no longer capture refuses the whole revert rather
-    /// than falling through to a destructive one with no checkpoint. The way
-    /// out is re-running with the toggle off, so the refusal has to reach the
-    /// user unchanged.
-    @Test("A revert whose checkpoint cannot be taken refuses rather than reverting")
-    func revertRefusesWhenTheCheckpointCannotBeTaken() async throws {
+    /// The core captures the checkpoint after the confirmation lands, so the
+    /// revert can still fail once consent is in — and the caller is told,
+    /// rather than getting a success for a rollback that did not happen.
+    @Test("A revert that fails after consent refuses rather than reporting success")
+    func revertSurfacesAFailureAfterConsent() async throws {
         let commands = MockVMCommanding()
         let vm = UUID()
         seed(commands, vm: vm)
@@ -201,7 +246,8 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: CommandError.self) {
             try await gateway.revertToSnapshot(
-                vm, snapshot: UUID(), takingCheckpoint: true, confirmed: true)
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: UUID()), takingCheckpoint: true,
+                confirmed: true)
         }
     }
 
@@ -220,7 +266,8 @@ struct VMSnapshotIntentTests {
         var asked: [ConfirmationPrompt] = []
 
         try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
-            try await gateway.deleteSnapshot(vm, snapshot: UUID(), confirmed: confirmed)
+            try await gateway.deleteSnapshot(
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: UUID()), confirmed: confirmed)
         }
 
         #expect(asked.map(\.kind) == [.deleteSnapshot])

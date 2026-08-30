@@ -55,18 +55,42 @@ enum VMIntentConsent {
             true
         }
     }
+
+    /// The action that performs a revert with `takingCheckpoint`, `nil` when
+    /// the VM cannot take one and so cannot perform that revert at all.
+    ///
+    /// The core names both routes — its own confirm action reverts, and a
+    /// `takesCheckpoint` alternative captures first — and offers the
+    /// alternative only where a capture can be taken. A surface that has
+    /// already chosen between them shows the chosen one's words rather than
+    /// inventing copy, and learns from the missing alternative that the choice
+    /// cannot be honoured.
+    static func revertAction(_ prompt: ConfirmationPrompt, takingCheckpoint: Bool) -> String? {
+        guard takingCheckpoint else { return prompt.confirmTitle }
+        return prompt.alternatives.first { $0.takesCheckpoint }?.title
+    }
 }
 
 extension AppIntent {
     /// Runs a destructive verb, raising the framework's own confirmation for the
     /// consent it refuses without (``VMIntentConsent/run(prompting:_:)``).
+    ///
+    /// `asking` turns the refusal into the confirm action's label; by default
+    /// that is the one the core named. A verb whose parameters already chose
+    /// among the prompt's routes passes the label for its choice — and refuses
+    /// from there, rather than confirming, when the prompt shows the choice
+    /// cannot be honoured.
     @MainActor
-    func runWithConsent(_ body: (_ confirmed: Bool) async throws -> Void) async throws {
+    func runWithConsent(
+        asking: (ConfirmationPrompt) throws -> String = { $0.confirmTitle },
+        _ body: (_ confirmed: Bool) async throws -> Void
+    ) async throws {
         try await VMIntentConsent.run(
             prompting: { prompt in
+                let accept = try asking(prompt)
                 try await requestConfirmation(
                     actionName: .custom(
-                        acceptLabel: "\(prompt.confirmTitle)",
+                        acceptLabel: "\(accept)",
                         acceptAlternatives: [],
                         denyLabel: "\(prompt.dismissTitle)",
                         denyAlternatives: [],

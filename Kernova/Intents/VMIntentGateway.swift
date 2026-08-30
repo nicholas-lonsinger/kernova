@@ -179,32 +179,57 @@ final class VMIntentGateway {
     }
 
     func revertToSnapshot(
-        _ id: UUID, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool
+        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, confirmed: Bool
     ) async throws {
         try await perform(.revertToSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .revertToSnapshot)
             try await self.commands.revertToSnapshot(
-                .id(id), snapshot: snapshot, takingCheckpoint: takingCheckpoint,
+                .id(id), snapshot: listed, takingCheckpoint: takingCheckpoint,
                 confirmed: confirmed)
         }
     }
 
-    func deleteSnapshot(_ id: UUID, snapshot: UUID, confirmed: Bool) async throws {
+    func deleteSnapshot(_ id: UUID, snapshot: SnapshotEntityID, confirmed: Bool) async throws {
         try await perform(.deleteSnapshot, on: id) {
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .deleteSnapshot)
             try await self.commands.deleteSnapshot(
-                .id(id), snapshot: snapshot, confirmed: confirmed)
+                .id(id), snapshot: listed, confirmed: confirmed)
         }
     }
 
-    func renameSnapshot(_ id: UUID, snapshot: UUID, to newName: String) async throws {
+    func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
         try await perform(.renameSnapshot, on: id) {
-            try self.commands.renameSnapshot(.id(id), snapshot: snapshot, to: newName)
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .renameSnapshot)
+            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: newName)
         }
     }
 
-    func setSnapshotNotes(_ id: UUID, snapshot: UUID, notes: String) async throws {
+    func setSnapshotNotes(_ id: UUID, snapshot: SnapshotEntityID, notes: String) async throws {
         try await perform(.setSnapshotNotes, on: id) {
-            try self.commands.setSnapshotNotes(.id(id), snapshot: snapshot, notes: notes)
+            let listed = try self.listedSnapshot(snapshot, on: id, verb: .setSnapshotNotes)
+            try self.commands.setSnapshotNotes(.id(id), snapshot: listed, notes: notes)
         }
+    }
+
+    /// The snapshot `picked` names, refusing one belonging to another VM.
+    ///
+    /// The VM parameter is authoritative — a Shortcut that changes it after
+    /// picking a snapshot must not act on the VM the stale pick names — and
+    /// this is where that is enforced for every snapshot verb, not only the
+    /// ones the core happens to catch. A revert or delete would be refused
+    /// there anyway; a rename or a note edit would not, because both are
+    /// documented no-ops for an identifier the manifest does not list, so the
+    /// mismatch would report success having changed nothing.
+    private func listedSnapshot(
+        _ picked: SnapshotEntityID, on vm: UUID, verb: VMVerb
+    ) throws -> UUID {
+        guard picked.vm != vm else { return picked.snapshot }
+        let name = (try? commands.info(.id(vm)).name) ?? vm.uuidString
+        throw CommandError.operationFailed(
+            verb: verb,
+            message:
+                "\u{201C}\(name)\u{201D} has no snapshot with the identifier \(picked.snapshot.uuidString)."
+        )
     }
 
     // MARK: - Library

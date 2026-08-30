@@ -88,10 +88,14 @@ struct SnapshotEntity: AppEntity {
 ///
 /// Unscoped, a picker meaning one VM would offer every snapshot in the library.
 /// Each snapshot-addressing intent declares its VM parameter here, and
-/// `allEntities()` reads whichever is bound; with none bound — the query is
-/// being consulted outside a parameter's context — it offers nothing rather
-/// than the whole library.
-struct SnapshotEntityQuery: EntityQuery, EnumerableEntityQuery {
+/// ``suggestedEntities()`` reads whichever is bound.
+///
+/// Scoping is why this offers suggestions rather than being enumerable: an
+/// enumerable query is also published as a Find action of its own, and a
+/// standalone action carries none of these projections — so it could only ever
+/// answer an empty list. ``FindSnapshotsIntent`` is the action that lists
+/// snapshots, and it takes the VM as a parameter.
+struct SnapshotEntityQuery: EntityQuery {
     @Dependency private var gateway: VMIntentGateway
 
     @IntentParameterDependency<RevertToSnapshotIntent>(\.$vm)
@@ -111,7 +115,7 @@ struct SnapshotEntityQuery: EntityQuery, EnumerableEntityQuery {
         revert?.vm ?? delete?.vm ?? rename?.vm ?? setNotes?.vm
     }
 
-    func allEntities() async throws -> [SnapshotEntity] {
+    func suggestedEntities() async throws -> [SnapshotEntity] {
         guard let scope else { return [] }
         return try await gateway.snapshots(ofVM: scope.id)
     }

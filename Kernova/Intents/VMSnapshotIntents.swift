@@ -29,7 +29,9 @@ struct FindSnapshotsIntent: AppIntent {
 /// The checkpoint is an explicit parameter rather than the alternative the
 /// core's confirmation offers: a Shortcut says up front which of the two it
 /// means, so confirming performs exactly what was asked. It defaults on, the
-/// same safe path the app's own alert makes the default button.
+/// same safe path the app's own alert makes the default button — and because
+/// the choice is made before the confirmation is raised, the confirmation is
+/// labelled with the route that was chosen rather than the core's default.
 struct RevertToSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Revert to Snapshot"
     static let description = IntentDescription(
@@ -55,12 +57,37 @@ struct RevertToSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent { confirmed in
+        try await runWithConsent(asking: checkpointAwareConfirmation) { confirmed in
             try await gateway.revertToSnapshot(
-                vm.id, snapshot: snapshot.id.snapshot, takingCheckpoint: takeCheckpoint,
+                vm.id, snapshot: snapshot.id, takingCheckpoint: takeCheckpoint,
                 confirmed: confirmed)
         }
         return .result()
+    }
+
+    /// The confirmation's accept label, or the refusal for a VM that cannot
+    /// take the checkpoint this action was configured to take.
+    ///
+    /// The refusal is raised here rather than left to the capture: the core
+    /// takes the checkpoint after consent, and what it throws then is an
+    /// invalid-state refusal that lists Revert to Snapshot among the verbs the
+    /// VM does accept and never names the checkpoint as what blocked it. The
+    /// state this covers is real — a VM that failed to start can be reverted
+    /// but cannot be captured, and reverting is how a user gets out of it — so
+    /// the refusal has to name the toggle that is in the way.
+    private func checkpointAwareConfirmation(_ prompt: ConfirmationPrompt) throws -> String {
+        guard
+            let action = VMIntentConsent.revertAction(prompt, takingCheckpoint: takeCheckpoint)
+        else {
+            throw CommandError.operationFailed(
+                verb: .revertToSnapshot,
+                message:
+                    "\u{201C}\(vm.name)\u{201D} cannot take a snapshot in its current state, so it "
+                    + "cannot be reverted with Take Snapshot First turned on. Turn that off to "
+                    + "revert without one."
+            )
+        }
+        return action
     }
 }
 
@@ -86,7 +113,7 @@ struct DeleteSnapshotIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         try await runWithConsent { confirmed in
             try await gateway.deleteSnapshot(
-                vm.id, snapshot: snapshot.id.snapshot, confirmed: confirmed)
+                vm.id, snapshot: snapshot.id, confirmed: confirmed)
         }
         return .result()
     }
@@ -115,7 +142,7 @@ struct RenameSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.renameSnapshot(vm.id, snapshot: snapshot.id.snapshot, to: name)
+        try await gateway.renameSnapshot(vm.id, snapshot: snapshot.id, to: name)
         return .result()
     }
 }
@@ -143,7 +170,7 @@ struct SetSnapshotNotesIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.setSnapshotNotes(vm.id, snapshot: snapshot.id.snapshot, notes: notes)
+        try await gateway.setSnapshotNotes(vm.id, snapshot: snapshot.id, notes: notes)
         return .result()
     }
 }
