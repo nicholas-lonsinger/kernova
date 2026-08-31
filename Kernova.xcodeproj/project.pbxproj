@@ -483,6 +483,7 @@
 				"$(SRCROOT)/KernovaMacOSAgent/install.command",
 				"$(SRCROOT)/KernovaMacOSAgent/uninstall.command",
 				"$(SRCROOT)/KernovaMacOSAgent/app.kernova.macosagent.plist",
+				"$(SRCROOT)/Tools/package-guest-agent-dmg.sh",
 			);
 			name = "Package Guest Agent DMG";
 			outputFileListPaths = (
@@ -492,8 +493,8 @@
 				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/KernovaMacOSAgentVersion.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\n\nSTAGING_DIR=$(mktemp -d \"${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX\")\nTEMP_DMG=\"$(mktemp -u \"${DERIVED_FILE_DIR}/guest-agent-temp.XXXXXX\").dmg\"\ntrap 'rm -rf \"${STAGING_DIR}\" \"${TEMP_DMG}\"' EXIT\n\nRAW_PREFIX=\"${DERIVED_FILE_DIR}/guest-agent-raw\"\nDMG_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaMacOSAgent.dmg\"\nVERSION_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaMacOSAgentVersion.txt\"\n\nditto \"${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app\" \"${STAGING_DIR}/Kernova Guest Agent.app\"\ncp \"${SRCROOT}/KernovaMacOSAgent/install.command\" \"${STAGING_DIR}/install.command\"\ncp \"${SRCROOT}/KernovaMacOSAgent/uninstall.command\" \"${STAGING_DIR}/uninstall.command\"\nchmod +x \"${STAGING_DIR}/install.command\" \"${STAGING_DIR}/uninstall.command\"\ncp \"${SRCROOT}/KernovaMacOSAgent/app.kernova.macosagent.plist\" \"${STAGING_DIR}/app.kernova.macosagent.plist\"\n\nmkdir -p \"$(dirname \"${DMG_OUTPUT}\")\"\n\n# Create a UDRW DMG then convert to DVD/CD-R master (UDTO/.cdr).\n# VZDiskImageStorageDeviceAttachment needs a format it can present as a\n# USB block device — the .cdr export works reliably for guest-mountable volumes.\nhdiutil create \\\n    -volname \"Kernova Guest Agent\" \\\n    -srcfolder \"${STAGING_DIR}\" \\\n    -ov -format UDRW \\\n    \"${TEMP_DMG}\"\nhdiutil convert \"${TEMP_DMG}\" -format UDTO -ov -o \"${RAW_PREFIX}\"\nmv \"${RAW_PREFIX}.cdr\" \"${DMG_OUTPUT}\"\n\n# Strip extended attributes that break code signing\nxattr -cr \"${DMG_OUTPUT}\"\n\n# Extract the agent's CFBundleShortVersionString from the app bundle's Info.plist\n# and write a sidecar the host reads at runtime. Keeping the agent bundle as the\n# single source of truth means the host cannot drift from what it actually ships.\nAGENT_VERSION=$(plutil -extract CFBundleShortVersionString raw \"${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app/Contents/Info.plist\")\nif [ -z \"${AGENT_VERSION}\" ]; then\n    echo \"error: Could not extract agent version from app bundle\" >&2\n    exit 1\nfi\nprintf '%s' \"${AGENT_VERSION}\" > \"${VERSION_OUTPUT}\"\n";
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Tools/package-guest-agent-dmg.sh\"\n";
 		};
 		A100020C /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
