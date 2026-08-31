@@ -1,0 +1,27 @@
+// The Kernova app target, both configurations.
+//
+// No signing identity, team, or entitlement path is assigned here: a target
+// xcconfig outranks Config/Local.xcconfig, so an assignment would silently
+// revert a developer to ad-hoc signing. CODE_SIGN_ENTITLEMENTS below is a
+// reference, and the variable it reads still resolves from the project layer.
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = app.kernova
+MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)
+
+// CFBundleVersion comes from Tools/set-build-number.sh through the prefix
+// header, so the checked-in Info.plist is preprocessed rather than generated.
+GENERATE_INFOPLIST_FILE = NO
+INFOPLIST_FILE = Kernova/App/Info.plist
+INFOPLIST_PREPROCESS = YES
+INFOPLIST_PREFIX_HEADER = $(DERIVED_FILE_DIR)/KernovaBuildNumber.h
+
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+COMBINE_HIDPI_IMAGES = YES
+SWIFT_EMIT_LOC_STRINGS = YES
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_ENTITLEMENTS = $(KERNOVA_APP_ENTITLEMENTS)
+PROVISIONING_PROFILE_SPECIFIER =
+ENABLE_HARDENED_RUNTIME[config=Release] = YES

@@ -1,6 +1,6 @@
 # BUILD.md
 
-Read the relevant section before touching build machinery — hooks and worktree setup, the signing identity, test-target topology, DerivedData, build numbers, guest-agent versioning, or LaunchServices cleanup. None of it is needed for a routine `make build` / `make test`; fresh-clone setup is in the [README](../README.md#development-setup).
+Read the relevant section before touching build machinery — hooks and worktree setup, where build settings live, the signing identity, test-target topology, DerivedData, build numbers, guest-agent versioning, or LaunchServices cleanup. None of it is needed for a routine `make build` / `make test`; fresh-clone setup is in the [README](../README.md#development-setup).
 
 ## Git hooks and worktree setup
 
@@ -12,6 +12,14 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 `.worktreeinclude` is the definitive list of local files a worktree inherits. Claude Code and other worktree tools read it natively; the hook is what makes a plain `git worktree add` honor it too. **Literal paths only — no globs.**
 
+## Where build settings live
+
+Every build setting lives in `Config/`: `Base.xcconfig` on both project configurations, `Config/Targets/<Target>.xcconfig` on both of that target's. Each file covers Debug and Release together, with a `[config=Debug]` / `[config=Release]` condition on the settings that genuinely differ. Every `buildSettings` block in `project.pbxproj` is empty, and `Tools/check-build-settings-layering.sh` fails lint if one isn't — the Signing & Capabilities editor writes toggles inline, where they silently outrank the xcconfig.
+
+Precedence runs target xcconfig above project xcconfig, so **no signing setting may be assigned in the app or test-target xcconfigs**: it would shadow `Config/Local.xcconfig` and revert a developer to ad-hoc signing. A `$(KERNOVA_APP_ENTITLEMENTS)` reference is fine — the variable still resolves from the project layer.
+
+`KernovaKit/Package.swift` is outside all of this: SwiftPM never reads a project xcconfig, so it restates the warnings-as-errors gate and the agent deployment floor. `Tools/check-agent-deployment-floor.sh` holds its `.macOS(…)` to `Base.xcconfig`'s `KERNOVA_AGENT_DEPLOYMENT_TARGET`.
+
 ## Signing identity
 
 Debug signs ad-hoc by default — `Config/Base.xcconfig` sets `CODE_SIGN_IDENTITY = -` — so a fresh clone builds with no Apple account, team, or certificate. The gitignored, hand-maintained `Config/Local.xcconfig`, included by that file and templated by `Config/Local.xcconfig.example`, overrides both that and `DEVELOPMENT_TEAM`. Worktrees inherit it through `.worktreeinclude`.
@@ -20,7 +28,7 @@ Set `CODE_SIGN_IDENTITY = Apple Development` there whenever you have a certifica
 
 `DEVELOPMENT_TEAM` is what automatic signing resolves that certificate through, and the guest agent's Release Developer ID signing needs it too ([RELEASING.md](RELEASING.md)) — keep the two lines together.
 
-The guest agent and `KernovaRelaunchHelper` pin their Release identities at target level, which outranks a project xcconfig; the app and both test bundles leave Release unpinned, so the override reaches them too — an entitled archive needs the real identity, and a team-signed, hardened test host rejects an ad-hoc test bundle under library validation, so host and bundle must sign together.
+The guest agent and `KernovaRelaunchHelper` pin their Release identities in their own `Config/Targets/` files, which outrank a project xcconfig; the app and both test bundles leave Release unpinned, so the override reaches them too — an entitled archive needs the real identity, and a team-signed, hardened test host rejects an ad-hoc test bundle under library validation, so host and bundle must sign together.
 The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
 
 The app's entitlements resolve through the same override point. `com.apple.vm.networking` is restricted — automatic signing refuses to sign it without an authorizing profile, and amfid kills an ad-hoc-signed binary that claims it at exec ("adhoc signed but contains restricted entitlements") — so the app's `CODE_SIGN_ENTITLEMENTS` resolves through `KERNOVA_APP_ENTITLEMENTS` in both configurations, defaulting in `Base.xcconfig` to `Kernova/Resources/Kernova.Development.entitlements`: the shipping set minus that key, keeping a profile-less checkout building and launchable.
@@ -41,7 +49,7 @@ That works because `KernovaKit` is referenced as a top-level peer — a `PBXFile
 
 Three of the workflows in `.github/workflows/` are required status checks: `lint`, `build-and-test`, and `proto-drift`. The "Required actions" ruleset matches them **by job name**, and that ruleset lives in GitHub's settings rather than in this repo — so renaming a job means editing the ruleset in the same change, or every PR waits on a check that never reports.
 
-The `lint` job runs `make lint`, which is therefore what gates a merge: `swift-format --strict`, shell (`bash -n` plus shellcheck, which it treats as required once `$CI` is set), `Tools/check-docs.sh` for the documentation line cap and link validity, and `Tools/check-entitlements.sh` for key parity between the two app entitlement variants. Each workflow's own header explains its trigger design; read it there before changing one.
+The `lint` job runs `make lint`, which is therefore what gates a merge; the Makefile's `lint` target is the list of what it covers, and shellcheck goes from optional to required once `$CI` is set. Each workflow's own header explains its trigger design; read it there before changing one.
 
 `Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step reads the result bundle and names those tests, which is where to look — a green conclusion on its own says nothing about flakes.
 
@@ -87,9 +95,7 @@ The guest agent has its **own** `MARKETING_VERSION`, independent of the app's. B
 
 Bump it in the same PR as the behavior change, even mid-PR. The first behavioral change on a branch bumps the **minor**; later revisions on that branch bump the **patch**.
 
-The value is set in **two** places — the Debug and Release configurations of the `KernovaMacOSAgent` target — and both must move together.
-
-Two parallel PRs that both picked the same next version rebase-merge cleanly, since the setting lines are identical; the later one must then manually advance the version again before merging.
+The value is the `MARKETING_VERSION` literal in `Config/Targets/KernovaMacOSAgent.xcconfig`, covering both configurations.
 
 ## Low-overhead Run scheme
 

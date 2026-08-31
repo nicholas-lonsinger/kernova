@@ -1,0 +1,20 @@
+// The KernovaMacOSAgentTests bundle, both configurations.
+//
+// No signing identity or team is assigned here: a target xcconfig outranks
+// Config/Local.xcconfig, and test bundle and host must sign together —
+// docs/BUILD.md "Signing identity".
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.tests
+MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)
+
+// Compiles agent sources, so it shares the agent's deployment floor.
+MACOSX_DEPLOYMENT_TARGET = $(KERNOVA_AGENT_DEPLOYMENT_TARGET)
+
+// The generated Info.plist takes its CFBundleVersion from here.
+GENERATE_INFOPLIST_FILE = YES
+CURRENT_PROJECT_VERSION = 1
+
+SWIFT_EMIT_LOC_STRINGS = NO
+
+CODE_SIGN_STYLE = Automatic

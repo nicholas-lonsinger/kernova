@@ -1,0 +1,11 @@
+// The KernovaRelaunchHelper command-line tool, both configurations.
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = app.kernova.relaunchhelper
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_ENTITLEMENTS = KernovaRelaunchHelper/KernovaRelaunchHelper.entitlements
+
+CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = -
+ENABLE_HARDENED_RUNTIME[config=Release] = YES
+SKIP_INSTALL[config=Release] = YES
