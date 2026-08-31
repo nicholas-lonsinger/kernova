@@ -351,18 +351,25 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
         }
     }
 
-    func grabIfChanged() {
-        guard isConnected else { return }
-        guard !clipboardContent.isEmpty else { return }
+    func grabIfChanged() -> ClipboardGrabOutcome {
+        guard isConnected else { return .undelivered }
+        guard !clipboardContent.isEmpty else { return .settled }
         // Never offer content that still holds not-yet-pulled placeholders: the
         // sender can't stream a `.pendingRemote` rep, and it would echo back.
         guard !clipboardContent.representations.contains(where: { $0.isPendingRemote }) else {
-            return
+            return .settled
         }
-        guard case .sent = endpoint.offer(clipboardContent) else { return }
-        // The offer just replaced supersedes whatever drop it was reading from,
-        // so that drop's files can go.
-        retireUnreferencedDropDirectories()
+        switch endpoint.offer(clipboardContent) {
+        case .sent:
+            // The offer just replaced supersedes whatever drop it was reading
+            // from, so that drop's files can go.
+            retireUnreferencedDropDirectories()
+            return .settled
+        case .duplicate, .nothingToOffer:
+            return .settled
+        case .sendFailed:
+            return .undelivered
+        }
     }
 
     // MARK: - Inbound (we are the receiver)

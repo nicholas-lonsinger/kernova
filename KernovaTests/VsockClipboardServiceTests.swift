@@ -90,7 +90,7 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         service.clipboardContent = ClipboardContent(text: "first")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
 
         let received = try await nextFrame(from: guest)
         guard case .clipboardOffer = received.payload else {
@@ -115,6 +115,32 @@ struct VsockClipboardServiceTests {
         // constructed, so connectivity is live as soon as `start()` runs, with
         // no Hello round trip. Liveness lives on the control channel.
         #expect(service.isConnected)
+    }
+
+    @Test("grabIfChanged reports whether the copy is settled or still owed to the guest")
+    func grabReportsDeliveryOutcome() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
+        service.clipboardContent = ClipboardContent(text: "before the channel is up")
+
+        // Not started: nothing can have reached the guest, so the caller must
+        // keep the copy for a later connected attempt.
+        #expect(service.grabIfChanged() == .undelivered)
+
+        service.start()
+        defer { service.stop() }
+        #expect(service.grabIfChanged() == .settled)
+
+        // A settled channel owes the copy again, whatever the buffer holds.
+        guest.close()
+        try await waitForChange { !service.isConnected }
+        service.clipboardContent = ClipboardContent(text: "copied during the outage")
+        #expect(service.grabIfChanged() == .undelivered)
     }
 
     @Test("the channel ending settles the service, so the next connection can forward again")
@@ -180,7 +206,7 @@ struct VsockClipboardServiceTests {
 
         let text = "hello clipboard"
         service.clipboardContent = ClipboardContent(text: text)
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
 
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -229,7 +255,7 @@ struct VsockClipboardServiceTests {
                 directorySourceURL: folder, estimatedByteCount: 12, filename: "Project",
                 uti: "public.folder")
         ])
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
 
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -305,7 +331,7 @@ struct VsockClipboardServiceTests {
                 directorySourceURL: scaffold, estimatedByteCount: 0, filename: "Scaffold",
                 uti: "public.folder"),
         ])
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
 
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -367,7 +393,7 @@ struct VsockClipboardServiceTests {
         service.clipboardContent = ClipboardContent(representations: [
             .init(uti: "public.data", data: bytes)
         ])
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
 
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -406,14 +432,15 @@ struct VsockClipboardServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
-        // Empty content → no offer.
+        // Empty content → no offer. Settled all the same: re-offering an empty
+        // buffer can never reach the guest, so a caller must not retry it.
         var snapshot = recorder.frames.count
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         try await recorder.expectNoNewFrames(sinceCount: snapshot)
 
         // First non-empty content → exactly one offer.
         service.clipboardContent = ClipboardContent(text: "alpha")
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         try await recorder.waitForFrameCount(snapshot + 1)
         guard case .clipboardOffer = recorder.frames[snapshot].payload else {
             Issue.record(
@@ -422,13 +449,13 @@ struct VsockClipboardServiceTests {
         }
         snapshot = recorder.frames.count
 
-        // Same content → no second offer.
-        service.grabIfChanged()
+        // Same content → no second offer, and the guest already holds it.
+        #expect(service.grabIfChanged() == .settled)
         try await recorder.expectNoNewFrames(sinceCount: snapshot)
 
         // Fresh content → another offer.
         service.clipboardContent = ClipboardContent(text: "beta")
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         try await recorder.waitForFrameCount(snapshot + 1)
         guard case .clipboardOffer = recorder.frames[snapshot].payload else {
             Issue.record(
@@ -456,7 +483,7 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         service.clipboardContent = ClipboardContent(text: "host data")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
             Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
@@ -2990,14 +3017,15 @@ struct VsockClipboardServiceTests {
                 reps: [RepInfo(uti: "public.png", byteCount: 1024, filename: "p.png", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // grabIfChanged must NOT echo placeholder content back to the guest.
+        // grabIfChanged must NOT echo placeholder content back to the guest —
+        // and reports it settled, since re-offering it can only be refused again.
         let before = recorder.frames.count
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         try await recorder.expectNoNewFrames(sinceCount: before)
 
         // The user replaces the buffer with their own bytes → a grab now offers.
         service.clipboardContent = ClipboardContent(text: "my own text")
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         try await recorder.waitForFrames {
             recorder.first {
                 if case .clipboardOffer = $0.payload { return true }; return false
@@ -3019,7 +3047,7 @@ struct VsockClipboardServiceTests {
 
         // Grab X — latches the send-dedup digest.
         service.clipboardContent = ClipboardContent(text: "keep me")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         _ = try await nextFrame(from: guest)  // first offer
 
         service.clearBuffer()
@@ -3028,7 +3056,7 @@ struct VsockClipboardServiceTests {
         // Re-setting the SAME content and grabbing must still offer — without
         // the dedup reset the unchanged digest would silently suppress it.
         service.clipboardContent = ClipboardContent(text: "keep me")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         let frame = try await nextFrame(from: guest)
         guard case .clipboardOffer = frame.payload else {
             Issue.record("Expected clipboardOffer after clear + re-set, got \(String(describing: frame.payload))")
@@ -3391,7 +3419,7 @@ struct VsockClipboardServiceTests {
 
         // The drop becomes the buffer, then the offer the guest can pull from.
         service.clipboardContent = droppedFileContent(at: dropped)
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         #expect(FileManager.default.fileExists(atPath: dropped.path))
 
         // Clearing the buffer leaves the offer live — the guest can still ask for
@@ -3402,7 +3430,7 @@ struct VsockClipboardServiceTests {
         // A newer offer supersedes the one that read from the drop: nothing on
         // either side can reach the file now.
         service.clipboardContent = ClipboardContent(text: "typed instead")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         #expect(!FileManager.default.fileExists(atPath: dropped.path))
     }
 
@@ -3428,12 +3456,12 @@ struct VsockClipboardServiceTests {
         let dropped = destination.appendingPathComponent("dropped.bin")
         try Data("x".utf8).write(to: dropped)
         service.clipboardContent = droppedFileContent(at: dropped)
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
 
         // Buffer and offer both move on, but the pasteboard still vends the
         // dropped file's URL.
         service.clipboardContent = ClipboardContent(text: "typed instead")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         #expect(FileManager.default.fileExists(atPath: dropped.path))
 
         // Once the user's clipboard has moved on, the file goes.

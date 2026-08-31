@@ -978,12 +978,13 @@ private final class FakeClipboardService: ClipboardServicing {
     /// Mirrors both real send guards: `isConnected`, and a latch advanced only by
     /// a successful send (`VsockClipboardService.lastGrabbedDigest` /
     /// `SpiceClipboardService.lastGrabbedText`).
-    func grabIfChanged() {
+    func grabIfChanged() -> ClipboardGrabOutcome {
         grabCallCount += 1
-        guard isConnected else { return }
-        guard clipboardContent.digest != lastAnnouncedDigest else { return }
+        guard isConnected else { return .undelivered }
+        guard clipboardContent.digest != lastAnnouncedDigest else { return .settled }
         lastAnnouncedDigest = clipboardContent.digest
         announcedCount += 1
+        return .settled
     }
     func clearBuffer() { clipboardContent = .empty }
     // materializeForPreview uses the protocol-extension default (no-op).

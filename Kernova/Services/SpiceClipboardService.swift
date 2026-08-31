@@ -94,20 +94,20 @@ final class SpiceClipboardService: ClipboardServicing {
     ///
     /// A by-demand guest answers with `CLIPBOARD_REQUEST` when something pastes;
     /// a legacy guest never will, so it is sent the data immediately.
-    func grabIfChanged() {
-        guard isConnected else { return }
+    func grabIfChanged() -> ClipboardGrabOutcome {
+        guard isConnected else { return .undelivered }
         guard let text = clipboardContent.text, !text.isEmpty else {
             if !clipboardContent.isEmpty {
                 Self.logger.debug(
                     "Clipboard content has no text representation — SPICE transport is text-only (issue #112 follow-up)"
                 )
             }
-            return
+            return .settled
         }
-        guard text != lastGrabbedText else { return }
+        guard text != lastGrabbedText else { return .settled }
 
         let grabMessage = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
-        guard writeToGuest(grabMessage) else { return }
+        guard writeToGuest(grabMessage) else { return .undelivered }
 
         // Only update state after successful write — otherwise a failed grab
         // would permanently prevent retries (text == lastGrabbedText).
@@ -118,12 +118,14 @@ final class SpiceClipboardService: ClipboardServicing {
             // Reset lastGrabbedText on failure so the next call retries.
             if !sendClipboardText(text) {
                 lastGrabbedText = nil
+                return .undelivered
             }
         }
 
         Self.logger.notice(
             "Sent clipboard grab (\(text.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))"
         )
+        return .settled
     }
 
     // MARK: - Reading

@@ -362,7 +362,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     func flushAndAnnounceEdit() {
         flushPendingEdit()
         guard hasUserEdit else { return }
-        instance.clipboardService?.grabIfChanged()
+        _ = instance.clipboardService?.grabIfChanged()
     }
 
     /// Drops any pending edit without committing it.
@@ -773,7 +773,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         switch intake {
         case .content(let content, let note):
             service.clipboardContent = content
-            service.grabIfChanged()
+            _ = service.grabIfChanged()
             if let note {
                 statusMessage.showTransientMessage(note, style: .warning)
             }
