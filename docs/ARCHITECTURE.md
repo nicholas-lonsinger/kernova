@@ -44,8 +44,14 @@ Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvancedOptio
 - `VMConfiguration` — a VM's persisted identity: a `Codable` `Sendable` struct written as
   `config.json` inside the VM bundle.
 - `VMInstance` — a VM's runtime representation: an `@Observable` `@MainActor` class wrapping a
-  `VMConfiguration`, an optional `VMSession`, and a `VMStatus`. It owns the per-VM vsock
-  services, `clipboardService`, `SerialSocketRelay`, and `runtimeFileAccess`.
+  `VMConfiguration`, an optional `VMSessionContext`, and a `VMStatus`. What outlives a session
+  belongs to it — the admission gate, the data sinks, the transfer reporter, the host clipboard
+  publisher — and it projects the context's state read-only for its callers.
+- `VMSessionContext` — everything scoped to one `VZVirtualMachine`'s lifetime: the `VMSession`, the
+  serial and SPICE pipes with their writer and relay, `clipboardService`, the passthrough
+  coordinator, the vsock services, the agent watchdog and its flags, `liveRemovableMedia`, the
+  network attachment coordinator, and the runtime security scopes. Each bring-up opens one before
+  building its configuration; `tearDown()` releases the whole of it in one ordered pass.
 - `VMSession` — one running VM's isolation domain: an actor whose executor is the private serial
   queue its `VZVirtualMachine` was created with, and the only type that calls into that VM or any
   of its device objects. It retains the VM's `VsockListenerHost`s, each for as long as its port is
@@ -123,10 +129,10 @@ the per-VM DHCP reservations and port-forwarding rules riding them, materialized
 `VmnetNetworkOperating` seam. Each VM holds a slot keyed on its persisted MAC, and slots and rules
 alike are kept in step with configurations through `VMLibrary`'s persistence funnel.
 
-While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by `VMInstance`,
-activated when the VM first reaches `.running`) keeps the live attachment realizing the persisted
-mode, driving the device through `NetworkDeviceControlling` and reconciling on VZ's
-attachment-disconnect callback, on `NetworkLinkObserving` (`HostNetworkLinkObserver`,
+While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by
+`VMSessionContext`, activated when the VM first reaches `.running`) keeps the live attachment
+realizing the persisted mode, driving the device through `NetworkDeviceControlling` and reconciling
+on VZ's attachment-disconnect callback, on `NetworkLinkObserving` (`HostNetworkLinkObserver`,
 SCDynamicStore), and on `applyLivePolicy` edits. A session with no realizable attachment surfaces
 as `VMInstance.networkAttachmentPending`.
 
@@ -171,8 +177,8 @@ sharing is restart-only — its SPICE port must be declared at config-build time
 Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 
 - `ClipboardServicing` — the `@MainActor` protocol both transports implement.
-  `VMInstance.clipboardService` holds the existential, so the window controllers never branch on
-  transport. Agent install/version state lives on `VsockControlService` instead, which runs whether
+  `VMSessionContext.clipboardService` holds the existential, so the window controllers never branch
+  on transport. Agent install/version state lives on `VsockControlService` instead, which runs whether
   or not clipboard sharing is enabled.
 - `SpiceClipboardService` — the Linux transport, over raw `VZFileHandleSerialPortAttachment` pipes
   parsed by `SpiceAgentParser`. Text only.
@@ -209,7 +215,7 @@ Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the log
 `EntitlementService` (what this build's signature authorizes, so feature UI can degrade in builds
 signed without a restricted entitlement), `AttachmentFileMonitor` (existence watching for the
 settings attachment rows), `RuntimeFileAccess` (per-boot security-scoped access, released once in
-`tearDownSession`), and `SerialSocketRelay` (below).
+`VMSessionContext.tearDown`), and `SerialSocketRelay` (below).
 
 **Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
 rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through
@@ -425,8 +431,8 @@ resolves them per boot attempt, healing stale bookmarks and moved paths back int
 
 **Scopes stay open for the whole VM runtime, not just across the config-build call.** VZ opens its
 fds at config-build time with no published retention guarantee, and an unbalanced release leaks
-kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and one release point
-(`tearDownSession`).
+kernel resources until relaunch — hence one owner (`RuntimeFileAccess`, held by the session
+context) and one release point (`VMSessionContext.tearDown`).
 
 ## Helper Targets
 

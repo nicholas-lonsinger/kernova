@@ -888,6 +888,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         library.instances.append(instance)
 
         let configuredUUID = UUID()
@@ -914,8 +915,9 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let id = UUID()
-        instance.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
+        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         instance.configuration = old
@@ -939,8 +941,9 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let oldID = UUID()
-        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -967,8 +970,9 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let id = UUID()
-        instance.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
+        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         instance.configuration = old
@@ -992,6 +996,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         library.instances.append(instance)
 
         let old = instance.configuration
@@ -1033,6 +1038,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         library.instances.append(instance)
 
         let old = instance.configuration
@@ -1058,8 +1064,9 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let oldID = UUID()
-        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1086,8 +1093,9 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let oldID = UUID()
-        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1113,8 +1121,9 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let oldID = UUID()
-        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1138,6 +1147,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         library.instances.append(instance)
 
         let old = instance.configuration
@@ -1158,6 +1168,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         library.instances.append(instance)
 
         let baseConfig = instance.configuration
@@ -1184,6 +1195,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         library.instances.append(instance)
 
         let baseConfig = instance.configuration

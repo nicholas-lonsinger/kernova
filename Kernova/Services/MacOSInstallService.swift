@@ -55,26 +55,24 @@ final class MacOSInstallService {
 
         try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
 
-        // The install-time build needs the same security scopes as the boot paths —
-        // a pre-install VM can already carry bookmarked external attachments from
-        // settings. Session teardown releases them.
-        instance.openRuntimeFileAccess()
+        instance.beginSessionContext()
         let result = try configBuilder.build(
             from: instance.configuration,
             bundleURL: instance.bundleURL
         )
 
-        instance.serialInputPipe = result.serialInputPipe
-        instance.serialOutputPipe = result.serialOutputPipe
-        instance.clipboardInputPipe = result.clipboardInputPipe
-        instance.clipboardOutputPipe = result.clipboardOutputPipe
-        // RATIONALE (2026-08-17): `attachSession` runs *before* the cancellation
+        instance.adoptBuildResult(result)
+        // RATIONALE (2026-08-31): `attachSession` runs *before* the cancellation
         // check below on purpose. A cancel in this window unwinds with
         // `instance.session` set, which
         // `VMLibraryViewModel.runGuestSetup`'s `catch is CancellationError`
-        // tears down. Checking first would leave the configured pipes dangling on
-        // `instance` with no matching VM.
-        let session = await instance.attachSession(from: result.configuration)
+        // tears down. Checking first would leave the open session context —
+        // its pipes and its security scopes — with no matching VM.
+        guard let session = await instance.attachSession(from: result.configuration) else {
+            throw VirtualizationError.noVirtualMachine
+        }
+        // Deliberately short of `bringUpSession`: an installer boot runs no
+        // vsock listeners, since no guest agent can be there to meet them.
         instance.startSerialReading()
         instance.startClipboardService()
 

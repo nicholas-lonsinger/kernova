@@ -154,7 +154,7 @@ struct SidebarViewControllerTests {
     func agentExpectedMissingVisibleWhenRunning() {
         let instance = makeInstance(guestOS: .macOS, status: .running)
         instance.configuration.lastSeenAgentVersion = "1.2.3"
-        instance.agentExpectedButMissing = true
+        instance.beginSessionContext().agentExpectedButMissing = true
         #expect(
             visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
@@ -190,7 +190,7 @@ struct SidebarViewControllerTests {
     func agentLouderStatesSurviveAppWideDisable() {
         let missing = makeInstance(guestOS: .macOS, status: .running)
         missing.configuration.lastSeenAgentVersion = "1.2.3"
-        missing.agentExpectedButMissing = true
+        missing.beginSessionContext().agentExpectedButMissing = true
         #expect(
             SidebarVMRowCellView.visibleAgentStatus(for: missing, installPromptDisabled: true)
                 == .expectedMissing(expected: "1.2.3"))

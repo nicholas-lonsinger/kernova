@@ -35,15 +35,20 @@ final class VMInstance {
     var configuration: VMConfiguration
     var status: VMStatus
 
+    /// Everything scoped to the current `VZVirtualMachine`'s lifetime, opened by
+    /// ``beginSessionContext(bootedIntoRecovery:)`` and released whole by
+    /// ``tearDownSession()``.
+    ///
+    /// The read-only projections below are the read surface; every write goes
+    /// through this slot or a method here, so no session state can outlive a
+    /// teardown that forgot it.
+    private(set) var sessionContext: VMSessionContext?
+
     /// The live VM's isolation domain — the only type that calls into the
     /// `VZVirtualMachine` and its device objects.
-    private(set) var session: VMSession?
+    var session: VMSession? { sessionContext?.session }
 
     let bundleURL: URL
-
-    /// Security-scoped access grants held for the live session; populated by
-    /// `openRuntimeFileAccess()` at boot, drained in `tearDownSession()`.
-    let runtimeFileAccess = RuntimeFileAccess()
 
     /// Progress of the guest setup running for this VM — a macOS install,
     /// or a Linux installer image being fetched and verified.
@@ -114,15 +119,11 @@ final class VMInstance {
 
     // MARK: - Clipboard Sharing
 
-    /// Bidirectional pipes for the SPICE clipboard console port (Linux guests only).
-    var clipboardInputPipe: Pipe?
-    var clipboardOutputPipe: Pipe?
-
     /// Active clipboard service: `SpiceClipboardService` for Linux,
     /// `VsockClipboardService` for macOS.
     ///
     /// Nil on macOS until the guest agent connects.
-    var clipboardService: (any ClipboardServicing)?
+    var clipboardService: (any ClipboardServicing)? { sessionContext?.clipboardService }
 
     /// Host-pasteboard writer shared by the clipboard window's "Copy to Mac" and
     /// the passthrough coordinator.
@@ -130,10 +131,6 @@ final class VMInstance {
     /// One per VM so echo suppression sees both writers — the coordinator's poll
     /// skips whatever change count this publisher last produced.
     @ObservationIgnored let hostClipboardPublisher = HostClipboardPublisher()
-
-    /// Automatic clipboard passthrough driver, created and torn down by
-    /// `refreshClipboardPassthrough()`.
-    @ObservationIgnored private var clipboardPassthroughCoordinator: ClipboardPassthroughCoordinator?
 
     /// Where this VM's clipboard and drop producers publish, and the owner of the
     /// value below.
@@ -152,13 +149,13 @@ final class VMInstance {
 
     // MARK: - Vsock Channel (macOS guests)
 
-    var vsockLogService: VsockGuestLogService?
+    var vsockLogService: VsockGuestLogService? { sessionContext?.vsockLogService }
 
-    var vsockControlService: VsockControlService?
+    var vsockControlService: VsockControlService? { sessionContext?.vsockControlService }
 
     /// Serves files dropped on this VM's display; populated once the guest
     /// agent's drop client connects.
-    var vsockDropService: VsockDropService?
+    var vsockDropService: VsockDropService? { sessionContext?.vsockDropService }
 
     /// Where the feature listeners read admission verdicts, off the main actor.
     ///
@@ -179,38 +176,19 @@ final class VMInstance {
     /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
     /// grace period has elapsed without a `Hello` arriving over the control
     /// channel.
-    ///
-    /// Reset on `tearDownSession` and on the next successful Hello.
-    var agentExpectedButMissing: Bool = false
+    var agentExpectedButMissing: Bool { sessionContext?.agentExpectedButMissing ?? false }
 
     /// `true` once a `Hello` has arrived on this VM session.
     ///
     /// Separates a mid-session agent disappearance from an agent that never
     /// appeared: only the latter is evidence about what is installed in the
     /// guest, so only the latter may rewrite persisted agent state.
-    ///
-    /// Reset on `tearDownSession`.
-    private(set) var hasSeenAgentThisSession = false
+    var hasSeenAgentThisSession: Bool { sessionContext?.hasSeenAgentThisSession ?? false }
 
     /// `true` when this session cold-booted into macOS Recovery, which never
     /// runs the guest agent — so agent silence is evidence of nothing for the
     /// whole session, not just at the moment of boot.
-    ///
-    /// Set by `VirtualizationService` at cold boot; reset on `tearDownSession`.
-    var bootedIntoRecovery = false
-
-    /// Backing task for the agent-arrival watchdog, re-armed each time the
-    /// control channel is lost.
-    private var agentPostStartTask: Task<Void, Never>?
-
-    /// Bumped by every arm and every cancel, so a watchdog task that finished
-    /// sleeping just before a cancel-and-re-arm can tell it has been disowned.
-    ///
-    /// A task holds the generation it was armed with; only the current one may
-    /// act. Without it, the slot check is an ABA test that a stale task passes
-    /// against a *successor's* task — firing `.expectedMissing` before that
-    /// successor's grace elapsed, and clearing its slot on the way out.
-    private var agentPostStartGeneration: UInt64 = 0
+    var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
     /// Performs a host-side mutation of this instance's configuration and routes
     /// it through the library's `updateConfiguration` pipeline (persist + apply
@@ -275,19 +253,6 @@ final class VMInstance {
         }
     }
 
-    // MARK: - Serial Console
-
-    var serialInputPipe: Pipe?
-    var serialOutputPipe: Pipe?
-
-    private var serialLogWriter: SerialLogWriter?
-
-    /// Host-side AF_UNIX relay exposing the serial port to an external terminal.
-    ///
-    /// Created once per running session and captured by the output readability
-    /// handler; it only binds a socket while started.
-    private var serialSocketRelay: SerialSocketRelay?
-
     private static let logger = Logger(subsystem: "app.kernova", category: "VMInstance")
 
     nonisolated var id: UUID { instanceID }
@@ -298,11 +263,21 @@ final class VMInstance {
     /// Keeps the live network attachment realizing the configured mode;
     /// created with the `VZVirtualMachine` for network-enabled VMs, activated
     /// once the session reaches `.running`, torn down with the session.
-    @ObservationIgnored var networkAttachmentCoordinator: NetworkAttachmentCoordinator?
+    var networkAttachmentCoordinator: NetworkAttachmentCoordinator? {
+        sessionContext?.networkAttachmentCoordinator
+    }
+
+    /// Reconciles the live attachment with the configured mode, once the
+    /// session has reached a state VZ will swap an attachment on.
+    ///
+    /// A no-op for a VM whose session has no network device — or none at all.
+    func activateNetworkAttachment() {
+        sessionContext?.networkAttachmentCoordinator?.activate()
+    }
 
     /// `true` while a live session's network device is detached and recovery
     /// is waiting for a usable host interface.
-    var networkAttachmentPending = false
+    var networkAttachmentPending: Bool { sessionContext?.networkAttachmentPending ?? false }
 
     // MARK: - Bundle Layout
 
@@ -373,7 +348,7 @@ final class VMInstance {
     ///
     /// One entry per item in `configuration.removableMedia` while the VM is
     /// running; cleared on stop/teardown.
-    var liveRemovableMedia: [USBDeviceInfo] = []
+    var liveRemovableMedia: [USBDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
 
     #if DEBUG
     /// Test stand-in for `session != nil`: constructing a real
@@ -640,30 +615,73 @@ final class VMInstance {
 
     // MARK: - State Helpers
 
+    /// Opens the context one boot attempt's session state lives in, replacing
+    /// any prior one, and takes the security scopes its configuration build
+    /// needs.
+    ///
+    /// Called at the top of every bring-up — including an install-time build,
+    /// where a pre-install VM can already carry bookmarked external attachments
+    /// from settings. The two are one call because a scope with no context to
+    /// hold it is a leak, and a context with no scopes cannot build.
+    @discardableResult
+    func beginSessionContext(bootedIntoRecovery: Bool = false) -> VMSessionContext {
+        // A displaced context is released rather than dropped: the boot paths
+        // tear down before retrying, so reaching here with one open means a
+        // caller skipped that — and the dropped context's VZ session, pipes and
+        // security scopes would outlive the last reference to them.
+        sessionContext?.tearDown()
+        let context = VMSessionContext(
+            label: name,
+            bootedIntoRecovery: bootedIntoRecovery,
+            admissionGate: vsockAdmissionGate,
+            clipboardDataSink: clipboardDataSink,
+            dropDataSink: dropDataSink)
+        openRuntimeFileAccess(into: context.fileAccess)
+        sessionContext = context
+        return context
+    }
+
+    /// Takes the pipes and cold-attached removable media a configuration build
+    /// produced into the open session context.
+    func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
+        guard let sessionContext else {
+            Self.logger.fault(
+                "No session context to adopt a build result for '\(self.name, privacy: .public)'")
+            assertionFailure("adoptBuildResult without beginSessionContext for '\(name)'")
+            return
+        }
+        sessionContext.serialInputPipe = result.serialInputPipe
+        sessionContext.serialOutputPipe = result.serialOutputPipe
+        sessionContext.clipboardInputPipe = result.clipboardInputPipe
+        sessionContext.clipboardOutputPipe = result.clipboardOutputPipe
+        sessionContext.liveRemovableMedia = result.coldRemovableMedia
+    }
+
+    /// Brings a built configuration all the way up: adopts its pipes and media,
+    /// creates the `VZVirtualMachine`, and starts the serial, clipboard and
+    /// vsock plumbing that rides it.
+    ///
+    /// The whole of what a boot path does between building a configuration and
+    /// telling VZ to run, so a cold boot and a restore cannot drift apart. The
+    /// install path stops short of the vsock listeners and stays hand-wired.
+    ///
+    /// `nil` for the same reason ``attachSession(from:)`` returns `nil`, and the
+    /// caller must not proceed to start anything.
+    func bringUpSession(with result: ConfigurationBuilder.BuildResult) async -> VMSession? {
+        adoptBuildResult(result)
+        guard let session = await attachSession(from: result.configuration) else { return nil }
+        startSerialReading()
+        startClipboardService()
+        await startVsockServices()
+        return session
+    }
+
     /// Tears down the live VM session.
     ///
     /// Does **not** change `status` — callers set the appropriate status after calling this.
     func tearDownSession() {
-        networkAttachmentCoordinator?.stop()
-        networkAttachmentCoordinator = nil
-        networkAttachmentPending = false
-        clipboardPassthroughCoordinator?.stop()
-        clipboardPassthroughCoordinator = nil
-        stopVsockServices()
-        stopClipboardService()
-        stopSerialReading()
-        cancelAgentPostStartWatchdog()
-        agentExpectedButMissing = false
-        hasSeenAgentThisSession = false
-        bootedIntoRecovery = false
-        serialInputPipe = nil
-        serialOutputPipe = nil
-        liveRemovableMedia = []
-        // Releasing the session releases the actor, its delegate adapter, and
-        // the `VZVirtualMachine`; the boot paths' file-lock retry covers the
-        // lagging deallocation of the VM's advisory locks.
-        session = nil
-        runtimeFileAccess.releaseAll()
+        sessionContext?.tearDown()
+        sessionContext = nil
         // An open display window resets this itself when it auto-closes;
         // `.hidden` (headless) has no window to do so — reset here so it
         // can't leak into the next session.
@@ -682,30 +700,44 @@ final class VMInstance {
 
     /// Creates the VM on its own queue, stores the session, and builds the
     /// network-attachment coordinator for network-enabled configurations.
-    @discardableResult
-    func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession {
+    ///
+    /// `nil` when no session context is open — a programming error, since every
+    /// bring-up path opens one before building the configuration this takes.
+    /// The just-created `VZVirtualMachine` is released rather than handed back:
+    /// a session this instance does not hold is one nothing can stop, so a
+    /// caller starting it would leave the guest running past every liveness
+    /// predicate, force stop included.
+    func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession? {
         // The configuration was assembled off-main and is handed over whole:
         // nothing touches it after the VM is created from it.
         nonisolated(unsafe) let vzConfig = vzConfig
         let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
-        self.session = session
-        await setupNetworkAttachmentCoordinator(for: session)
+        guard let sessionContext else {
+            Self.logger.fault(
+                "No session context to attach a session to for '\(self.name, privacy: .public)'")
+            assertionFailure("attachSession without beginSessionContext for '\(name)'")
+            return nil
+        }
+        sessionContext.session = session
+        await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
         return session
     }
 
     /// Builds this session's attachment-recovery coordinator, replacing any
     /// prior one.
-    private func setupNetworkAttachmentCoordinator(for session: VMSession) async {
-        networkAttachmentCoordinator?.stop()
-        networkAttachmentCoordinator = nil
-        networkAttachmentPending = false
+    private func setupNetworkAttachmentCoordinator(
+        for session: VMSession, in context: VMSessionContext
+    ) async {
+        context.networkAttachmentCoordinator?.stop()
+        context.networkAttachmentCoordinator = nil
+        context.networkAttachmentPending = false
         guard configuration.networkEnabled, session.hasNetworkDevice else { return }
         let networks = VmnetNetworkService.shared
         let initialPlan = await session.inspectNetworkAttachment { attachment in
             VZNetworkDeviceHandle.plan(of: attachment, in: networks)
         }
         guard self.session === session else { return }
-        networkAttachmentCoordinator = NetworkAttachmentCoordinator(
+        context.networkAttachmentCoordinator = NetworkAttachmentCoordinator(
             vmName: name,
             device: VZNetworkDeviceHandle(
                 session: session, initialPlan: initialPlan, vmnetNetworks: networks),
@@ -716,8 +748,8 @@ final class VMInstance {
                 return self.status == .running || self.status == .paused
             },
             choice: { [weak self] in self?.configuration.networkChoice },
-            onPendingChange: { [weak self] pending in
-                self?.networkAttachmentPending = pending
+            onPendingChange: { [weak context] pending in
+                context?.networkAttachmentPending = pending
             })
     }
 
@@ -744,15 +776,17 @@ final class VMInstance {
     /// Output is written to the on-disk `serial.log` (size-capped by
     /// `SerialLogWriter`) and tee'd to the `SerialSocketRelay` when enabled.
     func startSerialReading() {
-        guard let outputPipe = serialOutputPipe else { return }
+        guard let context = sessionContext, let outputPipe = context.serialOutputPipe else {
+            return
+        }
 
         // Created once per session so the readability handler can capture them
         // as `Sendable` locals — the handler must never touch `self` off-actor.
         let writer = SerialLogWriter(
             logURL: bundleLayout.serialLogURL, rotatedURL: bundleLayout.serialLogRotatedURL,
             label: name)
-        serialLogWriter = writer
-        let relay = makeSerialRelay()
+        context.serialLogWriter = writer
+        let relay = makeSerialRelay(in: context)
 
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -767,15 +801,15 @@ final class VMInstance {
 
     /// Creates the per-session serial relay and, when enabled, starts it.
     ///
-    /// Also stores it on `self`; returns `nil` when the input pipe is missing.
-    private func makeSerialRelay() -> SerialSocketRelay? {
-        guard let inputPipe = serialInputPipe else { return nil }
+    /// Also stores it on `context`; returns `nil` when the input pipe is missing.
+    private func makeSerialRelay(in context: VMSessionContext) -> SerialSocketRelay? {
+        guard let inputPipe = context.serialInputPipe else { return nil }
         let relay = SerialSocketRelay(
             path: Self.serialSocketPath(for: instanceID),
             guestInputWriteHandle: inputPipe.fileHandleForWriting,
             label: name
         )
-        serialSocketRelay = relay
+        context.serialSocketRelay = relay
         if configuration.serialSocketRelayEnabled {
             relay.start()
         }
@@ -793,11 +827,7 @@ final class VMInstance {
     }
 
     func stopSerialReading() {
-        serialOutputPipe?.fileHandleForReading.readabilityHandler = nil
-        serialSocketRelay?.stop()
-        serialSocketRelay = nil
-        serialLogWriter?.close()
-        serialLogWriter = nil
+        sessionContext?.stopSerialReading()
     }
 
     // MARK: - Clipboard Service Lifecycle
@@ -827,33 +857,35 @@ final class VMInstance {
     /// Host-side only — no guest cooperation and no wire change — so it drives
     /// both transports and works with the clipboard window closed.
     func refreshClipboardPassthrough() {
+        guard let context = sessionContext else { return }
         let shouldRun =
             configuration.clipboardSharingEnabled && configuration.clipboardPassthroughEnabled
             && hasLiveVirtualMachine
         if shouldRun {
             let coordinator =
-                clipboardPassthroughCoordinator
+                context.clipboardPassthroughCoordinator
                 ?? ClipboardPassthroughCoordinator(
                     instance: self, publisher: hostClipboardPublisher,
                     reporter: clipboardTransfers)
-            clipboardPassthroughCoordinator = coordinator
+            context.clipboardPassthroughCoordinator = coordinator
             coordinator.start()
         } else {
-            clipboardPassthroughCoordinator?.stop()
-            clipboardPassthroughCoordinator = nil
+            context.clipboardPassthroughCoordinator?.stop()
+            context.clipboardPassthroughCoordinator = nil
         }
     }
 
     private func startSpiceClipboardService() {
-        guard let inputPipe = clipboardInputPipe,
-            let outputPipe = clipboardOutputPipe
+        guard let context = sessionContext,
+            let inputPipe = context.clipboardInputPipe,
+            let outputPipe = context.clipboardOutputPipe
         else {
             Self.logger.error("SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
             return
         }
         let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
         service.start()
-        clipboardService = service
+        context.clipboardService = service
         Self.logger.info("SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
@@ -861,43 +893,7 @@ final class VMInstance {
     ///
     /// Safe to call when no service is active.
     func stopClipboardService() {
-        clipboardService?.stop()
-        clipboardService = nil
-        clipboardDataSink.set(nil)
-        closeSpiceClipboardPipes()
-    }
-
-    private func closeSpiceClipboardPipes() {
-        do {
-            try clipboardInputPipe?.fileHandleForReading.close()
-        } catch {
-            Self.logger.warning(
-                "Failed to close clipboard input read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        do {
-            try clipboardInputPipe?.fileHandleForWriting.close()
-        } catch {
-            Self.logger.warning(
-                "Failed to close clipboard input write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        do {
-            try clipboardOutputPipe?.fileHandleForReading.close()
-        } catch {
-            Self.logger.warning(
-                "Failed to close clipboard output read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        do {
-            try clipboardOutputPipe?.fileHandleForWriting.close()
-        } catch {
-            Self.logger.warning(
-                "Failed to close clipboard output write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        clipboardInputPipe = nil
-        clipboardOutputPipe = nil
+        sessionContext?.stopClipboardService()
     }
 
     // MARK: - Vsock Service Lifecycle
@@ -981,7 +977,7 @@ final class VMInstance {
     ///
     /// No-ops when passthrough is off.
     func republishPassthroughIfCeilingRaised() {
-        clipboardPassthroughCoordinator?.republishIfCeilingRaised()
+        sessionContext?.clipboardPassthroughCoordinator?.republishIfCeilingRaised()
     }
 
     /// Re-pushes the current policy to a connected guest agent.
@@ -1029,9 +1025,9 @@ final class VMInstance {
                 return
             }
             // Replace any prior service from a previous reconnect.
-            self.vsockControlService?.stop()
+            self.sessionContext?.vsockControlService?.stop()
             let service = self.makeControlService(for: channel)
-            self.vsockControlService = service
+            self.sessionContext?.vsockControlService = service
             service.start()
             // Any accepted channel that never completes its Hello is on a
             // clock. Replacing a live service settles the old one as
@@ -1061,9 +1057,9 @@ final class VMInstance {
                 channel.close()
                 return
             }
-            self.vsockLogService?.stop()
+            self.sessionContext?.vsockLogService?.stop()
             let service = VsockGuestLogService(channel: channel, label: self.name)
-            self.vsockLogService = service
+            self.sessionContext?.vsockLogService = service
             service.start()
         }
     }
@@ -1083,10 +1079,10 @@ final class VMInstance {
                 channel.close()
                 return
             }
-            self.vsockDropService?.stop()
+            self.sessionContext?.vsockDropService?.stop()
             let service = VsockDropService(
                 channel: channel, label: self.name, reporter: self.clipboardTransfers)
-            self.vsockDropService = service
+            self.sessionContext?.vsockDropService = service
             self.dropDataSink.set(service)
             service.start()
         }
@@ -1130,7 +1126,7 @@ final class VMInstance {
                 channel.close()
                 return
             }
-            self.clipboardService?.stop()
+            self.sessionContext?.clipboardService?.stop()
             // Read through `self` at each budget check, so a Settings change
             // lands on the live session without restarting the service.
             let service = VsockClipboardService(
@@ -1145,10 +1141,12 @@ final class VMInstance {
                 // what supersedes the stale write; retracting too would only
                 // flash an empty pasteboard and a Copy-to-Mac hint for a button
                 // passthrough hides.
-                guard let self, self.clipboardPassthroughCoordinator == nil else { return false }
+                guard let self,
+                    self.sessionContext?.clipboardPassthroughCoordinator == nil
+                else { return false }
                 return publisher.retractPromisedWrite()
             }
-            self.clipboardService = service
+            self.sessionContext?.clipboardService = service
             self.clipboardDataSink.set(service)
             service.start()
         }
@@ -1172,32 +1170,44 @@ final class VMInstance {
     /// and no watchdog is already armed. Cancelled by any inbound Hello, by a
     /// pause, and by `tearDownSession`.
     func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
+        guard let context = sessionContext else { return }
         guard configuration.guestOS == .macOS else { return }
-        guard !bootedIntoRecovery else { return }
+        guard !context.bootedIntoRecovery else { return }
         guard status == .running else { return }
         guard configuration.lastSeenAgentVersion != nil else { return }
-        guard vsockControlService?.agentVersion == nil else { return }
+        guard context.vsockControlService?.agentVersion == nil else { return }
         guard setupState == nil else { return }
-        guard agentPostStartTask == nil else { return }
+        guard context.agentPostStartTask == nil else { return }
 
-        agentPostStartGeneration &+= 1
-        let generation = agentPostStartGeneration
+        context.agentPostStartGeneration &+= 1
+        let generation = context.agentPostStartGeneration
         Self.logger.debug(
             "Agent arrival watchdog armed for '\(self.name, privacy: .public)' (grace=\(grace, privacy: .public))"
         )
-        agentPostStartTask = Task { [weak self] in
+        // The context is captured weakly: a strong hold would keep this
+        // session's `VZVirtualMachine`, pipes and services alive for the whole
+        // grace period after a teardown.
+        context.agentPostStartTask = Task { [weak self, weak context] in
             do {
                 try await Task.sleep(for: grace)
             } catch {
                 return
             }
-            guard let self else { return }
-            guard self.agentPostStartGeneration == generation else { return }
-            if self.vsockControlService?.agentVersion == nil {
+            // Both halves of the disowning check: the context this was armed on
+            // must still be the live one, and its generation must still be the
+            // one armed here. Generation alone is an ABA test across sessions —
+            // each context counts from zero — and identity alone is one within a
+            // session, so either on its own lets a stale task fire
+            // `.expectedMissing` before a successor's grace elapsed and clear
+            // that successor's slot on the way out.
+            guard let self, let armed = context, armed === self.sessionContext,
+                armed.agentPostStartGeneration == generation
+            else { return }
+            if armed.vsockControlService?.agentVersion == nil {
                 Self.logger.notice(
                     "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
-                self.agentExpectedButMissing = true
+                armed.agentExpectedButMissing = true
                 // An agent that never showed up at all outranks the nudge the
                 // user silenced — reset the dismissal so a future `.waiting`
                 // surfaces normally. The reported guest OS version goes with
@@ -1206,7 +1216,7 @@ final class VMInstance {
                 // Hello earlier in this session: it demonstrably exists, and
                 // reversing a preference nothing restores needs better evidence
                 // than one dropped channel.
-                if !self.hasSeenAgentThisSession,
+                if !armed.hasSeenAgentThisSession,
                     self.configuration.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
@@ -1216,7 +1226,7 @@ final class VMInstance {
                     }
                 }
             }
-            self.agentPostStartTask = nil
+            armed.agentPostStartTask = nil
         }
     }
 
@@ -1224,11 +1234,7 @@ final class VMInstance {
     ///
     /// Does not clear `agentExpectedButMissing` — callers do that explicitly.
     func cancelAgentPostStartWatchdog() {
-        // Bumping disowns a task whose sleep already elapsed, which a bare
-        // `cancel()` cannot reach.
-        agentPostStartGeneration &+= 1
-        agentPostStartTask?.cancel()
-        agentPostStartTask = nil
+        sessionContext?.cancelAgentPostStartWatchdog()
     }
 
     #if DEBUG
@@ -1236,7 +1242,7 @@ final class VMInstance {
     ///
     /// Test-only seam: tests await its completion rather than polling
     /// `agentExpectedButMissing`.
-    var agentPostStartTaskForTesting: Task<Void, Never>? { agentPostStartTask }
+    var agentPostStartTaskForTesting: Task<Void, Never>? { sessionContext?.agentPostStartTask }
     #endif
 
     /// Reacts to a `Hello` whose `agent_version` is non-empty.
@@ -1249,8 +1255,8 @@ final class VMInstance {
         // Any Hello proves the agent is alive, so clear the watchdog state
         // before the changed guards below.
         cancelAgentPostStartWatchdog()
-        agentExpectedButMissing = false
-        hasSeenAgentThisSession = true
+        sessionContext?.agentExpectedButMissing = false
+        sessionContext?.hasSeenAgentThisSession = true
         // Skip the no-op write: a `config.json` rewrite on every Hello would
         // re-fire `VMDirectoryWatcher` reconcile.
         let agentVersionChanged = configuration.lastSeenAgentVersion != info.agentVersion
@@ -1269,42 +1275,11 @@ final class VMInstance {
         }
     }
 
-    /// Stops every vsock service and unbinds the listeners that fed them.
-    ///
-    /// The unbind is ordered fire-and-forget on the session's queue, which is
-    /// what keeps this synchronous: the session retains each host until its
-    /// port is gone, so there is nothing to await to keep a bound port's
-    /// delegate alive.
-    ///
-    /// Only the vsock clipboard service is stopped here — the SPICE service is
-    /// owned by `stopClipboardService()`.
+    /// Stops every vsock service and unbinds the listeners that fed them —
+    /// see ``VMSessionContext/stopVsockServices()``.
     func stopVsockServices() {
-        session?.detachRemainingListeners()
-
-        vsockControlService?.stop()
-        vsockControlService = nil
-        // The stopped service cleared the gate; this also covers a service torn
-        // down before it ever published.
-        vsockAdmissionGate.clear()
-
-        vsockLogService?.stop()
-        vsockLogService = nil
-
-        vsockDropService?.stop()
-        vsockDropService = nil
-        dropDataSink.set(nil)
-
-        if clipboardService is VsockClipboardService {
-            clipboardService?.stop()
-            clipboardService = nil
-        }
-        clipboardDataSink.set(nil)
+        sessionContext?.stopVsockServices()
     }
-
-    /// The vsock live-policy application in flight, chained so a second toggle
-    /// arriving before the first finishes runs after it rather than
-    /// interleaving with it.
-    @ObservationIgnored private var livePolicyApplication: Task<Void, Never>?
 
     /// Reacts to a configuration change while the VM is running by installing
     /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
@@ -1342,7 +1317,9 @@ final class VMInstance {
             refreshClipboardPassthrough()
         }
 
-        guard let session, session.hasVirtioSocketDevice else { return }
+        guard let context = sessionContext, let session = context.session,
+            session.hasVirtioSocketDevice
+        else { return }
 
         let logChanged =
             oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled
@@ -1359,9 +1336,24 @@ final class VMInstance {
 
         let sessionID = session.id
 
-        livePolicyApplication = Task { [previous = livePolicyApplication] in
+        // The context is what each step below is re-checked against, and it is
+        // captured weakly so a chain still draining cannot hold a torn-down
+        // session's `VZVirtualMachine` and services alive behind it.
+        context.livePolicyApplication = Task {
+            [weak context, previous = context.livePolicyApplication] in
             await previous?.value
-            guard self.session === session else { return }
+            /// Whether the context this edit belongs to is still the live one.
+            ///
+            /// Every hop hands main back, so this is re-asked before each step:
+            /// a teardown landing in between has already queued its unbind, and
+            /// a *successor* session must have neither listeners installed
+            /// behind it nor its own services torn down by an edit that belongs
+            /// to a session already gone.
+            @MainActor func belongsToTheLiveSession() -> Bool {
+                guard let context, self.sessionContext === context else { return false }
+                return context.session === session
+            }
+            guard belongsToTheLiveSession() else { return }
 
             // A listener the guest is about to be told about goes up first: the
             // policy frame wakes the guest's parked reconnect loop at once
@@ -1370,21 +1362,17 @@ final class VMInstance {
             if logChanged && logEnabled {
                 await self.applyLiveLogPolicy(enabled: true, on: session, sessionID: sessionID)
             }
-            // Re-checked between the two installs: the hop above hands main
-            // back, so a teardown landing there has already queued its unbind,
-            // and a second install would bind ports behind it that nothing
-            // takes down.
-            guard self.session === session else { return }
+            guard belongsToTheLiveSession() else { return }
             if clipboardApplies && clipboardEnabled {
                 await self.applyLiveClipboardPolicy(enabled: true, on: session, sessionID: sessionID)
             }
 
-            guard self.session === session else { return }
+            guard belongsToTheLiveSession() else { return }
             if dropChanged && dropEnabled {
                 await self.applyLiveDropPolicy(enabled: true, on: session, sessionID: sessionID)
             }
 
-            guard self.session === session else { return }
+            guard belongsToTheLiveSession() else { return }
             // The control service is nil in the window between accepting a
             // connection and the guest's Hello — the next Hello-driven send
             // catches that up.
@@ -1395,14 +1383,18 @@ final class VMInstance {
             // thinks the feature is on makes the guest see EOF and pound the
             // host with reconnects until the policy arrives.
             if logChanged && !logEnabled {
+                guard belongsToTheLiveSession() else { return }
                 await self.applyLiveLogPolicy(enabled: false, on: session, sessionID: sessionID)
             }
             if clipboardApplies && !clipboardEnabled {
+                guard belongsToTheLiveSession() else { return }
                 await self.applyLiveClipboardPolicy(enabled: false, on: session, sessionID: sessionID)
             }
             if dropChanged && !dropEnabled {
+                guard belongsToTheLiveSession() else { return }
                 await self.applyLiveDropPolicy(enabled: false, on: session, sessionID: sessionID)
             }
+            guard belongsToTheLiveSession() else { return }
 
             Self.logger.notice(
                 "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
@@ -1416,9 +1408,9 @@ final class VMInstance {
     /// readability handler already holds a reference to it.
     private func applyLiveSerialRelayPolicy(enabled: Bool) {
         if enabled {
-            serialSocketRelay?.start()
+            sessionContext?.serialSocketRelay?.start()
         } else {
-            serialSocketRelay?.stop()
+            sessionContext?.serialSocketRelay?.stop()
         }
         Self.logger.notice(
             "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
@@ -1434,8 +1426,8 @@ final class VMInstance {
             // the host it displaces, so no accept can land on a dead delegate.
             await installer.attach([makeLogListenerHost(sessionID: sessionID)])
         } else {
-            vsockLogService?.stop()
-            vsockLogService = nil
+            sessionContext?.vsockLogService?.stop()
+            sessionContext?.vsockLogService = nil
             await installer.detach(ports: [KernovaVsockPort.log])
         }
     }
@@ -1456,8 +1448,8 @@ final class VMInstance {
         } else {
             // The caller gates this branch on macOS guests, so any
             // `clipboardService` here is a `VsockClipboardService`.
-            clipboardService?.stop()
-            clipboardService = nil
+            sessionContext?.clipboardService?.stop()
+            sessionContext?.clipboardService = nil
             clipboardDataSink.set(nil)
             await installer.detach(
                 ports: [KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData])
@@ -1475,8 +1467,8 @@ final class VMInstance {
                 makeDropDataListenerHost(),
             ])
         } else {
-            vsockDropService?.stop()
-            vsockDropService = nil
+            sessionContext?.vsockDropService?.stop()
+            sessionContext?.vsockDropService = nil
             dropDataSink.set(nil)
             await installer.detach(ports: [KernovaVsockPort.drop, KernovaVsockPort.dropData])
         }

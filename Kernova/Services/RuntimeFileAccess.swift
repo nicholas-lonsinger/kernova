@@ -6,7 +6,7 @@ import os
 /// VZ opens its file descriptors at configuration-build time and gives no
 /// signal when it is done with them, so config-derived scopes (kernel/initrd,
 /// external disks, shared directories) are held for the entire runtime and
-/// released exactly once from `VMInstance.tearDownSession()`. Removable-media
+/// released exactly once from `VMSessionContext.tearDown()`. Removable-media
 /// scopes are keyed by item id instead, so a live eject releases exactly its
 /// own grant and a re-attach replaces it cleanly.
 @MainActor
@@ -58,12 +58,13 @@ extension VMInstance {
     /// Opens scoped access for every bookmarked external path in the
     /// configuration, healing stale or moved bookmarks on the way.
     ///
-    /// Called at the top of each boot attempt, before the configuration builder
-    /// resolves any paths. The walk must stay in lockstep with
-    /// `ConfigurationBuilder`'s — a new external-path field on `VMConfiguration`
-    /// needs an entry in both, or its scope never opens and the builder reports
-    /// a spurious not-found under the sandbox.
-    func openRuntimeFileAccess() {
+    /// Called by ``beginSessionContext(bootedIntoRecovery:)`` at the top of each
+    /// boot attempt with the freshly opened context's `fileAccess`, before the
+    /// configuration builder resolves any paths. The walk must stay in lockstep
+    /// with `ConfigurationBuilder`'s — a new external-path field on
+    /// `VMConfiguration` needs an entry in both, or its scope never opens and
+    /// the builder reports a spurious not-found under the sandbox.
+    func openRuntimeFileAccess(into fileAccess: RuntimeFileAccess) {
         var scopes: [ScopedAccess] = []
         var heals: [(inout VMConfiguration) -> Void] = []
 
@@ -132,7 +133,7 @@ extension VMInstance {
                 c.removableMedia?[index].path = path
                 c.removableMedia?[index].bookmark = bookmark
             }
-            if let scope { runtimeFileAccess.addHotAttach(id: item.id, scope) }
+            if let scope { fileAccess.addHotAttach(id: item.id, scope) }
         }
         for directory in config.sharedDirectories ?? [] {
             let scope = open(directory.bookmark, storedPath: directory.path) { c, path, bookmark in
@@ -150,6 +151,6 @@ extension VMInstance {
                 for heal in heals { heal(&config) }
             }
         }
-        runtimeFileAccess.adoptConfigScopes(scopes)
+        fileAccess.adoptConfigScopes(scopes)
     }
 }

@@ -1003,7 +1003,7 @@ final class VMLibrary {
         for device in toDetach {
             do {
                 try await lifecycle.detachUSBDevice(device, from: instance)
-                instance.runtimeFileAccess.releaseHotAttach(id: device.id)
+                instance.sessionContext?.fileAccess.releaseHotAttach(id: device.id)
             } catch USBDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
@@ -1015,8 +1015,8 @@ final class VMLibrary {
                 Self.logger.notice(
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
-                instance.liveRemovableMedia.removeAll { $0.id == device.id }
-                instance.runtimeFileAccess.releaseHotAttach(id: device.id)
+                instance.sessionContext?.liveRemovableMedia.removeAll { $0.id == device.id }
+                instance.sessionContext?.fileAccess.releaseHotAttach(id: device.id)
             } catch {
                 Self.logger.error(
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -1041,7 +1041,7 @@ final class VMLibrary {
                     to: instance
                 )
                 if let scope {
-                    instance.runtimeFileAccess.addHotAttach(id: item.id, scope)
+                    instance.sessionContext?.fileAccess.addHotAttach(id: item.id, scope)
                 }
                 Self.logger.notice(
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"

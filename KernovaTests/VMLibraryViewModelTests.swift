@@ -5138,6 +5138,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         viewModel.instances.append(instance)
 
         viewModel.mountGuestAgentInstaller(on: instance)
@@ -5201,9 +5202,10 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let installerItem = RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         instance.configuration.removableMedia = [installerItem]
-        instance.liveRemovableMedia = [
+        instance.sessionContext?.liveRemovableMedia = [
             USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly)
         ]
         viewModel.instances.append(instance)
@@ -5261,10 +5263,11 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance(guestOS: .macOS)
         instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         instance.status = .running
+        instance.beginSessionContext()
         let installerItem = RemovableMediaItem(
             path: installerURL.path(percentEncoded: false), readOnly: true)
         instance.configuration.removableMedia = [installerItem]
-        instance.liveRemovableMedia = [
+        instance.sessionContext?.liveRemovableMedia = [
             USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly)
         ]
         viewModel.instances.append(instance)
@@ -5766,9 +5769,10 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let idA = UUID()
         let idB = UUID()
-        instance.liveRemovableMedia = [
+        instance.sessionContext?.liveRemovableMedia = [
             USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true),
             USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true),
         ]
@@ -5805,8 +5809,9 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let id = UUID()
-        instance.liveRemovableMedia = [
+        instance.sessionContext?.liveRemovableMedia = [
             USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
         ]
         var old = instance.configuration
@@ -5842,8 +5847,9 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let id = UUID()
-        instance.liveRemovableMedia = []
+        instance.sessionContext?.liveRemovableMedia = []
         var old = instance.configuration
         old.removableMedia = nil
         instance.configuration = old
@@ -5873,8 +5879,9 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let id = UUID()
-        instance.liveRemovableMedia = [
+        instance.sessionContext?.liveRemovableMedia = [
             USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
         ]
         var oldItem = RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true, label: "Installer")
@@ -5912,8 +5919,9 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
+        instance.beginSessionContext()
         let id = UUID()
-        instance.liveRemovableMedia = [
+        instance.sessionContext?.liveRemovableMedia = [
             USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
         ]
         var old = instance.configuration
