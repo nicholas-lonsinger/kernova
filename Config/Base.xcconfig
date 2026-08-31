@@ -1,12 +1,99 @@
-// Project-level base configuration, wired to both the Debug and Release
-// project XCBuildConfigurations. Signing overrides live in the gitignored
-// Local.xcconfig included below — docs/BUILD.md "Signing identity" owns the
-// full story.
+// Project-level base configuration, wired as the base of both project
+// XCBuildConfigurations. Per-target facts live in Config/Targets/<Target>.xcconfig,
+// which outranks this file; signing overrides live in the gitignored
+// Local.xcconfig included at the end — docs/BUILD.md "Signing identity" owns
+// the full story.
+//
+// Debug/Release differences carry a `[config=…]` condition rather than living
+// in separate files, so the settings both configurations share are written once.
+
+// MARK: - Architecture, SDK, and language
+
+ALWAYS_SEARCH_USER_PATHS = NO
+ARCHS = arm64
+SDKROOT = macosx
+MACOSX_DEPLOYMENT_TARGET = 26.0
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+CLANG_CXX_LANGUAGE_STANDARD = gnu++20
+GCC_C_LANGUAGE_STANDARD = gnu17
+CLANG_ENABLE_MODULES = YES
+CLANG_ENABLE_OBJC_ARC = YES
+CLANG_ENABLE_OBJC_WEAK = YES
+
+// The guest agent runs inside guests that predate the host's floor. Read by
+// Tools/check-agent-deployment-floor.sh, which holds KernovaKit/Package.swift's
+// `.macOS(…)` — the one statement SwiftPM cannot take from an xcconfig — to it.
+KERNOVA_AGENT_DEPLOYMENT_TARGET = 12.0
+
+// The app's marketing version, shared with the two test bundles. The guest
+// agent's is independent and lives in Config/Targets/KernovaMacOSAgent.xcconfig.
+KERNOVA_MARKETING_VERSION = 0.9.1
+
+// MARK: - Code generation
+
+COPY_PHASE_STRIP = NO
+DEAD_CODE_STRIPPING = YES
+ENABLE_STRICT_OBJC_MSGSEND = YES
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+GCC_NO_COMMON_BLOCKS = YES
+MTL_FAST_MATH = YES
+ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES
+STRING_CATALOG_GENERATE_SYMBOLS = YES
+
+GCC_OPTIMIZATION_LEVEL[config=Debug] = 0
+SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone
+GCC_DYNAMIC_NO_PIC[config=Debug] = NO
+ENABLE_TESTABILITY[config=Debug] = YES
+DEBUG_INFORMATION_FORMAT[config=Debug] = dwarf
+MTL_ENABLE_DEBUG_INFO[config=Debug] = INCLUDE_SOURCE
+GCC_PREPROCESSOR_DEFINITIONS[config=Debug] = DEBUG=1 $(inherited)
+SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug] = DEBUG $(inherited)
+
+SWIFT_COMPILATION_MODE[config=Release] = wholemodule
+DEBUG_INFORMATION_FORMAT[config=Release] = dwarf-with-dsym
+MTL_ENABLE_DEBUG_INFO[config=Release] = NO
+ENABLE_NS_ASSERTIONS[config=Release] = NO
+
+// MARK: - Diagnostics
+
+CLANG_ANALYZER_NONNULL = YES
+CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE
+CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES
+CLANG_WARN_BOOL_CONVERSION = YES
+CLANG_WARN_COMMA = YES
+CLANG_WARN_CONSTANT_CONVERSION = YES
+CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES
+CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR
+CLANG_WARN_DOCUMENTATION_COMMENTS = YES
+CLANG_WARN_EMPTY_BODY = YES
+CLANG_WARN_ENUM_CONVERSION = YES
+CLANG_WARN_INFINITE_RECURSION = YES
+CLANG_WARN_INT_CONVERSION = YES
+CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES
+CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES
+CLANG_WARN_OBJC_LITERAL_CONVERSION = YES
+CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR
+CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES
+CLANG_WARN_RANGE_LOOP_ANALYSIS = YES
+CLANG_WARN_STRICT_PROTOTYPES = YES
+CLANG_WARN_SUSPICIOUS_MOVE = YES
+CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE
+CLANG_WARN_UNREACHABLE_CODE = YES
+CLANG_WARN__DUPLICATE_METHOD_MATCH = YES
+GCC_WARN_64_TO_32_BIT_CONVERSION = YES
+GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR
+GCC_WARN_UNDECLARED_SELECTOR = YES
+GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE
+GCC_WARN_UNUSED_FUNCTION = YES
+GCC_WARN_UNUSED_VARIABLE = YES
 
 // Project targets only — package targets never read a project xcconfig, so
 // KernovaKit/Package.swift carries the same gate as a `swiftSettings` entry.
 SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
 GCC_TREAT_WARNINGS_AS_ERRORS = YES
+
+// MARK: - Signing
 
 // Ad-hoc, so a fresh clone builds with no team or certificate.
 CODE_SIGN_IDENTITY = -

@@ -1,9 +1,18 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
+// Project targets take these from Config/Base.xcconfig; a package target never
+// reads a project xcconfig, so the same gates are stated here.
+let sharedSwiftSettings: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
+    .treatAllWarnings(as: .error),
+]
+
 let package = Package(
     name: "KernovaKit",
     platforms: [
+        // Held to Config/Base.xcconfig's KERNOVA_AGENT_DEPLOYMENT_TARGET by
+        // Tools/check-agent-deployment-floor.sh.
         .macOS(.v12)
     ],
     products: [
@@ -19,26 +28,17 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftProtobuf", package: "swift-protobuf")
             ],
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-                .treatAllWarnings(as: .error),
-            ]
+            swiftSettings: sharedSwiftSettings
         ),
         .target(
             name: "KernovaTestSupport",
             dependencies: ["KernovaKit"],
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-                .treatAllWarnings(as: .error),
-            ]
+            swiftSettings: sharedSwiftSettings
         ),
         .testTarget(
             name: "KernovaKitTests",
             dependencies: ["KernovaKit", "KernovaTestSupport"],
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-                .treatAllWarnings(as: .error),
-            ]
+            swiftSettings: sharedSwiftSettings
         ),
     ]
 )

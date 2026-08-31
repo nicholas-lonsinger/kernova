@@ -43,9 +43,11 @@ Run long targets (`build`, `test`, `test-suite`) as bare **background** shell co
 
 The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64)` guards are unnecessary.
 
+Build settings live in `Config/` — `Base.xcconfig` for project-wide facts, `Config/Targets/<Target>.xcconfig` for per-target ones, each covering Debug and Release with `[config=…]` conditions. Every `buildSettings` block in `project.pbxproj` stays empty, and no signing identity, team, or entitlement path goes in an app or test-target xcconfig ([docs/BUILD.md](docs/BUILD.md)).
+
 A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`.
 
-Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — every occurrence together ([docs/BUILD.md](docs/BUILD.md)).
+Any change requiring a guest-agent reinstall bumps the `MARKETING_VERSION` in `Config/Targets/KernovaMacOSAgent.xcconfig` ([docs/BUILD.md](docs/BUILD.md)).
 
 ## Architecture
 

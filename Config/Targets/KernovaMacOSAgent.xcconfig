@@ -1,0 +1,48 @@
+// The guest agent app, both configurations.
+
+PRODUCT_NAME = Kernova Guest Agent
+PRODUCT_MODULE_NAME = KernovaMacOSAgent
+EXECUTABLE_NAME = KernovaMacOSAgent
+PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent
+
+// The guest agent's own version, independent of the app's. Bump it whenever a
+// change means a running guest needs the agent reinstalled — docs/BUILD.md
+// "Guest agent versioning".
+MARKETING_VERSION = 0.73.1
+
+MACOSX_DEPLOYMENT_TARGET = $(KERNOVA_AGENT_DEPLOYMENT_TARGET)
+
+// CFBundleVersion comes from Tools/set-build-number.sh through the prefix
+// header, so the checked-in Info.plist is preprocessed rather than generated.
+GENERATE_INFOPLIST_FILE = NO
+INFOPLIST_FILE = KernovaMacOSAgent/Info.plist
+INFOPLIST_PREPROCESS = YES
+INFOPLIST_PREFIX_HEADER = $(DERIVED_FILE_DIR)/AgentBuildNumber.h
+
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks @loader_path/../Frameworks
+
+ENABLE_APP_SANDBOX = NO
+ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO
+AUTOMATION_APPLE_EVENTS = NO
+ENABLE_HARDENED_RUNTIME = YES
+RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO
+RUNTIME_EXCEPTION_ALLOW_JIT = NO
+RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO
+RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO
+RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO
+RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO
+CLANG_INSTRUMENT_FOR_OPTIMIZATION_PROFILING[config=Debug] = NO
+
+// The agent runs inside the guest, where a host code identity buys nothing, so
+// Debug stays ad-hoc; Release carries the Developer ID a distributed agent
+// needs. Both pins shadow Config/Local.xcconfig by design.
+CODE_SIGN_IDENTITY[sdk=macosx*] = -
+CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = Developer ID Application
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_STYLE[config=Release] = Manual
+PROVISIONING_PROFILE_SPECIFIER =
+PROVISIONING_PROFILE_SPECIFIER[config=Release] = Kernova macOS Agent Developer ID
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
+OTHER_CODE_SIGN_FLAGS[config=Release] = --timestamp
+SKIP_INSTALL[config=Release] = YES
