@@ -201,7 +201,7 @@ jobs:
           # wrapper — the download then unpacks as a bare Info.plist + Data/ that
           # xcresulttool can't open without first renaming it back. Uploading the
           # enclosing `artifacts/` keeps `TestResults.xcresult/` intact in the
-          # download (matching the `-resultBundlePath artifacts/TestResults.xcresult`
-          # above), so `gh run download` yields a directly-usable result bundle.
+          # download (matching the Makefile's `RESULT_BUNDLE`), so `gh run
+          # download` yields a directly-usable result bundle.
           path: artifacts/
           retention-days: 7
