@@ -233,11 +233,14 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
     /// construction, and the first one through does the work.
     private func settle() {
         endpoint.stop()
+        // A garbage-collection pass, not a one-shot: it runs on every settle,
+        // not just the first, because a drop the buffer no longer shows keeps
+        // acquiring new unreferenced directories to reclaim for as long as the
+        // window's Clear button and text editor stay live against a retained,
+        // already-settled service.
+        retireUnreferencedDropDirectories()
         guard isConnected else { return }
         isConnected = false
-        // With the offer gone, a drop the buffer no longer shows has no reader
-        // left on this side.
-        retireUnreferencedDropDirectories()
         // Only this service's own operations, never the VM's whole report: a
         // paste fire this teardown cut short still owes the VM its answer, and a
         // superseded service's later failure belongs to the VM either way (§13).

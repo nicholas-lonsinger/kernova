@@ -126,6 +126,8 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
+        defer { service.stop() }
+        defer { guest.close() }
 
         // The guest closes this channel on every agent reconnect. Nothing calls
         // stop() for that, so the service has to settle itself or it keeps
@@ -134,7 +136,8 @@ struct VsockClipboardServiceTests {
 
         try await waitForChange { !service.isConnected }
         // The latch: an owner stop() after the channel already settled is a
-        // safe no-op, not a double retire/abandon/log.
+        // safe no-op — retire is expected to run again (a garbage-collection
+        // pass, not one-shot), but abandon/log are not.
         service.stop()
         #expect(!service.isConnected)
     }
