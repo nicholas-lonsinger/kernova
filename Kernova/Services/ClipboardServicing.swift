@@ -38,7 +38,12 @@ protocol ClipboardServicing: AnyObject {
     /// Announces the current `clipboardContent` to the guest if it has changed
     /// since the last successful announcement. Called by the clipboard window
     /// when it loses focus, and immediately after a paste/drop gesture.
-    func grabIfChanged()
+    ///
+    /// `.settled` means this content is done with — announced, already held by
+    /// the guest, or carrying nothing this transport can send. `.undelivered`
+    /// means nothing reached the guest and offering the same content again on a
+    /// live connection would send it.
+    func grabIfChanged() -> ClipboardGrabOutcome
 
     /// Empties the buffer (the window's "Clear" gesture) and resets the
     /// outbound dedup state.
@@ -74,6 +79,17 @@ protocol ClipboardServicing: AnyObject {
     /// offer (local or user-edited content) the buffer's representations return
     /// `.resolved`. Reps that can never be served are reported as `.droppedFile`.
     func materializeForCopy() -> [CopyToMacItem]
+}
+
+/// What became of a `grabIfChanged()`.
+///
+/// Splits the one outcome a caller can act on — nothing reached the guest, and
+/// the same content offered again on a live connection would go out — from
+/// every outcome that is final for this content, whether it was announced, the
+/// guest already held it, or it carried nothing this transport can send.
+enum ClipboardGrabOutcome: Equatable, Sendable {
+    case settled
+    case undelivered
 }
 
 /// A representation promised on the host pasteboard by its offer coordinates,

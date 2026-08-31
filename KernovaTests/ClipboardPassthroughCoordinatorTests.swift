@@ -35,6 +35,10 @@ struct ClipboardPassthroughCoordinatorTests {
         /// Every content handed to `grabIfChanged()` by the poll, in order.
         var grabbed: [ClipboardContent] = []
 
+        /// What a connected `grabIfChanged()` reports — the seam a test uses to
+        /// simulate a send that never left.
+        var grabOutcome: ClipboardGrabOutcome = .settled
+
         /// Makes `materializeForCopy` refuse the way `VsockClipboardService` does
         /// over the deadline-safe cap: every rep dropped, and the refusal
         /// reported in the same step.
@@ -47,9 +51,13 @@ struct ClipboardPassthroughCoordinatorTests {
         func stop() {}
         func clearBuffer() { clipboardContent = .empty }
 
-        func grabIfChanged() {
+        /// Mirrors both real transports: a disconnected service delivers nothing,
+        /// so it reports `.undelivered` and leaves the copy retryable.
+        func grabIfChanged() -> ClipboardGrabOutcome {
+            guard isConnected else { return .undelivered }
             grabbed.append(clipboardContent)
             grabRecorded.notify()
+            return grabOutcome
         }
 
         func materializeForCopy() -> [CopyToMacItem] {
@@ -181,6 +189,33 @@ struct ClipboardPassthroughCoordinatorTests {
 
         #expect(reconnected.grabbed.count == 1)
         #expect(reconnected.grabbed.first?.text == "copied during the outage")
+    }
+
+    @Test("A forward the transport never delivered is re-offered until it lands")
+    func undeliveredForwardIsRetried() {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        // The send failed on a connection that still reports itself up — a
+        // verdict only the transport's own outcome carries.
+        h.service.grabOutcome = .undelivered
+        writeText("never left the host", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.count == 1)
+
+        // Same copy, same change count: the poll must offer it again rather than
+        // read the count as already spent.
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.count == 2)
+
+        h.service.grabOutcome = .settled
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.count == 3)
+        #expect(h.service.grabbed.last?.text == "never left the host")
+
+        // Landed — the count is settled and the retries stop.
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.count == 3)
     }
 
     @Test("Our own inbound publish is absorbed, not re-forwarded (echo suppression)")
@@ -342,6 +377,113 @@ struct ClipboardPassthroughCoordinatorTests {
         // would fire on each one rather than on anything the user can act on.
         #expect(h.service.grabbed.isEmpty)
         #expect(h.reports.failure == nil)
+    }
+
+    @Test("A file copy whose service settles mid-resolve reaches the reconnected one")
+    func fileCopyLostMidResolveIsRetried() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        writeFileURLs([file], to: h.pasteboard)
+
+        var resolveCompleted = false
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolveCompleted = true
+            resolved.notify()
+        }
+
+        // The resolve's continuation needs the main actor this test holds, so the
+        // channel dies strictly between the poll's read and the offer it leads
+        // to — the window the change count used to be consumed in.
+        h.coordinator.pollHostClipboard()
+        h.service.isConnected = false
+        try await resolved.wait { resolveCompleted }
+        #expect(h.service.grabbed.isEmpty)
+
+        // The redial installs a fresh service, and the copy is still outstanding.
+        let reconnected = FakePassthroughService()
+        reconnected.reporter = h.reports.reporter
+        h.instance.clipboardService = reconnected
+        resolveCompleted = false
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolveCompleted }
+
+        #expect(reconnected.grabbed.map { $0.representations.map(\.filename) } == [["notes.txt"]])
+    }
+
+    @Test("A poll during an in-flight file resolve starts no second walk of the same copy")
+    func pollDuringResolveForwardsOnce() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        writeFileURLs([file], to: h.pasteboard)
+
+        var resolveCompleted = false
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolveCompleted = true
+            resolved.notify()
+        }
+
+        // Both polls run before the resolve's Task can start: leaving the copy
+        // retryable must not turn every tick of a multi-second folder walk into
+        // another walk.
+        h.coordinator.pollHostClipboard()
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolveCompleted }
+        #expect(h.service.grabbed.count == 1)
+
+        // And once it has settled, the copy is not offered a second time.
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.count == 1)
+    }
+
+    @Test("An undelivered forward files no transfer report until its retry lands")
+    func undeliveredForwardDefersItsSkipNote() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = directory.appendingPathComponent("kept.txt")
+        let doomed = directory.appendingPathComponent("doomed.txt")
+        try Data("kept".utf8).write(to: kept)
+        try Data("doomed".utf8).write(to: doomed)
+        writeFileURLs([kept, doomed], to: h.pasteboard)
+
+        var resolveCompleted = false
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolveCompleted = true
+            resolved.notify()
+        }
+
+        h.service.grabOutcome = .undelivered
+        h.coordinator.pollHostClipboard()
+        try FileManager.default.removeItem(at: doomed)
+        try await resolved.wait { resolveCompleted }
+
+        // Nothing reached the guest, so nothing partial did either — reporting
+        // here would file one refusal per poll until the retry lands.
+        #expect(h.service.grabbed.count == 1)
+        #expect(h.reports.refusals.isEmpty)
+
+        h.service.grabOutcome = .settled
+        resolveCompleted = false
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolveCompleted }
+
+        #expect(h.reports.refusals.count == 1)
+        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
     }
 
     @Test("A transient-marked snapshot is not forwarded")
@@ -538,7 +680,7 @@ struct ClipboardPassthroughCoordinatorTests {
         var promises: [CopyToMacPromise] = []
 
         func stop() {}
-        func grabIfChanged() {}
+        func grabIfChanged() -> ClipboardGrabOutcome { .settled }
         func clearBuffer() { clipboardContent = .empty }
         func materializeForCopy() -> [CopyToMacItem] { promises.map { .promised($0) } }
 

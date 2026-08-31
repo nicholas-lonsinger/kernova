@@ -129,7 +129,8 @@ struct SpiceClipboardServiceTests {
     func grabWhileDisconnected() {
         let (service, inputPipe, _) = makeService()
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        // Nothing reached the guest, so the copy is still owed to it.
+        #expect(service.grabIfChanged() == .undelivered)
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
@@ -139,7 +140,7 @@ struct SpiceClipboardServiceTests {
         connect(service)
         drainPipe(inputPipe)
 
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
@@ -154,7 +155,8 @@ struct SpiceClipboardServiceTests {
         service.clipboardContent = ClipboardContent(representations: [
             .init(uti: "public.png", data: Data([0x89, 0x50, 0x4E, 0x47]))
         ])
-        service.grabIfChanged()
+        // Settled, not owed: this transport can never carry it.
+        #expect(service.grabIfChanged() == .settled)
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
@@ -164,10 +166,10 @@ struct SpiceClipboardServiceTests {
         connect(service)
 
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         drainPipe(inputPipe)
 
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
@@ -180,7 +182,7 @@ struct SpiceClipboardServiceTests {
         drainPipe(inputPipe)
 
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
 
         let types = messageTypes(in: drainPipe(inputPipe))
         #expect(types == [.clipboardGrab])
@@ -193,7 +195,7 @@ struct SpiceClipboardServiceTests {
         drainPipe(inputPipe)
 
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        #expect(service.grabIfChanged() == .settled)
 
         let types = messageTypes(in: drainPipe(inputPipe))
         #expect(types == [.clipboardGrab, .clipboard])
@@ -210,7 +212,8 @@ struct SpiceClipboardServiceTests {
         try inputPipe.fileHandleForWriting.close()
 
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        // The write never left, so the copy is owed to the next connection.
+        #expect(service.grabIfChanged() == .undelivered)
 
         #expect(!service.isConnected)
     }
@@ -243,7 +246,7 @@ struct SpiceClipboardServiceTests {
 
         // Grab "Hello" — sets lastGrabbedText
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         drainPipe(inputPipe)
 
         // Guest sends its own data → resets lastGrabbedText
@@ -256,7 +259,7 @@ struct SpiceClipboardServiceTests {
 
         // Re-grabbing "Hello" should succeed because lastGrabbedText was reset
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         let types = messageTypes(in: drainPipe(inputPipe))
         #expect(types.contains(.clipboardGrab))
     }
@@ -269,7 +272,7 @@ struct SpiceClipboardServiceTests {
 
         // Grab sets pendingOutboundText
         service.clipboardContent = ClipboardContent(text: "Hello")
-        service.grabIfChanged()
+        _ = service.grabIfChanged()
         drainPipe(inputPipe)
 
         // Guest requests the data
