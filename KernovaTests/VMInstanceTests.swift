@@ -8,7 +8,7 @@ import KernovaTestSupport
 @Suite("VMInstance Tests", .admissionGated)
 @MainActor
 struct VMInstanceTests {
-    private func makeInstance(status: VMStatus = .stopped) -> VMInstance {
+    private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
@@ -16,7 +16,26 @@ struct VMInstanceTests {
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+    }
+
+    /// Every mid-operation phase, each with the session identity its own case
+    /// admits — what the transitional loops below enumerate.
+    private static var transitionalPhases: [VMLifecyclePhase] {
+        [
+            .starting(sessionID: UUID()), .saving(sessionID: UUID()),
+            .capturingLive(sessionID: UUID()), .capturingAtRest,
+            .restoringSavedState(sessionID: UUID()), .revertingToSnapshot,
+            .installing(sessionID: UUID()),
+        ]
+    }
+
+    /// Every phase that reports a status other than `.paused` — what the
+    /// display-projection loops enumerate, since the paused pair is covered on
+    /// its own.
+    private static var nonPausedPhases: [VMLifecyclePhase] {
+        [.stopped, .initialBoot, .failed(message: "Boot failed."), .running(sessionID: UUID())]
+            + transitionalPhases
     }
 
     // MARK: - Snapshot eligibility
@@ -25,27 +44,25 @@ struct VMInstanceTests {
         "A live (running or live-paused) or stopped VM can be snapshotted; transitional and unbootable states cannot"
     )
     func canTakeSnapshotCoversLiveAndStopped() {
-        for status in [VMStatus.running, .paused] {
-            let instance = makeInstance(status: status)
-            instance.hasLiveVirtualMachineOverrideForTesting = true
-            #expect(instance.canTakeSnapshot, "status \(status.displayName)")
+        for phase in [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())] {
+            #expect(makeInstance(phase: phase).canTakeSnapshot, "phase \(phase)")
         }
-        #expect(makeInstance(status: .stopped).canTakeSnapshot)
-        // Cold-paused is covered separately below — it can be snapshotted too,
+        #expect(makeInstance(phase: .stopped).canTakeSnapshot)
+        // Suspended is covered separately below — it can be snapshotted too,
         // just through a different capture mode.
-        for status in [
-            VMStatus.starting, .saving, .snapshotting, .restoring, .installing, .error, .initialBoot,
+        for phase in [
+            VMLifecyclePhase.starting(sessionID: UUID()), .saving(sessionID: UUID()),
+            .capturingLive(sessionID: UUID()), .capturingAtRest,
+            .restoringSavedState(sessionID: UUID()), .revertingToSnapshot,
+            .installing(sessionID: UUID()), .failed(message: "Boot failed."), .initialBoot,
         ] {
-            let instance = makeInstance(status: status)
-            instance.hasLiveVirtualMachineOverrideForTesting = true
-            #expect(instance.canTakeSnapshot == false, "status \(status.displayName)")
+            #expect(makeInstance(phase: phase).canTakeSnapshot == false, "phase \(phase)")
         }
     }
 
     @Test("A cold-paused VM's suspend slot is captured as a suspended-mode snapshot")
     func coldPausedTakesASuspendedSnapshot() throws {
-        let instance = makeInstance(status: .paused)
-        instance.hasLiveVirtualMachineOverrideForTesting = false
+        let instance = makeInstance(phase: .suspended)
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
@@ -61,8 +78,7 @@ struct VMInstanceTests {
         "A cold-paused VM with no suspend slot cannot be captured — a dead end a failed snapshot attempt can leave it in"
     )
     func coldPausedWithNoSaveFileCannotBeCaptured() {
-        let instance = makeInstance(status: .paused)
-        instance.hasLiveVirtualMachineOverrideForTesting = false
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused)
         #expect(!instance.hasSaveFile)
 
@@ -72,12 +88,10 @@ struct VMInstanceTests {
 
     @Test("The capture mode follows what the VM has to capture, and decides the stamped kind")
     func snapshotModeFollowsLiveness() {
-        for status in [VMStatus.running, .paused] {
-            let instance = makeInstance(status: status)
-            instance.hasLiveVirtualMachineOverrideForTesting = true
-            #expect(instance.snapshotCaptureMode == .live, "status \(status.displayName)")
+        for phase in [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())] {
+            #expect(makeInstance(phase: phase).snapshotCaptureMode == .live, "phase \(phase)")
         }
-        #expect(makeInstance(status: .stopped).snapshotCaptureMode == .stopped)
+        #expect(makeInstance(phase: .stopped).snapshotCaptureMode == .stopped)
         #expect(VMSnapshotCaptureMode.live.kind == .warm)
         #expect(VMSnapshotCaptureMode.suspended.kind == .warm)
         #expect(VMSnapshotCaptureMode.stopped.kind == .cold)
@@ -85,7 +99,7 @@ struct VMInstanceTests {
 
     @Test("canRevertToSnapshot needs a snapshot to go back to")
     func revertNeedsASnapshot() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         #expect(instance.canRevertToSnapshot == false)
 
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
@@ -94,17 +108,17 @@ struct VMInstanceTests {
 
     @Test("A running VM can be reverted — the revert discards the live session")
     func runningVMCanBeReverted() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
         #expect(instance.canRevertToSnapshot == true)
     }
 
     @Test("A VM mid-transition cannot be reverted")
     func transitioningVMCannotBeReverted() {
-        for status in [VMStatus.starting, .saving, .snapshotting, .restoring, .installing] {
-            let instance = makeInstance(status: status)
+        for phase in Self.transitionalPhases {
+            let instance = makeInstance(phase: phase)
             instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
-            #expect(instance.canRevertToSnapshot == false, "status \(status.displayName)")
+            #expect(instance.canRevertToSnapshot == false, "phase \(phase)")
         }
     }
 
@@ -127,7 +141,7 @@ struct VMInstanceTests {
 
     @Test("resetToStopped clears detailPaneMode back to .display")
     func resetToStoppedClearsDetailPaneMode() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.detailPaneMode = .settings
 
         instance.resetToStopped()
@@ -138,16 +152,17 @@ struct VMInstanceTests {
 
     // MARK: - tearDownSession
 
-    @Test("tearDownSession releases the whole session context without changing status")
-    func tearDownSessionPreservesStatus() {
-        let instance = makeInstance(status: .running)
+    @Test("tearDownSession releases the whole session context and rests where it is told")
+    func tearDownSessionRestsAtTheGivenPhase() {
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let context = instance.beginSessionContext()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .suspended)
 
-        #expect(instance.status == .running)
+        #expect(instance.phase == .suspended)
+        #expect(instance.liveSessionID == nil)
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
         // The released context is drained too, so nothing a stale reference
@@ -158,21 +173,21 @@ struct VMInstanceTests {
 
     @Test("tearDownSession resets a hidden (headless) displayMode to inline")
     func tearDownSessionResetsHiddenDisplayMode() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.displayMode = .hidden
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
 
         #expect(instance.displayMode == .inline)
     }
 
     @Test("tearDownSession is idempotent")
     func tearDownSessionIdempotent() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .livePaused(sessionID: UUID()))
         var tornDown = 0
         instance.onSessionTornDown = { tornDown += 1 }
-        instance.tearDownSession()
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .suspended)
+        instance.tearDownSession(restingAt: .suspended)
 
         #expect(instance.status == .paused)
         #expect(instance.sessionContext == nil)
@@ -186,7 +201,7 @@ struct VMInstanceTests {
 
     @Test("resetToStopped sets status to stopped and clears the session")
     func resetToStopped() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         // Simulate having a VM reference (we can't create a real VZVirtualMachine)
         #expect(instance.status == .running)
 
@@ -198,7 +213,7 @@ struct VMInstanceTests {
 
     @Test("resetToStopped is idempotent when already stopped")
     func resetToStoppedIdempotent() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.resetToStopped()
         #expect(instance.status == .stopped)
         #expect(instance.session == nil)
@@ -241,20 +256,20 @@ struct VMInstanceTests {
 
     @Test("isColdPaused is true when paused with no live session")
     func isColdPausedTrue() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.session == nil)
         #expect(instance.isColdPaused == true)
     }
 
     @Test("isColdPaused is false when stopped")
     func isColdPausedFalseWhenStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         #expect(instance.isColdPaused == false)
     }
 
     @Test("isColdPaused is false when running")
     func isColdPausedFalseWhenRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         #expect(instance.isColdPaused == false)
     }
 
@@ -262,30 +277,31 @@ struct VMInstanceTests {
 
     @Test(
         "hasLiveSession is true for a running or live-paused VM",
-        arguments: [VMStatus.running, .paused])
-    func hasLiveSessionWithLiveVM(status: VMStatus) {
-        let instance = makeInstance(status: status)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
-        #expect(instance.hasLiveSession == true)
+        arguments: [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())])
+    func hasLiveSessionWithLiveVM(phase: VMLifecyclePhase) {
+        #expect(makeInstance(phase: phase).hasLiveSession == true)
     }
 
     @Test(
         "hasLiveSession is false without a live virtual machine",
-        arguments: [VMStatus.running, .paused, .stopped, .error])
-    func hasLiveSessionWithoutLiveVM(status: VMStatus) {
-        let instance = makeInstance(status: status)
-        #expect(instance.hasLiveSession == false)
+        arguments: [
+            VMLifecyclePhase.suspended, .stopped, .failed(message: "Boot failed."), .initialBoot,
+        ])
+    func hasLiveSessionWithoutLiveVM(phase: VMLifecyclePhase) {
+        #expect(makeInstance(phase: phase).hasLiveSession == false)
     }
 
     @Test(
         "hasLiveSession is false mid-transition even with a live virtual machine",
-        arguments: [VMStatus.saving, .restoring, .starting, .installing, .initialBoot])
-    func hasLiveSessionIsFalseWhileTransitioning(status: VMStatus) {
-        // A VM that has not settled at `.running`/`.paused` is not something the
-        // termination pass can snapshot.
-        let instance = makeInstance(status: status)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
-        #expect(instance.hasLiveSession == false)
+        arguments: [
+            VMLifecyclePhase.saving(sessionID: UUID()), .restoringSavedState(sessionID: UUID()),
+            .starting(sessionID: UUID()), .installing(sessionID: UUID()),
+            .capturingLive(sessionID: UUID()),
+        ])
+    func hasLiveSessionIsFalseWhileTransitioning(phase: VMLifecyclePhase) {
+        // A VM that has not settled at running or live-paused is not something
+        // the termination pass can snapshot.
+        #expect(makeInstance(phase: phase).hasLiveSession == false)
     }
 
     // MARK: - effectiveMachineIdentifierData
@@ -319,7 +335,7 @@ struct VMInstanceTests {
 
     @Test("isKeepingAppAlive is true when preparing")
     func isKeepingAppAlivePreparing() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
@@ -328,23 +344,23 @@ struct VMInstanceTests {
 
     @Test("isKeepingAppAlive is true for active statuses")
     func isKeepingAppAliveActive() {
-        for status in [VMStatus.running, .starting, .saving, .restoring, .installing] {
-            let instance = makeInstance(status: status)
+        for phase in [VMLifecyclePhase.running(sessionID: UUID())] + Self.transitionalPhases {
+            let instance = makeInstance(phase: phase)
             #expect(instance.isKeepingAppAlive == true)
         }
     }
 
     @Test("isKeepingAppAlive is false when cold-paused")
     func isKeepingAppAliveColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.session == nil)
         #expect(instance.isKeepingAppAlive == false)
     }
 
     @Test("isKeepingAppAlive is false when stopped or error")
     func isKeepingAppAliveStoppedOrError() {
-        for status in [VMStatus.stopped, .error] {
-            let instance = makeInstance(status: status)
+        for phase in [VMLifecyclePhase.stopped, .failed(message: "Boot failed.")] {
+            let instance = makeInstance(phase: phase)
             #expect(instance.isKeepingAppAlive == false)
         }
     }
@@ -353,35 +369,35 @@ struct VMInstanceTests {
 
     @Test("canStop is true when running (without live VM, tests model logic)")
     func canStopRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         // status.canStop is true and isColdPaused is false
         #expect(instance.canStop == true)
     }
 
     @Test("canStop is false when stopped")
     func canStopStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         #expect(instance.canStop == false)
     }
 
     @Test("canStop is false for cold-paused VM (paused without live VM)")
     func canStopColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.canStop == false)
     }
 
     @Test("canStop is false during transitions")
     func canStopTransitions() {
-        for status in [VMStatus.starting, .saving, .restoring, .installing] {
-            let instance = makeInstance(status: status)
+        for phase in Self.transitionalPhases {
+            let instance = makeInstance(phase: phase)
             #expect(instance.canStop == false)
         }
     }
 
     @Test("canStop is false in error state")
     func canStopError() {
-        let instance = makeInstance(status: .error)
+        let instance = makeInstance(phase: .failed(message: "Boot failed."))
         #expect(instance.canStop == false)
     }
 
@@ -389,35 +405,34 @@ struct VMInstanceTests {
 
     @Test("canSave is true when running (without live VM, tests model logic)")
     func canSaveRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         // status.canSave is true and isColdPaused is false
         #expect(instance.canSave == true)
     }
 
     @Test("canSave is false when stopped")
     func canSaveStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         #expect(instance.canSave == false)
     }
 
     @Test("canSave is false for cold-paused VM (paused without live VM)")
     func canSaveColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.canSave == false)
     }
 
     @Test("canSave is false during transitions")
     func canSaveTransitions() {
-        for status in [VMStatus.starting, .saving, .restoring, .installing] {
-            let instance = makeInstance(status: status)
-            #expect(instance.canSave == false)
+        for phase in Self.transitionalPhases {
+            #expect(makeInstance(phase: phase).canSave == false, "\(phase)")
         }
     }
 
     @Test("canSave is false in error state")
     func canSaveError() {
-        let instance = makeInstance(status: .error)
+        let instance = makeInstance(phase: .failed(message: "Boot failed."))
         #expect(instance.canSave == false)
     }
 
@@ -425,10 +440,12 @@ struct VMInstanceTests {
 
     @Test("canForceStop is true when running or transitioning with a live VM to terminate")
     func canForceStopRunningAndTransitions() {
-        for status in [VMStatus.running, .starting, .saving, .snapshotting, .restoring] {
-            let instance = makeInstance(status: status)
-            instance.hasLiveVirtualMachineOverrideForTesting = true
-            #expect(instance.canForceStop == true, "status \(status.displayName)")
+        for phase in [
+            VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
+            .starting(sessionID: UUID()), .saving(sessionID: UUID()),
+            .capturingLive(sessionID: UUID()), .restoringSavedState(sessionID: UUID()),
+        ] {
+            #expect(makeInstance(phase: phase).canForceStop == true, "phase \(phase)")
         }
     }
 
@@ -436,25 +453,27 @@ struct VMInstanceTests {
     func canForceStopNeedsALiveVirtualMachine() {
         // A disks-only capture is a file copy with no VM behind it, and a start
         // still assembling its configuration has yet to create one.
-        for status in [VMStatus.snapshotting, .starting, .restoring] {
-            let instance = makeInstance(status: status)
-            instance.hasLiveVirtualMachineOverrideForTesting = false
-            #expect(instance.canForceStop == false, "status \(status.displayName)")
+        for phase in [
+            VMLifecyclePhase.capturingAtRest, .starting(sessionID: nil), .revertingToSnapshot,
+            .restoringSavedState(sessionID: nil),
+        ] {
+            #expect(makeInstance(phase: phase).canForceStop == false, "phase \(phase)")
         }
     }
 
     @Test("canForceStop is false for cold-paused VM (discard saved state is the only action)")
     func canForceStopColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.canForceStop == false)
     }
 
     @Test("canForceStop is false when stopped or in error state")
     func canForceStopStoppedOrError() {
-        for status in [VMStatus.stopped, .error, .initialBoot] {
-            let instance = makeInstance(status: status)
-            #expect(instance.canForceStop == false)
+        for phase in [
+            VMLifecyclePhase.stopped, .failed(message: "Boot failed."), .initialBoot,
+        ] {
+            #expect(makeInstance(phase: phase).canForceStop == false)
         }
     }
 
@@ -462,32 +481,31 @@ struct VMInstanceTests {
 
     @Test("canDelete is true when stopped, in error, or awaiting initial boot")
     func canDeleteInertStatuses() {
-        for status in [VMStatus.stopped, .error, .initialBoot] {
-            let instance = makeInstance(status: status)
-            #expect(instance.canDelete == true)
+        for phase in [
+            VMLifecyclePhase.stopped, .failed(message: "Boot failed."), .initialBoot,
+        ] {
+            #expect(makeInstance(phase: phase).canDelete == true)
         }
     }
 
     @Test("canDelete is true for a cold-paused VM (the saved state goes with the bundle)")
     func canDeleteColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.canDelete == true)
     }
 
     @Test("canDelete is false for a live-paused VM (its VZVirtualMachine is still in memory)")
     func canDeleteLivePaused() {
-        let instance = makeInstance(status: .paused)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let instance = makeInstance(phase: .livePaused(sessionID: UUID()))
         #expect(instance.isLivePaused == true)
         #expect(instance.canDelete == false)
     }
 
     @Test("canDelete is false while running or transitioning")
     func canDeleteRunningAndTransitions() {
-        for status in [VMStatus.running, .starting, .saving, .restoring, .installing] {
-            let instance = makeInstance(status: status)
-            #expect(instance.canDelete == false)
+        for phase in [VMLifecyclePhase.running(sessionID: UUID())] + Self.transitionalPhases {
+            #expect(makeInstance(phase: phase).canDelete == false)
         }
     }
 
@@ -495,7 +513,7 @@ struct VMInstanceTests {
     func canDeletePreparing() {
         // The toolbar's Move to Trash reads this predicate without a preparing
         // guard of its own, so the check has to live here to hold on every surface.
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
@@ -518,7 +536,7 @@ struct VMInstanceTests {
 
     @Test("resetToStopped clears serial pipes")
     func resetToStoppedClearsSerialPipes() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let context = instance.beginSessionContext()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
@@ -541,22 +559,21 @@ struct VMInstanceTests {
 
     @Test("statusDisplayName returns Suspended when cold-paused")
     func statusDisplayNameColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.statusDisplayName == "Suspended")
     }
 
     @Test("statusDisplayName delegates to status.displayName for non-paused states")
     func statusDisplayNameDelegates() {
-        for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
-            let instance = makeInstance(status: status)
-            #expect(instance.statusDisplayName == status.displayName)
+        for phase in Self.nonPausedPhases {
+            #expect(makeInstance(phase: phase).statusDisplayName == phase.status.displayName)
         }
     }
 
     @Test("statusDisplayNSColor returns systemOrange when cold-paused")
     func statusDisplayNSColorColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
@@ -565,33 +582,34 @@ struct VMInstanceTests {
     func statusDisplayNSColorByStatus() {
         // Concrete gray (not `.secondaryLabelColor`) so the OS icon keeps its
         // stopped color on the selection highlight instead of inverting to white.
-        #expect(makeInstance(status: .stopped).statusDisplayNSColor == .systemGray)
-        #expect(makeInstance(status: .running).statusDisplayNSColor == .systemGreen)
-        #expect(makeInstance(status: .starting).statusDisplayNSColor == .systemOrange)
-        #expect(makeInstance(status: .error).statusDisplayNSColor == .systemRed)
+        #expect(makeInstance(phase: .stopped).statusDisplayNSColor == .systemGray)
+        #expect(makeInstance(phase: .running(sessionID: UUID())).statusDisplayNSColor == .systemGreen)
+        #expect(makeInstance(phase: .starting(sessionID: nil)).statusDisplayNSColor == .systemOrange)
+        #expect(makeInstance(phase: .failed(message: "Boot failed.")).statusDisplayNSColor == .systemRed)
     }
 
     @Test("statusToolTip mentions disk when cold-paused")
     func statusToolTipColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         let tip = instance.statusToolTip
         #expect(tip != nil)
         #expect(tip!.contains("disk"))
     }
 
-    @Test("statusToolTip returns nil for non-paused states")
+    @Test("statusToolTip returns nil for every phase but the two that carry one")
     func statusToolTipNilForNonPaused() {
-        for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
-            let instance = makeInstance(status: status)
-            #expect(instance.statusToolTip == nil)
+        // Suspended names the disk its state is on, a failure names its
+        // message, and an unbooted VM names the install Start runs.
+        for phase in Self.nonPausedPhases
+        where phase.status != .error && phase != .initialBoot {
+            #expect(makeInstance(phase: phase).statusToolTip == nil, "\(phase)")
         }
     }
 
     @Test("statusToolTip carries the stored message in the error state")
     func statusToolTipError() {
-        let instance = makeInstance(status: .error)
-        instance.errorMessage = "The virtual machine failed to start."
+        let instance = makeInstance(phase: .failed(message: "The virtual machine failed to start."))
         #expect(instance.statusToolTip == "The virtual machine failed to start.")
     }
 
@@ -628,7 +646,7 @@ struct VMInstanceTests {
 
     @Test("A running VM awaiting network reattach shows the warning tint and says why")
     func networkPendingShowsWarningTintAndToolTip() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.beginSessionContext().networkAttachmentPending = true
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
@@ -648,7 +666,7 @@ struct VMInstanceTests {
 
     @Test("applyLivePolicy forwards a network mode change to the coordinator")
     func applyLivePolicyForwardsNetworkChange() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
         let device = MockNetworkDeviceControl(plan: .nat)
@@ -669,14 +687,14 @@ struct VMInstanceTests {
 
     @Test("applyLivePolicy ignores a network change while the VM is stopped")
     func applyLivePolicyIgnoresNetworkChangeWhileStopped() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
         let device = MockNetworkDeviceControl()
         let coordinator = attachNetworkCoordinator(to: instance, device: device)
         coordinator.activate()
         #expect(device.appliedPlans == [.nat])
-        instance.status = .stopped
+        instance.enter(.stopped)
 
         let old = instance.configuration
         instance.configuration.networkMode = .bridged
@@ -693,10 +711,9 @@ struct VMInstanceTests {
     /// invite `rebuildNetworkIfIdle` to recreate the network under it.
     @Test("A live session holds its configured network before its coordinator exists")
     func mayHoldAttachmentBeforeTheCoordinatorIsBuilt() {
-        let instance = makeInstance(status: .starting)
+        let instance = makeInstance(phase: .starting(sessionID: UUID()))
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
-        instance.hasLiveVirtualMachineOverrideForTesting = true
         #expect(instance.networkAttachmentCoordinator == nil)
 
         #expect(instance.mayHoldAttachment(on: .shared))
@@ -705,10 +722,9 @@ struct VMInstanceTests {
 
     @Test("A live session with networking off holds nothing")
     func mayHoldAttachmentWithNetworkingOff() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.configuration.networkEnabled = false
         instance.configuration.networkMode = .shared
-        instance.hasLiveVirtualMachineOverrideForTesting = true
 
         #expect(!instance.mayHoldAttachment(on: .shared))
         #expect(!instance.mayHoldAttachment(on: .hostOnly))
@@ -727,10 +743,9 @@ struct VMInstanceTests {
             (NetworkAttachmentPlan.nat, false),
         ])
     func mayHoldAttachmentReadsTheAppliedPlan(plan: NetworkAttachmentPlan, holdsShared: Bool) {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
-        instance.hasLiveVirtualMachineOverrideForTesting = true
         _ = attachNetworkCoordinator(to: instance, device: MockNetworkDeviceControl(plan: plan))
 
         #expect(instance.mayHoldAttachment(on: .shared) == holdsShared)
@@ -739,7 +754,7 @@ struct VMInstanceTests {
 
     @Test("tearDownSession stops network recovery and clears the pending flag")
     func tearDownSessionStopsNetworkRecovery() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .bridged
         let device = MockNetworkDeviceControl()
@@ -747,7 +762,7 @@ struct VMInstanceTests {
         coordinator.activate()
         #expect(instance.networkAttachmentPending)
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
 
         #expect(instance.networkAttachmentCoordinator == nil)
         #expect(!instance.networkAttachmentPending)
@@ -757,14 +772,14 @@ struct VMInstanceTests {
 
     @Test("startAction is .start without a pending install context")
     func startActionDefault() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         #expect(instance.startAction == .start)
         #expect(instance.startAction.label == "Start")
     }
 
     @Test("startAction is .install with a pending install context and no resumable download")
     func startActionInstall() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
         #expect(instance.hasResumableInstallDownload == false)
         #expect(instance.startAction == .install)
@@ -806,7 +821,7 @@ struct VMInstanceTests {
         // produce. The directory must be there for the test to mean anything.
         #expect(bundle.exists)
 
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.configuration.installContext = MacOSInstallContext(
             source: source,
             downloadDestinationPath: destination.path(percentEncoded: false)
@@ -863,7 +878,7 @@ struct VMInstanceTests {
 
     @Test("startAction is .download with a pending Linux image and nothing partial on disk")
     func startActionDownload() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.configuration.linuxInstallContext = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()))
 
@@ -889,7 +904,7 @@ struct VMInstanceTests {
                 etag: nil, lastModified: nil, createdAt: Date()))
         try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
 
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.configuration.linuxInstallContext = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()),
             downloadDestinationPath: destination.path(percentEncoded: false))
@@ -901,7 +916,7 @@ struct VMInstanceTests {
 
     @Test("stopActionMenuTitle names the discard consequence when cold-paused")
     func stopActionMenuTitleColdPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         #expect(instance.isColdPaused == true)
         #expect(instance.stopActionMenuTitle == "Discard Saved State…")
         #expect(instance.stopActionToolbarLabel == "Discard Saved State")
@@ -909,8 +924,10 @@ struct VMInstanceTests {
 
     @Test("stopActionMenuTitle is Stop for non-cold-paused states")
     func stopActionMenuTitleDefault() {
-        for status in [VMStatus.stopped, .running, .starting] {
-            let instance = makeInstance(status: status)
+        for phase in [
+            VMLifecyclePhase.stopped, .running(sessionID: UUID()), .starting(sessionID: nil),
+        ] {
+            let instance = makeInstance(phase: phase)
             #expect(instance.stopActionMenuTitle == "Stop")
             #expect(instance.stopActionToolbarLabel == "Stop")
         }
@@ -1004,7 +1021,7 @@ struct VMInstanceTests {
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: .stopped)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: .stopped)
     }
 
     @Test("agentStatus is .waiting on a macOS instance with no control service set")
@@ -1049,11 +1066,57 @@ struct VMInstanceTests {
         #expect(instance.agentStatus == .waiting)
     }
 
+    // MARK: - settle
+
+    @Test("A settle for the live session applies")
+    func settleAppliesForTheLiveSession() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .starting(sessionID: sessionID))
+
+        #expect(instance.settle(.running(sessionID: sessionID), for: sessionID))
+        #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
+    @Test("A settle for a superseded session is dropped")
+    func settleForASupersededSessionIsDropped() {
+        let successor = UUID()
+        let instance = makeInstance(phase: .running(sessionID: successor))
+
+        // The operation that raised this acted for a session the VM released
+        // before a fresh one took its place.
+        #expect(!instance.settle(.livePaused(sessionID: UUID()), for: UUID()))
+        #expect(instance.phase == .running(sessionID: successor))
+    }
+
+    @Test("A settle after the session was torn down is dropped, leaving the resting phase")
+    func settleAfterTeardownIsDropped() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        instance.tearDownSession(restingAt: .failed(message: "The guest stopped unexpectedly."))
+
+        #expect(!instance.settle(.running(sessionID: sessionID), for: sessionID))
+        #expect(instance.errorMessage == "The guest stopped unexpectedly.")
+        // The wedge this exists to prevent: a VM resting live over no session
+        // offers neither Stop, Force Stop nor Start.
+        #expect(instance.canStart)
+        #expect(!instance.hasLiveVirtualMachine)
+    }
+
+    @Test("Moving out of a failure drops its message rather than carrying it forward")
+    func failureMessageCannotOutliveItsPhase() {
+        let instance = makeInstance(phase: .failed(message: "The disk went away."))
+        #expect(instance.errorMessage == "The disk went away.")
+
+        instance.enter(.stopped)
+
+        #expect(instance.errorMessage == nil)
+    }
+
     // MARK: - Session Events
 
     @Test("a session event whose id matches no live session is dropped")
     func staleSessionEventIsDropped() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         // No session attached: any delivered id is stale — the event a
         // torn-down session's guest stop produces after a fresh start.
         instance.deliverSessionEvent(.guestDidStop, from: UUID())
@@ -1062,7 +1125,7 @@ struct VMInstanceTests {
 
     @Test("guestDidStop resets the instance to stopped")
     func guestDidStopEventResets() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.beginSessionContext().serialInputPipe = Pipe()
         instance.handleSessionEvent(.guestDidStop)
         #expect(instance.status == .stopped)
@@ -1071,7 +1134,7 @@ struct VMInstanceTests {
 
     @Test("didStopWithError tears the session down and records the error")
     func didStopWithErrorEventRecordsError() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.beginSessionContext().serialInputPipe = Pipe()
         let failure = NSError(
             domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
@@ -1083,7 +1146,7 @@ struct VMInstanceTests {
 
     @Test("networkAttachmentDisconnected forwards to the recovery coordinator")
     func networkDisconnectedEventForwardsToCoordinator() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let device = MockNetworkDeviceControl(plan: .nat)
         let coordinator = NetworkAttachmentCoordinator(
             vmName: "Test VM",
@@ -1139,7 +1202,8 @@ struct VMInstanceTests {
         config.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        let instance = VMInstance(
+            configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
         instance.setupState = setupState
         instance.beginSessionContext(bootedIntoRecovery: bootedIntoRecovery)
         return instance
@@ -1205,7 +1269,7 @@ struct VMInstanceTests {
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
         instance.beginSessionContext()
 
         // Wait noticeably past the grace so a broken guard would have a
@@ -1227,7 +1291,7 @@ struct VMInstanceTests {
         config.lastSeenAgentVersion = "should-be-ignored"
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
         instance.beginSessionContext()
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1261,7 +1325,7 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(bootedIntoRecovery: true)
         #expect(instance.bootedIntoRecovery)
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
         #expect(!instance.bootedIntoRecovery)
 
         instance.beginSessionContext(bootedIntoRecovery: true)
@@ -1285,15 +1349,16 @@ struct VMInstanceTests {
     @Test(
         "Watchdog is a no-op unless the VM is running",
         arguments: [
-            VMStatus.paused, .saving, .restoring, .stopped,
+            VMLifecyclePhase.livePaused(sessionID: UUID()), .saving(sessionID: UUID()),
+            .restoringSavedState(sessionID: UUID()), .stopped,
         ])
-    func watchdogNoopUnlessRunning(status: VMStatus) async throws {
+    func watchdogNoopUnlessRunning(phase: VMLifecyclePhase) async throws {
         // A live-paused guest is frozen: it cannot say Hello, so a grace clock
         // running against it would blame the agent for the user's pause. The
         // control channel settles for silence at the same time, which is what
         // re-arms the watchdog — hence the guard rather than caller discipline.
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.status = status
+        instance.enter(phase)
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         #expect(instance.agentPostStartTaskForTesting == nil)
@@ -1446,7 +1511,7 @@ struct VMInstanceTests {
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "26.0"))
         #expect(instance.hasSeenAgentThisSession)
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
         #expect(!instance.hasSeenAgentThisSession)
     }
 
@@ -1457,11 +1522,12 @@ struct VMInstanceTests {
         instance.sessionContext?.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
 
         #expect(instance.agentExpectedButMissing == false)
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         await instance.agentPostStartTaskForTesting?.value
@@ -1486,7 +1552,8 @@ struct VMInstanceTests {
 
         // Teardown, then a fresh session arming its own watchdog on a grace
         // long enough that it cannot legitimately fire during this test.
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
         #expect(instance.agentPostStartTaskForTesting != nil)
@@ -1541,7 +1608,7 @@ struct VMInstanceTests {
         let config = VMConfiguration(name: "Fresh", guestOS: .macOS, bootMode: .macOS)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
         var saveCount = 0
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)

@@ -17,11 +17,13 @@ struct StatusMenuVMSectionTests {
         @objc func rowTapped(_: NSMenuItem) {}
     }
 
-    private func makeInstance(name: String = "Test VM", status: VMStatus = .running) -> VMInstance {
+    private func makeInstance(name: String = "Test VM", phase: VMLifecyclePhase = .running(sessionID: UUID()))
+        -> VMInstance
+    {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
     private func row(_ id: UUID, _ title: String, notice: String? = nil) -> StatusMenuVMRow {
@@ -59,9 +61,9 @@ struct StatusMenuVMSectionTests {
 
     @Test("rows(for:) includes only VMs keeping the app alive, titled name — status")
     func rowModel() {
-        let running = makeInstance(name: "Build VM", status: .running)
-        let starting = makeInstance(name: "CI VM", status: .starting)
-        let stopped = makeInstance(name: "Idle VM", status: .stopped)
+        let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
+        let starting = makeInstance(name: "CI VM", phase: .starting(sessionID: nil))
+        let stopped = makeInstance(name: "Idle VM", phase: .stopped)
 
         let rows = StatusMenuVMSection.rows(for: [running, starting, stopped])
 
@@ -74,8 +76,8 @@ struct StatusMenuVMSectionTests {
 
     @Test("A VM with an outstanding clipboard refusal carries its dropdown line")
     func rowModelCarriesTheClipboardLine() {
-        let running = makeInstance(name: "Build VM", status: .running)
-        let quiet = makeInstance(name: "CI VM", status: .running)
+        let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
+        let quiet = makeInstance(name: "CI VM", phase: .running(sessionID: UUID()))
         reportRefusal(
             .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes), gesture: .copy, on: running)
 
@@ -86,7 +88,7 @@ struct StatusMenuVMSectionTests {
 
     @Test("A running transfer draws no dropdown line — the readout is its surface")
     func rowModelSkipsRunningReports() {
-        let running = makeInstance(name: "Build VM", status: .running)
+        let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
         let operation = ClipboardTransferOperation(
             gesture: .paste, direction: .inbound, peerName: running.name, revealDelay: 0,
             now: { 0 }, schedule: { _, _ in }, reporter: running.clipboardTransfers)
@@ -104,7 +106,7 @@ struct StatusMenuVMSectionTests {
 
     @Test("A stopped VM's refusal never reaches the dropdown — it has no row to sit under")
     func rowModelSkipsIssuesOfVMsWithoutRows() {
-        let stopped = makeInstance(name: "Idle VM", status: .stopped)
+        let stopped = makeInstance(name: "Idle VM", phase: .stopped)
         reportRefusal(.timedOut, gesture: .paste, on: stopped)
 
         let rows = StatusMenuVMSection.rows(for: [stopped])
@@ -114,7 +116,7 @@ struct StatusMenuVMSectionTests {
 
     @Test("A preparing phantom's row shows its operation, not raw status")
     func rowModelPreparing() {
-        let phantom = makeInstance(name: "Clone", status: .stopped)
+        let phantom = makeInstance(name: "Clone", phase: .stopped)
         phantom.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
 
         let rows = StatusMenuVMSection.rows(for: [phantom])

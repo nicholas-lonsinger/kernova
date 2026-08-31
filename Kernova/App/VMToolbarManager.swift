@@ -339,7 +339,7 @@ final class VMToolbarManager: NSObject {
             return
         }
 
-        let canResume = instance.status.canResume
+        let canResume = instance.canResume
         // `startAction` triggers on the pending setup context (not status), so
         // an .error retry also gets the setup-flavored labels.
         let startAction = instance.startAction

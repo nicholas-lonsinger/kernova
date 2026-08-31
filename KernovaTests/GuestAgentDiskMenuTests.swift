@@ -87,35 +87,44 @@ struct GuestAgentDiskMenuTests {
 @Suite("VMInstance.canManageGuestAgentDisk", .admissionGated)
 @MainActor
 struct GuestAgentDiskEligibilityTests {
-    private func makeInstance(guestOS: VMGuestOS, status: VMStatus, isLive: Bool) -> VMInstance {
+    private func makeInstance(guestOS: VMGuestOS, phase: VMLifecyclePhase) -> VMInstance {
         let config = VMConfiguration(
             name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
-        instance.hasLiveVirtualMachineOverrideForTesting = isLive
-        return instance
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
-    @Test("A live macOS guest can manage the disk", arguments: [VMStatus.running, .paused])
-    func liveMacOSIsEligible(status: VMStatus) {
-        #expect(makeInstance(guestOS: .macOS, status: status, isLive: true).canManageGuestAgentDisk)
+    @Test(
+        "A live macOS guest can manage the disk",
+        arguments: [
+            VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
+        ])
+    func liveMacOSIsEligible(phase: VMLifecyclePhase) {
+        #expect(makeInstance(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
     }
 
     @Test(
         "A live Linux guest cannot — the disk installs a macOS agent",
-        arguments: [VMStatus.running, .paused])
-    func liveLinuxIsNotEligible(status: VMStatus) {
-        #expect(!makeInstance(guestOS: .linux, status: status, isLive: true).canManageGuestAgentDisk)
+        arguments: [
+            VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
+        ])
+    func liveLinuxIsNotEligible(phase: VMLifecyclePhase) {
+        #expect(!makeInstance(guestOS: .linux, phase: phase).canManageGuestAgentDisk)
     }
 
-    @Test("A macOS guest with no live VM cannot — USB hot-plug needs one")
+    @Test("A macOS guest suspended to disk cannot — USB hot-plug needs a live VM")
     func macOSWithoutLiveVMIsNotEligible() {
-        #expect(!makeInstance(guestOS: .macOS, status: .running, isLive: false).canManageGuestAgentDisk)
+        #expect(!makeInstance(guestOS: .macOS, phase: .suspended).canManageGuestAgentDisk)
     }
 
-    @Test("A stopped macOS guest cannot", arguments: [VMStatus.stopped, .starting, .error])
-    func stoppedMacOSIsNotEligible(status: VMStatus) {
-        #expect(!makeInstance(guestOS: .macOS, status: status, isLive: true).canManageGuestAgentDisk)
+    @Test(
+        "A stopped macOS guest cannot",
+        arguments: [
+            VMLifecyclePhase.stopped, .starting(sessionID: UUID()),
+            .failed(message: "Boot failed."),
+        ])
+    func stoppedMacOSIsNotEligible(phase: VMLifecyclePhase) {
+        #expect(!makeInstance(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
     }
 }

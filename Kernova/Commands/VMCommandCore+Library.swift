@@ -262,11 +262,11 @@ extension VMCommandCore {
 
             // The save file has to come from the source bundle — the destination doesn't exist yet.
             let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
-            let initialStatus = VMLibrary.initialStatus(for: config, layout: sourceLayout)
+            let initialPhase = VMLibrary.initialPhase(for: config, layout: sourceLayout)
 
             let destinationURL = library.reserveDestination(for: sourceURL, in: vmsDir)
             let phantom = VMInstance(
-                configuration: config, bundleURL: destinationURL, status: initialStatus,
+                configuration: config, bundleURL: destinationURL, phase: initialPhase,
                 preferences: preferences)
 
             let storage = storageService
@@ -390,7 +390,10 @@ extension VMCommandCore {
                 Self.deletePrompt(instance, permanently: permanently))
         }
 
-        instance.tearDownSession()
+        // `canDelete` admits a suspended VM, whose slot goes with the bundle,
+        // so the VM rests stopped rather than claiming a saved state that is
+        // about to be trashed.
+        instance.tearDownSession(restingAt: .stopped)
         let toDelete =
             alsoRemoving.isEmpty
             ? []

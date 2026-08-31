@@ -19,7 +19,7 @@ struct AppClipboardReadoutTests {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
     }
 
     /// Stands a running, cancellable readout on `instance`, returning the

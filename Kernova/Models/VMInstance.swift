@@ -33,11 +33,29 @@ final class VMInstance {
 
     let instanceID: UUID
     var configuration: VMConfiguration
-    var status: VMStatus
+
+    /// Where this VM is in its lifecycle — the one stored value its status, its
+    /// failure message and every liveness predicate here are read off.
+    ///
+    /// Moved by ``enter(_:)`` for a transition that names no session, by
+    /// ``settle(_:for:)`` for one concluding work a session did, and by
+    /// ``tearDownSession(restingAt:)``, which releases the session and rests in
+    /// the same call.
+    private(set) var phase: VMLifecyclePhase
+
+    /// The vocabulary the wire and every label read.
+    var status: VMStatus { phase.status }
+
+    /// The permanent-failure message the error banner and the status tooltip
+    /// show.
+    ///
+    /// A payload of ``VMLifecyclePhase/failed(message:)`` rather than a field of
+    /// its own, so it cannot survive the move to another phase.
+    var errorMessage: String? { phase.errorMessage }
 
     /// Everything scoped to the current `VZVirtualMachine`'s lifetime, opened by
     /// ``beginSessionContext(bootedIntoRecovery:)`` and released whole by
-    /// ``tearDownSession()``.
+    /// ``tearDownSession(restingAt:)``.
     ///
     /// The read-only projections below are the read surface; every write goes
     /// through this slot or a method here, so no session state can outlive a
@@ -103,8 +121,6 @@ final class VMInstance {
     var preparingState: PreparingState?
 
     var isPreparing: Bool { preparingState != nil }
-
-    var errorMessage: String?
 
     /// The named restore points this VM's bundle holds, mirrored from
     /// `Snapshots/manifest.json`.
@@ -297,14 +313,14 @@ final class VMInstance {
     // MARK: - Initializer
 
     init(
-        configuration: VMConfiguration, bundleURL: URL, status: VMStatus = .stopped,
+        configuration: VMConfiguration, bundleURL: URL, phase: VMLifecyclePhase = .stopped,
         preferences: AppPreferences = .shared
     ) {
         self.instanceID = configuration.id
         self.configuration = configuration
         self.bundleURL = bundleURL
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
-        self.status = status
+        self.phase = phase
         self.preferences = preferences
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
@@ -350,35 +366,19 @@ final class VMInstance {
     /// running; cleared on stop/teardown.
     var liveRemovableMedia: [USBDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
 
-    #if DEBUG
-    /// Test stand-in for `session != nil`: constructing a real
-    /// `VZVirtualMachine` requires the virtualization entitlement, which CI
-    /// test hosts lack.
-    var hasLiveVirtualMachineOverrideForTesting: Bool?
-
-    /// Test stand-in for the live session's identity, for the same reason.
-    var liveSessionIDOverrideForTesting: UUID?
-    #endif
-
     /// The live session's identity — the token every asynchronous hand-off and
     /// delivered event carries, so one raised against a session this instance
     /// has already released is dropped instead of landing on its successor or
     /// on a stopped VM.
-    var liveSessionID: UUID? {
-        #if DEBUG
-        if let liveSessionIDOverrideForTesting { return liveSessionIDOverrideForTesting }
-        #endif
-        return session?.id
-    }
+    ///
+    /// Read off ``phase``, which is what makes the drop reliable: the phase and
+    /// the session move together, so no window exists where a released session
+    /// still answers as live.
+    var liveSessionID: UUID? { phase.sessionID }
 
     /// Whether a `VZVirtualMachine` for this VM is live in memory — the single
     /// liveness read every predicate here shares.
-    var hasLiveVirtualMachine: Bool {
-        #if DEBUG
-        if let hasLiveVirtualMachineOverrideForTesting { return hasLiveVirtualMachineOverrideForTesting }
-        #endif
-        return liveSessionID != nil
-    }
+    var hasLiveVirtualMachine: Bool { liveSessionID != nil }
 
     /// Whether a live `VZVirtualMachine` is attached and settled at a state VZ
     /// can act on — the VMs a termination save-suspends, and the ones a device
@@ -386,9 +386,7 @@ final class VMInstance {
     ///
     /// A cold-paused VM is excluded: its state is already on disk, with nothing
     /// live to act on.
-    var hasLiveSession: Bool {
-        status.canSave && hasLiveVirtualMachine
-    }
+    var hasLiveSession: Bool { phase.hasLiveSession }
 
     var canAttachUSBDevices: Bool {
         hasLiveSession
@@ -425,55 +423,73 @@ final class VMInstance {
         guard configuration.networkEnabled,
             VmnetNetworkKind(mode: configuration.networkMode) == kind
         else { return false }
-        return status.isTransitioning || hasLiveVirtualMachine
+        return phase.isTransitioning || hasLiveVirtualMachine
     }
 
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
-    var isColdPaused: Bool {
-        status == .paused && !hasLiveVirtualMachine
-    }
+    var isColdPaused: Bool { phase.isColdPaused }
 
     /// `true` when the VM is paused with its `VZVirtualMachine` still live in
     /// memory — the resumable counterpart of ``isColdPaused``.
-    var isLivePaused: Bool {
-        status == .paused && hasLiveVirtualMachine
-    }
+    var isLivePaused: Bool { phase.isLivePaused }
+
+    /// `true` while the VM is in an active lifecycle phase — see
+    /// ``VMLifecyclePhase/isActive``.
+    var isActive: Bool { phase.isActive }
 
     /// `true` when this VM should keep the app alive: preparing, in an active
-    /// lifecycle state, or live-paused in memory.
+    /// lifecycle phase, or live-paused in memory.
     var isKeepingAppAlive: Bool {
-        isPreparing || status.isActive || isLivePaused
+        isPreparing || isActive || isLivePaused
     }
 
-    var canStop: Bool {
-        status.canStop && !isColdPaused
-    }
+    /// `true` while the VM is mid-operation — see
+    /// ``VMLifecyclePhase/isTransitioning``.
+    var isTransitioning: Bool { phase.isTransitioning }
 
-    var canSave: Bool {
-        status.canSave && !isColdPaused
-    }
+    var canStart: Bool { phase.canStart }
+
+    var canStop: Bool { phase.canStop }
+
+    var canPause: Bool { phase.canPause }
+
+    var canResume: Bool { phase.canResume }
+
+    var canSave: Bool { phase.canSave }
+
+    var canEditSettings: Bool { phase.canEditSettings }
+
+    var canRename: Bool { phase.canRename }
+
+    /// Whether a rename committed now survives — see
+    /// ``VMLifecyclePhase/renamePersists``.
+    var renamePersists: Bool { phase.renamePersists }
+
+    /// Whether the VM has a display session a backing view should present.
+    var hasActiveDisplay: Bool { phase.hasActiveDisplay }
 
     /// How a capture started right now would be taken — the one place that
     /// choice is made — or `nil` when the VM is in no state to capture.
     ///
-    /// The other at-rest states are excluded. `.initialBoot` holds disks with no
+    /// The other at-rest phases are excluded. `.initialBoot` holds disks with no
     /// installed guest, so a revert would land the VM stopped over an unbootable
-    /// disk. `.error` may still hold a suspend slot the VM would resume from
-    /// (see ``VirtualizationService/applyRestoreFailure(to:)``). Every
-    /// transitional status (`.starting`, `.saving`, `.snapshotting`, …) is
+    /// disk. `.failed` may still hold a suspend slot the VM would resume from
+    /// (see ``VirtualizationService/restingPhaseAfterRestoreFailure(on:)``).
+    /// Every transitional phase (`.starting`, `.saving`, `.capturingLive`, …) is
     /// excluded too — a capture mid-operation would race the operation itself.
     ///
-    /// Cold-paused additionally needs ``hasSaveFile``, unlike the other
-    /// branches: a failed snapshot attempt can rest a VM cold-paused with no
-    /// suspend slot at all (``VirtualizationService/restingStatusAfterFailedSnapshot(_:session:wasRunning:)``),
-    /// the same dead end ``VirtualizationService/applyRestoreFailure(to:)``
-    /// documents for `.paused` generally.
+    /// Suspended additionally needs ``hasSaveFile``, unlike the other branches:
+    /// a failed snapshot attempt can rest a VM suspended with no suspend slot at
+    /// all (``VirtualizationService/restingPhaseAfterFailedWarmCapture(_:session:sessionID:wasRunning:)``),
+    /// the same dead end
+    /// ``VirtualizationService/restingPhaseAfterRestoreFailure(on:)`` documents
+    /// for ``VMLifecyclePhase/suspended`` generally.
     var snapshotCaptureMode: VMSnapshotCaptureMode? {
         if canSave {
             .live
         } else if isColdPaused && hasSaveFile {
             .suspended
-        } else if status == .stopped {
+        } else if phase == .stopped {
             .stopped
         } else {
             nil
@@ -489,7 +505,7 @@ final class VMInstance {
     /// A live VM qualifies: the revert discards the running session, which is
     /// what the confirmation asks the user to accept.
     var canRevertToSnapshot: Bool {
-        !isPreparing && !status.isTransitioning && !snapshotManifest.isEmpty
+        !isPreparing && !phase.isTransitioning && !snapshotManifest.isEmpty
     }
 
     // MARK: - Ephemeral Mode
@@ -518,30 +534,21 @@ final class VMInstance {
         ephemeralBaselineSnapshot?.id == snapshot.id
     }
 
-    /// `true` when the VM is eligible for forceful termination.
-    ///
-    /// A live `VZVirtualMachine` is what a force stop acts on, so its absence
-    /// decides: cold-paused VMs have nothing in memory to terminate, a
-    /// disks-only capture is a file copy with no VM behind it, and a start
-    /// still assembling its configuration has yet to create one. Each would
-    /// otherwise drop the running operation's claim and then fail with
-    /// ``VirtualizationError/noVirtualMachine``.
-    var canForceStop: Bool {
-        status.canForceStop && hasLiveVirtualMachine
-    }
+    /// `true` when the VM is eligible for forceful termination — see
+    /// ``VMLifecyclePhase/canForceStop``.
+    var canForceStop: Bool { phase.canForceStop }
 
     /// `true` when the VM can be deleted — nothing live in memory, no
-    /// transitional status, and no import or clone writing into the bundle.
+    /// transitional phase, and no import or clone writing into the bundle.
     ///
-    /// Cold-paused VMs are included: the saved state is a file inside the
-    /// bundle and is removed along with it, so no discard step is needed first.
+    /// Suspended VMs are included: the saved state is a file inside the bundle
+    /// and is removed along with it, so no discard step is needed first.
     ///
-    /// Enablement only. A cold resume holds `.paused` with no live VM while it
-    /// builds its configuration, so this stays `true` after one starts;
+    /// Enablement only.
     /// ``VMLibraryViewModel/deleteConfirmed(_:deletingExternalIDs:permanently:)``
     /// revalidates against the lifecycle lock at confirm time.
     var canDelete: Bool {
-        !isPreparing && (status.canEditSettings || isColdPaused)
+        !isPreparing && (phase.canEditSettings || isColdPaused)
     }
 
     /// `true` when the VM can be cold-booted into macOS Recovery.
@@ -549,12 +556,10 @@ final class VMInstance {
     /// Stopped macOS guests only — Virtualization.framework has no recovery
     /// start option for Linux/EFI guests.
     var canStartInRecovery: Bool {
-        status == .stopped && configuration.guestOS == .macOS
+        phase == .stopped && configuration.guestOS == .macOS
     }
 
-    var canUseExternalDisplay: Bool {
-        (status == .running || status == .paused) && hasLiveVirtualMachine
-    }
+    var canUseExternalDisplay: Bool { hasLiveSession }
 
     var isInFullscreen: Bool { displayMode == .fullscreen }
 
@@ -563,8 +568,7 @@ final class VMInstance {
     var isDisplayDetached: Bool { displayMode != .inline }
 
     var canShowClipboard: Bool {
-        configuration.clipboardSharingEnabled && (status == .running || status == .paused)
-            && hasLiveVirtualMachine
+        configuration.clipboardSharingEnabled && hasLiveSession
     }
 
     // MARK: - Session Events
@@ -596,15 +600,58 @@ final class VMInstance {
             resetToStopped()
             Self.logger.notice("Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
-            tearDownSession()
-            status = .error
-            errorMessage = error.localizedDescription
+            tearDownSession(restingAt: .failed(message: error.localizedDescription))
             Self.logger.error(
                 "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
             )
         case .networkAttachmentDisconnected(let error):
             networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
         }
+    }
+
+    // MARK: - Phase Transitions
+
+    /// Places the VM at `phase`.
+    ///
+    /// The write every transition that names no session goes through — a
+    /// start's configuration-build window, a disks-only capture, a revert, an
+    /// install pipeline, a discarded suspend slot. A phase that *does* name one
+    /// is installed by ``settle(_:for:)`` or by ``attachSession(from:)``, and
+    /// released by ``tearDownSession(restingAt:)``.
+    func enter(_ phase: VMLifecyclePhase) {
+        self.phase = phase
+    }
+
+    /// Applies `phase` only while `sessionID` still names the live session,
+    /// reporting whether it landed.
+    ///
+    /// What every asynchronous operation concludes through, for the reason
+    /// ``deliverSessionEvent(_:from:)`` exists: an operation's awaits give a
+    /// `didStopWithError`, a force stop or a successor session time to land, and
+    /// a phase written over that would claim a `VZVirtualMachine` this instance
+    /// no longer holds — leaving a VM nothing can stop, force stop, or start.
+    @discardableResult
+    func settle(_ phase: VMLifecyclePhase, for sessionID: UUID) -> Bool {
+        guard liveSessionID == sessionID else { return false }
+        self.phase = phase
+        return true
+    }
+
+    /// Marks a guest setup as running: a macOS install, or a Linux installer
+    /// image being fetched.
+    ///
+    /// The one way into ``VMLifecyclePhase/installing(sessionID:)``, for both
+    /// macOS install paths and the Linux download pipeline. A session the
+    /// installer creates is promoted in by ``attachSession(from:)``.
+    func beginGuestSetup() {
+        enter(.installing(sessionID: nil))
+    }
+
+    /// Ends a guest setup that ran no VZ session, so no power-off takes the VM
+    /// out of ``beginGuestSetup()`` — the Linux image pipeline, whose caller
+    /// chains a Start straight off it.
+    func endGuestSetup() {
+        enter(.stopped)
     }
 
     // MARK: - State Helpers
@@ -670,12 +717,23 @@ final class VMInstance {
         return session
     }
 
-    /// Tears down the live VM session.
+    /// Tears the live VM session down and rests the VM at `phase`.
     ///
-    /// Does **not** change `status` — callers set the appropriate status after calling this.
-    func tearDownSession() {
+    /// The two are one call because a phase naming a session that is gone is
+    /// exactly the state this type exists to make unrepresentable — so
+    /// `restingAt` must name none. A retry that deliberately stays mid-operation
+    /// passes the sessionless form of the phase it is in
+    /// (``VMLifecyclePhase/starting(sessionID:)`` with `nil`, say).
+    func tearDownSession(restingAt phase: VMLifecyclePhase) {
+        if let strandedSessionID = phase.sessionID {
+            Self.logger.fault(
+                "Teardown of '\(self.name, privacy: .public)' asked to rest at a phase naming session \(strandedSessionID, privacy: .public)"
+            )
+            assertionFailure("tearDownSession(restingAt:) given a phase naming a session")
+        }
         sessionContext?.tearDown()
         sessionContext = nil
+        self.phase = phase
         // An open display window resets this itself when it auto-closes;
         // `.hidden` (headless) has no window to do so — reset here so it
         // can't leak into the next session.
@@ -684,16 +742,21 @@ final class VMInstance {
     }
 
     func resetToStopped() {
-        tearDownSession()
-        status = .stopped
+        tearDownSession(restingAt: .stopped)
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
         onPoweredOff?()
     }
 
-    /// Creates the VM on its own queue, stores the session, and builds the
-    /// network-attachment coordinator for network-enabled configurations.
+    /// Creates the VM on its own queue, stores the session, promotes the
+    /// in-flight phase to name it, and builds the network-attachment coordinator
+    /// for network-enabled configurations.
+    ///
+    /// The promotion is part of storing the session rather than the caller's
+    /// next step: liveness is read off the phase, so a gap between the two would
+    /// be a window in which a `VZVirtualMachine` exists and every predicate
+    /// answers that none does.
     ///
     /// `nil` when no session context is open — a programming error, since every
     /// bring-up path opens one before building the configuration this takes.
@@ -713,6 +776,14 @@ final class VMInstance {
             return nil
         }
         sessionContext.session = session
+        if phase.admitsSessionIdentity {
+            phase = phase.naming(session.id)
+        } else {
+            Self.logger.fault(
+                "Session attached to '\(self.name, privacy: .public)' while at \(self.status.rawValue, privacy: .public), which names no session"
+            )
+            assertionFailure("attachSession from a phase that admits no session identity")
+        }
         await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
         return session
     }
@@ -737,10 +808,7 @@ final class VMInstance {
                 session: session, initialPlan: initialPlan, vmnetNetworks: networks),
             interfaces: HostBridgedInterfaceProvider(),
             linkObserver: HostNetworkLinkObserver(),
-            isEligible: { [weak self] in
-                guard let self else { return false }
-                return self.status == .running || self.status == .paused
-            },
+            isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
             onPendingChange: { [weak context] pending in
                 context?.networkAttachmentPending = pending

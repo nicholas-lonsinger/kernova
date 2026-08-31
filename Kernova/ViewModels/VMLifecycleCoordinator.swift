@@ -311,7 +311,7 @@ final class VMLifecycleCoordinator {
                     }
 
                     instance.setupState = .macOSInstall(hasDownloadStep: true)
-                    instance.status = .installing
+                    instance.beginGuestSetup()
 
                     // Local because a moved latest destination lapses it below.
                     var requestedFreshDownload = context.requestedFreshDownload
@@ -427,7 +427,7 @@ final class VMLifecycleCoordinator {
                     }
 
                     instance.setupState = .macOSInstall(hasDownloadStep: false)
-                    instance.status = .installing
+                    instance.beginGuestSetup()
                 }
 
                 let installedImage = try await installService.install(
@@ -460,8 +460,9 @@ final class VMLifecycleCoordinator {
                 Self.logger.error(
                     "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationService.underlyingChainDescription(nsError), privacy: .public)]"
                 )
-                VirtualizationService.applyStartFailure(
-                    error, to: instance, transientRestingStatus: .initialBoot)
+                instance.enter(
+                    VirtualizationService.restingPhaseAfterStartFailure(
+                        error, transientRestingPhase: .initialBoot))
                 throw error
             }
         }
@@ -581,7 +582,7 @@ final class VMLifecycleCoordinator {
 
             do {
                 instance.setupState = .linuxImage(hasVerifyStep: context.hasVerifyStep)
-                instance.status = .installing
+                instance.beginGuestSetup()
 
                 // Resolved on every attempt: a catalog entry because the mirror
                 // renames its ISO in place (see `LinuxImageCatalogEntry`), a
@@ -690,11 +691,10 @@ final class VMLifecycleCoordinator {
                     at: downloadDestination, named: image.filename,
                     from: InstalledImage(linuxSource: context.source), to: instance)
                 instance.setupState = nil
-                // The VM entered `.installing` for the pipeline and nothing
-                // else takes it out — unlike a macOS install, no VZ session ran
-                // to leave it `.stopped`. The caller chains a Start straight
-                // off this return, and `.installing` fails its guard.
-                instance.status = .stopped
+                // Unlike a macOS install, no VZ session ran whose power-off
+                // would take the VM out of the install phase — and the caller
+                // chains a Start straight off this return.
+                instance.endGuestSetup()
             } catch is CancellationError {
                 Self.logger.info(
                     "Linux image download cancelled for '\(instance.name, privacy: .public)'")
@@ -713,8 +713,9 @@ final class VMLifecycleCoordinator {
                 Self.logger.error(
                     "Linux image download failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
                 )
-                VirtualizationService.applyStartFailure(
-                    error, to: instance, transientRestingStatus: .initialBoot)
+                instance.enter(
+                    VirtualizationService.restingPhaseAfterStartFailure(
+                        error, transientRestingPhase: .initialBoot))
                 throw error
             }
         }

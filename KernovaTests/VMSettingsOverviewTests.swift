@@ -436,7 +436,7 @@ struct VMSettingsOverviewTests {
     func networkCardClaimSurvivesLiveSwitching() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         let vc = VMSettingsViewController(
             instance: instance, viewModel: viewModel, isReadOnly: true)
         vc.loadViewIfNeeded()
@@ -599,7 +599,7 @@ struct VMSettingsOverviewTests {
     @Test("The capture command dims when the VM is in no state to be captured")
     func takeSnapshotFollowsTheViewModelGate() throws {
         let (vc, instance, viewModel) = makeController()
-        instance.status = .starting
+        instance.enter(.starting(sessionID: nil))
         reapply(vc, (instance, viewModel))
 
         let take = try #require(actionButton(.takeSnapshot, in: try card(.snapshots, in: vc)))

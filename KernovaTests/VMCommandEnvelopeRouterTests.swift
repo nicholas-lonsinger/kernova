@@ -80,14 +80,14 @@ struct VMCommandEnvelopeRouterTests {
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String = "Wired", status: VMStatus = .stopped
+        in harness: Harness, name: String = "Wired", phase: VMLifecyclePhase = .stopped
     ) -> VMInstance {
         var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         config.networkEnabled = false
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: status, preferences: preferences)
+            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
         harness.library.instances.append(instance)
         harness.storage.bundles[bundleURL] = config
         return instance
@@ -99,7 +99,7 @@ struct VMCommandEnvelopeRouterTests {
     func listCrossesTheWire() async throws {
         let harness = makeHarness()
         makeInstance(in: harness, name: "First")
-        makeInstance(in: harness, name: "Second", status: .running)
+        makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(.list)
 
@@ -142,7 +142,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A snapshot capture answers with the snapshot that landed")
     func takeSnapshotCrossesTheWire() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(
             .takeSnapshot(.id(instance.id), name: "Fresh", notes: ""))
@@ -184,7 +184,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A state gate comes back naming the state and the verbs it allows")
     func invalidStateCrossesTheWire() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
 
@@ -246,7 +246,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("An unconfirmed cancel refuses with the confirmation naming the running step")
     func cancelGuestSetupWithoutConsentRefuses() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .installing)
+        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
         instance.setupTask = Task {}
         instance.setupState = .macOSInstall(hasDownloadStep: false)
 
@@ -264,7 +264,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A confirmed cancel of a running setup crosses the wire and cancels the task")
     func cancelGuestSetupCrossesTheWire() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .installing)
+        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
         let cancelStream = AsyncStream<Void>.makeStream()
         instance.setupTask = Task {
             await withTaskCancellationHandler {
@@ -285,7 +285,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Cancelling with nothing in flight refuses, and the verb is not offered")
     func cancelGuestSetupWithNothingInFlightRefuses() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .stopped)
+        let instance = makeInstance(in: harness, phase: .stopped)
 
         let response = try await harness.transport.send(
             .cancelGuestSetup(.id(instance.id), confirmed: true))
@@ -306,7 +306,7 @@ struct VMCommandEnvelopeRouterTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            configuration: config, bundleURL: bundleURL, phase: .initialBoot,
             preferences: preferences)
         harness.library.instances.append(instance)
         harness.storage.bundles[bundleURL] = config
@@ -371,7 +371,7 @@ struct VMCommandEnvelopeRouterTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            configuration: config, bundleURL: bundleURL, phase: .initialBoot,
             preferences: preferences)
         library.instances.append(instance)
         storage.bundles[bundleURL] = config

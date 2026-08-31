@@ -11,11 +11,11 @@ struct SnapshotRevertMenuTests {
         @objc func revert(_ sender: NSMenuItem) {}
     }
 
-    private func makeInstance(status: VMStatus = .stopped) -> VMInstance {
+    private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
         let config = VMConfiguration(name: "Revert VM", guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
     private func makeSnapshot(_ name: String, offsetSeconds: TimeInterval = 0) -> VMSnapshot {
@@ -82,7 +82,7 @@ struct SnapshotRevertMenuTests {
 
     @Test("Items are disabled while the VM is mid-transition")
     func itemsDisabledWhileTransitioning() {
-        let instance = makeInstance(status: .starting)
+        let instance = makeInstance(phase: .starting(sessionID: nil))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [makeSnapshot("Only")])
 
         #expect(rebuild(for: instance).items.allSatisfy { !$0.isEnabled })
@@ -90,7 +90,7 @@ struct SnapshotRevertMenuTests {
 
     @Test("Items are enabled on a running VM, which the revert terminates")
     func itemsEnabledWhileRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [makeSnapshot("Only")])
 
         #expect(rebuild(for: instance).items.allSatisfy { $0.isEnabled })
@@ -98,7 +98,7 @@ struct SnapshotRevertMenuTests {
 
     @Test("The caller's gate decides, so a busy VM's items are disabled")
     func callerGateDisablesItems() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [makeSnapshot("Only")])
 
         // `canRevertToSnapshot` alone reads `true` here: the VM is settled. The

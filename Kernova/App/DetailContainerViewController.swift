@@ -272,7 +272,7 @@ final class DetailContainerViewController: NSViewController {
             viewModel.instances
                 .filter {
                     $0.hasLiveVirtualMachine && $0.displayMode == .inline
-                        && $0.status.hasActiveDisplay
+                        && $0.hasActiveDisplay
                 }
                 .map(\.id)
         )
@@ -285,7 +285,7 @@ final class DetailContainerViewController: NSViewController {
         guard let instance = viewModel.selectedInstance,
             let display = instance.session?.displayHandle,
             instance.displayMode == .inline,
-            instance.status.hasActiveDisplay,
+            instance.hasActiveDisplay,
             instance.detailPaneMode == .display
         else {
             // The armed VM's display is presentable but the user is looking
@@ -293,7 +293,7 @@ final class DetailContainerViewController: NSViewController {
             // passed, so expire the request instead of letting it fire on a
             // later pane switch.
             if let selected = viewModel.selectedInstance, armedGuestFocusID == selected.id,
-                selected.hasLiveVirtualMachine, selected.status.hasActiveDisplay
+                selected.hasLiveVirtualMachine, selected.hasActiveDisplay
             {
                 armedGuestFocusID = nil
             }

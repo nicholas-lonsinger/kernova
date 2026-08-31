@@ -375,7 +375,7 @@ struct VMLibraryTests {
     func reconcileRemovesStoppedVMs() {
         let (library, _, _, _) = makeLibrary()
         let instance = makeInstance(name: "Gone VM")
-        instance.status = .stopped
+        instance.enter(.stopped)
         library.instances.append(instance)
 
         // Storage has no bundles, so instance should be removed
@@ -388,7 +388,7 @@ struct VMLibraryTests {
     func reconcilePreservesRunningVMs() {
         let (library, _, _, _) = makeLibrary()
         let instance = makeInstance(name: "Running VM")
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         library.instances.append(instance)
 
         library.reconcileWithDisk()
@@ -401,7 +401,7 @@ struct VMLibraryTests {
     func reconcilePreservesPausedVMs() {
         let (library, _, _, _) = makeLibrary()
         let instance = makeInstance(name: "Paused VM")
-        instance.status = .paused
+        instance.enter(.suspended)
         library.instances.append(instance)
 
         library.reconcileWithDisk()
@@ -415,7 +415,7 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         let remaining = makeInstance(name: "Remaining")
         let removed = makeInstance(name: "Removed")
-        removed.status = .stopped
+        removed.enter(.stopped)
         library.instances = [remaining, removed]
         library.selectedID = removed.id
 
@@ -629,7 +629,7 @@ struct VMLibraryTests {
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .initialBoot)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .initialBoot)
         library.instances.append(instance)
         // Bundle is NOT in storage.bundles — simulating an on-disk deletion.
 
@@ -649,7 +649,7 @@ struct VMLibraryTests {
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .initialBoot)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .initialBoot)
 
         // Spawn a long-running install task we can observe getting cancelled.
         let cancelStream = AsyncStream<Void>.makeStream()
@@ -676,13 +676,13 @@ struct VMLibraryTests {
     func pauseAllForSleepPausesRunning() async {
         let (library, _, virtService, _) = makeLibrary()
         let running1 = makeInstance(name: "Running 1")
-        running1.status = .running
+        running1.enter(.running(sessionID: UUID()))
         let running2 = makeInstance(name: "Running 2")
-        running2.status = .running
+        running2.enter(.running(sessionID: UUID()))
         let stopped = makeInstance(name: "Stopped")
-        stopped.status = .stopped
+        stopped.enter(.stopped)
         let paused = makeInstance(name: "User Paused")
-        paused.status = .paused
+        paused.enter(.suspended)
         library.instances = [running1, running2, stopped, paused]
 
         await library.pauseAllForSleep()
@@ -699,9 +699,9 @@ struct VMLibraryTests {
     func resumeAllAfterWakeResumesOnlySleepPaused() async {
         let (library, _, virtService, _) = makeLibrary()
         let sleepPaused = makeInstance(name: "Sleep Paused")
-        sleepPaused.status = .paused
+        sleepPaused.enter(.suspended)
         let userPaused = makeInstance(name: "User Paused")
-        userPaused.status = .paused
+        userPaused.enter(.suspended)
         library.instances = [sleepPaused, userPaused]
         library.sleepPausedInstanceIDs = Set([sleepPaused.id])
 
@@ -719,7 +719,7 @@ struct VMLibraryTests {
         virtService.pauseError = VirtualizationError.noVirtualMachine
         let (library, _, _, _) = makeLibrary(virtualizationService: virtService)
         let running = makeInstance(name: "Running")
-        running.status = .running
+        running.enter(.running(sessionID: UUID()))
         library.instances = [running]
 
         await library.pauseAllForSleep()
@@ -737,7 +737,7 @@ struct VMLibraryTests {
         virtService.resumeError = VirtualizationError.noVirtualMachine
         let (library, _, _, _) = makeLibrary(virtualizationService: virtService)
         let instance = makeInstance(name: "Sleep Paused")
-        instance.status = .paused
+        instance.enter(.suspended)
         library.instances = [instance]
         library.sleepPausedInstanceIDs = Set([instance.id])
 
@@ -753,7 +753,7 @@ struct VMLibraryTests {
     func pauseAllForSleepNoOp() async {
         let (library, _, virtService, _) = makeLibrary()
         let stopped = makeInstance(name: "Stopped")
-        stopped.status = .stopped
+        stopped.enter(.stopped)
         library.instances = [stopped]
 
         await library.pauseAllForSleep()
@@ -766,7 +766,7 @@ struct VMLibraryTests {
     func resumeAllAfterWakeNoOp() async {
         let (library, _, virtService, _) = makeLibrary()
         let paused = makeInstance(name: "User Paused")
-        paused.status = .paused
+        paused.enter(.suspended)
         library.instances = [paused]
         // sleepPausedInstanceIDs is empty
 
@@ -779,11 +779,11 @@ struct VMLibraryTests {
     func pauseAllForSleepSkipsNonRunning() async {
         let (library, _, virtService, _) = makeLibrary()
         let starting = makeInstance(name: "Starting")
-        starting.status = .starting
+        starting.enter(.starting(sessionID: nil))
         let saving = makeInstance(name: "Saving")
-        saving.status = .saving
+        saving.enter(.saving(sessionID: UUID()))
         let error = makeInstance(name: "Error")
-        error.status = .error
+        error.enter(.failed(message: "Test failure"))
         library.instances = [starting, saving, error]
 
         await library.pauseAllForSleep()
@@ -796,7 +796,7 @@ struct VMLibraryTests {
     func resumeAllAfterWakeSkipsNonPaused() async {
         let (library, _, virtService, _) = makeLibrary()
         let instance = makeInstance(name: "Was Paused")
-        instance.status = .stopped  // Status changed between sleep and wake
+        instance.enter(.stopped)  // Status changed between sleep and wake
         library.instances = [instance]
         library.sleepPausedInstanceIDs = Set([instance.id])
 
@@ -857,7 +857,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let preparing = makeInstance(name: "Preparing VM")
         markPreparing(preparing)
-        preparing.status = .stopped
+        preparing.enter(.stopped)
         library.instances.append(preparing)
 
         // Storage has no bundles — normally this instance would be removed
@@ -887,7 +887,7 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         library.instances.append(instance)
 
@@ -914,7 +914,7 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
         instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
@@ -940,7 +940,7 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
         instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
@@ -969,7 +969,7 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
         instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
@@ -995,7 +995,7 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         library.instances.append(instance)
 
@@ -1017,7 +1017,7 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .stopped
+        instance.enter(.stopped)
         library.instances.append(instance)
 
         let old = instance.configuration
@@ -1037,7 +1037,7 @@ struct VMLibraryTests {
         mock.attachError = USBDeviceError.diskImageNotFound("/tmp/missing.iso")
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         library.instances.append(instance)
 
@@ -1063,7 +1063,7 @@ struct VMLibraryTests {
         mock.detachError = USBDeviceError.deviceNotFound
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
         instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
@@ -1092,7 +1092,7 @@ struct VMLibraryTests {
         mock.detachError = TransientError()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
         instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
@@ -1120,7 +1120,7 @@ struct VMLibraryTests {
         mock.detachError = USBDeviceError.noVirtualMachine
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
         instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
@@ -1146,7 +1146,7 @@ struct VMLibraryTests {
         mock.attachError = USBDeviceError.noVirtualMachine
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         library.instances.append(instance)
 
@@ -1167,7 +1167,7 @@ struct VMLibraryTests {
         let mock = SuspendingMockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         library.instances.append(instance)
 
@@ -1179,7 +1179,7 @@ struct VMLibraryTests {
         await mock.waitUntilSuspended()
         // Stop the VM before the suspended attach resolves.
         library.applyLivePolicy(for: instance, old: configA, new: configB)
-        instance.status = .stopped
+        instance.enter(.stopped)
 
         mock.resumeSuspended()
         for _ in 0..<10 { await Task.yield() }
@@ -1194,7 +1194,7 @@ struct VMLibraryTests {
         let mock = SuspendingMockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         library.instances.append(instance)
 

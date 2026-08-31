@@ -21,9 +21,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnPause = true
 
-    /// When `true`, `resume` will suspend *before* touching `status`, standing in
-    /// for the window a real cold resume spends building its configuration while
-    /// the VM still reads as cold-paused.
+    /// When `true`, `resume` will suspend *before* touching the phase, standing
+    /// in for the window a real cold resume spends building its configuration
+    /// while the VM still reads as suspended.
     ///
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnResume = false
@@ -77,11 +77,18 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     // MARK: - VirtualizationProviding
 
+    /// The identity a phase this mock installs names — the live one when the
+    /// instance already holds a session, and a fresh one otherwise, since a CI
+    /// host can mint no real `VZVirtualMachine`.
+    private func sessionIdentity(for instance: VMInstance) -> UUID {
+        instance.liveSessionID ?? UUID()
+    }
+
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
-        instance.status = .running
+        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
     }
 
     func stop(_ instance: VMInstance) async throws {
@@ -96,26 +103,27 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnPause {
             await suspendIfNeeded()
         }
-        instance.status = .paused
+        instance.enter(.livePaused(sessionID: sessionIdentity(for: instance)))
     }
 
     func resume(_ instance: VMInstance) async throws {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
-        instance.status = .running
+        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
     }
 
     func save(_ instance: VMInstance) async throws {
-        instance.tearDownSession()
-        instance.status = .paused
+        instance.tearDownSession(restingAt: .suspended)
     }
 
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let wasRunning = instance.status == .running
-        instance.status = wasRunning ? .running : .paused
+        let sessionID = sessionIdentity(for: instance)
+        instance.enter(
+            instance.status == .running
+                ? .running(sessionID: sessionID) : .livePaused(sessionID: sessionID))
     }
 
     func revertToSnapshot(
@@ -124,7 +132,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
-        instance.tearDownSession()
-        instance.status = .paused
+        instance.tearDownSession(restingAt: .suspended)
     }
 }

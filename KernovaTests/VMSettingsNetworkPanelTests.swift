@@ -52,7 +52,7 @@ struct VMSettingsNetworkPanelTests {
         interfaces: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
         entitled: Bool = true,
         isReadOnly: Bool = false,
-        status: VMStatus = .stopped,
+        phase: VMLifecyclePhase = .stopped,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
@@ -63,7 +63,7 @@ struct VMSettingsNetworkPanelTests {
             portForwardingRules: portForwardingRules)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
         let vc = VMSettingsViewController(
             instance: instance, viewModel: viewModel ?? makeViewModel(), isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,
@@ -537,9 +537,9 @@ struct VMSettingsNetworkPanelTests {
         // The holder is live on Shared; this VM shares its address on Host Only,
         // which the start guard permits — the two are on different networks.
         let holder = try #require(viewModel.instances.first)
-        holder.status = .running
+        holder.enter(.running(sessionID: UUID()))
         let (vc, instance) = makeNetworkController(
-            mode: .hostOnly, isReadOnly: true, status: .running, viewModel: viewModel)
+            mode: .hostOnly, isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         let shared = try #require(popUp.itemArray.first { $0.title == "Shared Network" })
 
@@ -661,7 +661,7 @@ struct VMSettingsNetworkPanelTests {
     func runningVMLocksTheMACControls() throws {
         let (vc, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
-            isReadOnly: true, status: .running)
+            isReadOnly: true, phase: .running(sessionID: UUID()))
 
         #expect(editableField("MAC address", in: vc.view)?.isEnabled == false)
         #expect(findButton(titled: "Generate", in: vc.view)?.isEnabled == false)
@@ -717,7 +717,7 @@ struct VMSettingsNetworkPanelTests {
     func runningVMKeepsThePickerLiveWithNoneDisabled() throws {
         let (vc, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
-            isReadOnly: true, status: .running)
+            isReadOnly: true, phase: .running(sessionID: UUID()))
 
         let popUp = try openModeMenu(in: vc)
         #expect(popUp.isEnabled)
@@ -733,12 +733,12 @@ struct VMSettingsNetworkPanelTests {
         // a single section.
         let (liveVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
-            isReadOnly: true, status: .running)
+            isReadOnly: true, phase: .running(sessionID: UUID()))
         #expect(panelHeaderLockHints(in: liveVC).allSatisfy { $0.isHidden })
 
         let (savingVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
-            isReadOnly: true, status: .saving)
+            isReadOnly: true, phase: .saving(sessionID: UUID()))
         #expect(panelHeaderLockHints(in: savingVC).allSatisfy { !$0.isHidden })
         #expect(!panelHeaderLockHints(in: savingVC).isEmpty)
     }
@@ -747,7 +747,7 @@ struct VMSettingsNetworkPanelTests {
     func runningPickerWritesALiveModeSwitch() throws {
         let (vc, instance) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
-            isReadOnly: true, status: .running)
+            isReadOnly: true, phase: .running(sessionID: UUID()))
         let popUp = try openModeMenu(in: vc)
 
         popUp.selectItem(withTitle: "Wi-Fi (en0)")
@@ -762,18 +762,20 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(
             networkEnabled: false,
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
-            isReadOnly: true, status: .running)
+            isReadOnly: true, phase: .running(sessionID: UUID()))
         #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == false)
     }
 
-    @Test("Transitional and cold-paused states lock the picker")
+    @Test("Transitional and suspended phases lock the picker")
     func transitionalStatesLockThePicker() throws {
-        for status in [VMStatus.saving, .restoring, .paused] {
-            // `.paused` with no live `VZVirtualMachine` is cold-paused — there
-            // is no session to hot-swap an attachment on.
+        for phase in [
+            VMLifecyclePhase.saving(sessionID: UUID()), .revertingToSnapshot, .suspended,
+        ] {
+            // Suspended carries no live `VZVirtualMachine` — there is no
+            // session to hot-swap an attachment on.
             let (vc, _) = makeNetworkController(
                 interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
-                isReadOnly: true, status: status)
+                isReadOnly: true, phase: phase)
             #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == false)
         }
     }
@@ -845,7 +847,7 @@ struct VMSettingsNetworkPanelTests {
     @Test("A running VM's rule controls are locked")
     func runningVMLocksTheRuleControls() {
         let (vc, _) = makeNetworkController(
-            portForwardingRules: [Self.webRule], isReadOnly: true, status: .running)
+            portForwardingRules: [Self.webRule], isReadOnly: true, phase: .running(sessionID: UUID()))
 
         #expect(removeRuleButtons(in: vc.view).allSatisfy { !$0.isEnabled })
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
@@ -854,7 +856,7 @@ struct VMSettingsNetworkPanelTests {
     @Test("Unlocking after a session re-enables the rule controls")
     func unlockingReenablesTheRuleControls() {
         let (vc, instance) = makeNetworkController(
-            portForwardingRules: [Self.webRule], isReadOnly: true, status: .running)
+            portForwardingRules: [Self.webRule], isReadOnly: true, phase: .running(sessionID: UUID()))
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
 
         vc.reconfigure(instance: instance, viewModel: makeViewModel(), isReadOnly: false)
@@ -896,7 +898,7 @@ struct VMSettingsNetworkPanelTests {
 
     @Test("A live-switchable Network section hides its hint and leaves the Mode row undimmed")
     func liveSwitchableNetworkRowStaysUndimmed() throws {
-        let (vc, _) = makeNetworkController(isReadOnly: true, status: .running)
+        let (vc, _) = makeNetworkController(isReadOnly: true, phase: .running(sessionID: UUID()))
         let panel = try #require(vc.panelForTesting(.network))
         let modeRow = try #require(settingsRow(labeled: "Mode", in: panel))
         #expect(modeRow.alphaValue == 1)
@@ -906,7 +908,7 @@ struct VMSettingsNetworkPanelTests {
 
     @Test("A stopped VM's Network Mode row dims with the rest of its section")
     func stoppedNetworkModeRowFollowsTheLock() throws {
-        let (vc, _) = makeNetworkController(isReadOnly: true, status: .stopped)
+        let (vc, _) = makeNetworkController(isReadOnly: true, phase: .stopped)
         let panel = try #require(vc.panelForTesting(.network))
         let modeRow = try #require(settingsRow(labeled: "Mode", in: panel))
         #expect(modeRow.alphaValue == Alpha.disabled)

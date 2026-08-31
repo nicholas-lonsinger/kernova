@@ -55,12 +55,12 @@ struct VMLibraryViewModelEphemeralTests {
     /// Loads the VMs through the view model — the path that wires the power-off
     /// hook — each carrying two snapshots, the older of which is its baseline.
     ///
-    /// `ephemeral` decides whether the first VM's mode is on; `status` is where
+    /// `ephemeral` decides whether the first VM's mode is on; `phase` is where
     /// it rests once loaded. `secondVM` adds a second, always-ephemeral VM, for
     /// the cases that turn on the two being tracked apart.
     private func makeHarness(
-        ephemeral: Bool = true, status: VMStatus = .running, secondVM: Bool = false,
-        baselineKind: VMSnapshotKind = .warm
+        ephemeral: Bool = true, phase: VMLifecyclePhase = .running(sessionID: UUID()),
+        secondVM: Bool = false, baselineKind: VMSnapshotKind = .warm
     ) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
@@ -90,7 +90,7 @@ struct VMLibraryViewModelEphemeralTests {
         await viewModel.loadVMs()
         let instance = try #require(
             viewModel.instances.first { $0.configuration.id == first.config.id })
-        instance.status = status
+        instance.enter(phase)
         let other = second.flatMap { seeded in
             viewModel.instances.first { $0.configuration.id == seeded.config.id }
         }
@@ -183,7 +183,7 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness(secondVM: true)
         let other = try #require(harness.other)
         let otherBaseline = try #require(harness.otherBaseline)
-        other.status = .running
+        other.enter(.running(sessionID: UUID()))
 
         await harness.viewModel.stop(harness.instance)
         await harness.viewModel.stop(other)
@@ -261,7 +261,7 @@ struct VMLibraryViewModelEphemeralTests {
 
     @Test("A Stop aimed at a suspended ephemeral session asks before discarding it")
     func discardSavedStateAsksBeforeReverting() async throws {
-        let harness = try await makeHarness(status: .paused)
+        let harness = try await makeHarness(phase: .suspended)
 
         // Nothing to shut down: the revert deletes the suspended session and
         // rolls the disks back, so it takes the same consent the force path does.
@@ -275,7 +275,7 @@ struct VMLibraryViewModelEphemeralTests {
 
     @Test("A confirmed discard of a suspended ephemeral session reverts to the baseline")
     func discardSavedStateReverts() async throws {
-        let harness = try await makeHarness(status: .paused)
+        let harness = try await makeHarness(phase: .suspended)
 
         await harness.viewModel.forceStop(harness.instance)
 
@@ -288,7 +288,7 @@ struct VMLibraryViewModelEphemeralTests {
 
     @Test("Discarding a suspended session still routes through a disks-only baseline")
     func discardSavedStateRevertsToAColdBaseline() async throws {
-        let harness = try await makeHarness(status: .paused, baselineKind: .cold)
+        let harness = try await makeHarness(phase: .suspended, baselineKind: .cold)
 
         await harness.viewModel.forceStop(harness.instance)
 
@@ -299,7 +299,7 @@ struct VMLibraryViewModelEphemeralTests {
 
     @Test("A suspended VM that is not ephemeral is asked about too, then just discards")
     func nonEphemeralDiscardIsUnchanged() async throws {
-        let harness = try await makeHarness(ephemeral: false, status: .paused)
+        let harness = try await makeHarness(ephemeral: false, phase: .suspended)
 
         // The session a plain discard deletes is no less lost for the VM not
         // being ephemeral, so the consent is the same.

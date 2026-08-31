@@ -327,8 +327,7 @@ struct DetailAlertsPresenterTests {
     func takeSnapshotSheetDedupesWhileQueued() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .running
-        vm.hasLiveVirtualMachineOverrideForTesting = true
+        vm.enter(.running(sessionID: UUID()))
 
         // No window, so nothing drains: both requests would otherwise sit in
         // `pending` and show two sheets back to back.
@@ -343,8 +342,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertNamesTheSuspendedSession() throws {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .paused
-        vm.hasLiveVirtualMachineOverrideForTesting = false
+        vm.enter(.suspended)
         // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
         // needs one on disk, not just the status.
         try FileManager.default.createDirectory(
@@ -368,8 +366,7 @@ struct DetailAlertsPresenterTests {
     func discardAlertOnAnEphemeralVMNamesTheBaseline() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .paused
-        vm.hasLiveVirtualMachineOverrideForTesting = false
+        vm.enter(.suspended)
         let baseline = VMSnapshot(name: "Clean install")
         vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
         vm.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -385,8 +382,7 @@ struct DetailAlertsPresenterTests {
     func discardAlertOnAPlainVMIsUnchanged() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .paused
-        vm.hasLiveVirtualMachineOverrideForTesting = false
+        vm.enter(.suspended)
 
         let alert = presenter.forceStopAlertForTesting(vm)
 
@@ -398,8 +394,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnALiveVMOffersSnapshotFirst() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .running
-        vm.hasLiveVirtualMachineOverrideForTesting = true
+        vm.enter(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before the update")
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
@@ -412,7 +407,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnAStoppedVMOffersSnapshotFirst() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .stopped
+        vm.enter(.stopped)
         let snapshot = VMSnapshot(name: "Before the update", kind: .cold)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
@@ -424,8 +419,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnAColdTargetNamesThePowerOff() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .running
-        vm.hasLiveVirtualMachineOverrideForTesting = true
+        vm.enter(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
@@ -438,8 +432,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnAColdTargetFromColdPaused() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
-        vm.status = .paused
-        vm.hasLiveVirtualMachineOverrideForTesting = false
+        vm.enter(.suspended)
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)

@@ -38,9 +38,9 @@ struct VMToolbarManagerTests {
         return (library, lifecycle)
     }
 
-    private func makeInstance(status: VMStatus = .stopped, clipboardSharing: Bool = true)
-        -> VMInstance
-    {
+    private func makeInstance(
+        phase: VMLifecyclePhase = .stopped, clipboardSharing: Bool = true
+    ) -> VMInstance {
         var config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
@@ -49,7 +49,7 @@ struct VMToolbarManagerTests {
         config.clipboardSharingEnabled = clipboardSharing
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
     private func makeManager(
@@ -135,11 +135,12 @@ struct VMToolbarManagerTests {
 
     @Test("Take Snapshot is enabled wherever Suspend is, and on a stopped VM too")
     func takeSnapshotCoversStoppedAsWell() {
-        for (status, expected) in [
-            (VMStatus.running, true), (.paused, true), (.stopped, true), (.starting, false),
+        for (phase, expected) in [
+            (VMLifecyclePhase.running(sessionID: UUID()), true),
+            (.livePaused(sessionID: UUID()), true), (.stopped, true),
+            (.starting(sessionID: UUID()), false),
         ] {
-            let instance = makeInstance(status: status)
-            instance.hasLiveVirtualMachineOverrideForTesting = true
+            let instance = makeInstance(phase: phase)
             let manager = makeManager(instance: instance)
             let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -147,10 +148,10 @@ struct VMToolbarManagerTests {
 
             #expect(
                 item("testTakeSnapshot", in: toolbar)?.isEnabled == expected,
-                "status \(status.displayName)")
+                "phase \(phase)")
         }
         // Suspend keeps its own, narrower gate.
-        let stopped = makeInstance(status: .stopped)
+        let stopped = makeInstance(phase: .stopped)
         let manager = makeManager(instance: stopped)
         let (toolbar, _, _) = makeToolbar(manager: manager)
         manager.updateToolbarItems(in: toolbar)
@@ -162,8 +163,7 @@ struct VMToolbarManagerTests {
         let suspending = SuspendingMockVirtualizationService()
         suspending.shouldSuspendOnResume = true
         let (library, lifecycle) = makeLibrary(virtualization: suspending)
-        let instance = makeInstance(status: .paused)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let instance = makeInstance(phase: .livePaused(sessionID: UUID()))
         library.instances.append(instance)
         let manager = makeManager(instance: instance, library: library)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -369,7 +369,7 @@ struct VMToolbarManagerTests {
 
     @Test("updateClipboardItem disables the clipboard item without a running VM")
     func clipboardItemDisabledForStoppedInstance() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -391,7 +391,7 @@ struct VMToolbarManagerTests {
 
     @Test("Clipboard button shows the transfer fraction while a transfer is in flight")
     func clipboardBarShownDuringTransfer() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let operation = publishProgress(transferred: 25, total: 100, on: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -404,7 +404,7 @@ struct VMToolbarManagerTests {
 
     @Test("Clipboard button hides the bar once the transfer reaches a terminal state")
     func clipboardBarHiddenAfterTerminal() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let operation = publishProgress(transferred: 50, total: 100, on: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -420,7 +420,7 @@ struct VMToolbarManagerTests {
 
     @Test("the Clipboard button stays blank for a drop on a VM with sharing switched off")
     func clipboardBarSilentForADropWithSharingOff() {
-        let instance = makeInstance(status: .running, clipboardSharing: false)
+        let instance = makeInstance(phase: .running(sessionID: UUID()), clipboardSharing: false)
         let operation = publishProgress(
             transferred: 25, total: 100, on: instance, gesture: .drop)
         let manager = makeManager(instance: instance)
@@ -439,7 +439,7 @@ struct VMToolbarManagerTests {
 
     @Test("Every VM item is disabled while a clone or import writes into the bundle")
     func preparingDisablesEveryItem() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
@@ -459,7 +459,7 @@ struct VMToolbarManagerTests {
 
     @Test("Play button shows 'Start' when status is stopped")
     func playLabelStartWhenStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -472,7 +472,7 @@ struct VMToolbarManagerTests {
 
     @Test("Play button shows 'Resume' when status is paused")
     func playLabelResumeWhenPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -487,7 +487,7 @@ struct VMToolbarManagerTests {
 
     @Test("Play enabled when canStart (stopped)")
     func playEnabledWhenStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -501,7 +501,7 @@ struct VMToolbarManagerTests {
 
     @Test("Pause and stop enabled when running")
     func pauseStopEnabledWhenRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -515,7 +515,7 @@ struct VMToolbarManagerTests {
 
     @Test("Play (resume) and stop enabled when paused")
     func resumeStopEnabledWhenPaused() {
-        let instance = makeInstance(status: .paused)
+        let instance = makeInstance(phase: .suspended)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -529,7 +529,7 @@ struct VMToolbarManagerTests {
 
     @Test("Play enabled after a failure (error)")
     func playEnabledWhenError() {
-        let instance = makeInstance(status: .error)
+        let instance = makeInstance(phase: .failed(message: "Boot failed."))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -543,7 +543,7 @@ struct VMToolbarManagerTests {
 
     @Test("All lifecycle items disabled during transitioning states")
     func lifecycleDisabledDuringTransition() {
-        let instance = makeInstance(status: .starting)
+        let instance = makeInstance(phase: .starting(sessionID: nil))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -557,7 +557,7 @@ struct VMToolbarManagerTests {
 
     @Test("Save state enabled when canSave (running)")
     func saveEnabledWhenRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -568,7 +568,7 @@ struct VMToolbarManagerTests {
 
     @Test("Save state disabled when stopped")
     func saveDisabledWhenStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -581,7 +581,7 @@ struct VMToolbarManagerTests {
 
     @Test("Display items disabled when gatesDisplayOnCapability=true and canUseExternalDisplay is false")
     func displayGatedAndDisabled() {
-        let instance = makeInstance(status: .stopped)  // canUseExternalDisplay = false
+        let instance = makeInstance(phase: .stopped)  // canUseExternalDisplay = false
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: true)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -593,7 +593,7 @@ struct VMToolbarManagerTests {
 
     @Test("Display items enabled when gatesDisplayOnCapability=false regardless of status")
     func displayNotGatedAlwaysEnabled() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -607,7 +607,7 @@ struct VMToolbarManagerTests {
 
     @Test("Pop Out label when displayMode is inline")
     func popOutLabelWhenInline() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.displayMode = .inline
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -619,7 +619,7 @@ struct VMToolbarManagerTests {
 
     @Test("Pop In label when displayMode is popOut")
     func popInLabelWhenPopOut() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.displayMode = .popOut
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -631,7 +631,7 @@ struct VMToolbarManagerTests {
 
     @Test("Pop In label when displayMode is hidden (headless)")
     func popInLabelWhenHidden() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.displayMode = .hidden
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -643,7 +643,7 @@ struct VMToolbarManagerTests {
 
     @Test("Fullscreen label when not in fullscreen")
     func fullscreenLabelDefault() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.displayMode = .inline
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -655,7 +655,7 @@ struct VMToolbarManagerTests {
 
     @Test("Exit Fullscreen label when in fullscreen")
     func exitFullscreenLabel() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         instance.displayMode = .fullscreen
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -678,7 +678,7 @@ struct VMToolbarManagerTests {
 
     @Test("Settings toggle is disabled when status has no active display")
     func settingsToggleDisabledWhenStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -690,7 +690,7 @@ struct VMToolbarManagerTests {
 
     @Test("Settings toggle is enabled when status has active display")
     func settingsToggleEnabledWhenRunning() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -702,7 +702,7 @@ struct VMToolbarManagerTests {
 
     @Test("Settings toggle shows 'Show Settings' label when in display mode")
     func settingsToggleLabelInDisplayMode() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.detailPaneMode = .display
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -716,7 +716,7 @@ struct VMToolbarManagerTests {
 
     @Test("Settings toggle shows 'Hide Settings' label when in settings mode")
     func settingsToggleLabelInSettingsMode() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.detailPaneMode = .settings
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -750,7 +750,7 @@ struct VMToolbarManagerTests {
 
     @Test("updateToolbarItems tolerates a toolbar with no shared items")
     func updateWithAllItemsRemoved() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager, defaultItems: [])
 
@@ -761,7 +761,7 @@ struct VMToolbarManagerTests {
 
     @Test("updateToolbarItems still updates present items when others were removed")
     func updateWithPartialItemSet() {
-        let instance = makeInstance(status: .running)
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(
             manager: manager,

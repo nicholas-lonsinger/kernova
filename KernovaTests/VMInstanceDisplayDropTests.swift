@@ -20,7 +20,7 @@ struct VMInstanceDisplayDropTests {
         init(
             guestOS: VMGuestOS = .macOS, lastSeenAgentVersion: String? = "1.0.0",
             clipboardSharingEnabled: Bool = true, dropFilesEnabled: Bool = true,
-            status: VMStatus = .running
+            phase: VMLifecyclePhase = .running(sessionID: UUID())
         ) {
             var config = VMConfiguration(
                 name: "Drop VM", guestOS: guestOS,
@@ -30,7 +30,7 @@ struct VMInstanceDisplayDropTests {
             config.dropFilesEnabled = dropFilesEnabled
             let bundleURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(config.id.uuidString, isDirectory: true)
-            instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+            instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
             // The services below are session state, so they need a session to
             // live in — the boot paths open one before any listener is wired.
             instance.beginSessionContext()
@@ -190,8 +190,8 @@ struct VMInstanceDisplayDropTests {
         try await waitForChange { harness.instance.displayDropAvailability == .available }
 
         // Pausing tears down no vsock, so every channel below still reads as
-        // connected — only `status` says the guest cannot answer.
-        harness.instance.status = .paused
+        // connected — only the phase says the guest cannot answer.
+        harness.instance.enter(.suspended)
 
         #expect(harness.instance.vsockDropService?.isConnected == true)
         #expect(harness.instance.displayDropAvailability == .disconnected)

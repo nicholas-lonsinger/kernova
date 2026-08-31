@@ -21,11 +21,10 @@ struct ClipboardPasteLimitPolicyPushTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: .running,
+            configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()),
             preferences: preferences)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
-        // The override stands in for a live `VZVirtualMachine`, not for the
-        // session context the control service lives in.
+        // The phase's session identity stands in for a live `VZVirtualMachine`,
+        // not for the session context the control service lives in.
         instance.beginSessionContext()
         return instance
     }

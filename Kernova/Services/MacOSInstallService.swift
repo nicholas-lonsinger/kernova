@@ -26,7 +26,7 @@ final class MacOSInstallService {
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
-        instance.status = .installing
+        instance.beginGuestSetup()
 
         Self.logger.info("Starting macOS installation for '\(instance.name, privacy: .public)'")
 
