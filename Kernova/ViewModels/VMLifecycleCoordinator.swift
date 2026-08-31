@@ -802,12 +802,12 @@ final class VMLifecycleCoordinator {
         let tracked = USBDeviceInfo(
             id: info.id, path: diskImagePath, readOnly: info.readOnly,
             attachedAt: info.attachedAt)
-        instance.liveRemovableMedia.append(tracked)
+        instance.sessionContext?.liveRemovableMedia.append(tracked)
         return tracked
     }
 
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
-        instance.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
+        instance.sessionContext?.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
     }
 }

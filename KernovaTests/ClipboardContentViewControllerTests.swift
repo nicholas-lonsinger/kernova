@@ -56,9 +56,12 @@ private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstan
     config.clipboardPassthroughEnabled = passthroughEnabled
     let bundleURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    return VMInstance(
+    let instance = VMInstance(
         configuration: config, bundleURL: bundleURL,
         preferences: makeEphemeralPreferences(suiteName: "test.kernova.clipboard-vc-instance"))
+    // The clipboard service is session state, so it needs a session to live in.
+    instance.beginSessionContext()
+    return instance
 }
 
 /// Verifies the host "Copy to Mac" provider-retention lifecycle: each written
@@ -89,7 +92,7 @@ struct ClipboardContentViewControllerRetentionTests {
 
         let service = FakeClipboardService(content: ClipboardContent(text: "lazy bytes"))
         let instance = makeClipboardInstance()
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
@@ -124,7 +127,7 @@ struct ClipboardContentViewControllerRetentionTests {
         do {
             let service = FakeClipboardService(content: ClipboardContent(text: "durable bytes"))
             let instance = makeClipboardInstance()
-            instance.clipboardService = service
+            instance.sessionContext?.clipboardService = service
             let vc = ClipboardContentViewController(
                 instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
                 writePasteboard: pasteboard, providerRegistry: registry)
@@ -160,7 +163,7 @@ struct ClipboardContentViewControllerRetentionTests {
 
         let service = FakeClipboardService(content: ClipboardContent(text: "doomed write"))
         let instance = makeClipboardInstance()
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
@@ -200,7 +203,7 @@ struct ClipboardContentViewControllerEditTests {
         service: FakeClipboardService, debounce: Duration
     ) -> ClipboardContentViewController {
         let instance = makeClipboardInstance()
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         return ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             editDebounceInterval: debounce)
@@ -388,7 +391,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         ClipboardContentViewController, VMInstance
     ) {
         let instance = makeClipboardInstance(passthroughEnabled: passthroughEnabled)
-        instance.clipboardService = FakeClipboardService(content: .empty)
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
         let vc = makeController(instance: instance)
         _ = vc.view  // forces loadView + viewDidLoad → updateUI
         return (vc, instance)
@@ -439,7 +442,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     func responderChainGatedByPassthrough() {
         let service = FakeClipboardService(content: ClipboardContent(text: "some content"))
         let instance = makeClipboardInstance(passthroughEnabled: true)
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = makeController(instance: instance)
         _ = vc.view
 
@@ -473,7 +476,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
         let service = FakeClipboardService(content: .empty)
         let instance = makeClipboardInstance(passthroughEnabled: true)
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             readPasteboard: hostPasteboard)
@@ -500,7 +503,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance(passthroughEnabled: true)
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
@@ -570,7 +573,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         service.copyItems = copyItems
         let instance = makeClipboardInstance()
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
@@ -648,7 +651,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     func peerReportedCodesRenderTheirOwnMessage() {
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance()
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
 
@@ -676,7 +679,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     func localFailureShowsItsOwnMessage() {
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance()
-        instance.clipboardService = service
+        instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
 
@@ -696,12 +699,12 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         let superseded = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         // A real transport reports to the VM's reporter, which outlives it.
         superseded.reporter = instance.clipboardTransfers
-        instance.clipboardService = superseded
+        instance.sessionContext?.clipboardService = superseded
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
         // The clipboard channel reconnects: the window now shows a service that
         // knows nothing of the promise the old one left on the pasteboard.
-        instance.clipboardService = FakeClipboardService(content: .empty)
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
 
         // That promise fires on a paste and fails against the dead channel.
         superseded.reportRefusal(.timedOut, gesture: .paste)
@@ -715,7 +718,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     @Test("the window's bar renders the VM's running readout, whichever producer opened it")
     func transferBarRendersTheVMReport() throws {
         let instance = makeClipboardInstance()
-        instance.clipboardService = FakeClipboardService(content: .empty)
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
         // A drop is the other producer on this VM's report; the window's bar
@@ -849,7 +852,7 @@ struct ClipboardContentChipTests {
         content: ClipboardContent, readPasteboard: NSPasteboard = .general
     ) -> (ClipboardContentViewController, VMInstance) {
         let instance = makeClipboardInstance()
-        instance.clipboardService = FakeClipboardService(content: content)
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: content)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             readPasteboard: readPasteboard)

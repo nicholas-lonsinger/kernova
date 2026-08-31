@@ -24,6 +24,9 @@ struct ClipboardPasteLimitPolicyPushTests {
             configuration: config, bundleURL: bundleURL, status: .running,
             preferences: preferences)
         instance.hasLiveVirtualMachineOverrideForTesting = true
+        // The override stands in for a live `VZVirtualMachine`, not for the
+        // session context the control service lives in.
+        instance.beginSessionContext()
         return instance
     }
 
@@ -51,9 +54,9 @@ struct ClipboardPasteLimitPolicyPushTests {
         guest.start()
         host.start()
 
-        instance.vsockControlService?.stop()
+        instance.sessionContext?.vsockControlService?.stop()
         let service = instance.makeControlService(for: host)
-        instance.vsockControlService = service
+        instance.sessionContext?.vsockControlService = service
         service.start()
         return guest
     }

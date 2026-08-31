@@ -112,9 +112,10 @@ struct USBDeviceServiceTests {
     @Test("tearDownSession clears liveRemovableMedia")
     func tearDownClearsUSBDevices() {
         let instance = makeInstance()
+        let context = instance.beginSessionContext()
 
-        instance.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
-        instance.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
+        context.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
+        context.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
         #expect(instance.liveRemovableMedia.count == 2)
 
         instance.tearDownSession()

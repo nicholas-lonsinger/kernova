@@ -1684,6 +1684,7 @@ struct VMLifecycleCoordinatorTests {
     func attachUSBDeviceForwards() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
         let instance = makeInstance()
+        instance.beginSessionContext()
 
         let info = try await coordinator.attachUSBDevice(
             diskImagePath: "/tmp/test.dmg",
@@ -1704,6 +1705,7 @@ struct VMLifecycleCoordinatorTests {
     func detachUSBDeviceForwards() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
         let instance = makeInstance()
+        instance.beginSessionContext()
 
         let info = try await coordinator.attachUSBDevice(
             diskImagePath: "/tmp/test.dmg",
@@ -1736,6 +1738,7 @@ struct VMLifecycleCoordinatorTests {
     func detachUSBDevicePropagatesError() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
         let instance = makeInstance()
+        instance.beginSessionContext()
 
         let info = try await coordinator.attachUSBDevice(
             diskImagePath: "/tmp/test.dmg",
@@ -1757,6 +1760,7 @@ struct VMLifecycleCoordinatorTests {
     func attachUSBDeviceTracksStoredPathWithResolvedURL() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
         let instance = makeInstance()
+        instance.beginSessionContext()
 
         // A bookmark that tracked a moved file: the resolved location is
         // what must reach the service, while the tracked identity stays the

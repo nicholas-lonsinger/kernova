@@ -26,7 +26,11 @@ struct VMInstanceVsockAdmissionTests {
         let config = VMConfiguration(name: "Admission VM", guestOS: .macOS, bootMode: .macOS)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        // Every service below is session state, so it needs a session to live
+        // in — the boot paths open one before any listener is wired.
+        instance.beginSessionContext()
+        return instance
     }
 
     /// Builds the control service as `startVsockServices()`'s accept path does,
@@ -35,7 +39,7 @@ struct VMInstanceVsockAdmissionTests {
         for instance: VMInstance, channel: VsockChannel
     ) -> VsockControlService {
         let control = instance.makeControlService(for: channel)
-        instance.vsockControlService = control
+        instance.sessionContext?.vsockControlService = control
         control.start()
         return control
     }

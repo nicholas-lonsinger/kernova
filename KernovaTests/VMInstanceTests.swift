@@ -138,18 +138,22 @@ struct VMInstanceTests {
 
     // MARK: - tearDownSession
 
-    @Test("tearDownSession clears pipes and the session without changing status")
+    @Test("tearDownSession releases the whole session context without changing status")
     func tearDownSessionPreservesStatus() {
         let instance = makeInstance(status: .running)
-        instance.serialInputPipe = Pipe()
-        instance.serialOutputPipe = Pipe()
+        let context = instance.beginSessionContext()
+        context.serialInputPipe = Pipe()
+        context.serialOutputPipe = Pipe()
 
         instance.tearDownSession()
 
         #expect(instance.status == .running)
+        #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
-        #expect(instance.serialInputPipe == nil)
-        #expect(instance.serialOutputPipe == nil)
+        // The released context is drained too, so nothing a stale reference
+        // still holds keeps a file handle or a service alive.
+        #expect(context.serialInputPipe == nil)
+        #expect(context.serialOutputPipe == nil)
     }
 
     @Test("tearDownSession resets a hidden (headless) displayMode to inline")
@@ -165,13 +169,17 @@ struct VMInstanceTests {
     @Test("tearDownSession is idempotent")
     func tearDownSessionIdempotent() {
         let instance = makeInstance(status: .paused)
+        var tornDown = 0
+        instance.onSessionTornDown = { tornDown += 1 }
         instance.tearDownSession()
         instance.tearDownSession()
 
         #expect(instance.status == .paused)
+        #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
-        #expect(instance.serialInputPipe == nil)
-        #expect(instance.serialOutputPipe == nil)
+        // The hook fires on every call, context or not — the library uses it
+        // for work that can only run while nothing holds the bundle.
+        #expect(tornDown == 2)
     }
 
     // MARK: - resetToStopped
@@ -532,13 +540,15 @@ struct VMInstanceTests {
     @Test("resetToStopped clears serial pipes")
     func resetToStoppedClearsSerialPipes() {
         let instance = makeInstance(status: .running)
-        instance.serialInputPipe = Pipe()
-        instance.serialOutputPipe = Pipe()
+        let context = instance.beginSessionContext()
+        context.serialInputPipe = Pipe()
+        context.serialOutputPipe = Pipe()
 
         instance.resetToStopped()
 
-        #expect(instance.serialInputPipe == nil)
-        #expect(instance.serialOutputPipe == nil)
+        #expect(instance.sessionContext == nil)
+        #expect(context.serialInputPipe == nil)
+        #expect(context.serialOutputPipe == nil)
         #expect(instance.status == .stopped)
     }
 
@@ -629,15 +639,18 @@ struct VMInstanceTests {
                 return instance.status == .running || instance.status == .paused
             },
             choice: { [weak instance] in instance?.configuration.networkChoice },
-            onPendingChange: { [weak instance] in instance?.networkAttachmentPending = $0 })
-        instance.networkAttachmentCoordinator = coordinator
+            onPendingChange: { [weak instance] in
+                instance?.sessionContext?.networkAttachmentPending = $0
+            })
+        let context = instance.sessionContext ?? instance.beginSessionContext()
+        context.networkAttachmentCoordinator = coordinator
         return coordinator
     }
 
     @Test("A running VM awaiting network reattach shows the warning tint and says why")
     func networkPendingShowsWarningTintAndToolTip() {
         let instance = makeInstance(status: .running)
-        instance.networkAttachmentPending = true
+        instance.beginSessionContext().networkAttachmentPending = true
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
         // The wording names what is actually unavailable: the app-managed
@@ -1038,7 +1051,7 @@ struct VMInstanceTests {
         // the SPICE service's own `.waiting` (same value, but for the wrong
         // reason — and `.current` if the SPICE service were connected).
         let instance = makeInstance(guestOS: .macOS)
-        instance.clipboardService = SpiceClipboardService(
+        instance.beginSessionContext().clipboardService = SpiceClipboardService(
             inputPipe: Pipe(),
             outputPipe: Pipe()
         )
@@ -1050,7 +1063,7 @@ struct VMInstanceTests {
     func agentStatusLinuxDispatchesToSpice() {
         let instance = makeInstance(guestOS: .linux)
         let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
-        instance.clipboardService = spice
+        instance.beginSessionContext().clipboardService = spice
         // Newly-constructed SPICE service is `.waiting` (no handshake yet) —
         // dispatch returns that same value, proving the cast + access path runs.
         #expect(spice.agentStatus == .waiting)
@@ -1071,22 +1084,22 @@ struct VMInstanceTests {
     @Test("guestDidStop resets the instance to stopped")
     func guestDidStopEventResets() {
         let instance = makeInstance(status: .running)
-        instance.serialInputPipe = Pipe()
+        instance.beginSessionContext().serialInputPipe = Pipe()
         instance.handleSessionEvent(.guestDidStop)
         #expect(instance.status == .stopped)
-        #expect(instance.serialInputPipe == nil)
+        #expect(instance.sessionContext == nil)
     }
 
     @Test("didStopWithError tears the session down and records the error")
     func didStopWithErrorEventRecordsError() {
         let instance = makeInstance(status: .running)
-        instance.serialInputPipe = Pipe()
+        instance.beginSessionContext().serialInputPipe = Pipe()
         let failure = NSError(
             domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
         instance.handleSessionEvent(.didStopWithError(failure))
         #expect(instance.status == .error)
         #expect(instance.errorMessage == "boom")
-        #expect(instance.serialInputPipe == nil)
+        #expect(instance.sessionContext == nil)
     }
 
     @Test("networkAttachmentDisconnected forwards to the recovery coordinator")
@@ -1103,7 +1116,7 @@ struct VMInstanceTests {
             retryDelays: [],
             choice: { NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil) },
             onPendingChange: { _ in })
-        instance.networkAttachmentCoordinator = coordinator
+        instance.beginSessionContext().networkAttachmentCoordinator = coordinator
         coordinator.activate()
         #expect(device.appliedPlans.isEmpty)
 
@@ -1126,14 +1139,17 @@ struct VMInstanceTests {
     //   - No Hello arrives during the grace window.
     // Tests inject a millisecond-scale grace so the suite stays fast.
 
-    /// Builds a macOS VMInstance with a known `lastSeenAgentVersion`.
+    /// Builds a macOS VMInstance with a known `lastSeenAgentVersion` and an
+    /// open session context — the watchdog is session state, so it arms into
+    /// one or not at all.
     ///
     /// The caller is responsible for explicitly clearing the watchdog if needed
     /// across tests.
     private func makeMacOSInstanceWithAgentInstalled(
         lastSeen: String = "0.9.2",
         lastSeenGuestOSVersion: String? = nil,
-        setupState: GuestSetupState? = nil
+        setupState: GuestSetupState? = nil,
+        bootedIntoRecovery: Bool = false
     ) -> VMInstance {
         var config = VMConfiguration(
             name: "macOS Watchdog Test",
@@ -1146,6 +1162,7 @@ struct VMInstanceTests {
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
         instance.setupState = setupState
+        instance.beginSessionContext(bootedIntoRecovery: bootedIntoRecovery)
         return instance
     }
 
@@ -1210,6 +1227,7 @@ struct VMInstanceTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        instance.beginSessionContext()
 
         // Wait noticeably past the grace so a broken guard would have a
         // real chance to mis-fire. 3× grace is plenty.
@@ -1231,6 +1249,7 @@ struct VMInstanceTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        instance.beginSessionContext()
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
@@ -1245,8 +1264,8 @@ struct VMInstanceTests {
         // not a per-call flag: a pause/resume inside a Recovery session reaches
         // the same arm site with no idea a Recovery boot happened.
         let instance = makeMacOSInstanceWithAgentInstalled(
-            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        instance.bootedIntoRecovery = true
+            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)",
+            bootedIntoRecovery: true)
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
@@ -1255,14 +1274,21 @@ struct VMInstanceTests {
         #expect(instance.configuration.agentInstallNudgeDismissed == false)
     }
 
-    @Test("tearDownSession clears the recovery-boot flag")
-    func tearDownSessionClearsRecoveryFlag() {
-        // Per-session, like the rest of the watchdog state: the next boot is
-        // free to be an ordinary one.
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.bootedIntoRecovery = true
+    @Test("Each boot attempt's context carries its own recovery-boot flag")
+    func recoveryFlagIsPerSessionContext() {
+        // The retry loop the cold-boot path runs tears the session down and
+        // opens a fresh context per attempt, so a Recovery boot that hits
+        // file-lock contention must come back up in Recovery.
+        let instance = makeMacOSInstanceWithAgentInstalled(bootedIntoRecovery: true)
+        #expect(instance.bootedIntoRecovery)
 
         instance.tearDownSession()
+        #expect(!instance.bootedIntoRecovery)
+
+        instance.beginSessionContext(bootedIntoRecovery: true)
+        #expect(instance.bootedIntoRecovery)
+        // And an ordinary attempt on the same instance is ordinary.
+        instance.beginSessionContext()
         #expect(!instance.bootedIntoRecovery)
     }
 
@@ -1310,7 +1336,7 @@ struct VMInstanceTests {
         defer { guest.close() }
 
         let control = VsockControlService(channel: host, label: "watchdog-test")
-        instance.vsockControlService = control
+        instance.sessionContext?.vsockControlService = control
         control.start()
         defer { control.stop() }
 
@@ -1449,24 +1475,60 @@ struct VMInstanceTests {
     func tearDownSessionResetsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
         // Drive the flag manually to simulate the watchdog having fired.
-        instance.agentExpectedButMissing = true
+        instance.sessionContext?.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
 
         instance.tearDownSession()
 
         #expect(instance.agentExpectedButMissing == false)
-        // Re-arming after teardown should now succeed — the prior task was
-        // cancelled, so the idempotency guard does not block this.
+        // The next session's context arms cleanly — the prior task was
+        // cancelled, so nothing carries over to block it.
+        instance.beginSessionContext()
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
+    }
+
+    /// The cross-context ABA the generation counter alone cannot close: each
+    /// context starts counting at zero, so a task armed at generation 1 in one
+    /// session matches generation 1 in the next. Cancellation does not cover
+    /// it — a sleep that returned just before the teardown is past the point
+    /// `cancel()` can reach.
+    @Test("A watchdog armed in a torn-down session never fires on its successor")
+    func watchdogFromAPriorContextDoesNotFireOnTheNext() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        // Held to the end of the test on purpose: without it the released
+        // context deallocates and the task's weak capture answers the question
+        // before the identity check is reached, which is not what is under test.
+        let staleContext = instance.sessionContext
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        let stale = instance.agentPostStartTaskForTesting
+        #expect(stale != nil)
+
+        // Teardown, then a fresh session arming its own watchdog on a grace
+        // long enough that it cannot legitimately fire during this test.
+        instance.tearDownSession()
+        instance.beginSessionContext()
+        instance.startAgentPostStartWatchdog(grace: .seconds(60))
+        #expect(instance.agentPostStartTaskForTesting != nil)
+
+        // The stale task's sleep elapses here; it must disown itself.
+        await stale?.value
+
+        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.agentStatus != .expectedMissing(expected: "0.9.2"))
+        // And it must not have cleared the successor's slot on the way out —
+        // an emptied slot is what would let the next arm site double-arm.
+        #expect(instance.agentPostStartTaskForTesting != nil)
+        instance.cancelAgentPostStartWatchdog()
+        #expect(staleContext !== instance.sessionContext)
     }
 
     @Test("agentStatus surfaces .expectedMissing only when both the flag and persisted version are set")
     func agentStatusExpectedMissingRequiresBoth() {
         let instance = makeMacOSInstanceWithAgentInstalled()
         // Flag alone but version present → .expectedMissing
-        instance.agentExpectedButMissing = true
+        instance.sessionContext?.agentExpectedButMissing = true
         #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
 
         // Wipe the persisted version: the synthesizer guard falls back to
@@ -1621,7 +1683,7 @@ struct VMInstanceTests {
     @Test("recordObservedAgentInfo cancels the watchdog and clears expected-missing")
     func recordObservedClearsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.agentExpectedButMissing = true
+        instance.sessionContext?.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(10))
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))

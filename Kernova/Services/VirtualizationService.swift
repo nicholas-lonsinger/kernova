@@ -42,7 +42,7 @@ final class VirtualizationService {
             // Activation waits for `.running`: VZ documents runtime attachment
             // swapping for a running VM, and a boot or restore that came up
             // detached is reconciled here.
-            instance.networkAttachmentCoordinator?.activate()
+            instance.activateNetworkAttachment()
             // The watchdog flips `agentExpectedButMissing` when a VM that has seen
             // the agent before gets no Hello within the grace period. No-op for
             // fresh VMs (no `lastSeenAgentVersion`), for Linux, and for recovery
@@ -110,20 +110,10 @@ final class VirtualizationService {
     /// plumbing, and starts the machine — one cold-boot attempt.
     private func coldBoot(_ instance: VMInstance, bootIntoRecovery: Bool) async throws {
         // Per attempt, not once per start: the lock-contention retry loop tears the
-        // session down — releasing these scopes — between attempts, and that
-        // teardown resets the Recovery flag this re-sets below.
-        instance.openRuntimeFileAccess()
-        instance.bootedIntoRecovery = bootIntoRecovery
+        // session down between attempts, taking this context's scopes with it.
+        instance.beginSessionContext(bootedIntoRecovery: bootIntoRecovery)
         let result = try await buildConfiguration(for: instance)
-        instance.serialInputPipe = result.serialInputPipe
-        instance.serialOutputPipe = result.serialOutputPipe
-        instance.clipboardInputPipe = result.clipboardInputPipe
-        instance.clipboardOutputPipe = result.clipboardOutputPipe
-        instance.liveRemovableMedia = result.coldRemovableMedia
-        let session = await instance.attachSession(from: result.configuration)
-        instance.startSerialReading()
-        instance.startClipboardService()
-        await instance.startVsockServices()
+        let session = await instance.bringUpSession(with: result)
         let startOptions = Self.recoveryStartOptions(
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
         try await session.start(options: startOptions)
@@ -265,7 +255,7 @@ final class VirtualizationService {
                 instance.status = .running
                 // Idempotent re-activation reconciles an attachment the host
                 // link may have invalidated during the pause.
-                instance.networkAttachmentCoordinator?.activate()
+                instance.activateNetworkAttachment()
                 instance.removeSaveFile()
                 // The guest is executing again, and this is the same session
                 // that was paused — so `bootedIntoRecovery` still governs, and
@@ -280,7 +270,7 @@ final class VirtualizationService {
                 // actually shows up.
                 try await restoreFromSaveFile(instance)
                 instance.status = .running
-                instance.networkAttachmentCoordinator?.activate()
+                instance.activateNetworkAttachment()
             } else {
                 throw VirtualizationError.noSaveFile
             }
@@ -819,18 +809,9 @@ final class VirtualizationService {
     /// build failure propagates as-is (the caller's attachment explainers
     /// match on it); a restore or resume failure is wrapped in `restoreFailed`.
     private func restoreFromSaveFileAttempt(_ instance: VMInstance) async throws {
-        instance.openRuntimeFileAccess()
+        instance.beginSessionContext()
         let result = try await buildConfiguration(for: instance)
-
-        instance.serialInputPipe = result.serialInputPipe
-        instance.serialOutputPipe = result.serialOutputPipe
-        instance.clipboardInputPipe = result.clipboardInputPipe
-        instance.clipboardOutputPipe = result.clipboardOutputPipe
-        instance.liveRemovableMedia = result.coldRemovableMedia
-        let session = await instance.attachSession(from: result.configuration)
-        instance.startSerialReading()
-        instance.startClipboardService()
-        await instance.startVsockServices()
+        let session = await instance.bringUpSession(with: result)
 
         Self.logger.debug("restoreFromSaveFile: attempting restore from save file")
         do {

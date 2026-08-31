@@ -106,7 +106,9 @@ struct ClipboardPassthroughCoordinatorTests {
         let service = FakePassthroughService()
         let reports = ClipboardTransferReports()
         service.reporter = reports.reporter
-        instance.clipboardService = service
+        // The clipboard service is session state, so it needs a session to
+        // live in.
+        instance.beginSessionContext().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: reports.reporter,
             pasteboard: pasteboard)
@@ -184,7 +186,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // The accept path swaps in a fresh service on redial.
         let reconnected = FakePassthroughService()
         reconnected.reporter = h.reports.reporter
-        h.instance.clipboardService = reconnected
+        h.instance.sessionContext?.clipboardService = reconnected
         h.coordinator.pollHostClipboard()
 
         #expect(reconnected.grabbed.count == 1)
@@ -408,7 +410,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // The redial installs a fresh service, and the copy is still outstanding.
         let reconnected = FakePassthroughService()
         reconnected.reporter = h.reports.reporter
-        h.instance.clipboardService = reconnected
+        h.instance.sessionContext?.clipboardService = reconnected
         resolveCompleted = false
         h.coordinator.pollHostClipboard()
         try await resolved.wait { resolveCompleted }
@@ -787,7 +789,7 @@ struct ClipboardPassthroughCoordinatorTests {
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL)
         let service = PromisedPassthroughService()
-        instance.clipboardService = service
+        instance.beginSessionContext().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: instance.clipboardTransfers,
             pasteboard: pasteboard)

@@ -35,6 +35,9 @@ struct VMInstanceLiveVsockPolicyTests {
         instance.configuration.agentLogForwardingEnabled = true
         let sessionID = UUID()
         instance.liveSessionIDOverrideForTesting = sessionID
+        // The override stands in for a live `VZVirtualMachine`, not for the
+        // session context the services and their hand-offs live in.
+        instance.beginSessionContext()
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(
                 handshakeComplete: true,

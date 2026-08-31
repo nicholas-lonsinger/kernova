@@ -31,6 +31,9 @@ struct VMInstanceDisplayDropTests {
             let bundleURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(config.id.uuidString, isDirectory: true)
             instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+            // The services below are session state, so they need a session to
+            // live in — the boot paths open one before any listener is wired.
+            instance.beginSessionContext()
         }
 
         /// Installs a started control service and hands back the guest end, so a
@@ -39,7 +42,7 @@ struct VMInstanceDisplayDropTests {
         func attachControl() throws -> VsockChannel {
             let (guest, host) = try makePair()
             let control = VsockControlService(channel: host, label: "drop-test")
-            instance.vsockControlService = control
+            instance.sessionContext?.vsockControlService = control
             control.start()
             return guest
         }
@@ -50,7 +53,7 @@ struct VMInstanceDisplayDropTests {
             let (_, host) = try makePair()
             let service = VsockDropService(
                 channel: host, label: "Drop VM", reporter: instance.clipboardTransfers)
-            instance.vsockDropService = service
+            instance.sessionContext?.vsockDropService = service
             service.start()
         }
 
