@@ -1,6 +1,7 @@
 # Xcode
 build/
 DerivedData/
+artifacts/
 
 # Per-developer signing team, hand-set in Config/Local.xcconfig — see
 # Config/Base.xcconfig.

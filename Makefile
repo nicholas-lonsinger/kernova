@@ -3,41 +3,41 @@
 # These targets own the `xcodebuild` invocations — the flags are not the
 # obvious ones, so never hand-write one. Inside Xcode, just use the IDE
 # (CMD-B / CMD-U); this Makefile is for terminal, CI, and tooling use.
-#
-# CI mirrors the build/test invocation by hand in
-# .github/workflows/xcodebuild-test.yml — keep changes to the shared
-# xcodebuild flags in sync there.
 
 PROJECT      := Kernova.xcodeproj
 SCHEME       := Kernova
 DESTINATION  := platform=macOS
 
+DERIVED_DATA_ROOT := DerivedData
+DERIVED_DATA      := $(DERIVED_DATA_ROOT)/$(basename $(PROJECT))
+RESULT_BUNDLE     := artifacts/TestResults.xcresult
+
+# CI-only settings. `CI=1 make test` reproduces a CI build locally.
+ifneq ($(strip $(CI)),)
 # OMIT -derivedDataPath on a dev machine so a terminal build shares the Xcode
 # GUI's arena; pass it under CI so artifacts land at a fixed path. Omitting the
 # flag is load-bearing — docs/BUILD.md "Derived data and build arenas".
-#
-# Evaluated lazily (recursive `=`, expanded via $(XCODEBUILD_FLAGS) inside the
-# build/test recipes) so targets that never build — help, lint, format, clean —
-# don't pay for the probe on every invocation.
-DERIVED_DATA_ROOT := DerivedData
-DERIVED_DATA      := $(DERIVED_DATA_ROOT)/$(basename $(PROJECT))
-DERIVED_DATA_FLAG = $(shell \
-	if [ -n "$${CI:-}" ]; then \
-		printf -- '-derivedDataPath %s' '$(DERIVED_DATA)'; \
-	fi)
+DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
+# Plugin validation is an interactive trust prompt no runner can answer; the
+# index store serves an editor CI does not have; the compilation cache is what
+# the workflow's cache steps save and restore.
+CI_FLAGS           := -skipPackagePluginValidation \
+                      COMPILER_INDEX_STORE_ENABLE=NO \
+                      COMPILATION_CACHE_ENABLE_CACHING=YES
+RESULT_BUNDLE_FLAG := -resultBundlePath $(RESULT_BUNDLE)
+endif
 
 # Build configuration, passed explicitly rather than relying on the scheme's
 # per-action default (Debug). Override on the command line to build/test in
 # Release, e.g. `make build CONFIGURATION=Release`.
 CONFIGURATION ?= Debug
 
-# Recursive (`=`) so DERIVED_DATA_FLAG above is resolved per-recipe, not at
-# parse time.
 XCODEBUILD_FLAGS = -project $(PROJECT) \
                    -scheme $(SCHEME) \
                    -destination '$(DESTINATION)' \
                    $(DERIVED_DATA_FLAG) \
-                   -configuration $(CONFIGURATION)
+                   -configuration $(CONFIGURATION) \
+                   $(CI_FLAGS)
 
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
@@ -55,16 +55,17 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts
+.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
 help:
 	@printf 'Kernova build targets:\n\n'
-	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-15s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-22s %s\n", $$1, $$2}'
 	@printf '\n'
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
+	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
 
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an
@@ -76,18 +77,24 @@ install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree
 	git config core.hooksPath .githooks
 	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies).'
 
-# Silent when the hooks are wired up; otherwise a one-line nudge. Runs as a
-# prerequisite of the build/test targets so contributors who skipped the
-# install step see the reminder on their first build instead of only when
-# CI fails on their PR. Detection delegates to Tools/hooks-installed.sh —
-# shared with doctor.sh — which verifies the configured path actually
-# contains the hooks rather than string-comparing against ".githooks" (an
-# absolute path that resolves correctly also counts as installed).
+# Silent when the hooks are wired up, or under CI (which has no hooks to
+# install); otherwise a one-line nudge. Runs as a prerequisite of the
+# build/test targets so contributors who skipped the install step see the
+# reminder on their first build instead of only when CI fails on their PR.
+# Detection delegates to Tools/hooks-installed.sh — shared with doctor.sh —
+# which verifies the configured path actually contains the hooks rather than
+# string-comparing against ".githooks" (an absolute path that resolves
+# correctly also counts as installed).
 check-hooks:
-	@Tools/hooks-installed.sh >/dev/null || printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2
+	@if [ -z "$${CI:-}" ] && ! Tools/hooks-installed.sh >/dev/null; then \
+		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2; \
+	fi
 
 build: check-hooks ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
+
+build-for-testing: check-hooks ## Compile the app and test bundles without running them
+	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
 
 # Removes both build arenas this checkout can have: the in-worktree
 # DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
@@ -111,6 +118,13 @@ clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the 
 
 test: check-hooks ## Run the full test suite (all three test targets via Kernova.xctestplan)
 	xcodebuild $(XCODEBUILD_FLAGS) test
+
+# The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild
+# refuses a -resultBundlePath that already exists, and outside CI this target
+# passes no such flag and must not touch artifacts/.
+test-without-building: check-hooks ## Run the test plan against an existing build-for-testing product
+	@test -z '$(RESULT_BUNDLE_FLAG)' || rm -rf '$(RESULT_BUNDLE)'
+	xcodebuild $(XCODEBUILD_FLAGS) $(RESULT_BUNDLE_FLAG) test-without-building
 
 # `xcrun` so the toolchain matches the one selected via `xcode-select`
 # (same rationale as the `xcrun swift-format` invocation above).
