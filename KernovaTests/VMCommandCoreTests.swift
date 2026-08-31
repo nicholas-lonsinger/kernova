@@ -364,6 +364,60 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
+    // MARK: - Allowed verbs
+
+    @Test("allowedVerbs reads out in a fixed order, reads first")
+    func allowedVerbsOrder() {
+        let harness = makeHarness()
+        let stopped = makeInstance(in: harness, name: "Stopped", status: .stopped)
+
+        // The order is user-visible: `invalidState` renders this list as
+        // "What it accepts now: Start, Take Snapshot, …".
+        #expect(
+            harness.core.allowedVerbs(for: stopped) == [
+                .info, .ipAddress, .snapshots, .start, .takeSnapshot, .deleteSnapshot,
+                .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete,
+            ])
+
+        let running = makeInstance(in: harness, name: "Running", status: .running)
+        running.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(
+            harness.core.allowedVerbs(for: running) == [
+                .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open,
+                .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .rename,
+            ])
+    }
+
+    @Test("A cold-paused VM reports its saved-state discard as the one stop it takes")
+    func allowedVerbsForAColdPausedVM() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .paused)
+
+        // No live VM to terminate and no graceful stop, but the discard rides
+        // the same verb — named once, in the same slot.
+        #expect(!instance.canStop)
+        #expect(!instance.canForceStop)
+        #expect(
+            harness.core.allowedVerbs(for: instance) == [
+                .info, .ipAddress, .snapshots, .stop, .resume, .open, .deleteSnapshot,
+                .renameSnapshot, .setSnapshotNotes, .rename, .delete,
+            ])
+    }
+
+    @Test("A preparing VM reports its reads and the cancel that stops the copy")
+    func allowedVerbsWhilePreparing() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, status: .running)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+
+        #expect(
+            harness.core.allowedVerbs(for: instance) == [
+                .info, .ipAddress, .snapshots, .cancelPreparing,
+            ])
+    }
+
     // MARK: - State gates
 
     @Test("start refuses a VM that is already running")

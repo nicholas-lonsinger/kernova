@@ -73,7 +73,7 @@ final class SidebarViewController: NSViewController {
         outlineView.beginRenameForRow = { [weak self] row in
             guard let self,
                 let instance = self.outlineView.item(atRow: row) as? VMInstance,
-                instance.canRename
+                self.viewModel.capabilities.isAvailable(.rename, on: instance)
             else { return }
             self.viewModel.renameVMInSidebar(instance)
         }
@@ -337,13 +337,11 @@ final class SidebarViewController: NSViewController {
 
     @objc private func rowDoubleClicked(_: Any?) {
         let row = outlineView.clickedRow
-        guard row >= 0,
-            let instance = outlineView.item(atRow: row) as? VMInstance,
-            !instance.isPreparing
-        else { return }
-        if instance.status.canStart {
+        guard row >= 0, let instance = outlineView.item(atRow: row) as? VMInstance else { return }
+        let capabilities = viewModel.capabilities
+        if capabilities.isAvailable(.start, on: instance) {
             Task { await viewModel.start(instance) }
-        } else if instance.status.canResume {
+        } else if capabilities.isAvailable(.resume, on: instance) {
             Task { await viewModel.resume(instance) }
         }
     }
@@ -666,6 +664,7 @@ extension SidebarViewController {
     func buildContextMenu(for instance: VMInstance) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        let capabilities = viewModel.capabilities
 
         if instance.isPreparing {
             if let operation = instance.preparingState?.operation {
@@ -675,12 +674,12 @@ extension SidebarViewController {
             return menu
         }
 
-        let status = instance.status
-
         // Lifecycle
         var startItem: NSMenuItem?
-        if status.canStart {
-            if instance.canStartInRecovery && !preferences.alwaysShowAdvancedOptions {
+        if capabilities.isApplicable(.start, to: instance) {
+            if capabilities.isApplicable(.startInRecovery, to: instance)
+                && !preferences.alwaysShowAdvancedOptions
+            {
                 // RATIONALE: Zero-height dummy item at index 0 anchors the context menu so
                 // it doesn't jump downward when "Start" collapses into its Recovery
                 // alternate on ⌥-hold. When an isAlternate pair sits at the very top,
@@ -697,11 +696,11 @@ extension SidebarViewController {
             menu.addItem(start)
             startItem = start
         }
-        if instance.canStartInRecovery {
+        if capabilities.isApplicable(.startInRecovery, to: instance) {
             // An Option-alternate of "Start", or a plain always-visible item when
-            // "Always show advanced options" is on. `canStartInRecovery` implies
-            // `.stopped`, so "Start" was just added and immediately precedes this
-            // one — required for alternate pairing.
+            // "Always show advanced options" is on. Recovery implies `.stopped`,
+            // so "Start" was just added and immediately precedes this one —
+            // required for alternate pairing.
             let recovery = item("Start in Recovery Mode", #selector(menuStartRecovery(_:)), instance)
             if !preferences.alwaysShowAdvancedOptions {
                 // Keyless Option-reveal: both items have an empty key equivalent, so the
@@ -714,18 +713,20 @@ extension SidebarViewController {
             }
             menu.addItem(recovery)
         }
-        if status.canPause {
+        if capabilities.isApplicable(.pause, to: instance) {
             menu.addItem(item("Pause", #selector(menuPause(_:)), instance))
         }
-        if status.canResume {
+        if capabilities.isApplicable(.resume, to: instance) {
             menu.addItem(item("Resume", #selector(menuResume(_:)), instance))
         }
-        if instance.canStop {
+        let canStop = capabilities.isApplicable(.stop, to: instance)
+        if canStop {
             let stop = item(instance.stopActionMenuTitle, #selector(menuStop(_:)), instance)
             menu.addItem(stop)
             // An Option-alternate of "Stop". No zero-height anchor is needed: when
-            // `canStop` holds, a Pause or Resume item always precedes "Stop", so the
-            // pair is never at index 0 and the menu can't shift on ⌥-press.
+            // a graceful stop is offered, a Pause or Resume item always precedes
+            // "Stop", so the pair is never at index 0 and the menu can't shift on
+            // ⌥-press.
             let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
             if !preferences.alwaysShowAdvancedOptions {
                 stop.keyEquivalentModifierMask = []
@@ -734,49 +735,53 @@ extension SidebarViewController {
             }
             menu.addItem(forceStop)
         }
-        if instance.isColdPaused {
+        if capabilities.isApplicable(.discardSavedState, to: instance) {
             menu.addItem(item(instance.stopActionMenuTitle, #selector(menuForceStop(_:)), instance))
-        } else if instance.canForceStop && !instance.canStop {
+        } else if capabilities.isApplicable(.forceStop, to: instance) && !canStop {
             // Transient states (starting/saving/restoring) where graceful stop isn't
             // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.
             menu.addItem(item("Force Stop…", #selector(menuForceStop(_:)), instance))
         }
 
         // State
-        if instance.canSave || instance.canTakeSnapshot || instance.canRevertToSnapshot {
+        let canSuspend = capabilities.isApplicable(.suspend, to: instance)
+        let canTakeSnapshot = capabilities.isApplicable(.takeSnapshot, to: instance)
+        let canRevert = capabilities.isApplicable(.revertToSnapshot, to: instance)
+        if canSuspend || canTakeSnapshot || canRevert {
             menu.addItem(.separator())
         }
-        if instance.canSave {
+        if canSuspend {
             menu.addItem(item("Suspend", #selector(menuSuspend(_:)), instance))
         }
-        if instance.canTakeSnapshot {
+        if canTakeSnapshot {
             let takeSnapshot = item(
                 "Take Snapshot\u{2026}", #selector(menuTakeSnapshot(_:)), instance)
-            takeSnapshot.isEnabled = viewModel.canTakeSnapshot(instance)
+            takeSnapshot.isEnabled = capabilities.isAvailable(.takeSnapshot, on: instance)
             menu.addItem(takeSnapshot)
         }
-        if instance.canRevertToSnapshot {
+        if canRevert {
             let revert = NSMenuItem(title: SnapshotRevertMenu.title, action: nil, keyEquivalent: "")
             let submenu = NSMenu(title: SnapshotRevertMenu.title)
             SnapshotRevertMenu.rebuild(
-                submenu, for: instance, isEnabled: viewModel.canRevertToSnapshot(instance),
+                submenu, for: instance,
+                isEnabled: capabilities.isAvailable(.revertToSnapshot, on: instance),
                 target: self, action: #selector(menuRevertToSnapshot(_:)))
             revert.submenu = submenu
             menu.addItem(revert)
         }
 
         // Display
-        if instance.canUseExternalDisplay {
+        if capabilities.isApplicable(.togglePopOut, to: instance) {
             menu.addItem(.separator())
             menu.addItem(
                 responderItem(
                     instance.isDisplayDetached ? "Pop In Display" : "Pop Out Display",
-                    #selector(AppDelegate.togglePopOut(_:))
+                    #selector(AppDelegate.togglePopOut(_:)), instance
                 ))
             menu.addItem(
                 responderItem(
                     instance.isInFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display",
-                    #selector(AppDelegate.toggleFullscreen(_:))
+                    #selector(AppDelegate.toggleFullscreen(_:)), instance
                 ))
         }
 
@@ -784,11 +789,11 @@ extension SidebarViewController {
 
         // Management
         let rename = item("Rename", #selector(menuRename(_:)), instance)
-        rename.isEnabled = status.canRename
+        rename.isEnabled = capabilities.isAvailable(.rename, on: instance)
         menu.addItem(rename)
 
         let clone = item("Clone", #selector(menuClone(_:)), instance)
-        clone.isEnabled = status.canEditSettings && !viewModel.hasPreparing
+        clone.isEnabled = capabilities.isAvailable(.clone, on: instance)
         menu.addItem(clone)
         // An ⌥-alternate of "Clone" performing the opposite of the clone
         // machine-ID setting. Mid-menu (Rename precedes), so no anchor item is
@@ -810,12 +815,12 @@ extension SidebarViewController {
         // "Move to Trash…" gathers input (which externals to delete), so the
         // ellipsis is correct here.
         let trash = item("Move to Trash…", #selector(menuMoveToTrash(_:)), instance)
-        trash.isEnabled = instance.canDelete
+        trash.isEnabled = capabilities.isAvailable(.delete, on: instance)
         menu.addItem(trash)
         // An ⌥-alternate of "Move to Trash…". This pair sits at the menu's end, so
         // collapsing the primary can't shift the menu; no anchor item is needed.
         let deleteImmediately = item("Delete Immediately…", #selector(menuDeleteImmediately(_:)), instance)
-        deleteImmediately.isEnabled = instance.canDelete
+        deleteImmediately.isEnabled = trash.isEnabled
         if !preferences.alwaysShowAdvancedOptions {
             trash.keyEquivalentModifierMask = []
             deleteImmediately.keyEquivalentModifierMask = [.option]
@@ -836,9 +841,16 @@ extension SidebarViewController {
 
     /// A menu item dispatched down the responder chain (target `nil`) so the
     /// app delegate handles it — used for the display pop-out/fullscreen toggles.
-    private func responderItem(_ title: String, _ action: Selector) -> NSMenuItem {
+    ///
+    /// Carries the clicked row's VM so the delegate acts on it: its own
+    /// key-window rule would otherwise name whichever VM's display window is in
+    /// front.
+    private func responderItem(_ title: String, _ action: Selector, _ instance: VMInstance)
+        -> NSMenuItem
+    {
         let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: "")
         menuItem.target = nil
+        menuItem.representedObject = instance
         menuItem.isEnabled = true
         return menuItem
     }

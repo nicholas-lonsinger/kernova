@@ -318,7 +318,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     private func refreshGeneral() {
         nameButton.title = instance.name
-        nameButton.isEnabled = instance.canRename
+        nameButton.isEnabled = viewModel.capabilities.isAvailable(.rename, on: instance)
         let installedImage = instance.configuration.installedImage?.displayName
         installedImageValueLabel?.stringValue = installedImage ?? ""
         installedImageRow?.isHidden = installedImage == nil
@@ -455,7 +455,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ephemeralBaselinePopUp.selectItem(at: index)
     }
     @objc private func startRename() {
-        guard instance.canRename else { return }
+        guard viewModel.capabilities.isAvailable(.rename, on: instance) else { return }
         viewModel.renameVMInDetail(instance)
     }
 
@@ -463,7 +463,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// renamed (e.g. while running), mirroring the disabled name button.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(startRename) {
-            return instance.canRename
+            return viewModel.capabilities.isAvailable(.rename, on: instance)
         }
         return true
     }

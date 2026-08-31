@@ -9,6 +9,34 @@ import Testing
 struct VMToolbarManagerTests {
     // MARK: - Factories
 
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmtoolbar")
+
+    /// The library behind the capability catalog every manager reads — the
+    /// settle checks (`isBusy`) resolve through it and its lifecycle.
+    private func makeLibrary(
+        virtualization: any VirtualizationProviding = MockVirtualizationService()
+    ) -> (library: VMLibrary, lifecycle: VMLifecycleCoordinator) {
+        let lifecycle = VMLifecycleCoordinator(
+            virtualizationService: virtualization,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            linuxImageResolveService: MockLinuxImageResolveService(),
+            downloadService: MockDownloadService(),
+            fileSystem: MockFileSystem()
+        )
+        let library = VMLibrary(
+            storageService: MockVMStorageService(),
+            snapshotStore: MockVMSnapshotStore(),
+            lifecycle: lifecycle,
+            fileSystem: MockFileSystem(),
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(),
+            isVMNetworkingEntitled: true
+        )
+        return (library, lifecycle)
+    }
+
     private func makeInstance(status: VMStatus = .stopped, clipboardSharing: Bool = true)
         -> VMInstance
     {
@@ -25,7 +53,7 @@ struct VMToolbarManagerTests {
 
     private func makeManager(
         instance: VMInstance? = nil,
-        checksPreparing: Bool = true,
+        library: VMLibrary? = nil,
         gatesDisplayOnCapability: Bool = true,
         includeSettingsToggle: Bool = true
     ) -> VMToolbarManager {
@@ -38,9 +66,9 @@ struct VMToolbarManagerTests {
                 popOutID: NSToolbarItem.Identifier("testPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("testFullscreen"),
                 settingsToggleID: includeSettingsToggle ? NSToolbarItem.Identifier("testSettingsToggle") : nil,
-                checksPreparing: checksPreparing,
                 gatesDisplayOnCapability: gatesDisplayOnCapability
             ),
+            capabilities: VMCapabilityCatalog(library: library ?? makeLibrary().library),
             instanceProvider: { instance }
         )
     }
@@ -126,6 +154,35 @@ struct VMToolbarManagerTests {
         let (toolbar, _, _) = makeToolbar(manager: manager)
         manager.updateToolbarItems(in: toolbar)
         #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
+    }
+
+    @Test("Take Snapshot is disabled while an operation on the VM is still settling")
+    func takeSnapshotDisabledWhileSettling() async throws {
+        let suspending = SuspendingMockVirtualizationService()
+        suspending.shouldSuspendOnResume = true
+        let (library, lifecycle) = makeLibrary(virtualization: suspending)
+        let instance = makeInstance(status: .paused)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        library.instances.append(instance)
+        let manager = makeManager(instance: instance, library: library)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == true)
+
+        // The resume holds `.paused` while it settles, so the VM's own state
+        // still reads capturable — a capture started now would race the
+        // operation and be rejected, so the button has to go dim rather than
+        // error on click.
+        let resume = Task { @MainActor in try await lifecycle.resume(instance) }
+        await suspending.waitUntilSuspended()
+
+        manager.updateToolbarItems(in: toolbar)
+        #expect(instance.canTakeSnapshot)
+        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
+
+        suspending.resumeSuspended()
+        try await resume.value
     }
 
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
@@ -366,38 +423,22 @@ struct VMToolbarManagerTests {
 
     // MARK: - Preparing State
 
-    @Test("checksPreparing=true disables all when isPreparing")
-    func checksPreparingDisablesAll() {
+    @Test("Every VM item is disabled while a clone or import writes into the bundle")
+    func preparingDisablesEveryItem() {
         let instance = makeInstance(status: .running)
-        instance.preparingState = VMInstance.PreparingState(
-            operation: .cloning,
-            task: Task {}
-        )
-        let manager = makeManager(instance: instance, checksPreparing: true)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
         manager.updateToolbarItems(in: toolbar)
 
         let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
         #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-    }
-
-    @Test("checksPreparing=false ignores isPreparing")
-    func skipPreparingCheck() {
-        let instance = makeInstance(status: .running)
-        instance.preparingState = VMInstance.PreparingState(
-            operation: .cloning,
-            task: Task {}
-        )
-        let manager = makeManager(instance: instance, checksPreparing: false)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        // With checksPreparing=false and status=running, pause should be enabled
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        let pauseItem = lifecycle?.subitems[1]
-        #expect(pauseItem?.isEnabled == true)
+        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
+        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
+        #expect(item("testSettingsToggle", in: toolbar)?.isEnabled == false)
     }
 
     // MARK: - Lifecycle Labels

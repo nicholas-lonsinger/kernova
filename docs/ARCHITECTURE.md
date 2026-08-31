@@ -242,7 +242,9 @@ session down without that hook, so a suspended session survives to revert at its
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
   `surfaceDisplay` hook, an unawaited failure through `onFailure` — and `events()` vends an
   `AsyncStream<VMLibraryEvent>` fed by one diffing observation plus the clone/import copy failures
-  no model field survives to hold, for callers that cannot observe the model. Clone and import
+  no model field survives to hold, for callers that cannot observe the model. Whether a given VM
+  admits a given command is derived in one place, `VMCapabilityCatalog`, which the core's own verb
+  guards and every AppKit surface's enablement both read. Clone and import
   register a preparing "phantom" `VMInstance` **synchronously, before any
   `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
   imports and clones cannot claim the same bundle URL.

@@ -37,7 +37,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
     init(
-        instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void,
+        instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
+        onResume: @escaping () -> Void,
         onUpdateConfiguration: @escaping ((inout VMConfiguration) -> Void) -> Void
     ) {
         self.vmID = instance.instanceID
@@ -54,9 +55,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,
-                checksPreparing: false,
                 gatesDisplayOnCapability: false
             ),
+            capabilities: capabilities,
             instanceProvider: { [weak instance] in instance }
         )
         self.enterFullscreen = enterFullscreen

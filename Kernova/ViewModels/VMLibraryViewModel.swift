@@ -107,6 +107,9 @@ final class VMLibraryViewModel {
     // Headless reads and gates the UI enables its commands from, each
     // documented on ``VMCommandCore``.
 
+    /// Every per-VM capability predicate the AppKit surfaces read.
+    var capabilities: VMCapabilityCatalog { commands.capabilities }
+
     func canTakeSnapshot(_ instance: VMInstance) -> Bool { commands.canTakeSnapshot(instance) }
 
     func canRevertToSnapshot(_ instance: VMInstance) -> Bool {

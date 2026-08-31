@@ -14,26 +14,20 @@ final class RevertOutcome {
 extension VMCommandCore {
     // MARK: - Gates
 
-    /// Whether Take Snapshot is offered right now — the single gate every
-    /// surface enables its command from.
-    ///
-    /// ``VMInstance/canTakeSnapshot`` alone answers the VM's state; an
-    /// operation still settling would reject the capture, so it has to be part
-    /// of the same read or the command reads as available and errors instead.
+    /// Whether Take Snapshot is offered right now.
     func canTakeSnapshot(_ instance: VMInstance) -> Bool {
-        instance.canTakeSnapshot && !library.isBusy(instance)
+        capabilities.isAvailable(.takeSnapshot, on: instance)
     }
 
-    /// Whether a revert is offered right now — the counterpart gate to
-    /// ``canTakeSnapshot(_:)``.
+    /// Whether a revert is offered right now.
     func canRevertToSnapshot(_ instance: VMInstance) -> Bool {
-        instance.canRevertToSnapshot && !library.isBusy(instance)
+        capabilities.isAvailable(.revertToSnapshot, on: instance)
     }
 
-    /// Whether a snapshot may be deleted — the one snapshot-list edit that
-    /// goes through the same per-VM serialization a revert holds.
+    /// Whether the snapshot list may be edited — the deletes, renames and notes
+    /// that go through the same per-VM serialization a revert holds.
     func canDeleteSnapshots(_ instance: VMInstance) -> Bool {
-        !library.isBusy(instance)
+        capabilities.isAvailable(.deleteSnapshot, on: instance)
     }
 
     /// Whether `snapshot` may be deleted: the manifest has to be editable, and
