@@ -16,7 +16,7 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 Every build setting lives in `Config/`: `Base.xcconfig` on both project configurations, `Config/Targets/<Target>.xcconfig` on both of that target's. Each file covers Debug and Release together, with a `[config=Debug]` / `[config=Release]` condition on the settings that genuinely differ. Every `buildSettings` block in `project.pbxproj` is empty, and `Tools/check-build-settings-layering.sh` fails lint if one isn't — the Signing & Capabilities editor writes toggles inline, where they silently outrank the xcconfig.
 
-Precedence runs target xcconfig above project xcconfig, so **no signing setting may be assigned in the app or test-target xcconfigs**: it would shadow `Config/Local.xcconfig` and revert a developer to ad-hoc signing. A `$(KERNOVA_APP_ENTITLEMENTS)` reference is fine — the variable still resolves from the project layer.
+Precedence runs target xcconfig above project xcconfig, so **no signing identity, team, or entitlement path may be assigned in the app or test-target xcconfigs**: it would shadow `Config/Local.xcconfig` and revert a developer to ad-hoc signing. The settings those files do carry — `CODE_SIGN_STYLE`, `ENABLE_HARDENED_RUNTIME`, an empty `PROVISIONING_PROFILE_SPECIFIER`, and a `$(KERNOVA_APP_ENTITLEMENTS)` reference — name no identity and shadow nothing that file sets.
 
 `KernovaKit/Package.swift` is outside all of this: SwiftPM never reads a project xcconfig, so it restates the warnings-as-errors gate and the agent deployment floor. `Tools/check-agent-deployment-floor.sh` holds its `.macOS(…)` to `Base.xcconfig`'s `KERNOVA_AGENT_DEPLOYMENT_TARGET`.
 

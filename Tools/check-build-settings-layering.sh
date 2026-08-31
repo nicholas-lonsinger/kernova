@@ -13,6 +13,11 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 
 pbxproj="Kernova.xcodeproj/project.pbxproj"
 
+if [ ! -f "$pbxproj" ]; then
+    echo "check-build-settings-layering: $pbxproj is missing" >&2
+    exit 1
+fi
+
 violations=$(awk '
     # Pass 1: map each configuration ID to the list that owns it, so a
     # violation names the target rather than a bare hex ID.
