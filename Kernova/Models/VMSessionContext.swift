@@ -83,6 +83,10 @@ final class VMSessionContext {
     /// The vsock live-policy application in flight, chained so a second toggle
     /// arriving before the first finishes runs after it rather than
     /// interleaving with it.
+    ///
+    /// Per context, so an edit made to one session never queues behind a
+    /// previous session's chain — nor lands on a successor's listeners, which
+    /// the chain's own per-step context check refuses.
     @ObservationIgnored var livePolicyApplication: Task<Void, Never>?
 
     // MARK: - Guest Agent
@@ -169,6 +173,12 @@ final class VMSessionContext {
         networkAttachmentPending = false
         clipboardPassthroughCoordinator?.stop()
         clipboardPassthroughCoordinator = nil
+        // Dropping the handle is the whole release: `VMInstance.applyLivePolicy`
+        // re-checks that this context is still the live one before each of its
+        // steps, so a chain in flight settles into a no-op on its own — a
+        // `cancel()` would reach none of those steps, none of which suspend on
+        // anything cancellable.
+        livePolicyApplication = nil
         stopVsockServices()
         stopClipboardService()
         stopSerialReading()

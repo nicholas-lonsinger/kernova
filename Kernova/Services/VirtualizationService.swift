@@ -113,7 +113,9 @@ final class VirtualizationService {
         // session down between attempts, taking this context's scopes with it.
         instance.beginSessionContext(bootedIntoRecovery: bootIntoRecovery)
         let result = try await buildConfiguration(for: instance)
-        let session = await instance.bringUpSession(with: result)
+        guard let session = await instance.bringUpSession(with: result) else {
+            throw VirtualizationError.noVirtualMachine
+        }
         let startOptions = Self.recoveryStartOptions(
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
         try await session.start(options: startOptions)
@@ -811,7 +813,9 @@ final class VirtualizationService {
     private func restoreFromSaveFileAttempt(_ instance: VMInstance) async throws {
         instance.beginSessionContext()
         let result = try await buildConfiguration(for: instance)
-        let session = await instance.bringUpSession(with: result)
+        guard let session = await instance.bringUpSession(with: result) else {
+            throw VirtualizationError.noVirtualMachine
+        }
 
         Self.logger.debug("restoreFromSaveFile: attempting restore from save file")
         do {

@@ -68,7 +68,9 @@ final class MacOSInstallService {
         // `VMLibraryViewModel.runGuestSetup`'s `catch is CancellationError`
         // tears down. Checking first would leave the open session context —
         // its pipes and its security scopes — with no matching VM.
-        let session = await instance.attachSession(from: result.configuration)
+        guard let session = await instance.attachSession(from: result.configuration) else {
+            throw VirtualizationError.noVirtualMachine
+        }
         // Deliberately short of `bringUpSession`: an installer boot runs no
         // vsock listeners, since no guest agent can be there to meet them.
         instance.startSerialReading()

@@ -664,10 +664,12 @@ final class VMInstance {
     /// The whole of what a boot path does between building a configuration and
     /// telling VZ to run, so a cold boot and a restore cannot drift apart. The
     /// install path stops short of the vsock listeners and stays hand-wired.
-    @discardableResult
-    func bringUpSession(with result: ConfigurationBuilder.BuildResult) async -> VMSession {
+    ///
+    /// `nil` for the same reason ``attachSession(from:)`` returns `nil`, and the
+    /// caller must not proceed to start anything.
+    func bringUpSession(with result: ConfigurationBuilder.BuildResult) async -> VMSession? {
         adoptBuildResult(result)
-        let session = await attachSession(from: result.configuration)
+        guard let session = await attachSession(from: result.configuration) else { return nil }
         startSerialReading()
         startClipboardService()
         await startVsockServices()
@@ -699,10 +701,13 @@ final class VMInstance {
     /// Creates the VM on its own queue, stores the session, and builds the
     /// network-attachment coordinator for network-enabled configurations.
     ///
-    /// The session context must already be open — every bring-up path opens it
-    /// before building the configuration this takes.
-    @discardableResult
-    func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession {
+    /// `nil` when no session context is open — a programming error, since every
+    /// bring-up path opens one before building the configuration this takes.
+    /// The just-created `VZVirtualMachine` is released rather than handed back:
+    /// a session this instance does not hold is one nothing can stop, so a
+    /// caller starting it would leave the guest running past every liveness
+    /// predicate, force stop included.
+    func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession? {
         // The configuration was assembled off-main and is handed over whole:
         // nothing touches it after the VM is created from it.
         nonisolated(unsafe) let vzConfig = vzConfig
@@ -711,7 +716,7 @@ final class VMInstance {
             Self.logger.fault(
                 "No session context to attach a session to for '\(self.name, privacy: .public)'")
             assertionFailure("attachSession without beginSessionContext for '\(name)'")
-            return session
+            return nil
         }
         sessionContext.session = session
         await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
@@ -1331,9 +1336,24 @@ final class VMInstance {
 
         let sessionID = session.id
 
-        context.livePolicyApplication = Task { [previous = context.livePolicyApplication] in
+        // The context is what each step below is re-checked against, and it is
+        // captured weakly so a chain still draining cannot hold a torn-down
+        // session's `VZVirtualMachine` and services alive behind it.
+        context.livePolicyApplication = Task {
+            [weak context, previous = context.livePolicyApplication] in
             await previous?.value
-            guard self.session === session else { return }
+            /// Whether the context this edit belongs to is still the live one.
+            ///
+            /// Every hop hands main back, so this is re-asked before each step:
+            /// a teardown landing in between has already queued its unbind, and
+            /// a *successor* session must have neither listeners installed
+            /// behind it nor its own services torn down by an edit that belongs
+            /// to a session already gone.
+            @MainActor func belongsToTheLiveSession() -> Bool {
+                guard let context, self.sessionContext === context else { return false }
+                return context.session === session
+            }
+            guard belongsToTheLiveSession() else { return }
 
             // A listener the guest is about to be told about goes up first: the
             // policy frame wakes the guest's parked reconnect loop at once
@@ -1342,21 +1362,17 @@ final class VMInstance {
             if logChanged && logEnabled {
                 await self.applyLiveLogPolicy(enabled: true, on: session, sessionID: sessionID)
             }
-            // Re-checked between the two installs: the hop above hands main
-            // back, so a teardown landing there has already queued its unbind,
-            // and a second install would bind ports behind it that nothing
-            // takes down.
-            guard self.session === session else { return }
+            guard belongsToTheLiveSession() else { return }
             if clipboardApplies && clipboardEnabled {
                 await self.applyLiveClipboardPolicy(enabled: true, on: session, sessionID: sessionID)
             }
 
-            guard self.session === session else { return }
+            guard belongsToTheLiveSession() else { return }
             if dropChanged && dropEnabled {
                 await self.applyLiveDropPolicy(enabled: true, on: session, sessionID: sessionID)
             }
 
-            guard self.session === session else { return }
+            guard belongsToTheLiveSession() else { return }
             // The control service is nil in the window between accepting a
             // connection and the guest's Hello — the next Hello-driven send
             // catches that up.
@@ -1367,14 +1383,18 @@ final class VMInstance {
             // thinks the feature is on makes the guest see EOF and pound the
             // host with reconnects until the policy arrives.
             if logChanged && !logEnabled {
+                guard belongsToTheLiveSession() else { return }
                 await self.applyLiveLogPolicy(enabled: false, on: session, sessionID: sessionID)
             }
             if clipboardApplies && !clipboardEnabled {
+                guard belongsToTheLiveSession() else { return }
                 await self.applyLiveClipboardPolicy(enabled: false, on: session, sessionID: sessionID)
             }
             if dropChanged && !dropEnabled {
+                guard belongsToTheLiveSession() else { return }
                 await self.applyLiveDropPolicy(enabled: false, on: session, sessionID: sessionID)
             }
+            guard belongsToTheLiveSession() else { return }
 
             Self.logger.notice(
                 "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
