@@ -37,7 +37,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
     init(
-        instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void,
+        instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
+        onResume: @escaping () -> Void,
         onUpdateConfiguration: @escaping ((inout VMConfiguration) -> Void) -> Void
     ) {
         self.vmID = instance.instanceID
@@ -54,9 +55,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,
-                checksPreparing: false,
                 gatesDisplayOnCapability: false
             ),
+            capabilities: capabilities,
             instanceProvider: { [weak instance] in instance }
         )
         self.enterFullscreen = enterFullscreen
@@ -196,10 +197,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         instanceObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                _ = self.instance.status
-                _ = self.instance.hasLiveVirtualMachine
-                _ = self.instance.displayMode
-                _ = self.instance.configuration.clipboardSharingEnabled
+                // Everything the toolbar's items read, owned by the manager so
+                // the read set stays in step with the enablement it feeds —
+                // `status` and `hasLiveVirtualMachine`, which the dismissal
+                // branch below also reads, are among them.
+                self.toolbarManager.trackItemState()
                 _ = self.instance.configuration.displayAutoResizes
                 // Everything `displayDropAvailability` reads, so the display
                 // registers and unregisters as a drag destination when the guest

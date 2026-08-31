@@ -544,12 +544,6 @@ final class VMInstance {
         !isPreparing && (status.canEditSettings || isColdPaused)
     }
 
-    /// `true` when the VM's name can be edited — not mid-transition, and no
-    /// import or clone still writing into the bundle.
-    var canRename: Bool {
-        !isPreparing && status.canRename
-    }
-
     /// `true` when the VM can be cold-booted into macOS Recovery.
     ///
     /// Stopped macOS guests only — Virtualization.framework has no recovery

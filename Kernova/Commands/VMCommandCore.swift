@@ -26,6 +26,10 @@ final class VMCommandCore: VMCommanding {
     let fileSystem: any FileSystemOperating
     let preferences: AppPreferences
 
+    /// Where every per-VM capability predicate is derived — this core's verb
+    /// guards and every surface's enablement read the same one.
+    let capabilities: VMCapabilityCatalog
+
     // MARK: - Adapter Hooks
 
     /// Puts a VM's display in front of the user — the detached window for a
@@ -87,6 +91,7 @@ final class VMCommandCore: VMCommanding {
         self.snapshotStore = snapshotStore
         self.fileSystem = fileSystem
         self.preferences = preferences
+        self.capabilities = VMCapabilityCatalog(library: library)
 
         // An Ephemeral Mode VM goes back to its baseline on every power-off,
         // however it got there — so the handler belongs with the revert verb
@@ -153,30 +158,27 @@ final class VMCommandCore: VMCommanding {
 
     /// The verbs `instance` accepts in the state it is in right now — what an
     /// ``CommandError/invalidState(vm:current:allowed:)`` refusal names.
+    ///
+    /// A projection of ``VMCapabilityCatalog``, in ``VMCapability``'s
+    /// declaration order. Three capabilities carry ``VMVerb/stop``, so the
+    /// first one a state admits places it and the rest fall away.
     func allowedVerbs(for instance: VMInstance) -> [VMVerb] {
-        var verbs: [VMVerb] = [.info, .ipAddress, .snapshots]
-        guard !instance.isPreparing else { return verbs + [.cancelPreparing] }
-        if instance.status.canStart { verbs.append(.start) }
-        if instance.setupTask != nil { verbs.append(.cancelGuestSetup) }
-        if instance.status.canStop { verbs.append(.stop) }
-        if instance.canStop { verbs.append(.restart) }
-        if instance.canForceStop && !verbs.contains(.stop) { verbs.append(.stop) }
-        if instance.status.canPause { verbs.append(.pause) }
-        if instance.status.canResume { verbs.append(.resume) }
-        if instance.canSave { verbs.append(.suspend) }
-        if instance.status.hasActiveDisplay { verbs.append(.open) }
-        if canTakeSnapshot(instance) { verbs.append(.takeSnapshot) }
-        if canRevertToSnapshot(instance) { verbs.append(.revertToSnapshot) }
-        if canDeleteSnapshots(instance) {
-            verbs.append(contentsOf: [.deleteSnapshot, .renameSnapshot, .setSnapshotNotes])
+        var verbs: [VMVerb] = []
+        for capability in VMCapability.allCases {
+            guard let verb = capability.verb, !verbs.contains(verb),
+                capabilities.accepts(capability, on: instance)
+            else { continue }
+            verbs.append(verb)
         }
-        if instance.status.canEditSettings { verbs.append(.clone) }
-        // Not gated on the editing affordance: a rename rewrites the name and
-        // nothing a running operation reads, so every state admits one except
-        // the revert that would overwrite it.
-        if instance.status.renamePersists { verbs.append(.rename) }
-        if instance.canDelete { verbs.append(.delete) }
         return verbs
+    }
+
+    /// Refuses `capability` when `instance` will not take it, naming the copy in
+    /// flight when that is what is blocking rather than a status the summary
+    /// already reports as `"preparing"`.
+    func require(_ capability: VMCapability, on instance: VMInstance) throws {
+        guard !capabilities.accepts(capability, on: instance) else { return }
+        throw invalidState(instance)
     }
 
     /// The refusal for a verb the VM's current state does not admit.

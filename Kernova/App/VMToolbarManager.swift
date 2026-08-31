@@ -24,10 +24,12 @@ final class VMToolbarManager: NSObject {
         /// display and the (read-only) settings form.
         let settingsToggleID: NSToolbarItem.Identifier?
 
-        /// When `true`, checks `instance.isPreparing` and disables all items while preparing.
-        let checksPreparing: Bool
-
-        /// When `true`, gates display button enablement on `instance.canUseExternalDisplay`.
+        /// When `true`, the display buttons take the same capability gate every
+        /// other item does.
+        ///
+        /// A display window's own toolbar sets it `false`: the window *is* the
+        /// display, so Pop In and Fullscreen stay live through the transitional
+        /// states that make an external display unusable from the library window.
         let gatesDisplayOnCapability: Bool
     }
 
@@ -67,6 +69,7 @@ final class VMToolbarManager: NSObject {
     }
 
     private let configuration: Configuration
+    private let capabilities: VMCapabilityCatalog
     private let instanceProvider: () -> VMInstance?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VMToolbarManager")
@@ -107,8 +110,13 @@ final class VMToolbarManager: NSObject {
 
     // MARK: - Init
 
-    init(configuration: Configuration, instanceProvider: @escaping () -> VMInstance?) {
+    init(
+        configuration: Configuration,
+        capabilities: VMCapabilityCatalog,
+        instanceProvider: @escaping () -> VMInstance?
+    ) {
         self.configuration = configuration
+        self.capabilities = capabilities
         self.instanceProvider = instanceProvider
         super.init()
         let ids = sharedItemIdentifiers
@@ -224,16 +232,52 @@ final class VMToolbarManager: NSObject {
 
     // MARK: - Toolbar State Updates
 
+    /// Reads every value ``updateToolbarItems(in:)`` derives item state from,
+    /// for a host to call inside its observation `track:` closure.
+    ///
+    /// The read set lives beside the expressions it feeds so the two cannot
+    /// drift. The settle signal is what makes that load-bearing: whether an
+    /// operation is still unsettled lives on ``VMLifecycleCoordinator``, and no
+    /// per-VM property mirrors it — a host tracking only its instance never
+    /// wakes for a hot pause or resume, and Take Snapshot stays lit for the
+    /// whole window a capture would be rejected in.
+    func trackItemState() {
+        guard let instance = instanceProvider() else { return }
+        for capability in VMCapability.allCases {
+            _ = capabilities.isAvailable(capability, on: instance)
+        }
+        // Read unconditionally: a predicate above can short-circuit before
+        // reaching one of these, and each one also feeds a label.
+        _ = instance.status
+        _ = instance.isPreparing
+        _ = instance.hasLiveVirtualMachine
+        _ = instance.displayMode
+        _ = instance.detailPaneMode
+        _ = instance.startAction
+        _ = instance.configuration.clipboardSharingEnabled
+    }
+
     func updateToolbarItems(in toolbar: NSToolbar) {
-        let instance = resolveActiveInstance()
+        let instance = instanceProvider()
+        if instance == nil {
+            Self.logger.debug("updateToolbarItems: no instance available")
+        }
         updateLifecycleGroup(in: toolbar, instance: instance)
-        updateItem(in: toolbar, configuration.saveStateID, isEnabled: instance?.canSave ?? false)
+        updateItem(
+            in: toolbar, configuration.saveStateID, isEnabled: isAvailable(.suspend, on: instance))
         updateItem(
             in: toolbar, configuration.takeSnapshotID,
-            isEnabled: instance?.canTakeSnapshot ?? false)
+            isEnabled: isAvailable(.takeSnapshot, on: instance))
         updateClipboardItem(in: toolbar, instance: instance)
         updateDisplayItems(in: toolbar, instance: instance)
         updateSettingsToggleItem(in: toolbar, instance: instance)
+    }
+
+    /// The catalog read every item's enablement goes through, answering `false`
+    /// for the no-selection case each of them shares.
+    private func isAvailable(_ capability: VMCapability, on instance: VMInstance?) -> Bool {
+        guard let instance else { return false }
+        return capabilities.isAvailable(capability, on: instance)
     }
 
     /// The state-dependent presentation of an item that relabels with VM state
@@ -273,9 +317,11 @@ final class VMToolbarManager: NSObject {
         return item
     }
 
+    /// Pop Out and Fullscreen share one predicate, so one read answers both.
     private func displayItemsEnabled(for instance: VMInstance?) -> Bool {
         guard let instance else { return false }
-        return configuration.gatesDisplayOnCapability ? instance.canUseExternalDisplay : true
+        guard configuration.gatesDisplayOnCapability else { return true }
+        return capabilities.isAvailable(.togglePopOut, on: instance)
     }
 
     private func updateLifecycleGroup(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -327,12 +373,12 @@ final class VMToolbarManager: NSObject {
             play.toolTip = playToolTip
         }
 
-        play.isEnabled = instance.status.canStart || canResume
-        group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
+        play.isEnabled = isAvailable(.start, on: instance) || isAvailable(.resume, on: instance)
+        group.subitems[LifecycleSegment.pause.rawValue].isEnabled = isAvailable(
+            .pause, on: instance)
 
-        // canStop excludes cold-paused (no graceful stop possible); isColdPaused
-        // enables the "discard saved state" path, and the label names that
-        // consequence.
+        // The graceful stop excludes cold-paused, which the discard-saved-state
+        // capability covers instead; the label names that consequence.
         let stop = group.subitems[LifecycleSegment.stop.rawValue]
         let stopLabel = instance.stopActionToolbarLabel
         if stop.label != stopLabel {
@@ -340,7 +386,8 @@ final class VMToolbarManager: NSObject {
             stop.image = .systemSymbol("stop.fill", accessibilityDescription: stopLabel)
             stop.toolTip = instance.isColdPaused ? Self.discardSavedStateToolTip : Self.stopToolTip
         }
-        stop.isEnabled = instance.canStop || instance.isColdPaused
+        stop.isEnabled =
+            isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)
     }
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -348,7 +395,7 @@ final class VMToolbarManager: NSObject {
             updateItem(
                 in: toolbar,
                 configuration.clipboardID,
-                isEnabled: instance?.canShowClipboard ?? false
+                isEnabled: isAvailable(.showClipboard, on: instance)
             ) != nil
         else { return }
 
@@ -402,7 +449,7 @@ final class VMToolbarManager: NSObject {
             configuration.settingsToggleID,
             // Only meaningful when there's an actual display to toggle away from;
             // in other states the settings form is already the only view.
-            isEnabled: instance?.status.hasActiveDisplay ?? false,
+            isEnabled: isAvailable(.toggleSettingsPane, on: instance),
             state: inSettingsMode
                 ? ItemState(
                     label: "Hide Settings", symbol: "gearshape.fill",
@@ -452,7 +499,7 @@ final class VMToolbarManager: NSObject {
         }
         switch segment {
         case .play:
-            if instanceProvider()?.status.canResume ?? false {
+            if isAvailable(.resume, on: instanceProvider()) {
                 NSApp.sendAction(#selector(AppDelegate.resumeVM(_:)), to: nil, from: nil)
             } else {
                 NSApp.sendAction(#selector(AppDelegate.startVM(_:)), to: nil, from: nil)
@@ -465,17 +512,6 @@ final class VMToolbarManager: NSObject {
     }
 
     // MARK: - Helpers
-
-    /// Resolves the current VM instance, returning `nil` if no instance is available
-    /// or (when configured) the instance is preparing.
-    private func resolveActiveInstance() -> VMInstance? {
-        guard let instance = instanceProvider() else {
-            Self.logger.debug("resolveActiveInstance: no instance available")
-            return nil
-        }
-        if configuration.checksPreparing && instance.isPreparing { return nil }
-        return instance
-    }
 
     /// Creates a bordered image-backed item — the standard single-button shape,
     /// which merges into a shared glass capsule with adjacent bordered items.

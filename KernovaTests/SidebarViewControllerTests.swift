@@ -317,6 +317,25 @@ struct SidebarViewControllerTests {
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
     }
 
+    @Test("Context menu keeps Clone enabled while a different VM is being copied")
+    func contextMenuCloneIgnoresAnotherVMsCopy() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(name: "Settled", status: .stopped)
+        let copying = makeInstance(name: "Copying", status: .stopped)
+        let task = Task {}
+        defer { task.cancel() }
+        copying.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        viewModel.instances.append(contentsOf: [instance, copying])
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        // Overlapping clones and imports are a supported case — the copy in
+        // flight belongs to another VM and says nothing about this one.
+        #expect(viewModel.library.hasPreparing)
+        #expect(menuItem("Clone", in: menu)?.isEnabled == true)
+    }
+
     @Test("Context menu for a cold-paused VM offers Discard Saved State, not Stop/Suspend")
     func contextMenuColdPaused() throws {
         let viewModel = makeViewModel()

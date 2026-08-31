@@ -48,9 +48,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 popOutID: NSToolbarItem.Identifier("popOut"),
                 fullscreenID: NSToolbarItem.Identifier("fullscreen"),
                 settingsToggleID: NSToolbarItem.Identifier("settingsToggle"),
-                checksPreparing: true,
                 gatesDisplayOnCapability: true
             ),
+            capabilities: viewModel.capabilities,
             instanceProvider: { [weak viewModel] in viewModel?.selectedInstance }
         )
 
@@ -142,14 +142,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         windowStateObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
+                // Which VM the toolbar is about, then everything its items read
+                // — the manager owns that read set so it stays in step with the
+                // enablement it feeds.
                 _ = self.viewModel.selectedID
+                self.toolbarManager.trackItemState()
+                // The window title's own inputs.
                 _ = self.viewModel.selectedInstance?.name
-                _ = self.viewModel.selectedInstance?.status
-                _ = self.viewModel.selectedInstance?.isPreparing
-                _ = self.viewModel.selectedInstance?.displayMode
-                _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
-                _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
-                _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.hasLiveEphemeralSession
             },
             apply: { [weak self] in
@@ -438,22 +437,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 // MARK: - NSToolbarItemValidation
 
 extension MainWindowController: NSToolbarItemValidation {
-    /// The palette-only items mirror the menu bar's `validateMenuItem(_:)`
-    /// predicates for the same actions, so the two surfaces never disagree.
+    /// The palette-only items take their predicates from ``VMCapabilityCatalog``,
+    /// the one the menu bar and the sidebar read too.
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         let instance = viewModel.selectedInstance
+        let capabilities = viewModel.capabilities
 
         switch item.itemIdentifier {
         case Self.toolbarNewVM:
             return true
         case Self.toolbarShowInFinder:
-            // Enabled even while preparing — the bundle already exists on disk.
-            return instance != nil
+            // Available even while preparing — the bundle already exists on disk.
+            return instance.map { capabilities.isAvailable(.showInFinder, on: $0) } ?? false
         case Self.toolbarClone:
-            guard let instance else { return false }
-            return instance.status.canEditSettings && !viewModel.hasPreparing
+            return instance.map { capabilities.isAvailable(.clone, on: $0) } ?? false
         case Self.toolbarMoveToTrash:
-            return instance?.canDelete ?? false
+            return instance.map { capabilities.isAvailable(.delete, on: $0) } ?? false
         default:
             guard let instance, !instance.isPreparing else { return false }
 

@@ -36,18 +36,13 @@ extension VMCommandCore {
 
     /// Renames a VM; an empty or unchanged name is a no-op.
     ///
-    /// Two states refuse: a bundle a clone or import is still writing into, and
-    /// a revert that will assign a whole configuration back over this one
-    /// (``VMStatus/renamePersists``). Every other is taken — the rename
-    /// rewrites the name and touches nothing else, so a VM that started or
-    /// began suspending while the field editor was open keeps the name the user
-    /// typed rather than trading it for an alert.
+    /// What the rename takes is wider than what the sidebar and the settings
+    /// pane offer — ``VMCapabilityCatalog/accepts(_:on:)`` states the split.
     func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
-        try refuseIfPreparing(instance)
-        guard instance.status.renamePersists else { throw invalidState(instance) }
+        try require(.rename, on: instance)
         Self.logger.debug(
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
         guard library.updateConfiguration(of: instance, mutate: { $0.name = trimmed }) else {
@@ -67,8 +62,7 @@ extension VMCommandCore {
     @discardableResult
     func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary {
         let instance = try resolve(selector)
-        try refuseIfPreparing(instance)
-        guard instance.status.canEditSettings else { throw invalidState(instance) }
+        try require(.clone, on: instance)
 
         let generateNewID: Bool
         switch machineIdentity {

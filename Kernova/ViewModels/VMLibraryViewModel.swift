@@ -58,8 +58,6 @@ final class VMLibraryViewModel {
 
     var hasLoadedLibrary: Bool { library.hasLoadedLibrary }
 
-    var hasPreparing: Bool { library.hasPreparing }
-
     var hasUninterruptibleWork: Bool { library.hasUninterruptibleWork }
 
     var hasSaveInFlight: Bool { library.hasSaveInFlight }
@@ -106,6 +104,9 @@ final class VMLibraryViewModel {
 
     // Headless reads and gates the UI enables its commands from, each
     // documented on ``VMCommandCore``.
+
+    /// Every per-VM capability predicate the AppKit surfaces read.
+    var capabilities: VMCapabilityCatalog { commands.capabilities }
 
     func canTakeSnapshot(_ instance: VMInstance) -> Bool { commands.canTakeSnapshot(instance) }
 

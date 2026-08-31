@@ -297,6 +297,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return viewModel.selectedInstance
     }
 
+    /// The VM a nil-target action acts on: the one the sending item names, else
+    /// ``activeInstance``.
+    ///
+    /// The sidebar's context menu dispatches its display toggles down the
+    /// responder chain, and its row is not always the key window's VM — naming
+    /// the VM on the item is what keeps the click acting on the row it came
+    /// from. Every other sender carries none and gets the key-window rule.
+    private func target(of sender: Any?) -> VMInstance? {
+        (sender as? NSMenuItem)?.representedObject as? VMInstance ?? activeInstance
+    }
+
     // MARK: - Entry Point
 
     static func main() {
@@ -587,7 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard let self else { return }
                 guard
                     let instance = self.viewModel.instances.first(where: { $0.instanceID == vmID }),
-                    instance.canShowClipboard
+                    self.viewModel.capabilities.accepts(.showClipboard, on: instance)
                 else {
                     // The window the notice pointed at can't open — the VM has
                     // stopped, had sharing turned off, or is gone from the
@@ -1873,7 +1884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func showClipboardWindow(for instance: VMInstance) {
         showAuxiliaryWindow(
             for: instance,
-            isEligible: instance.canShowClipboard,
+            isEligible: viewModel.capabilities.accepts(.showClipboard, on: instance),
             windowsPath: \.clipboardWindows,
             observersPath: \.clipboardObservers,
             factory: { [viewModel] in ClipboardWindowController(instance: $0, viewModel: viewModel) }
@@ -1898,7 +1909,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Display Window (Pop-Out / Fullscreen)
 
     @objc func togglePopOut(_ sender: Any?) {
-        guard let instance = activeInstance else { return }
+        guard let instance = target(of: sender) else { return }
 
         if let existing = displayWindows[instance.instanceID] {
             existing.closeForPopIn()
@@ -1930,7 +1941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc func toggleFullscreen(_ sender: Any?) {
-        guard let instance = activeInstance else { return }
+        guard let instance = target(of: sender) else { return }
 
         if let existing = displayWindows[instance.instanceID] {
             existing.window?.toggleFullScreen(nil)
@@ -1958,6 +1969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         let controller = VMDisplayWindowController(
             instance: instance,
+            capabilities: viewModel.capabilities,
             enterFullscreen: enterFullscreen,
             onResume: { [weak self] in
                 guard let self else { return }
@@ -2157,102 +2169,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Menu Validation
 
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        // Preparing instances disable all VM menu bar actions; Show in Finder stays
-        // available since the bundle already exists on disk. `quitCompletely` is
-        // app-level and must never be gated on the selected VM's state, or a
-        // preparing import would disable the GUI's only full-quit affordance.
-        if let instance = activeInstance, instance.isPreparing {
-            switch menuItem.action {
-            case #selector(showLibrary(_:)), #selector(newVM(_:)), #selector(openVMsFolder(_:)),
-                #selector(showVMInFinder(_:)), #selector(quitCompletely(_:)):
-                return true
-            default:
-                return false
-            }
+    /// The capability a menu selector performs, or `nil` for an app-level
+    /// command no VM's state gates.
+    ///
+    /// Selectors are AppKit's vocabulary, so the mapping lives here rather than
+    /// in the headless catalog.
+    private static func capability(for action: Selector?) -> VMCapability? {
+        switch action {
+        case #selector(startVM(_:)): .start
+        case #selector(startVMInRecovery(_:)): .startInRecovery
+        case #selector(pauseVM(_:)): .pause
+        case #selector(resumeVM(_:)): .resume
+        // Cold-paused VMs have no live VM to stop — `stopVM(_:)` routes them to
+        // the discard-saved-state confirmation instead, so the menu bar's one
+        // stop item covers both capabilities and is validated against both.
+        case #selector(stopVM(_:)): .stop
+        // Cold-paused is excluded: the retitled stop item ("Discard Saved
+        // State…") is the one surface for that action, and two enabled items
+        // must not alias one action under two names.
+        case #selector(forceStopVM(_:)): .forceStop
+        case #selector(saveVM(_:)): .suspend
+        case #selector(takeSnapshot(_:)): .takeSnapshot
+        case #selector(renameVM(_:)): .rename
+        // Same gate for the primary and its ⌥-alternate, in both pairs.
+        case #selector(cloneVM(_:)), #selector(cloneVMAlternate(_:)): .clone
+        case #selector(deleteVM(_:)), #selector(deleteImmediatelyVM(_:)): .delete
+        case #selector(showVMInFinder(_:)): .showInFinder
+        // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
+        // menuNeedsUpdate(_:) handles the Clipboard item's visual state. This
+        // entry covers its keyboard shortcut, which still routes through
+        // validateMenuItem(_:).
+        case #selector(showClipboard(_:)): .showClipboard
+        case #selector(toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
+        case #selector(togglePopOut(_:)): .togglePopOut
+        case #selector(toggleFullscreen(_:)): .toggleFullscreen
+        case #selector(toggleSettingsPane(_:)): .toggleSettingsPane
+        default: nil
         }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        // App-level commands — New, Show Library, Open VMs Folder, Quit
+        // Completely — are never gated on the selected VM's state, or a
+        // preparing import would disable the GUI's only full-quit affordance.
+        guard let capability = Self.capability(for: menuItem.action) else { return true }
+
+        // The two titles that do not depend on a VM, applied before the
+        // selection guard so neither strands the last selection's wording: the
+        // guest-agent item's title is part of what it reports (see
+        // `unavailableTitle`), and the clone alternate's names a preference.
+        switch menuItem.action {
+        case #selector(toggleGuestAgentDisk(_:)):
+            menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
+        case #selector(cloneVMAlternate(_:)):
+            menuItem.title = preferences.cloneAlternateMenuTitle
+        default:
+            break
+        }
+
+        guard let instance = target(of: menuItem) else { return false }
+        let isAvailable = viewModel.capabilities.isAvailable(capability, on: instance)
 
         switch menuItem.action {
         case #selector(startVM(_:)):
-            guard let instance = activeInstance else { return false }
             // Install-flavored title for pending-install VMs.
             menuItem.title = instance.startAction.label
-            return instance.status.canStart
-        case #selector(startVMInRecovery(_:)):
-            return activeInstance?.canStartInRecovery ?? false
-        case #selector(pauseVM(_:)):
-            return activeInstance?.status.canPause ?? false
-        case #selector(resumeVM(_:)):
-            return activeInstance?.status.canResume ?? false
         case #selector(stopVM(_:)):
-            guard let instance = activeInstance else { return false }
-            // Cold-paused VMs have no live VM to stop — `stopVM(_:)` routes them to
-            // the discard-saved-state confirmation, and the title names that.
             menuItem.title = instance.stopActionMenuTitle
-            return instance.canStop || instance.isColdPaused
-        case #selector(forceStopVM(_:)):
-            // Cold-paused is excluded: the retitled stop item ("Discard Saved
-            // State…") is the one surface for that action, and two enabled items
-            // must not alias one action under two names.
-            return activeInstance?.canForceStop ?? false
-        case #selector(saveVM(_:)):
-            return activeInstance?.canSave ?? false
-        case #selector(takeSnapshot(_:)):
-            return activeInstance.map { viewModel.canTakeSnapshot($0) } ?? false
-        case #selector(renameVM(_:)):
-            return activeInstance?.status.canRename ?? false
-        case #selector(cloneVM(_:)), #selector(cloneVMAlternate(_:)):
-            if menuItem.action == #selector(cloneVMAlternate(_:)) {
-                menuItem.title = preferences.cloneAlternateMenuTitle
-            }
-            guard let instance = activeInstance else { return false }
-            return instance.status.canEditSettings && !viewModel.hasPreparing
-        case #selector(deleteVM(_:)), #selector(deleteImmediatelyVM(_:)):
-            // Same gate for both the primary and its ⌥-alternate.
-            return activeInstance?.canDelete ?? false
-        case #selector(showVMInFinder(_:)):
-            return activeInstance != nil
-        // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
-        // menuNeedsUpdate(_:) handles visual state. This case covers keyboard
-        // shortcut validation, which still routes through validateMenuItem(_:).
-        case #selector(showClipboard(_:)):
-            return activeInstance?.canShowClipboard ?? false
+            return isAvailable
+                || viewModel.capabilities.isAvailable(.discardSavedState, on: instance)
         case #selector(toggleGuestAgentDisk(_:)):
-            // Hard gates (not status-derived): a macOS guest with a live session
-            // to look inside, and a bundled DMG for it to hold. Retitling on the
-            // way out matters as much as enabling — see `unavailableTitle`.
-            guard let instance = activeInstance, instance.canManageGuestAgentDisk,
-                Self.guestAgentDiskPath != nil
-            else {
-                menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
-                return false
-            }
+            // Layered over the capability: a bundled DMG for the VM to hold, and
+            // the mount/eject model that decides both title and enablement. The
+            // unavailable title set above stands unless both hold.
+            guard isAvailable, Self.guestAgentDiskPath != nil else { return false }
             let model = GuestAgentDiskMenuItem.model(
                 status: instance.agentStatus,
                 isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
             menuItem.title = model.title
             return model.isEnabled
         case #selector(togglePopOut(_:)):
-            guard let instance = activeInstance else { return false }
-            let canUse = instance.canUseExternalDisplay
             // `isDisplayDetached` (not window existence): a hidden (headless)
             // display has no window but still pops back *in*.
             menuItem.title = instance.isDisplayDetached ? "Pop In Display" : "Pop Out Display"
-            return canUse
         case #selector(toggleFullscreen(_:)):
-            guard let instance = activeInstance else { return false }
-            let canUse = instance.canUseExternalDisplay
             let isFullscreen = displayWindows[instance.instanceID] != nil && instance.isInFullscreen
             menuItem.title = isFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display"
-            return canUse
         default:
-            return true
+            break
         }
+        return isAvailable
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === NSApp.windowsMenu {
-            clipboardMenuItem.isEnabled = activeInstance?.canShowClipboard ?? false
+            clipboardMenuItem.isEnabled =
+                activeInstance.map { viewModel.capabilities.isAvailable(.showClipboard, on: $0) }
+                ?? false
         } else if menu === appMenu {
             // Re-derive the quit section so a Settings toggle flip is reflected on
             // the next open.
@@ -2274,7 +2287,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let model = RevertSnapshotMenuModel(
             instanceID: instance?.id,
             snapshots: instance?.snapshotManifest.ordered ?? [],
-            isEnabled: instance.map { viewModel.canRevertToSnapshot($0) } ?? false)
+            isEnabled: instance.map {
+                viewModel.capabilities.isAvailable(.revertToSnapshot, on: $0)
+            } ?? false)
         guard model != revertSnapshotMenuModel else { return }
         revertSnapshotMenuModel = model
         SnapshotRevertMenu.rebuild(
