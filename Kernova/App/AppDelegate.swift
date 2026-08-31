@@ -2213,6 +2213,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Completely — are never gated on the selected VM's state, or a
         // preparing import would disable the GUI's only full-quit affordance.
         guard let capability = Self.capability(for: menuItem.action) else { return true }
+
+        // The two titles that do not depend on a VM, applied before the
+        // selection guard so neither strands the last selection's wording: the
+        // guest-agent item's title is part of what it reports (see
+        // `unavailableTitle`), and the clone alternate's names a preference.
+        switch menuItem.action {
+        case #selector(toggleGuestAgentDisk(_:)):
+            menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
+        case #selector(cloneVMAlternate(_:)):
+            menuItem.title = preferences.cloneAlternateMenuTitle
+        default:
+            break
+        }
+
         guard let instance = target(of: menuItem) else { return false }
         let isAvailable = viewModel.capabilities.isAvailable(capability, on: instance)
 
@@ -2224,17 +2238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             menuItem.title = instance.stopActionMenuTitle
             return isAvailable
                 || viewModel.capabilities.isAvailable(.discardSavedState, on: instance)
-        case #selector(cloneVMAlternate(_:)):
-            menuItem.title = preferences.cloneAlternateMenuTitle
         case #selector(toggleGuestAgentDisk(_:)):
             // Layered over the capability: a bundled DMG for the VM to hold, and
-            // the mount/eject model that decides both title and enablement.
-            // Retitling on the way out matters as much as enabling — see
-            // `unavailableTitle`.
-            guard isAvailable, Self.guestAgentDiskPath != nil else {
-                menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
-                return false
-            }
+            // the mount/eject model that decides both title and enablement. The
+            // unavailable title set above stands unless both hold.
+            guard isAvailable, Self.guestAgentDiskPath != nil else { return false }
             let model = GuestAgentDiskMenuItem.model(
                 status: instance.agentStatus,
                 isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))

@@ -142,14 +142,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         windowStateObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
+                // Which VM the toolbar is about, then everything its items read
+                // — the manager owns that read set so it stays in step with the
+                // enablement it feeds.
                 _ = self.viewModel.selectedID
+                self.toolbarManager.trackItemState()
+                // The window title's own inputs.
                 _ = self.viewModel.selectedInstance?.name
-                _ = self.viewModel.selectedInstance?.status
-                _ = self.viewModel.selectedInstance?.isPreparing
-                _ = self.viewModel.selectedInstance?.displayMode
-                _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
-                _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
-                _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.hasLiveEphemeralSession
             },
             apply: { [weak self] in

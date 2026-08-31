@@ -232,6 +232,31 @@ final class VMToolbarManager: NSObject {
 
     // MARK: - Toolbar State Updates
 
+    /// Reads every value ``updateToolbarItems(in:)`` derives item state from,
+    /// for a host to call inside its observation `track:` closure.
+    ///
+    /// The read set lives beside the expressions it feeds so the two cannot
+    /// drift. The settle signal is what makes that load-bearing: whether an
+    /// operation is still unsettled lives on ``VMLifecycleCoordinator``, and no
+    /// per-VM property mirrors it — a host tracking only its instance never
+    /// wakes for a hot pause or resume, and Take Snapshot stays lit for the
+    /// whole window a capture would be rejected in.
+    func trackItemState() {
+        guard let instance = instanceProvider() else { return }
+        for capability in VMCapability.allCases {
+            _ = capabilities.isAvailable(capability, on: instance)
+        }
+        // Read unconditionally: a predicate above can short-circuit before
+        // reaching one of these, and each one also feeds a label.
+        _ = instance.status
+        _ = instance.isPreparing
+        _ = instance.hasLiveVirtualMachine
+        _ = instance.displayMode
+        _ = instance.detailPaneMode
+        _ = instance.startAction
+        _ = instance.configuration.clipboardSharingEnabled
+    }
+
     func updateToolbarItems(in toolbar: NSToolbar) {
         let instance = instanceProvider()
         if instance == nil {

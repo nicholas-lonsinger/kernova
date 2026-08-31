@@ -1,5 +1,6 @@
 import Cocoa
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -156,7 +157,7 @@ struct VMToolbarManagerTests {
         #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
     }
 
-    @Test("Take Snapshot is disabled while an operation on the VM is still settling")
+    @Test("The toolbar's own observation dims Take Snapshot when an operation starts settling")
     func takeSnapshotDisabledWhileSettling() async throws {
         let suspending = SuspendingMockVirtualizationService()
         suspending.shouldSuspendOnResume = true
@@ -167,6 +168,19 @@ struct VMToolbarManagerTests {
         let manager = makeManager(instance: instance, library: library)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
+        // The loop both hosts run, verbatim. Every item sets
+        // `autovalidates = false`, so this is the *only* thing that refreshes
+        // them — driving `updateToolbarItems(in:)` directly would pass whether
+        // or not the settle signal is in the tracked read set.
+        let applied = AsyncGate()
+        let loop = observeRecurring(
+            track: { manager.trackItemState() },
+            apply: {
+                manager.updateToolbarItems(in: toolbar)
+                applied.notify()
+            })
+        defer { loop.cancel() }
+
         manager.updateToolbarItems(in: toolbar)
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == true)
 
@@ -176,8 +190,8 @@ struct VMToolbarManagerTests {
         // error on click.
         let resume = Task { @MainActor in try await lifecycle.resume(instance) }
         await suspending.waitUntilSuspended()
+        try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
 
-        manager.updateToolbarItems(in: toolbar)
         #expect(instance.canTakeSnapshot)
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
 

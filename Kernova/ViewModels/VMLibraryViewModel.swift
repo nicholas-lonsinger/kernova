@@ -58,8 +58,6 @@ final class VMLibraryViewModel {
 
     var hasLoadedLibrary: Bool { library.hasLoadedLibrary }
 
-    var hasPreparing: Bool { library.hasPreparing }
-
     var hasUninterruptibleWork: Bool { library.hasUninterruptibleWork }
 
     var hasSaveInFlight: Bool { library.hasSaveInFlight }

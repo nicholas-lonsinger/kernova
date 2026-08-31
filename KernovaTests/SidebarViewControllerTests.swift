@@ -332,7 +332,7 @@ struct SidebarViewControllerTests {
 
         // Overlapping clones and imports are a supported case — the copy in
         // flight belongs to another VM and says nothing about this one.
-        #expect(viewModel.hasPreparing)
+        #expect(viewModel.library.hasPreparing)
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
     }
 

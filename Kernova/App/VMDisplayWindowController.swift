@@ -197,10 +197,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         instanceObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                _ = self.instance.status
-                _ = self.instance.hasLiveVirtualMachine
-                _ = self.instance.displayMode
-                _ = self.instance.configuration.clipboardSharingEnabled
+                // Everything the toolbar's items read, owned by the manager so
+                // the read set stays in step with the enablement it feeds —
+                // `status` and `hasLiveVirtualMachine`, which the dismissal
+                // branch below also reads, are among them.
+                self.toolbarManager.trackItemState()
                 _ = self.instance.configuration.displayAutoResizes
                 // Everything `displayDropAvailability` reads, so the display
                 // registers and unregisters as a drag destination when the guest

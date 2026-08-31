@@ -187,9 +187,16 @@ struct VMCapabilityCatalogTests {
 
         #expect(harness.catalog.isApplicable(.takeSnapshot, to: instance))
         #expect(!harness.catalog.isAvailable(.takeSnapshot, on: instance))
+        #expect(!harness.catalog.isAvailable(.revertToSnapshot, on: instance))
+        #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
         // The lifecycle verbs carry no settle term — a stop has to be able to
         // interrupt an operation that is still running.
         #expect(harness.catalog.isAvailable(.stop, on: instance))
+        // Nor do a snapshot's name and note: `VMCommandCore` writes both while
+        // the VM is busy, so refusing them here would make `accepts` disagree
+        // with the verb whose guard it is meant to be.
+        #expect(harness.catalog.accepts(.renameSnapshot, on: instance))
+        #expect(harness.catalog.accepts(.setSnapshotNotes, on: instance))
 
         suspending.resumeSuspended()
         try await resume.value

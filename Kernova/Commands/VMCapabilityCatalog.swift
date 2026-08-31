@@ -174,15 +174,18 @@ struct VMCapabilityCatalog {
         guard capability.survivesPreparing || !instance.isPreparing else { return false }
         guard isApplicable(capability, to: instance) else { return false }
         switch capability {
-        case .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes:
-            // A capture or a manifest edit races an operation that is still
-            // settling and would be rejected, so the command reads as
-            // unavailable rather than erroring on click.
+        case .takeSnapshot, .revertToSnapshot, .deleteSnapshot:
+            // Each of these moves VM state or snapshot files and would race an
+            // operation that is still settling, so it reads as unavailable
+            // rather than erroring on click. A snapshot's name and note are
+            // metadata-only manifest writes no operation reads mid-flight, and
+            // are deliberately not on this list.
             return !library.isBusy(instance)
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .clone,
-            .rename, .delete, .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen,
-            .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
+            .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete, .cancelPreparing,
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
+            .toggleSettingsPane:
             return true
         }
     }
