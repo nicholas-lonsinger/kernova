@@ -447,6 +447,76 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.service.grabbed.count == 1)
     }
 
+    @Test("A file resolve the host clipboard outran offers nothing and settles nothing")
+    func supersededResolveIsDropped() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        writeFileURLs([file], to: h.pasteboard)
+
+        var resolveCompleted = false
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolveCompleted = true
+            resolved.notify()
+        }
+
+        // The user copies something else while the folder walk is still running.
+        h.coordinator.pollHostClipboard()
+        writeText("copied over the folder", to: h.pasteboard)
+        try await resolved.wait { resolveCompleted }
+
+        // Offering the walk's result now would put content nobody holds on the
+        // guest's clipboard.
+        #expect(h.service.grabbed.isEmpty)
+
+        // And settling the superseded count must not roll the record backwards:
+        // the copy that replaced it still forwards.
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.map(\.text) == ["copied over the folder"])
+    }
+
+    @Test("A file resolve outliving its passthrough session neither offers nor settles")
+    func resolveOutlivingItsSessionIsDropped() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        writeFileURLs([file], to: h.pasteboard)
+
+        var resolveCompleted = false
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolveCompleted = true
+            resolved.notify()
+        }
+
+        // Passthrough switched off and back on while the walk runs, so its
+        // resolve lands in a session that has already reseeded to `-1`.
+        h.coordinator.start()
+        h.coordinator.pollHostClipboard()
+        h.coordinator.stop()
+        h.coordinator.start()
+        defer { h.coordinator.stop() }
+
+        try await resolved.wait { resolveCompleted }
+        #expect(h.service.grabbed.isEmpty)
+
+        // Nothing was recorded either: the fresh session's first poll still
+        // forwards the current clipboard, which a stale record would suppress.
+        resolveCompleted = false
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolveCompleted }
+        #expect(h.service.grabbed.map { $0.representations.map(\.filename) } == [["notes.txt"]])
+    }
+
     @Test("An undelivered forward files no transfer report until its retry lands")
     func undeliveredForwardDefersItsSkipNote() async throws {
         let h = makeHarness()

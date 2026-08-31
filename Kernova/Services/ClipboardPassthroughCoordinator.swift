@@ -229,12 +229,21 @@ final class ClipboardPassthroughCoordinator {
             #if DEBUG
             defer { self.onForwardResolvedForTesting?() }
             #endif
-            // Declared second so it runs first (defers unwind in reverse), leaving
-            // the coordinator ready to retry before the test hook observes it.
+            guard self.runGeneration == generation else { return }
+            // Below the session guard, so a resolve outliving its session cannot
+            // release a slot the *new* session armed at the same count and admit
+            // the second walk this field exists to prevent. Declared after the
+            // test hook so it runs before it (defers unwind in reverse), leaving
+            // the coordinator ready to retry by the time the hook observes it.
             defer {
                 if self.resolvingChangeCount == changeCount { self.resolvingChangeCount = nil }
             }
-            guard self.runGeneration == generation else { return }
+            // The host clipboard moved on during the walk: this content is
+            // nobody's copy now, and settling its count would roll the record
+            // backwards over whatever replaced it — which an inbound publish's
+            // own count cannot recover from, since the next poll absorbs that as
+            // our own write rather than forwarding it.
+            guard self.pasteboard.changeCount == changeCount else { return }
             // The live service may have been torn down or replaced during the
             // resolve; recording nothing leaves the copy for the next poll.
             guard let service = self.instance?.clipboardService else { return }
