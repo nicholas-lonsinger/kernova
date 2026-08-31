@@ -390,10 +390,6 @@ extension VMCommandCore {
                 Self.deletePrompt(instance, permanently: permanently))
         }
 
-        // `canDelete` admits a suspended VM, whose slot goes with the bundle,
-        // so the VM rests stopped rather than claiming a saved state that is
-        // about to be trashed.
-        instance.tearDownSession(restingAt: .stopped)
         let toDelete =
             alsoRemoving.isEmpty
             ? []
@@ -412,6 +408,13 @@ extension VMCommandCore {
             )
             throw CommandError.operationFailed(verb: .delete, message: error.localizedDescription)
         }
+        // Ordered after the delete, which throws on a volume with no Trash or a
+        // bundle another process holds: `canDelete` admits a suspended VM, and
+        // one that survives a failed delete has to keep naming the slot still
+        // sitting in its bundle — resting stopped early would take Resume away
+        // and stamp a later capture as disks-only. Nothing live can reach here,
+        // so the teardown releases a stale context rather than a running VM.
+        instance.tearDownSession(restingAt: .stopped)
         cleanupSetupResumeData(for: instance, permanently: permanently)
         lifecycle.clearActiveOperation(for: instance.id)
         library.sleepPausedInstanceIDs.remove(instance.id)

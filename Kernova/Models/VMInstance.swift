@@ -479,11 +479,10 @@ final class VMInstance {
     /// excluded too — a capture mid-operation would race the operation itself.
     ///
     /// Suspended additionally needs ``hasSaveFile``, unlike the other branches:
-    /// a failed snapshot attempt can rest a VM suspended with no suspend slot at
-    /// all (``VirtualizationService/restingPhaseAfterFailedWarmCapture(_:session:sessionID:wasRunning:)``),
-    /// the same dead end
-    /// ``VirtualizationService/restingPhaseAfterRestoreFailure(on:)`` documents
-    /// for ``VMLifecyclePhase/suspended`` generally.
+    /// the phase says the guest's memory is on disk, and only the file says it
+    /// is still there — a slot removed underneath the VM leaves a suspension
+    /// with nothing to capture, the same dead end
+    /// ``VirtualizationService/restingPhaseAfterRestoreFailure(on:)`` names.
     var snapshotCaptureMode: VMSnapshotCaptureMode? {
         if canSave {
             .live

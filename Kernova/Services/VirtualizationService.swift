@@ -72,9 +72,15 @@ final class VirtualizationService {
                     "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
                 )
             }
-            instance.tearDownSession(
-                restingAt: Self.restingPhaseAfterLifecycleFailure(
-                    error, on: instance, transientRestingPhase: .stopped))
+            if Self.attemptStillOwnsThePhase(instance, actingFor: nil) {
+                instance.tearDownSession(
+                    restingAt: Self.restingPhaseAfterLifecycleFailure(
+                        error, on: instance, transientRestingPhase: .stopped))
+            } else {
+                Self.logger.notice(
+                    "Start of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
+                )
+            }
             throw error
         }
     }
@@ -252,10 +258,20 @@ final class VirtualizationService {
             instance.cancelAgentPostStartWatchdog()
             Self.logger.notice("Paused VM '\(instance.name, privacy: .public)'")
         } catch {
+            // The phase is deliberately untouched: the pause did not take, so
+            // the VM is where it was, still holding the session — and the guest
+            // stays usable, with Stop, Force Stop and a retried Pause all
+            // offered. Resting at a phase naming no session would strand it
+            // instead: liveness is read off the phase, so every later event this
+            // still-live session raises — the guest's own shutdown above all —
+            // would be dropped, and the pipes, vsock listeners, security scopes
+            // and file locks it holds would never be released.
+            //
+            // The failure reaches the user as the thrown error, which is what
+            // every caller of this already surfaces.
             Self.logger.error(
                 "Failed to pause VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.settle(.failed(message: error.localizedDescription), for: sessionID)
             throw error
         }
     }
@@ -271,24 +287,28 @@ final class VirtualizationService {
         guard instance.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
         }
+        // A suspended VM whose slot has gone has nothing to resume from, and no
+        // attempt has touched anything yet — so it rests where a slotless
+        // suspension belongs rather than through the failure path below, which
+        // classifies what an attempt did.
+        let hotResumeSessionID = instance.session?.id
+        if hotResumeSessionID == nil, !instance.hasSaveFile {
+            instance.enter(.stopped)
+            throw VirtualizationError.noSaveFile
+        }
 
         do {
             let sessionID: UUID
-            let isHotResume: Bool
             if let session = instance.session {
-                sessionID = session.id
-                isHotResume = true
                 try await session.resume()
-            } else if instance.hasSaveFile {
+                sessionID = session.id
+            } else {
                 // Deliberately arms nothing below: a restore resumes whatever
                 // guest state was frozen, which may be a Recovery session that
                 // never runs the agent, and no host-side flag survives the save
                 // to say which. The accept path arms once a control channel
                 // actually shows up.
                 sessionID = try await restoreFromSaveFile(instance)
-                isHotResume = false
-            } else {
-                throw VirtualizationError.noSaveFile
             }
 
             guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
@@ -300,7 +320,7 @@ final class VirtualizationService {
             // Idempotent re-activation reconciles an attachment the host link
             // may have invalidated during the pause.
             instance.activateNetworkAttachment()
-            if isHotResume {
+            if hotResumeSessionID != nil {
                 instance.removeSaveFile()
                 // The guest is executing again, and this is the same session
                 // that was paused — so `bootedIntoRecovery` still governs, and
@@ -317,9 +337,15 @@ final class VirtualizationService {
                     "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }
-            instance.tearDownSession(
-                restingAt: Self.restingPhaseAfterLifecycleFailure(
-                    error, on: instance, transientRestingPhase: nil))
+            if Self.attemptStillOwnsThePhase(instance, actingFor: hotResumeSessionID) {
+                instance.tearDownSession(
+                    restingAt: Self.restingPhaseAfterLifecycleFailure(
+                        error, on: instance, transientRestingPhase: nil))
+            } else {
+                Self.logger.notice(
+                    "Resume of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
+                )
+            }
             throw error
         }
     }
@@ -342,7 +368,7 @@ final class VirtualizationService {
             // No sidecar metadata is needed beside the save file: removable media
             // carry stable UUIDs and storage disks stable virtio block identifiers
             // in `config`, and VZ matches both on restore.
-            guard instance.liveSessionID == sessionID else {
+            guard Self.attemptStillOwnsThePhase(instance, actingFor: sessionID) else {
                 // The guest went away mid-write, so the slot on disk is however
                 // far VZ got. Resting suspended would offer it as resumable;
                 // the VM stays where the teardown put it instead.
@@ -357,7 +383,16 @@ final class VirtualizationService {
             Self.logger.error(
                 "Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.tearDownSession(restingAt: .failed(message: error.localizedDescription))
+            // A force stop is the interrupt this operation is most likely to
+            // meet — it aborts the write and rests the VM `.stopped`, which a
+            // failure banner over the top would misreport as a crash.
+            if Self.attemptStillOwnsThePhase(instance, actingFor: sessionID) {
+                instance.tearDownSession(restingAt: .failed(message: error.localizedDescription))
+            } else {
+                Self.logger.notice(
+                    "Suspend of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
+                )
+            }
             throw error
         }
     }
@@ -654,8 +689,11 @@ final class VirtualizationService {
 
         // A live guest's memory and disks are exactly what the revert replaces,
         // and the user confirmed losing them — so terminate rather than save.
-        let wasLive = instance.hasLiveVirtualMachine
-        if let session = instance.session {
+        // Both the termination and the resume that closes this read the one
+        // session, so no second reading of liveness can disagree with it.
+        let liveSession = instance.session
+        let wasLive = liveSession != nil
+        if let session = liveSession {
             do {
                 try await session.stop()
             } catch {
@@ -787,6 +825,28 @@ final class VirtualizationService {
             case .restoreFailed(let underlying) = virtualizationError
         else { return error }
         return underlying
+    }
+
+    /// Whether an attempt that has just failed still owns where `instance`
+    /// rests, or has been overtaken and must leave the phase alone.
+    ///
+    /// ``VMLifecycleCoordinator/hasActiveOperation(for:)`` documents the reason
+    /// this is needed: a stop or a force stop releases another operation's claim
+    /// so the user can always interrupt, but the interrupted body keeps running
+    /// and reaches its `catch` with the VM already settled by whatever
+    /// interrupted it — `.stopped` from a force stop, `.failed` from a guest
+    /// failure. Resting again over that reports a state the attempt did not
+    /// produce, and puts a red banner on a deliberate force stop.
+    ///
+    /// `sessionID` names the session the attempt acted for. An attempt that may
+    /// never have created one passes `nil` and is recognized instead by the VM
+    /// still being mid-operation, since every phase an interruption rests at is
+    /// a settled one.
+    static func attemptStillOwnsThePhase(
+        _ instance: VMInstance, actingFor sessionID: UUID?
+    ) -> Bool {
+        if let sessionID { return instance.liveSessionID == sessionID }
+        return instance.isTransitioning
     }
 
     /// Where a failed start or resume leaves `instance`, for the caller to rest

@@ -2361,17 +2361,26 @@ struct VMLibraryViewModelTests {
         #expect(presenter.instanceToStopPaused == nil)
     }
 
-    @Test("pause presents error on service failure")
+    @Test("pause presents error on service failure and leaves the guest running")
     func pausePresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.pauseError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
 
         await viewModel.pause(instance)
 
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage != nil)
+        // The pause did not take, so the VM is where it was and still names its
+        // session — which is what keeps that session's later events, its
+        // teardown hooks and its Ephemeral revert reachable, and keeps Stop and
+        // Force Stop offered.
+        #expect(instance.phase == .running(sessionID: sessionID))
+        #expect(instance.canStop)
+        #expect(instance.canForceStop)
     }
 
     @Test("resume presents error on service failure")

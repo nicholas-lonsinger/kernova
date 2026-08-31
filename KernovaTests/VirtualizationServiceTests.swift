@@ -71,6 +71,50 @@ struct VirtualizationServiceTests {
         #expect(!captured)
     }
 
+    // MARK: - An attempt overtaken by an interrupt
+
+    @Test("An attempt that still holds the session it acted for keeps the phase")
+    func overtakenAttemptKeepsThePhaseWhileItHoldsItsSession() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .saving(sessionID: sessionID))
+
+        #expect(VirtualizationService.attemptStillOwnsThePhase(instance, actingFor: sessionID))
+    }
+
+    @Test("A force stop landing mid-suspend takes the phase away from the attempt")
+    func forceStopDuringASuspendOvertakesTheAttempt() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .saving(sessionID: sessionID))
+
+        // What `forceStop` leaves behind: the coordinator releases the suspend's
+        // claim so the user can interrupt, but the suspend's body keeps running
+        // and reaches its `catch` after this.
+        instance.resetToStopped()
+
+        #expect(!VirtualizationService.attemptStillOwnsThePhase(instance, actingFor: sessionID))
+        // The aborted `saveMachineState` must not paint a failure over a
+        // deliberate force stop.
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("An attempt with no session of its own is recognized by the VM still being mid-operation")
+    func attemptWithoutASessionIsRecognizedByItsInFlightPhase() {
+        // A start whose configuration build failed never created one.
+        let starting = makeInstance(phase: .starting(sessionID: nil))
+        #expect(VirtualizationService.attemptStillOwnsThePhase(starting, actingFor: nil))
+
+        // Every phase an interruption rests at is settled, which is what
+        // separates "still mine" from "someone else got here first".
+        for phase in [
+            VMLifecyclePhase.stopped, .failed(message: "The guest stopped."), .suspended,
+            .running(sessionID: UUID()),
+        ] {
+            #expect(
+                !VirtualizationService.attemptStillOwnsThePhase(
+                    makeInstance(phase: phase), actingFor: nil), "\(phase)")
+        }
+    }
+
     // MARK: - Warm capture over a session that goes away
 
     @Test("A guest that dies mid-capture leaves the VM where the teardown put it, not running")

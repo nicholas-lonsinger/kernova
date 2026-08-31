@@ -87,10 +87,10 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func pause(_ instance: VMInstance) async throws {
         pauseCallCount += 1
-        if let error = pauseError {
-            instance.enter(.failed(message: error.localizedDescription))
-            throw error
-        }
+        // A failed pause leaves the phase alone, as the real service does: the
+        // pause did not take, so the VM is where it was and still holds its
+        // session.
+        if let error = pauseError { throw error }
         instance.enter(.livePaused(sessionID: sessionIdentity(for: instance)))
     }
 

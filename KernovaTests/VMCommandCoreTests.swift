@@ -1195,6 +1195,26 @@ struct VMCommandCoreTests {
         #expect(harness.storage.deleteVMBundleCallCount == 1)
     }
 
+    @Test("A delete that could not trash the bundle leaves the VM naming its suspend slot")
+    func failedDeleteKeepsTheSuspendedPhase() async throws {
+        let harness = makeHarness()
+        harness.storage.deleteVMBundleError = VMStorageError.bundleNotFound(
+            URL(filePath: "/tmp/Doomed.kernova"))
+        let instance = makeInstance(in: harness, name: "Doomed", phase: .suspended)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.delete(
+                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+        }
+
+        // The bundle — and the slot inside it — is still on disk, so a VM that
+        // survived the delete has to keep offering Resume rather than reading
+        // as a stopped VM whose next capture would be stamped disks-only.
+        #expect(harness.library.instances.contains { $0 === instance })
+        #expect(instance.phase == .suspended)
+        #expect(instance.canResume)
+    }
+
     @Test("A repeat delete of an already-removed VM refuses as not found")
     func deleteRefusesARepeatConfirm() async throws {
         let harness = makeHarness()
