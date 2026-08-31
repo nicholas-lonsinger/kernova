@@ -45,7 +45,7 @@ The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64
 
 Build settings live in `Config/` — `Base.xcconfig` for project-wide facts, `Config/Targets/<Target>.xcconfig` for per-target ones, each covering Debug and Release with `[config=…]` conditions. Every `buildSettings` block in `project.pbxproj` stays empty, and no signing identity, team, or entitlement path goes in an app or test-target xcconfig ([docs/BUILD.md](docs/BUILD.md)).
 
-A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`.
+A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`. A `PBXShellScriptBuildPhase` is a one-line call into a tracked `Tools/*.sh` script, never an inline program — `make lint` cannot see one.
 
 Any change requiring a guest-agent reinstall bumps the `MARKETING_VERSION` in `Config/Targets/KernovaMacOSAgent.xcconfig` ([docs/BUILD.md](docs/BUILD.md)).
 
