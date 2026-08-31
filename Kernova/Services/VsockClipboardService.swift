@@ -19,7 +19,9 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
     /// Bidirectional clipboard buffer.
     var clipboardContent: ClipboardContent = .empty
 
-    /// `true` once `start()` has been called.
+    /// `true` while this service's accepted channel is live.
+    ///
+    /// Cleared by `stop()` and by the channel ending under it.
     private(set) var isConnected: Bool = false
 
     var supportsBinaryRepresentations: Bool { true }
@@ -221,7 +223,17 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
     }
 
     func stop() {
+        settle()
+    }
+
+    /// Tears the service down once its channel is over, whether the owner asked
+    /// or the channel simply ended.
+    ///
+    /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
+    /// construction, and the first one through does the work.
+    private func settle() {
         endpoint.stop()
+        guard isConnected else { return }
         isConnected = false
         // With the offer gone, a drop the buffer no longer shows has no reader
         // left on this side.
@@ -615,6 +627,17 @@ extension VsockClipboardService: ClipboardEndpointDelegate {
         failure: ClipboardTransferFailure
     ) {
         reportRefusal(gesture: gesture, failure)
+    }
+
+    /// Settles here rather than waiting for whatever replaces this service.
+    ///
+    /// `isConnected` is what the passthrough coordinator's poll reads to decide
+    /// whether to forward the host pasteboard *and* to record its change count,
+    /// and the guest closes this channel on every agent reconnect, so a service
+    /// left standing would absorb the copy instead of letting the next
+    /// connection forward it.
+    func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
+        settle()
     }
 }
 

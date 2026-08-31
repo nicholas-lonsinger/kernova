@@ -112,9 +112,31 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         // The clipboard listener accepts the connection before the service is
-        // constructed, so connectivity is equivalent to "started and not yet
-        // stopped". Liveness lives on the control channel.
+        // constructed, so connectivity is live as soon as `start()` runs, with
+        // no Hello round trip. Liveness lives on the control channel.
         #expect(service.isConnected)
+    }
+
+    @Test("the channel ending settles the service, so the next connection can forward again")
+    func channelEndSettlesTheService() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
+        service.start()
+
+        // The guest closes this channel on every agent reconnect. Nothing calls
+        // stop() for that, so the service has to settle itself or it keeps
+        // absorbing the copy instead of letting the next connection forward it.
+        guest.close()
+
+        try await waitForChange { !service.isConnected }
+        // The latch: an owner stop() after the channel already settled is a
+        // safe no-op, not a double retire/abandon/log.
+        service.stop()
+        #expect(!service.isConnected)
     }
 
     @Test("A payload-less frame is dropped without closing the clipboard channel")
@@ -414,7 +436,7 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Outbound request edge cases
 
-    @Test("handleRequest send failure is handled gracefully and leaves the service connected")
+    @Test("handleRequest send failure is handled gracefully and the channel end settles the service")
     func requestSendFailureIsHandledGracefully() async throws {
         let (hostFd, _, host, guest) = try makeRawPair()
         host.start()
@@ -454,10 +476,10 @@ struct VsockClipboardServiceTests {
         guest.close()
 
         // The service reads the request and tries to stream; the writes fail
-        // (peer gone) and are swallowed by the sender. No SIGPIPE, no crash, and
-        // isConnected stays true because only stop() clears it.
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(service.isConnected, "isConnected should remain true — only stop() clears it")
+        // (peer gone) and are swallowed by the sender — no SIGPIPE, no crash.
+        // `guest.close()` above also ends the channel itself, which settles the
+        // service once the consume loop notices.
+        try await waitForChange { !service.isConnected }
     }
 
     // MARK: - Inbound (lazy pull: an offer publishes placeholders; the window

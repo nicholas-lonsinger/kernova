@@ -159,6 +159,30 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.service.grabbed.count == 1)
     }
 
+    @Test("A copy during an outage is forwarded once the redial's service reconnects")
+    func copyDuringOutageIsForwardedAfterReconnect() {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        // The channel went down (the guest closed it on reconnect) and the
+        // service settled — no poll may record the change count while
+        // disconnected, or the copy below would never be noticed once a fresh
+        // service comes up.
+        h.service.isConnected = false
+        writeText("copied during the outage", to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        #expect(h.service.grabbed.isEmpty)
+
+        // The accept path swaps in a fresh service on redial.
+        let reconnected = FakePassthroughService()
+        reconnected.reporter = h.reports.reporter
+        h.instance.clipboardService = reconnected
+        h.coordinator.pollHostClipboard()
+
+        #expect(reconnected.grabbed.count == 1)
+        #expect(reconnected.grabbed.first?.text == "copied during the outage")
+    }
+
     @Test("Our own inbound publish is absorbed, not re-forwarded (echo suppression)")
     func echoSuppressed() async {
         let h = makeHarness()
