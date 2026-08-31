@@ -5,7 +5,9 @@ import Foundation
 @Suite("USBDeviceService Tests", .admissionGated)
 @MainActor
 struct USBDeviceServiceTests {
-    private func makeInstance(status: VMStatus = .running) -> VMInstance {
+    private func makeInstance(phase: VMLifecyclePhase = .running(sessionID: UUID()))
+        -> VMInstance
+    {
         let config = VMConfiguration(
             name: "USB Test VM",
             guestOS: .linux,
@@ -13,7 +15,7 @@ struct USBDeviceServiceTests {
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
     // MARK: - USBDeviceInfo Model Tests
@@ -118,17 +120,21 @@ struct USBDeviceServiceTests {
         context.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
         #expect(instance.liveRemovableMedia.count == 2)
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
 
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test(
-        "canAttachUSBDevices admits a live VM only at a settled status",
-        arguments: zip([VMStatus.running, .paused, .stopped], [true, true, false]))
-    func canAttachFollowsLiveSession(status: VMStatus, expected: Bool) {
-        let instance = makeInstance(status: status)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        "canAttachUSBDevices admits a live VM only at a settled phase",
+        arguments: zip(
+            [
+                VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
+                .saving(sessionID: UUID()), .suspended, .stopped,
+            ],
+            [true, true, false, false, false]))
+    func canAttachFollowsLiveSession(phase: VMLifecyclePhase, expected: Bool) {
+        let instance = makeInstance(phase: phase)
         #expect(instance.canAttachUSBDevices == expected)
     }
 }

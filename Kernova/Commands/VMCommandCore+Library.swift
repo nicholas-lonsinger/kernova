@@ -262,11 +262,11 @@ extension VMCommandCore {
 
             // The save file has to come from the source bundle — the destination doesn't exist yet.
             let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
-            let initialStatus = VMLibrary.initialStatus(for: config, layout: sourceLayout)
+            let initialPhase = VMLibrary.initialPhase(for: config, layout: sourceLayout)
 
             let destinationURL = library.reserveDestination(for: sourceURL, in: vmsDir)
             let phantom = VMInstance(
-                configuration: config, bundleURL: destinationURL, status: initialStatus,
+                configuration: config, bundleURL: destinationURL, phase: initialPhase,
                 preferences: preferences)
 
             let storage = storageService
@@ -390,7 +390,6 @@ extension VMCommandCore {
                 Self.deletePrompt(instance, permanently: permanently))
         }
 
-        instance.tearDownSession()
         let toDelete =
             alsoRemoving.isEmpty
             ? []
@@ -409,6 +408,13 @@ extension VMCommandCore {
             )
             throw CommandError.operationFailed(verb: .delete, message: error.localizedDescription)
         }
+        // Ordered after the delete, which throws on a volume with no Trash or a
+        // bundle another process holds: `canDelete` admits a suspended VM, and
+        // one that survives a failed delete has to keep naming the slot still
+        // sitting in its bundle — resting stopped early would take Resume away
+        // and stamp a later capture as disks-only. Nothing live can reach here,
+        // so the teardown releases a stale context rather than a running VM.
+        instance.tearDownSession(restingAt: .stopped)
         cleanupSetupResumeData(for: instance, permanently: permanently)
         lifecycle.clearActiveOperation(for: instance.id)
         library.sleepPausedInstanceIDs.remove(instance.id)

@@ -13,7 +13,7 @@ extension VMCommandCore {
     /// The start every surface reaches, with the instance already resolved.
     func start(_ instance: VMInstance, recovery: Bool = false) async throws {
         try refuseIfPreparing(instance)
-        guard instance.status.canStart else { throw invalidState(instance) }
+        guard instance.canStart else { throw invalidState(instance) }
         if recovery, !instance.canStartInRecovery {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
         }
@@ -78,7 +78,7 @@ extension VMCommandCore {
     private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
         library.instances.first { other in
             other !== instance
-                && (other.status.isActive || other.isLivePaused)
+                && (other.isActive || other.isLivePaused)
                 && Self.sharesMachineIdentifier(instance, other)
         }
     }
@@ -246,25 +246,25 @@ extension VMCommandCore {
                 // Tear down a VM the install attached before cancellation fired: a
                 // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
                 // the old one is still alive on `instance.session`.
-                instance.tearDownSession()
+                instance.tearDownSession(restingAt: .initialBoot)
                 instance.setupState = nil
-                instance.errorMessage = nil
-                instance.status = .initialBoot
                 Self.logger.notice(
                     "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
                 return
             } catch {
                 // Same teardown reason as the cancel branch: an attached VM from a
-                // partial install must not bleed into the next retry.
-                instance.tearDownSession()
+                // partial install must not bleed into the next retry. The
+                // pipeline classified its own failure into a resting phase, so
+                // the teardown keeps that — unless a cancel raced the failure
+                // (user intent was cancel, so drop the message and take no
+                // dialog), or the throw came from before the classification and
+                // the VM is still in an install phase naming its session.
+                let classified = instance.phase
+                let restingAtCancel = Task.isCancelled || classified.sessionID != nil
+                instance.tearDownSession(restingAt: restingAtCancel ? .initialBoot : classified)
                 instance.setupState = nil
                 if Task.isCancelled {
-                    // A non-cancellation error arrived before the cancel propagated
-                    // (e.g. a network failure raced it). User intent was cancel, so
-                    // route back to `.initialBoot` and drop the message — no dialog.
-                    instance.errorMessage = nil
-                    instance.status = .initialBoot
                     Self.logger.notice(
                         "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
                     )
@@ -398,12 +398,15 @@ extension VMCommandCore {
                 try await resumeThenShutDown(instance)
                 return
             }
-            guard instance.status.canStop else { throw invalidState(instance) }
-            // A cold-paused VM has no guest to send the request to, so this is
-            // not a shutdown at all: it deletes the suspended session exactly as
-            // the force path does, and an Ephemeral VM's rolls the disks back to
-            // the baseline on top of that. Same outcome, so the same consent —
-            // which is also what the UI asks for at every cold-paused Stop.
+            // A suspended VM has no guest to send the request to, so this is not
+            // a shutdown at all: it deletes the suspended session exactly as the
+            // force path does, and an Ephemeral VM's rolls the disks back to the
+            // baseline on top of that. It passes the gate alongside the VMs that
+            // do take a shutdown, and asks the same consent the force path does
+            // — which is also what the UI asks at every suspended Stop.
+            guard instance.canStop || instance.isColdPaused else {
+                throw invalidState(instance)
+            }
             guard confirmed || !instance.isColdPaused else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
@@ -414,7 +417,7 @@ extension VMCommandCore {
                 throw failure(error, verb: .stop, on: instance)
             }
         case .resumeThenShutDown:
-            guard instance.status.canResume else { throw invalidState(instance) }
+            guard instance.canResume else { throw invalidState(instance) }
             try await resumeThenShutDown(instance)
         case .force:
             // No state gate: a force stop is the interrupt of last resort, and
@@ -505,7 +508,7 @@ extension VMCommandCore {
 
     func pause(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
-        guard instance.status.canPause else { throw invalidState(instance) }
+        guard instance.canPause else { throw invalidState(instance) }
         do {
             try await lifecycle.pause(instance)
         } catch {
@@ -519,7 +522,7 @@ extension VMCommandCore {
     func resume(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
         try refuseIfPreparing(instance)
-        guard instance.status.canResume else { throw invalidState(instance) }
+        guard instance.canResume else { throw invalidState(instance) }
 
         // A cold resume builds a fresh VZVirtualMachine from the save file, so it
         // claims the machine identity — and puts its MAC address back on a
@@ -582,9 +585,9 @@ extension VMCommandCore {
         try await stop(instance, disposition: .graceful, confirmed: true)
         await waitForObservedChange { [library] in
             !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
-                && (instance.status.canStart || instance.status.canResume)
+                && (instance.canStart || instance.canResume)
         }
-        if instance.status.canStart {
+        if instance.canStart {
             try await start(instance)
         } else {
             try await resume(.id(instance.id))
@@ -599,7 +602,7 @@ extension VMCommandCore {
         // which reads as having a display while the copy is still writing —
         // and `allowedVerbs` offers a preparing row nothing but its cancel.
         try refuseIfPreparing(instance)
-        guard instance.status.hasActiveDisplay else { throw invalidState(instance) }
+        guard instance.hasActiveDisplay else { throw invalidState(instance) }
         surfaceDisplay?(instance)
     }
 

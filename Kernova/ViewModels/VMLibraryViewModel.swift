@@ -353,9 +353,9 @@ final class VMLibraryViewModel {
 
             let bundleURL = try storageService.createVMBundle(for: config)
             let layout = VMBundleLayout(bundleURL: bundleURL)
-            let initialStatus = VMLibrary.initialStatus(for: config, layout: layout)
+            let initialPhase = VMLibrary.initialPhase(for: config, layout: layout)
             let instance = VMInstance(
-                configuration: config, bundleURL: bundleURL, status: initialStatus,
+                configuration: config, bundleURL: bundleURL, phase: initialPhase,
                 preferences: preferences)
             library.wirePersistence(for: instance)
 
@@ -369,7 +369,7 @@ final class VMLibraryViewModel {
             selectedID = instance.id
 
             Self.logger.notice(
-                "Created VM '\(config.name, privacy: .public)' (status: \(initialStatus.displayName, privacy: .public))"
+                "Created VM '\(config.name, privacy: .public)' (status: \(initialPhase.status.displayName, privacy: .public))"
             )
 
             if wizard.startAfterCreate {
@@ -468,7 +468,7 @@ final class VMLibraryViewModel {
             Self.logger.notice(
                 "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
             )
-            if instance.isColdPaused { instance.status = .stopped }
+            if instance.isColdPaused { instance.enter(.stopped) }
         }
         await start(instance)
     }
@@ -1246,22 +1246,21 @@ final class VMLibraryViewModel {
     /// A VM that has yet to finish setup is skipped: its start runs the macOS
     /// install or the Linux image download, neither of which may begin
     /// unattended. ``VMConfiguration/hasPendingSetup`` is what decides that, not
-    /// the status — ``VMCommandCore/start(_:recovery:)`` dispatches on the
-    /// surviving install context too, so a failed install sitting at `.error`
-    /// still routes into the installer, and `.error` otherwise means "retry the
+    /// the phase — ``VMCommandCore/start(_:recovery:)`` dispatches on the
+    /// surviving install context too, so a failed install sitting at `.failed`
+    /// still routes into the installer, and `.failed` otherwise means "retry the
     /// boot".
     nonisolated static func autoStartStep(
         startsAutomaticallyOnLaunch: Bool,
         isPreparing: Bool,
         hasPendingSetup: Bool,
-        isColdPaused: Bool,
-        status: VMStatus
+        phase: VMLifecyclePhase
     ) -> AutoStartStep {
         guard startsAutomaticallyOnLaunch, !isPreparing, !hasPendingSetup,
-            status != .initialBoot
+            phase != .initialBoot
         else { return .skip }
-        if isColdPaused { return .resume }
-        return status.canStart ? .start : .skip
+        if phase.isColdPaused { return .resume }
+        return phase.canStart ? .start : .skip
     }
 
     /// Starts every VM marked to start automatically, one after another.
@@ -1313,8 +1312,7 @@ final class VMLibraryViewModel {
                 startsAutomaticallyOnLaunch: instance.configuration.startsAutomaticallyOnLaunch,
                 isPreparing: instance.isPreparing,
                 hasPendingSetup: instance.configuration.hasPendingSetup,
-                isColdPaused: instance.isColdPaused,
-                status: instance.status)
+                phase: instance.phase)
             switch step {
             case .start:
                 await start(instance)
@@ -1327,7 +1325,7 @@ final class VMLibraryViewModel {
                 skippedCount += 1
                 continue
             }
-            if instance.status.isActive {
+            if instance.isActive {
                 startedCount += 1
             } else {
                 failedCount += 1

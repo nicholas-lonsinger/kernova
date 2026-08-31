@@ -21,12 +21,21 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
 
     var saveError: (any Error)?
 
+    /// Runs once the state has been written, before the disks are copied — the
+    /// seam a test lands a mid-capture guest failure through, so the capture
+    /// finds its session gone at exactly the point a real one would.
+    private var afterSave: (@Sendable () async -> Void)?
+
     init(guestState: GuestState) {
         self.guestState = guestState
     }
 
     func setSaveError(_ error: any Error) {
         saveError = error
+    }
+
+    func setAfterSave(_ work: @escaping @Sendable () async -> Void) {
+        afterSave = work
     }
 
     func pauseIfRunning() async throws {
@@ -45,5 +54,6 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         calls.append("saveMachineState")
         savedStateURLs.append(url)
         if let saveError { throw saveError }
+        await afterSave?()
     }
 }

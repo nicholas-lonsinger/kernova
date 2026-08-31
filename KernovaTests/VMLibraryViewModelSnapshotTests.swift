@@ -70,13 +70,13 @@ struct VMLibraryViewModelSnapshotTests {
     /// A VM registered in `viewModel`'s library — every verb addresses a VM by
     /// selector, so one outside the library resolves to nothing.
     private func makeInstance(
-        in viewModel: VMLibraryViewModel, status: VMStatus = .running
+        in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .running(sessionID: UUID())
     ) -> VMInstance {
         let config = VMConfiguration(name: "Snapshot VM", guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: status, preferences: preferences)
+            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
         viewModel.instances.append(instance)
         return instance
     }
@@ -146,7 +146,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A VM with nothing settled to capture opens no sheet")
     func requestRefusedWhileTransitioning() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .starting)
+        let instance = makeInstance(in: harness.viewModel, phase: .starting(sessionID: nil))
 
         harness.viewModel.requestTakeSnapshot(instance)
 
@@ -156,7 +156,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A capture of a stopped VM is stamped as disks-only")
     func stoppedCaptureIsCold() async {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .stopped)
+        let instance = makeInstance(in: harness.viewModel, phase: .stopped)
 
         await harness.viewModel.takeSnapshot(instance, name: "Before first boot").value
 
@@ -168,7 +168,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A capture of a cold-paused VM is stamped as memory-and-disks and lands in the manifest")
     func coldPausedCaptureIsWarm() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .paused)
+        let instance = makeInstance(in: harness.viewModel, phase: .suspended)
         // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
         // needs one on disk, not just the status.
         try FileManager.default.createDirectory(
@@ -188,7 +188,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A capture of a running VM is stamped as memory-and-disks")
     func runningCaptureIsWarm() async {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .running)
+        let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: UUID()))
 
         await harness.viewModel.takeSnapshot(instance, name: "Mid-session").value
 
@@ -328,7 +328,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("Snapshot-then-revert check-points a stopped VM disks-only before reverting")
     func snapshotThenRevertCheckPointsAStoppedVM() async {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .stopped)
+        let instance = makeInstance(in: harness.viewModel, phase: .stopped)
         var target = makeSnapshot()
         target.kind = .cold
         seed(harness, instance, [target])
@@ -411,7 +411,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.takeSnapshotSheetInstances.count == 1)
 
         // The sheet gathers a name, and the VM starts restoring while it is up.
-        instance.status = .restoring
+        instance.enter(.revertingToSnapshot)
         await harness.viewModel.takeSnapshot(instance, name: "Too late").value
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
@@ -421,10 +421,10 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A VM that stopped while the sheet was up is captured disks-only, not refused")
     func kindIsStampedAtConfirmTime() async {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .running)
+        let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: UUID()))
         harness.viewModel.requestTakeSnapshot(instance)
 
-        instance.status = .stopped
+        instance.enter(.stopped)
         await harness.viewModel.takeSnapshot(instance, name: "Powered off first").value
 
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
@@ -433,7 +433,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A rename arriving while an operation is unsettled still lands")
     func renameLandsWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .restoring)
+        let instance = makeInstance(in: harness.viewModel, phase: .revertingToSnapshot)
         let snapshot = makeSnapshot()
         seed(harness, instance, [snapshot])
 
@@ -559,7 +559,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A note arriving while an operation is unsettled still lands")
     func notesLandWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, status: .restoring)
+        let instance = makeInstance(in: harness.viewModel, phase: .revertingToSnapshot)
         let snapshot = makeSnapshot()
         seed(harness, instance, [snapshot])
 
@@ -575,7 +575,7 @@ struct VMLibraryViewModelSnapshotTests {
         harness.virtualization.shouldSuspendOnRevert = true
         // At rest when the revert is asked for — the verb refuses a VM already
         // mid-operation — and parked mid-copy by the suspending service below.
-        let instance = makeInstance(in: harness.viewModel, status: .running)
+        let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: UUID()))
         let snapshot = makeSnapshot()
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)

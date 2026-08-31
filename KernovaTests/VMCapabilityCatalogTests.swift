@@ -48,8 +48,8 @@ struct VMCapabilityCatalogTests {
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String = "Catalog VM", status: VMStatus = .stopped,
-        hasLiveVirtualMachine: Bool = false, guestOS: VMGuestOS = .linux
+        in harness: Harness, name: String = "Catalog VM", phase: VMLifecyclePhase = .stopped,
+        guestOS: VMGuestOS = .linux
     ) -> VMInstance {
         var config = VMConfiguration(
             name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
@@ -57,11 +57,24 @@ struct VMCapabilityCatalogTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: status, preferences: preferences)
-        instance.hasLiveVirtualMachineOverrideForTesting = hasLiveVirtualMachine
+            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
         harness.storage.bundles[bundleURL] = config
         harness.library.instances.append(instance)
         return instance
+    }
+
+    /// Every phase, each with the session identity its own case admits.
+    private static var everyPhase: [VMLifecyclePhase] {
+        let id = UUID()
+        return [
+            .stopped, .initialBoot, .failed(message: "Boot failed."), .suspended,
+            .capturingAtRest, .revertingToSnapshot,
+            .starting(sessionID: nil), .installing(sessionID: nil),
+            .restoringSavedState(sessionID: nil),
+            .starting(sessionID: id), .installing(sessionID: id), .running(sessionID: id),
+            .livePaused(sessionID: id), .saving(sessionID: id), .capturingLive(sessionID: id),
+            .restoringSavedState(sessionID: id),
+        ]
     }
 
     /// Applicable in every state, so each case below names only what its state
@@ -73,43 +86,52 @@ struct VMCapabilityCatalogTests {
 
     // MARK: - Applicability by state
 
-    @Test("Each state admits exactly the capabilities its own predicates allow")
-    func applicabilityByState() {
-        let cases: [(label: String, status: VMStatus, live: Bool, added: Set<VMCapability>)] = [
-            ("stopped", .stopped, false, [.start, .takeSnapshot, .clone, .rename, .delete]),
+    @Test("Each phase admits exactly the capabilities its own predicates allow")
+    func applicabilityByPhase() {
+        let id = UUID()
+        let display: Set<VMCapability> = [.open, .toggleSettingsPane]
+        let cases: [(label: String, phase: VMLifecyclePhase, added: Set<VMCapability>)] = [
+            ("stopped", .stopped, [.start, .takeSnapshot, .clone, .rename, .delete]),
             (
-                "running", .running, true,
+                "running", .running(sessionID: id),
                 [
                     .stop, .restart, .forceStop, .pause, .suspend, .open, .takeSnapshot,
                     .rename, .togglePopOut, .toggleFullscreen, .toggleSettingsPane,
                 ]
             ),
             (
-                "live-paused", .paused, true,
+                "live-paused", .livePaused(sessionID: id),
                 [
                     .stop, .restart, .forceStop, .resume, .suspend, .open, .takeSnapshot,
                     .rename, .togglePopOut, .toggleFullscreen, .toggleSettingsPane,
                 ]
             ),
-            // No save file on disk, so a cold-paused VM has no suspend slot
-            // to capture.
+            // No save file on disk, so a suspended VM has no suspend slot to
+            // capture.
             (
-                "cold-paused", .paused, false,
+                "suspended", .suspended,
                 [.discardSavedState, .resume, .open, .rename, .delete, .toggleSettingsPane]
             ),
-            ("starting", .starting, true, [.forceStop]),
-            ("saving", .saving, true, [.forceStop, .open, .toggleSettingsPane]),
-            ("snapshotting", .snapshotting, true, [.forceStop, .open, .toggleSettingsPane]),
-            ("restoring", .restoring, true, [.forceStop, .open, .toggleSettingsPane]),
-            ("installing", .installing, true, []),
-            ("error", .error, false, [.start, .clone, .rename, .delete]),
-            ("initialBoot", .initialBoot, false, [.start, .clone, .rename, .delete]),
+            ("starting, no VM yet", .starting(sessionID: nil), []),
+            ("starting", .starting(sessionID: id), [.forceStop]),
+            ("saving", .saving(sessionID: id), display.union([.forceStop])),
+            ("capturing live", .capturingLive(sessionID: id), display.union([.forceStop])),
+            ("capturing at rest", .capturingAtRest, display),
+            (
+                "restoring a saved state", .restoringSavedState(sessionID: id),
+                display.union([.forceStop])
+            ),
+            ("restoring, no VM yet", .restoringSavedState(sessionID: nil), display),
+            ("reverting to a snapshot", .revertingToSnapshot, display),
+            ("installing", .installing(sessionID: id), []),
+            ("installing, no VM yet", .installing(sessionID: nil), []),
+            ("failed", .failed(message: "Boot failed."), [.start, .clone, .rename, .delete]),
+            ("initialBoot", .initialBoot, [.start, .clone, .rename, .delete]),
         ]
 
         for testCase in cases {
             let harness = makeHarness()
-            let instance = makeInstance(
-                in: harness, status: testCase.status, hasLiveVirtualMachine: testCase.live)
+            let instance = makeInstance(in: harness, phase: testCase.phase)
             let applicable = Set(
                 VMCapability.allCases.filter { harness.catalog.isApplicable($0, to: instance) })
 
@@ -119,20 +141,14 @@ struct VMCapabilityCatalogTests {
 
     @Test("Nothing is available that is not applicable")
     func availabilityImpliesApplicability() {
-        for status in [
-            VMStatus.stopped, .starting, .running, .paused, .saving, .snapshotting, .restoring,
-            .installing, .initialBoot, .error,
-        ] {
-            for live in [false, true] {
-                let harness = makeHarness()
-                let instance = makeInstance(
-                    in: harness, status: status, hasLiveVirtualMachine: live)
-                for capability in VMCapability.allCases
-                where harness.catalog.isAvailable(capability, on: instance) {
-                    #expect(
-                        harness.catalog.isApplicable(capability, to: instance),
-                        "\(capability) on \(status.displayName) live=\(live)")
-                }
+        for phase in Self.everyPhase {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+            for capability in VMCapability.allCases
+            where harness.catalog.isAvailable(capability, on: instance) {
+                #expect(
+                    harness.catalog.isApplicable(capability, to: instance),
+                    "\(capability) on \(phase)")
             }
         }
     }
@@ -142,7 +158,7 @@ struct VMCapabilityCatalogTests {
     @Test("A bundle still being copied offers only its reads, its cancel, and Show in Finder")
     func preparingLeavesOnlyTheReadsAndItsCancel() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running, hasLiveVirtualMachine: true)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
@@ -177,8 +193,7 @@ struct VMCapabilityCatalogTests {
         let suspending = SuspendingMockVirtualizationService()
         suspending.shouldSuspendOnResume = true
         let harness = makeHarness(virtualization: suspending)
-        let instance = makeInstance(
-            in: harness, status: .paused, hasLiveVirtualMachine: true)
+        let instance = makeInstance(in: harness, phase: .livePaused(sessionID: UUID()))
 
         #expect(harness.catalog.isAvailable(.takeSnapshot, on: instance))
 
@@ -207,7 +222,7 @@ struct VMCapabilityCatalogTests {
     @Test("A rename typed while the VM began a transient is offered no longer but still taken")
     func renameAcceptsWiderThanItOffers() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .saving, hasLiveVirtualMachine: true)
+        let instance = makeInstance(in: harness, phase: .saving(sessionID: UUID()))
 
         #expect(!harness.catalog.isApplicable(.rename, to: instance))
         #expect(!harness.catalog.isAvailable(.rename, on: instance))
@@ -217,7 +232,7 @@ struct VMCapabilityCatalogTests {
     @Test("A revert refuses the rename it would assign back over")
     func renameRefusedDuringARevert() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .restoring, hasLiveVirtualMachine: true)
+        let instance = makeInstance(in: harness, phase: .revertingToSnapshot)
 
         #expect(!harness.catalog.accepts(.rename, on: instance))
     }
@@ -235,14 +250,14 @@ struct VMCapabilityCatalogTests {
 
     @Test("Every capability but rename accepts exactly what it makes available")
     func acceptanceMatchesAvailabilityElsewhere() {
-        for status in [VMStatus.stopped, .running, .paused, .saving, .restoring, .error] {
+        for phase in Self.everyPhase {
             let harness = makeHarness()
-            let instance = makeInstance(in: harness, status: status, hasLiveVirtualMachine: true)
+            let instance = makeInstance(in: harness, phase: phase)
             for capability in VMCapability.allCases where capability != .rename {
                 #expect(
                     harness.catalog.accepts(capability, on: instance)
                         == harness.catalog.isAvailable(capability, on: instance),
-                    "\(capability) on \(status.displayName)")
+                    "\(capability) on \(phase)")
             }
         }
     }
@@ -252,8 +267,8 @@ struct VMCapabilityCatalogTests {
     @Test("Recovery and the guest-agent disk are macOS-guest capabilities")
     func macOSOnlyCapabilities() {
         let harness = makeHarness()
-        let linux = makeInstance(in: harness, name: "Linux", status: .stopped)
-        let mac = makeInstance(in: harness, name: "macOS", status: .stopped, guestOS: .macOS)
+        let linux = makeInstance(in: harness, name: "Linux", phase: .stopped)
+        let mac = makeInstance(in: harness, name: "macOS", phase: .stopped, guestOS: .macOS)
 
         #expect(!harness.catalog.isApplicable(.startInRecovery, to: linux))
         #expect(harness.catalog.isApplicable(.startInRecovery, to: mac))
@@ -262,7 +277,7 @@ struct VMCapabilityCatalogTests {
         // neither stopped VM has.
         #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: mac))
         let running = makeInstance(
-            in: harness, name: "Running macOS", status: .running, hasLiveVirtualMachine: true,
+            in: harness, name: "Running macOS", phase: .running(sessionID: UUID()),
             guestOS: .macOS)
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
     }
@@ -270,7 +285,7 @@ struct VMCapabilityCatalogTests {
     @Test("The clipboard window follows the VM's own sharing toggle")
     func clipboardFollowsTheSharingToggle() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running, hasLiveVirtualMachine: true)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         #expect(!harness.catalog.isApplicable(.showClipboard, to: instance))
 

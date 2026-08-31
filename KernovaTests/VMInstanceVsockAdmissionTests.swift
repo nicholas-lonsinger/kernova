@@ -330,7 +330,7 @@ struct VMInstanceVsockAdmissionTests {
         instance.configuration.clipboardSharingEnabled = true
         instance.configuration.agentLogForwardingEnabled = true
         let sessionID = UUID()
-        instance.liveSessionIDOverrideForTesting = sessionID
+        instance.enter(.running(sessionID: sessionID))
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(
                 handshakeComplete: true,
@@ -352,7 +352,7 @@ struct VMInstanceVsockAdmissionTests {
             await drainMainQueue()
 
             #expect(listener.isInstalled(instance), "\(listener.port): no service installed")
-            instance.tearDownSession()
+            instance.tearDownSession(restingAt: .stopped)
         }
     }
 
@@ -374,10 +374,9 @@ struct VMInstanceVsockAdmissionTests {
             // the hand-off's own and not the admission gate's.
             #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
             // The user stops the VM before the queued hand-off gets its turn on
-            // main. Releasing the stand-in identity is what `tearDownSession`
-            // does to `session` itself.
-            instance.tearDownSession()
-            instance.liveSessionIDOverrideForTesting = nil
+            // main. Resting at a phase that names no session is what releases
+            // the identity the hand-off is checked against.
+            instance.tearDownSession(restingAt: .stopped)
 
             await drainMainQueue()
 
@@ -394,7 +393,7 @@ struct VMInstanceVsockAdmissionTests {
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(handshakeComplete: true))
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
     }

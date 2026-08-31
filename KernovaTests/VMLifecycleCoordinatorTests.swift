@@ -93,7 +93,7 @@ struct VMLifecycleCoordinatorTests {
     func stopForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         try await coordinator.stop(instance)
 
@@ -104,7 +104,7 @@ struct VMLifecycleCoordinatorTests {
     func forceStopForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         try await coordinator.forceStop(instance)
 
@@ -115,7 +115,7 @@ struct VMLifecycleCoordinatorTests {
     func pauseForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         try await coordinator.pause(instance)
 
@@ -126,7 +126,7 @@ struct VMLifecycleCoordinatorTests {
     func resumeForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
-        instance.status = .paused
+        instance.enter(.suspended)
 
         try await coordinator.resume(instance)
 
@@ -137,7 +137,7 @@ struct VMLifecycleCoordinatorTests {
     func saveForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         try await coordinator.save(instance)
 
@@ -242,7 +242,7 @@ struct VMLifecycleCoordinatorTests {
         // second concurrent VZ operation.
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         let task = Task { @MainActor in
             try await coordinator.start(instance)
@@ -333,7 +333,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(!coordinator.hasActiveOperation(for: instance.id))
 
         // A second operation should succeed
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         try await coordinator.pause(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
     }
@@ -408,7 +408,7 @@ struct VMLifecycleCoordinatorTests {
     func stopDoesNotAffectActiveOperationTracking() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         try await coordinator.stop(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
@@ -612,7 +612,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         installService.installError = makeInstallVMLimitExceededError()
         let instance = makeInstance()
-        instance.errorMessage = "stale message from an earlier failure"
+        instance.enter(.failed(message: "stale message from an earlier failure"))
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
@@ -1034,7 +1034,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeInstance(name: "Debian")
         instance.configuration.linuxInstallContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
-        instance.status = .initialBoot
+        instance.enter(.initialBoot)
         return instance
     }
 

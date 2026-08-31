@@ -21,17 +21,17 @@ struct VMInstanceAgentReconnectTests {
         try #require(KernovaMacOSAgentInfo.bundledVersion)
     }
 
-    private func makeInstance(agentVersion: String, status: VMStatus = .running) -> VMInstance {
+    private func makeInstance(
+        agentVersion: String, phase: VMLifecyclePhase = .running(sessionID: UUID())
+    ) -> VMInstance {
         var config = VMConfiguration(name: "Reconnect VM", guestOS: .macOS, bootMode: .macOS)
         config.lastSeenAgentVersion = agentVersion
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
-        // `agentStatus` synthesis keys off a live VZVirtualMachine, which no CI
-        // host can create.
-        instance.hasLiveVirtualMachineOverrideForTesting = true
-        // The override stands in for a live `VZVirtualMachine`, not for the
-        // session context the control service lives in.
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        // `agentStatus` synthesis keys off a live `VZVirtualMachine`, which no
+        // CI host can create — the phase's session identity stands in for one,
+        // not for the session context the control service lives in.
         instance.beginSessionContext()
         return instance
     }
@@ -177,7 +177,7 @@ struct VMInstanceAgentReconnectTests {
         try guest.send(makeGuestHello(agentVersion: version))
         try await waitForChange { instance.vsockControlService?.agentVersion != nil }
 
-        instance.status = .paused
+        instance.enter(.livePaused(sessionID: try #require(instance.liveSessionID)))
         #expect(instance.isLivePaused)
 
         // RATIONALE: negative assertion ("prove nothing was torn down or
@@ -207,7 +207,7 @@ struct VMInstanceAgentReconnectTests {
         try guest.send(makeGuestHello(agentVersion: version))
         try await waitForChange { instance.vsockControlService?.agentVersion != nil }
 
-        instance.status = .paused
+        instance.enter(.suspended)
         guest.close()
         try await waitForChange { instance.vsockControlService?.isConnected == false }
 
@@ -215,7 +215,7 @@ struct VMInstanceAgentReconnectTests {
 
         // Resuming is what starts the clock — and the resumed VM is exactly the
         // case that must escalate.
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentStatus == .expectedMissing(expected: version))

@@ -122,7 +122,7 @@ struct VMCapabilityCatalog {
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes:
             true
         case .start:
-            instance.status.canStart
+            instance.canStart
         case .startInRecovery:
             instance.canStartInRecovery
         case .cancelGuestSetup:
@@ -134,21 +134,21 @@ struct VMCapabilityCatalog {
         case .discardSavedState:
             instance.isColdPaused
         case .pause:
-            instance.status.canPause
+            instance.canPause
         case .resume:
-            instance.status.canResume
+            instance.canResume
         case .suspend:
             instance.canSave
         case .open, .toggleSettingsPane:
-            instance.status.hasActiveDisplay
+            instance.hasActiveDisplay
         case .takeSnapshot:
             instance.canTakeSnapshot
         case .revertToSnapshot:
             instance.canRevertToSnapshot
         case .clone:
-            instance.status.canEditSettings
+            instance.canEditSettings
         case .rename:
-            instance.status.canRename
+            instance.canRename
         case .delete:
             instance.canDelete
         case .cancelPreparing:
@@ -203,8 +203,8 @@ struct VMCapabilityCatalog {
             // open when the VM started or began suspending is kept rather than
             // traded for an alert — only the revert that will assign a whole
             // configuration back over this one refuses
-            // (``VMStatus/renamePersists``).
-            return !instance.isPreparing && instance.status.renamePersists
+            // (``VMLifecyclePhase/renamePersists``).
+            return !instance.isPreparing && instance.renamePersists
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,

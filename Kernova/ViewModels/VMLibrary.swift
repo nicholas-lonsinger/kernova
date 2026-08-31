@@ -93,7 +93,7 @@ final class VMLibrary {
     /// Excludes settled `.running` and `.paused` VMs, which termination
     /// save-suspends.
     var hasUninterruptibleWork: Bool {
-        instances.contains { $0.isPreparing || $0.status.isTransitioning }
+        instances.contains { $0.isPreparing || $0.isTransitioning }
             || hasRevertInFlight
     }
 
@@ -103,7 +103,7 @@ final class VMLibrary {
     /// Narrower than ``hasUninterruptibleWork``, which the window reconcile uses
     /// to hold back a quit nobody asked for.
     var hasSaveInFlight: Bool {
-        instances.contains { $0.status.terminationMustWaitOut }
+        instances.contains { $0.phase.terminationMustWaitOut }
     }
 
     /// Whether `instance` has work in flight that its sidebar row renders as busy.
@@ -113,7 +113,7 @@ final class VMLibrary {
     /// resume — for the whole VZ await, so ``VMStatus`` alone renders nothing
     /// while one is settling.
     func isBusy(_ instance: VMInstance) -> Bool {
-        instance.isPreparing || instance.status.isTransitioning
+        instance.isPreparing || instance.isTransitioning
             || lifecycle.hasUnsettledOperation(for: instance.id)
     }
 
@@ -173,18 +173,20 @@ final class VMLibrary {
         startDirectoryWatcher()
     }
 
-    // MARK: - Initial Status
+    // MARK: - Initial Phase
 
-    /// Status to assign to a VM when it's first loaded from disk or imported.
+    /// Phase to assign to a VM when it's first loaded from disk or imported.
     ///
     /// A surviving install context — either guest's — is the canonical signal
     /// that the VM has never completed its initial boot, so it outranks
-    /// `.paused`/`.stopped`.
-    nonisolated static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
+    /// `.suspended`/`.stopped`.
+    nonisolated static func initialPhase(for config: VMConfiguration, layout: VMBundleLayout)
+        -> VMLifecyclePhase
+    {
         if config.hasPendingSetup {
             return .initialBoot
         }
-        return layout.hasSaveFile ? .paused : .stopped
+        return layout.hasSaveFile ? .suspended : .stopped
     }
 
     // MARK: - Load
@@ -196,7 +198,7 @@ final class VMLibrary {
     private struct ScannedBundle: Sendable {
         let configuration: VMConfiguration
         let bundleURL: URL
-        let status: VMStatus
+        let phase: VMLifecyclePhase
     }
 
     /// The whole library as read from disk in one pass.
@@ -219,7 +221,7 @@ final class VMLibrary {
                     ScannedBundle(
                         configuration: config,
                         bundleURL: bundleURL,
-                        status: initialStatus(for: config, layout: VMBundleLayout(bundleURL: bundleURL))))
+                        phase: initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL))))
             } catch {
                 logger.error(
                     "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -273,7 +275,7 @@ final class VMLibrary {
             .map { scanned in
                 let instance = VMInstance(
                     configuration: scanned.configuration, bundleURL: scanned.bundleURL,
-                    status: scanned.status, preferences: preferences)
+                    phase: scanned.phase, preferences: preferences)
                 wirePersistence(for: instance)
                 return instance
             } + addedDuringRead
@@ -784,7 +786,7 @@ final class VMLibrary {
     ) -> VMInstance? {
         guard config.networkEnabled, let mac = config.macAddress else { return nil }
         return vmsHoldingMACAddress(mac, otherThan: instance).first { other in
-            (other.status.isActive || other.isLivePaused)
+            (other.isActive || other.isLivePaused)
                 && other.configuration.networkEnabled
                 && other.configuration.networkMode == config.networkMode
         }
@@ -854,7 +856,7 @@ final class VMLibrary {
         // VM already running can form the collision this way, and only a
         // configuration not already in one is refused — a VM that reached a
         // collision by some other route has to stay editable to leave it.
-        if instance.status.isActive || instance.isLivePaused,
+        if instance.isActive || instance.isLivePaused,
             liveMACAddressConflict(for: old, excluding: instance) == nil,
             refuseIfDuplicateMACAddressConflict(instance, joining: new)
         {
@@ -1216,11 +1218,10 @@ final class VMLibrary {
             var didChange = false
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
                 let layout = VMBundleLayout(bundleURL: bundleURL)
-                let initialStatus = Self.initialStatus(for: config, layout: layout)
                 let instance = VMInstance(
                     configuration: config,
                     bundleURL: bundleURL,
-                    status: initialStatus,
+                    phase: Self.initialPhase(for: config, layout: layout),
                     preferences: preferences
                 )
                 wirePersistence(for: instance)

@@ -108,21 +108,22 @@ struct VMCommandCoreTests {
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String = "Core VM", status: VMStatus = .stopped,
+        in harness: Harness, name: String = "Core VM", phase: VMLifecyclePhase = .stopped,
         guestOS: VMGuestOS = .linux
     ) -> VMInstance {
-        register(name: name, status: status, guestOS: guestOS, in: harness.library, harness.storage)
+        register(name: name, phase: phase, guestOS: guestOS, in: harness.library, harness.storage)
     }
 
     @discardableResult
     private func makeInstance(
-        in harness: SuspendingHarness, name: String = "Core VM", status: VMStatus = .stopped
+        in harness: SuspendingHarness, name: String = "Core VM",
+        phase: VMLifecyclePhase = .stopped
     ) -> VMInstance {
-        register(name: name, status: status, guestOS: .linux, in: harness.library, harness.storage)
+        register(name: name, phase: phase, guestOS: .linux, in: harness.library, harness.storage)
     }
 
     private func register(
-        name: String, status: VMStatus, guestOS: VMGuestOS, in library: VMLibrary,
+        name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, in library: VMLibrary,
         _ storage: MockVMStorageService
     ) -> VMInstance {
         var config = VMConfiguration(
@@ -131,7 +132,7 @@ struct VMCommandCoreTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: status, preferences: preferences)
+            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
         storage.bundles[bundleURL] = config
         // Wired the way every real construction site is, so the per-instance
         // hooks a verb answers — the power-off that starts an Ephemeral revert,
@@ -207,7 +208,7 @@ struct VMCommandCoreTests {
     func ambiguousCarriesEveryCandidate() throws {
         let harness = makeHarness()
         let first = makeInstance(in: harness, name: "Twin")
-        let second = makeInstance(in: harness, name: "Twin", status: .running)
+        let second = makeInstance(in: harness, name: "Twin", phase: .running(sessionID: UUID()))
 
         let error = try #require(commandError { _ = try harness.core.info(.name("Twin")) })
         guard case .ambiguous(let selector, let candidates) = error else {
@@ -225,7 +226,7 @@ struct VMCommandCoreTests {
     func listsInLibraryOrder() {
         let harness = makeHarness()
         makeInstance(in: harness, name: "First")
-        makeInstance(in: harness, name: "Second", status: .running)
+        makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
 
         #expect(harness.core.list().map(\.name) == ["First", "Second"])
         #expect(harness.core.list().map(\.status) == ["stopped", "running"])
@@ -292,7 +293,7 @@ struct VMCommandCoreTests {
     @Test("pause, resume, and suspend each reach the service")
     func pauseResumeSuspend() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         try await harness.core.pause(.id(instance.id))
         #expect(harness.virtualization.pauseCallCount == 1)
@@ -300,7 +301,7 @@ struct VMCommandCoreTests {
         try await harness.core.resume(.id(instance.id))
         #expect(harness.virtualization.resumeCallCount == 1)
 
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         try await harness.core.suspend(.id(instance.id))
         #expect(harness.virtualization.saveCallCount == 1)
     }
@@ -308,7 +309,7 @@ struct VMCommandCoreTests {
     @Test("A graceful stop of a running VM needs no confirmation")
     func gracefulStopRuns() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: false)
 
@@ -318,7 +319,7 @@ struct VMCommandCoreTests {
     @Test("open brings the display of a VM that has one to the front")
     func openSurfacesTheDisplay() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         var surfaced: [UUID] = []
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
 
@@ -351,7 +352,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         // An imported bundle carrying a save file rests its phantom `.paused`,
         // which reads as having a display while the copy is still writing.
-        let instance = makeInstance(in: harness, name: "Copying", status: .paused)
+        let instance = makeInstance(in: harness, name: "Copying", phase: .suspended)
         instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
         var surfaced = 0
         harness.core.surfaceDisplay = { _ in surfaced += 1 }
@@ -369,7 +370,7 @@ struct VMCommandCoreTests {
     @Test("allowedVerbs reads out in a fixed order, reads first")
     func allowedVerbsOrder() {
         let harness = makeHarness()
-        let stopped = makeInstance(in: harness, name: "Stopped", status: .stopped)
+        let stopped = makeInstance(in: harness, name: "Stopped", phase: .stopped)
 
         // The order is user-visible: `invalidState` renders this list as
         // "What it accepts now: Start, Take Snapshot, …".
@@ -379,8 +380,8 @@ struct VMCommandCoreTests {
                 .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete,
             ])
 
-        let running = makeInstance(in: harness, name: "Running", status: .running)
-        running.hasLiveVirtualMachineOverrideForTesting = true
+        let running = makeInstance(
+            in: harness, name: "Running", phase: .running(sessionID: UUID()))
         #expect(
             harness.core.allowedVerbs(for: running) == [
                 .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open,
@@ -391,7 +392,7 @@ struct VMCommandCoreTests {
     @Test("A cold-paused VM reports its saved-state discard as the one stop it takes")
     func allowedVerbsForAColdPausedVM() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .paused)
+        let instance = makeInstance(in: harness, phase: .suspended)
 
         // No live VM to terminate and no graceful stop, but the discard rides
         // the same verb — named once, in the same slot.
@@ -407,7 +408,7 @@ struct VMCommandCoreTests {
     @Test("A preparing VM reports its reads and the cancel that stops the copy")
     func allowedVerbsWhilePreparing() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
@@ -423,7 +424,7 @@ struct VMCommandCoreTests {
     @Test("start refuses a VM that is already running")
     func startRefusesARunningVM() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let error = try #require(
             await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
@@ -493,7 +494,7 @@ struct VMCommandCoreTests {
     @Test("resume refuses a VM whose clone or import is still copying")
     func resumeRefusesAPreparingVM() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Copying", status: .paused)
+        let instance = makeInstance(in: harness, name: "Copying", phase: .suspended)
         instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
 
         let error = try #require(await commandError { try await harness.core.resume(.id(instance.id)) })
@@ -505,7 +506,7 @@ struct VMCommandCoreTests {
     @Test("start refused mid-install names cancelGuestSetup as the way out")
     func startRefusedMidInstallNamesCancelGuestSetup() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .installing)
+        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
         instance.setupTask = Task {}
 
         let error = try #require(
@@ -522,7 +523,7 @@ struct VMCommandCoreTests {
     @Test("cancelGuestSetup without consent refuses with the confirmation naming the running step")
     func cancelGuestSetupWithoutConsentNamesTheStep() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .installing)
+        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
         instance.setupTask = Task {}
         instance.setupState = .macOSInstall(hasDownloadStep: true)
 
@@ -539,7 +540,7 @@ struct VMCommandCoreTests {
     @Test("cancelGuestSetup's prompt names what a cancel costs at each step")
     func cancelGuestSetupPromptVariesByStep() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .installing)
+        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
 
         instance.setupState = .macOSInstall(hasDownloadStep: false)
         let install = VMCommandCore.cancelGuestSetupPrompt(instance)
@@ -603,7 +604,7 @@ struct VMCommandCoreTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, status: .initialBoot,
+            configuration: config, bundleURL: bundleURL, phase: .initialBoot,
             preferences: preferences)
         library.wirePersistence(for: instance)
         library.instances.append(instance)
@@ -627,7 +628,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         preferences.blockDuplicateMachineIDBoot = true
         let identity = Data([1, 2, 3, 4])
-        let live = makeInstance(in: harness, name: "Live", status: .running)
+        let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID()))
         live.configuration.genericMachineIdentifierData = identity
         let twin = makeInstance(in: harness, name: "Twin")
         twin.configuration.genericMachineIdentifierData = identity
@@ -649,10 +650,9 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         preferences.blockDuplicateMachineIDBoot = true
         let identity = Data([9, 9, 9])
-        let live = makeInstance(in: harness, name: "Live", status: .running)
+        let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID()))
         live.configuration.genericMachineIdentifierData = identity
-        live.hasLiveVirtualMachineOverrideForTesting = true
-        let twin = makeInstance(in: harness, name: "Twin", status: .paused)
+        let twin = makeInstance(in: harness, name: "Twin", phase: .suspended)
         twin.configuration.genericMachineIdentifierData = identity
 
         // Cold-paused: the resume builds a fresh VM and claims the identity.
@@ -664,7 +664,7 @@ struct VMCommandCoreTests {
 
         // Hot-paused: the live object already holds the identity, so refusing
         // would be refusing a VM its own.
-        twin.hasLiveVirtualMachineOverrideForTesting = true
+        twin.enter(.livePaused(sessionID: UUID()))
         try await harness.core.resume(.id(twin.id))
         #expect(harness.virtualization.resumeCallCount == 1)
     }
@@ -674,7 +674,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         preferences.blockDuplicateMachineIDBoot = false
         let identity = Data([4, 5, 6])
-        let live = makeInstance(in: harness, name: "Live", status: .running)
+        let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID()))
         live.configuration.genericMachineIdentifierData = identity
         let twin = makeInstance(in: harness, name: "Twin")
         twin.configuration.genericMachineIdentifierData = identity
@@ -688,10 +688,9 @@ struct VMCommandCoreTests {
     @Test("A start onto a MAC address a live guest already holds is refused")
     func duplicateMACRefusesTheStart() async throws {
         let harness = makeHarness()
-        let live = makeInstance(in: harness, name: "Live", status: .running)
+        let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID()))
         live.configuration.networkEnabled = true
         live.configuration.macAddress = "aa:bb:cc:dd:ee:ff"
-        live.hasLiveVirtualMachineOverrideForTesting = true
         let twin = makeInstance(in: harness, name: "Twin")
         twin.configuration.networkEnabled = true
         twin.configuration.macAddress = "AA:BB:CC:DD:EE:FF"
@@ -711,8 +710,8 @@ struct VMCommandCoreTests {
     @Test("A force stop with no consent refuses, describing what confirming does")
     func forceStopAsksForConsent() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Runner", status: .running)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let instance = makeInstance(
+            in: harness, name: "Runner", phase: .running(sessionID: UUID()))
 
         let error = try #require(
             await commandError {
@@ -734,7 +733,7 @@ struct VMCommandCoreTests {
     @Test("A cold-paused VM's force stop is worded as discarding its saved state")
     func forceStopOfAColdPausedVMIsADiscard() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Suspended", status: .paused)
+        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
 
         let error = try #require(
             await commandError {
@@ -752,8 +751,8 @@ struct VMCommandCoreTests {
     @Test("A graceful stop of a live-paused VM refuses with both ways out")
     func stopPausedAsksWhichWayOut() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Paused", status: .paused)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let instance = makeInstance(
+            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
 
         let error = try #require(
             await commandError {
@@ -775,7 +774,7 @@ struct VMCommandCoreTests {
     @Test("A cold-paused VM's graceful stop asks the consent its force path does")
     func gracefulStopOfAColdPausedVMAsksForConsent() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Suspended", status: .paused)
+        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
 
         // Not a shutdown at heart: `VirtualizationService.stop` discards the
         // save file for any cold-paused VM, ephemeral or not.
@@ -797,7 +796,7 @@ struct VMCommandCoreTests {
     @Test("A cold-paused Ephemeral VM's graceful stop asks the consent its force path does")
     func gracefulStopOfAColdPausedEphemeralVMAsksForConsent() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Ephemeral", status: .paused)
+        let instance = makeInstance(in: harness, name: "Ephemeral", phase: .suspended)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -875,7 +874,7 @@ struct VMCommandCoreTests {
     @Test("A revert with no consent refuses, and offers the check-pointed path")
     func revertAsksForConsent() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Reverter", status: .stopped)
+        let instance = makeInstance(in: harness, name: "Reverter", phase: .stopped)
         let snapshot = VMSnapshot(name: "Clean", kind: .cold)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
@@ -949,7 +948,7 @@ struct VMCommandCoreTests {
         // can be running by the time the stale confirm lands — and its bundle
         // holds the disks that guest is booted off.
         instance.preparingState = nil
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         let error = try #require(
             commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: true) })
@@ -964,7 +963,7 @@ struct VMCommandCoreTests {
     @Test("A capture lands in the manifest, stamped by what the VM could capture")
     func takeSnapshotLandsInTheManifest() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let summary = try await harness.core.takeSnapshot(
             .id(instance.id), name: "  Fresh  ", notes: " a note ")
@@ -978,7 +977,7 @@ struct VMCommandCoreTests {
     @Test("A capture refused at the confirm leaves the manifest alone")
     func takeSnapshotRechecksTheGate() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, status: .restoring)
+        let instance = makeInstance(in: harness, phase: .revertingToSnapshot)
 
         let error = try #require(
             await commandError {
@@ -993,7 +992,7 @@ struct VMCommandCoreTests {
     func takeSnapshotFailureIsReported() async throws {
         let harness = makeHarness()
         harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let error = try #require(
             await commandError {
@@ -1011,7 +1010,7 @@ struct VMCommandCoreTests {
     func checkPointedRevertAbortsOnCaptureFailure() async throws {
         let harness = makeHarness()
         harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
-        let instance = makeInstance(in: harness, status: .running)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Clean")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
@@ -1128,7 +1127,7 @@ struct VMCommandCoreTests {
     @Test("rename lands on a VM that started transitioning while the field was open")
     func renamePersistsThroughATransition() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Before", status: .saving)
+        let instance = makeInstance(in: harness, name: "Before", phase: .saving(sessionID: UUID()))
 
         // The rename rewrites the configuration's name and nothing the suspend
         // reads, so the typed name lands rather than being traded for an alert.
@@ -1141,7 +1140,7 @@ struct VMCommandCoreTests {
     @Test("rename refuses during a revert, which would assign the old name back")
     func renameRefusesDuringARestore() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Before", status: .restoring)
+        let instance = makeInstance(in: harness, name: "Before", phase: .revertingToSnapshot)
 
         // The revert reads the configuration it assigns back before it starts
         // writing, so a name landing now would be silently overwritten —
@@ -1178,7 +1177,7 @@ struct VMCommandCoreTests {
             await task.value
         }
 
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
         #expect(
             commandError { _ = try harness.core.clone(.id(instance.id), machineIdentity: .new) }?
                 .isInvalidState == true)
@@ -1194,6 +1193,26 @@ struct VMCommandCoreTests {
 
         #expect(harness.library.instances.isEmpty)
         #expect(harness.storage.deleteVMBundleCallCount == 1)
+    }
+
+    @Test("A delete that could not trash the bundle leaves the VM naming its suspend slot")
+    func failedDeleteKeepsTheSuspendedPhase() async throws {
+        let harness = makeHarness()
+        harness.storage.deleteVMBundleError = VMStorageError.bundleNotFound(
+            URL(filePath: "/tmp/Doomed.kernova"))
+        let instance = makeInstance(in: harness, name: "Doomed", phase: .suspended)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.delete(
+                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+        }
+
+        // The bundle — and the slot inside it — is still on disk, so a VM that
+        // survived the delete has to keep offering Resume rather than reading
+        // as a stopped VM whose next capture would be stamped disks-only.
+        #expect(harness.library.instances.contains { $0 === instance })
+        #expect(instance.phase == .suspended)
+        #expect(instance.canResume)
     }
 
     @Test("A repeat delete of an already-removed VM refuses as not found")
@@ -1216,7 +1235,7 @@ struct VMCommandCoreTests {
     @Test("delete refuses a VM that stopped being deletable while the sheet was up")
     func deleteRefusesANoLongerDeletableVM() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Started", status: .running)
+        let instance = makeInstance(in: harness, name: "Started", phase: .running(sessionID: UUID()))
 
         let error = try #require(
             await commandError {
@@ -1288,7 +1307,7 @@ struct VMCommandCoreTests {
         var events = harness.core.events().makeAsyncIterator()
         // A fresh subscriber is told what happens from here, not replayed the
         // library it can already list.
-        instance.status = .running
+        instance.enter(.running(sessionID: UUID()))
 
         let first = try #require(await events.next())
         guard case .statusChanged(let id, let name, let from, let to) = first else {
@@ -1327,11 +1346,10 @@ struct VMCommandCoreTests {
     @Test("A VM landing in its error state reports the message it carries")
     func eventsReportFailures() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Broken", status: .running)
+        let instance = makeInstance(in: harness, name: "Broken", phase: .running(sessionID: UUID()))
         var events = harness.core.events().makeAsyncIterator()
 
-        instance.errorMessage = "The disk went away"
-        instance.status = .error
+        instance.enter(.failed(message: "The disk went away"))
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {
@@ -1475,7 +1493,7 @@ struct VMCommandCoreTests {
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
         var reported: [CommandError] = []
         harness.core.onFailure = { failure, _ in reported.append(failure) }
-        let instance = makeInstance(in: harness, name: "Reverter", status: .running)
+        let instance = makeInstance(in: harness, name: "Reverter", phase: .running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Clean")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
@@ -1498,7 +1516,7 @@ struct VMCommandCoreTests {
     func failedDiscardRevertThrowsFromStop() async throws {
         let harness = makeHarness()
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
-        let instance = makeInstance(in: harness, name: "Ephemeral", status: .paused)
+        let instance = makeInstance(in: harness, name: "Ephemeral", phase: .suspended)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -1521,7 +1539,7 @@ struct VMCommandCoreTests {
         var reported: [CommandError] = []
         harness.core.onFailure = { failure, _ in reported.append(failure) }
 
-        let instance = makeInstance(in: harness, name: "Ephemeral", status: .running)
+        let instance = makeInstance(in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -1569,7 +1587,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         // Both inline-rename surfaces commit on end-editing whether or not the
         // text changed, so an unchanged commit landing here must not refuse.
-        let instance = makeInstance(in: harness, name: "Steady", status: .saving)
+        let instance = makeInstance(in: harness, name: "Steady", phase: .saving(sessionID: UUID()))
 
         #expect(commandError { try harness.core.rename(.id(instance.id), to: "Steady") } == nil)
         #expect(commandError { try harness.core.rename(.id(instance.id), to: "   ") } == nil)
@@ -1581,7 +1599,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         // Stopped: there is no display to open, and the state admits both a
         // start and a disks-only capture, so the sentence has something to list.
-        let instance = makeInstance(in: harness, name: "Resting", status: .stopped)
+        let instance = makeInstance(in: harness, name: "Resting", phase: .stopped)
 
         let error = try #require(commandError { try harness.core.open(.id(instance.id)) })
 
@@ -1596,8 +1614,8 @@ struct VMCommandCoreTests {
     func restartWaitsOutTheEphemeralRevert() async throws {
         let harness = makeSuspendingHarness()
         harness.virtualization.shouldSuspendOnRevert = true
-        let instance = makeInstance(in: harness, name: "Ephemeral", status: .running)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -1624,8 +1642,8 @@ struct VMCommandCoreTests {
     @Test("A restart of an ordinary VM boots it once the power-off settles")
     func restartBootsAnOrdinaryVM() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Plain", status: .running)
-        instance.hasLiveVirtualMachineOverrideForTesting = true
+        let instance = makeInstance(
+            in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
         try await harness.core.restart(.id(instance.id))
 

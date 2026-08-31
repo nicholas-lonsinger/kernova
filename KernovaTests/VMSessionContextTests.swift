@@ -28,7 +28,7 @@ private final class RetainingAcceptor: VsockDataConnectionAccepting {
 @MainActor
 struct VMSessionContextTests {
     private func makeInstance(
-        guestOS: VMGuestOS = .macOS, status: VMStatus = .running
+        guestOS: VMGuestOS = .macOS, phase: VMLifecyclePhase = .running(sessionID: UUID())
     ) -> VMInstance {
         var config = VMConfiguration(
             name: "Session Context VM", guestOS: guestOS,
@@ -37,7 +37,7 @@ struct VMSessionContextTests {
         config.lastSeenAgentVersion = "0.9.2"
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
     /// Whether mutating through `mutate` wakes an observer that reads `track`.
@@ -113,7 +113,7 @@ struct VMSessionContextTests {
         instance.beginSessionContext(bootedIntoRecovery: true)
         #expect(instance.sessionContext != nil)
 
-        instance.tearDownSession()
+        instance.tearDownSession(restingAt: .stopped)
 
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
@@ -232,7 +232,7 @@ struct VMSessionContextTests {
             instance.beginSessionContext()
             #expect(
                 observationFires(reading: { track(instance) }) {
-                    instance.tearDownSession()
+                    instance.tearDownSession(restingAt: .stopped)
                 })
         }
     }

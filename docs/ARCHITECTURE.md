@@ -44,9 +44,13 @@ Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvancedOptio
 - `VMConfiguration` — a VM's persisted identity: a `Codable` `Sendable` struct written as
   `config.json` inside the VM bundle.
 - `VMInstance` — a VM's runtime representation: an `@Observable` `@MainActor` class wrapping a
-  `VMConfiguration`, an optional `VMSessionContext`, and a `VMStatus`. What outlives a session
-  belongs to it — the admission gate, the data sinks, the transfer reporter, the host clipboard
-  publisher — and it projects the context's state read-only for its callers.
+  `VMConfiguration`, an optional `VMSessionContext`, and a `VMLifecyclePhase`. What outlives a
+  session belongs to it — the admission gate, the data sinks, the transfer reporter, the host
+  clipboard publisher — and it projects the context's state read-only for its callers.
+- `VMLifecyclePhase` — where a VM is in its lifecycle, and the one value its `VMStatus`, its failure
+  message and every liveness predicate are read off. A live phase carries the identity of the
+  session it describes, and moves only through `settle(_:for:)`, `attachSession(from:)` and
+  `tearDownSession(restingAt:)` — so it cannot outlive the `VZVirtualMachine` it names.
 - `VMSessionContext` — everything scoped to one `VZVirtualMachine`'s lifetime: the `VMSession`, the
   serial and SPICE pipes with their writer and relay, `clipboardService`, the passthrough
   coordinator, the vsock services, the agent watchdog and its flags, `liveRemovableMedia`, the
@@ -62,7 +66,8 @@ Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvancedOptio
   place path logic lives.
 - `VMSnapshot` / `VMSnapshotManifest` — a named restore point and the `Snapshots/manifest.json`
   payload listing them.
-- `VMStatus`, `VMBootMode`, `VMGuestOS` — enums.
+- `VMStatus` — the vocabulary a phase projects into for the wire and the UI, carrying no predicates
+  of its own. `VMBootMode`, `VMGuestOS` — plain enums.
 - `GuestSetupState` — the runtime step model behind the one setup-progress view both guests share,
   with per-flow copy supplied by a `GuestSetupDescriptor`.
 

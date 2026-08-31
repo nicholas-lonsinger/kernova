@@ -68,11 +68,9 @@ final class VMDetailRouterViewController: NSViewController {
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.instance.preparingState
-                _ = self.instance.status
-                _ = self.instance.errorMessage
+                _ = self.instance.phase
                 _ = self.instance.detailPaneMode
                 _ = self.instance.setupState
-                _ = self.instance.hasLiveVirtualMachine
             },
             apply: { [weak self] in self?.apply() }
         )
@@ -84,11 +82,9 @@ final class VMDetailRouterViewController: NSViewController {
         guard isViewLoaded else { return }
         let route = DetailRoute.resolve(
             preparingLabel: instance.preparingState?.displayLabel,
-            status: instance.status,
-            errorMessage: instance.errorMessage,
+            phase: instance.phase,
             hasSetupState: instance.setupState != nil,
-            detailPaneMode: instance.detailPaneMode,
-            hasLiveVirtualMachine: instance.hasLiveVirtualMachine)
+            detailPaneMode: instance.detailPaneMode)
 
         guard route != displayedRoute else { return }
         displayedRoute = route

@@ -1,7 +1,12 @@
 import Foundation
 @testable import Kernova
 
-/// Mock for `VirtualizationProviding` that sets VM status without real VZ operations.
+/// Mock for `VirtualizationProviding` that moves a VM's lifecycle phase without
+/// real VZ operations.
+///
+/// A live phase needs a session identity a CI host cannot mint a real
+/// `VZVirtualMachine` for, so each bring-up synthesizes one and every later
+/// phase reuses whatever the instance is already holding.
 @MainActor
 final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Call Tracking
@@ -23,10 +28,16 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     /// The status the VM was in when `start` was called.
     ///
-    /// The real service refuses a start from a status that fails
-    /// ``VMStatus/canStart``; recording it is what lets a caller that hands a
-    /// VM off to a boot be asserted on the state it hands over.
+    /// The real service refuses a start from a phase that fails
+    /// ``VMLifecyclePhase/canStart``; recording it is what lets a caller that
+    /// hands a VM off to a boot be asserted on the state it hands over.
     var statusAtStart: VMStatus?
+
+    /// The identity a phase this mock installs names — the live one when the
+    /// instance already holds a session, and a fresh one otherwise.
+    private func sessionIdentity(for instance: VMInstance) -> UUID {
+        instance.liveSessionID ?? UUID()
+    }
 
     // MARK: - Error Injection & Recovery
 
@@ -54,12 +65,12 @@ final class MockVirtualizationService: VirtualizationProviding {
         configurationAtStart = instance.configuration
         statusAtStart = instance.status
         if let error = startError {
-            instance.tearDownSession()
-            VirtualizationService.applyLifecycleFailure(
-                error, to: instance, transientRestingStatus: .stopped)
+            instance.tearDownSession(
+                restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
+                    error, on: instance, transientRestingPhase: .stopped))
             throw error
         }
-        instance.status = .running
+        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
     }
 
     func stop(_ instance: VMInstance) async throws {
@@ -76,39 +87,35 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func pause(_ instance: VMInstance) async throws {
         pauseCallCount += 1
-        if let error = pauseError {
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
-            throw error
-        }
-        instance.status = .paused
+        // A failed pause leaves the phase alone, as the real service does: the
+        // pause did not take, so the VM is where it was and still holds its
+        // session.
+        if let error = pauseError { throw error }
+        instance.enter(.livePaused(sessionID: sessionIdentity(for: instance)))
     }
 
     func resume(_ instance: VMInstance) async throws {
         resumeCallCount += 1
         if let error = resumeError {
-            instance.tearDownSession()
-            VirtualizationService.applyLifecycleFailure(
-                error, to: instance, transientRestingStatus: nil)
+            instance.tearDownSession(
+                restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
+                    error, on: instance, transientRestingPhase: nil))
             throw error
         }
-        instance.status = .running
+        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
     }
 
     func save(_ instance: VMInstance) async throws {
         saveCallCount += 1
         // The real service marks the VM `.saving` before tearing the session
-        // down and settles the resting status after — so the teardown hook
-        // fires while the status still reads as transitioning.
-        instance.status = .saving
+        // down, so the teardown hook fires from a phase that reads as
+        // transitioning.
+        instance.enter(.saving(sessionID: sessionIdentity(for: instance)))
         if let error = saveError {
-            instance.tearDownSession()
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
+            instance.tearDownSession(restingAt: .failed(message: error.localizedDescription))
             throw error
         }
-        instance.tearDownSession()
-        instance.status = .paused
+        instance.tearDownSession(restingAt: .suspended)
     }
 
     /// Mirrors the real service's state machine without VZ: the VM passes
@@ -117,15 +124,17 @@ final class MockVirtualizationService: VirtualizationProviding {
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let resting: VMStatus =
+        let sessionID = sessionIdentity(for: instance)
+        let resting: VMLifecyclePhase =
             switch (snapshot.kind, instance.status) {
             case (.cold, _): .stopped
-            case (.warm, .running): .running
-            case (.warm, _): .paused
+            case (.warm, .running): .running(sessionID: sessionID)
+            case (.warm, _): .livePaused(sessionID: sessionID)
             }
-        instance.status = .snapshotting
+        instance.enter(
+            snapshot.kind == .cold ? .capturingAtRest : .capturingLive(sessionID: sessionID))
         if let error = takeSnapshotError {
-            instance.status = resting
+            instance.enter(resting)
             throw error
         }
         // The store is exercised for real so a test can assert on the files the
@@ -140,7 +149,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                 relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
-        instance.status = resting
+        instance.enter(resting)
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn
@@ -155,16 +164,15 @@ final class MockVirtualizationService: VirtualizationProviding {
         var restore = plan
         restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
 
-        instance.tearDownSession()
-        instance.status = .restoring
+        instance.tearDownSession(restingAt: .revertingToSnapshot)
         if let error = revertToSnapshotError {
-            VirtualizationService.applyRestoreFailure(to: instance)
+            instance.enter(VirtualizationService.restingPhaseAfterRestoreFailure(on: instance))
             throw error
         }
         try store.restore(
             bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
         instance.configuration = restore.configuration
         revertedSnapshots.append(snapshot)
-        instance.status = plan.kind == .warm ? .paused : .stopped
+        instance.enter(plan.kind == .warm ? .suspended : .stopped)
     }
 }

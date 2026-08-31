@@ -1,212 +1,9 @@
 import Testing
+
 @testable import Kernova
 
 @Suite("VMStatus Tests", .admissionGated)
 struct VMStatusTests {
-    // MARK: - State Checks
-
-    @Test("canStart returns true for stopped, error, and initialBoot states")
-    func canStart() {
-        #expect(VMStatus.stopped.canStart == true)
-        #expect(VMStatus.error.canStart == true)
-        #expect(VMStatus.initialBoot.canStart == true)
-        #expect(VMStatus.running.canStart == false)
-        #expect(VMStatus.paused.canStart == false)
-        #expect(VMStatus.starting.canStart == false)
-        #expect(VMStatus.saving.canStart == false)
-        #expect(VMStatus.restoring.canStart == false)
-        #expect(VMStatus.installing.canStart == false)
-    }
-
-    @Test("canStop returns true for running and paused states")
-    func canStop() {
-        #expect(VMStatus.running.canStop == true)
-        #expect(VMStatus.paused.canStop == true)
-        #expect(VMStatus.stopped.canStop == false)
-        #expect(VMStatus.starting.canStop == false)
-        #expect(VMStatus.saving.canStop == false)
-        #expect(VMStatus.restoring.canStop == false)
-        #expect(VMStatus.installing.canStop == false)
-        #expect(VMStatus.initialBoot.canStop == false)
-        #expect(VMStatus.error.canStop == false)
-    }
-
-    @Test("canPause returns true only for running state")
-    func canPause() {
-        #expect(VMStatus.running.canPause == true)
-        #expect(VMStatus.stopped.canPause == false)
-        #expect(VMStatus.paused.canPause == false)
-        #expect(VMStatus.starting.canPause == false)
-        #expect(VMStatus.saving.canPause == false)
-        #expect(VMStatus.restoring.canPause == false)
-        #expect(VMStatus.installing.canPause == false)
-        #expect(VMStatus.initialBoot.canPause == false)
-        #expect(VMStatus.error.canPause == false)
-    }
-
-    @Test("canResume returns true only for paused state")
-    func canResume() {
-        #expect(VMStatus.paused.canResume == true)
-        #expect(VMStatus.stopped.canResume == false)
-        #expect(VMStatus.running.canResume == false)
-        #expect(VMStatus.starting.canResume == false)
-        #expect(VMStatus.saving.canResume == false)
-        #expect(VMStatus.restoring.canResume == false)
-        #expect(VMStatus.installing.canResume == false)
-        #expect(VMStatus.initialBoot.canResume == false)
-        #expect(VMStatus.error.canResume == false)
-    }
-
-    @Test("canSave returns true for running and paused states")
-    func canSave() {
-        #expect(VMStatus.running.canSave == true)
-        #expect(VMStatus.paused.canSave == true)
-        #expect(VMStatus.stopped.canSave == false)
-        #expect(VMStatus.starting.canSave == false)
-        #expect(VMStatus.saving.canSave == false)
-        #expect(VMStatus.restoring.canSave == false)
-        #expect(VMStatus.installing.canSave == false)
-        #expect(VMStatus.initialBoot.canSave == false)
-        #expect(VMStatus.error.canSave == false)
-    }
-
-    @Test("canEditSettings returns true for stopped, error, and initialBoot states")
-    func canEditSettings() {
-        #expect(VMStatus.stopped.canEditSettings == true)
-        #expect(VMStatus.error.canEditSettings == true)
-        #expect(VMStatus.initialBoot.canEditSettings == true)
-        #expect(VMStatus.running.canEditSettings == false)
-        #expect(VMStatus.paused.canEditSettings == false)
-        #expect(VMStatus.starting.canEditSettings == false)
-        #expect(VMStatus.saving.canEditSettings == false)
-        #expect(VMStatus.restoring.canEditSettings == false)
-        #expect(VMStatus.installing.canEditSettings == false)
-    }
-
-    @Test("canRename returns true for all non-transitioning states")
-    func canRename() {
-        #expect(VMStatus.stopped.canRename == true)
-        #expect(VMStatus.running.canRename == true)
-        #expect(VMStatus.paused.canRename == true)
-        #expect(VMStatus.initialBoot.canRename == true)
-        #expect(VMStatus.error.canRename == true)
-        #expect(VMStatus.starting.canRename == false)
-        #expect(VMStatus.saving.canRename == false)
-        #expect(VMStatus.restoring.canRename == false)
-        #expect(VMStatus.installing.canRename == false)
-    }
-
-    @Test("A committed rename survives every state but the revert that assigns a config back")
-    func renamePersists() {
-        for status in [
-            VMStatus.stopped, .starting, .running, .paused, .saving, .snapshotting, .installing,
-            .initialBoot, .error,
-        ] {
-            #expect(status.renamePersists == true)
-        }
-        #expect(VMStatus.restoring.renamePersists == false)
-    }
-
-    @Test("canForceStop returns true for running, paused, starting, saving, restoring")
-    func canForceStop() {
-        #expect(VMStatus.running.canForceStop == true)
-        #expect(VMStatus.paused.canForceStop == true)
-        #expect(VMStatus.starting.canForceStop == true)
-        #expect(VMStatus.saving.canForceStop == true)
-        #expect(VMStatus.restoring.canForceStop == true)
-        #expect(VMStatus.stopped.canForceStop == false)
-        #expect(VMStatus.installing.canForceStop == false)
-        #expect(VMStatus.initialBoot.canForceStop == false)
-        #expect(VMStatus.error.canForceStop == false)
-    }
-
-    // MARK: - Active
-
-    @Test("isActive returns true for running, starting, saving, restoring, installing")
-    func isActive() {
-        #expect(VMStatus.running.isActive == true)
-        #expect(VMStatus.starting.isActive == true)
-        #expect(VMStatus.saving.isActive == true)
-        #expect(VMStatus.restoring.isActive == true)
-        #expect(VMStatus.installing.isActive == true)
-        #expect(VMStatus.paused.isActive == false)
-        #expect(VMStatus.stopped.isActive == false)
-        #expect(VMStatus.initialBoot.isActive == false)
-        #expect(VMStatus.error.isActive == false)
-    }
-
-    // MARK: - Active Display
-
-    @Test("hasActiveDisplay returns true for running, paused, saving, restoring")
-    func hasActiveDisplay() {
-        #expect(VMStatus.running.hasActiveDisplay == true)
-        #expect(VMStatus.paused.hasActiveDisplay == true)
-        #expect(VMStatus.saving.hasActiveDisplay == true)
-        #expect(VMStatus.restoring.hasActiveDisplay == true)
-        #expect(VMStatus.stopped.hasActiveDisplay == false)
-        #expect(VMStatus.starting.hasActiveDisplay == false)
-        #expect(VMStatus.installing.hasActiveDisplay == false)
-        #expect(VMStatus.initialBoot.hasActiveDisplay == false)
-        #expect(VMStatus.error.hasActiveDisplay == false)
-    }
-
-    // MARK: - Transitioning
-
-    @Test("isTransitioning returns true for starting, saving, restoring, and installing")
-    func isTransitioning() {
-        #expect(VMStatus.starting.isTransitioning == true)
-        #expect(VMStatus.saving.isTransitioning == true)
-        #expect(VMStatus.restoring.isTransitioning == true)
-        #expect(VMStatus.installing.isTransitioning == true)
-        #expect(VMStatus.stopped.isTransitioning == false)
-        #expect(VMStatus.running.isTransitioning == false)
-        #expect(VMStatus.paused.isTransitioning == false)
-        #expect(VMStatus.initialBoot.isTransitioning == false)
-        #expect(VMStatus.error.isTransitioning == false)
-    }
-
-    @Test("terminationMustWaitOut covers saving alone")
-    func terminationMustWaitOut() {
-        #expect(VMStatus.saving.terminationMustWaitOut == true)
-        // A restore keeps the save file until its resume succeeds, and a start or
-        // install writes nothing a relaunch cannot redo, so an explicit quit is
-        // free to terminate through them.
-        #expect(VMStatus.starting.terminationMustWaitOut == false)
-        #expect(VMStatus.restoring.terminationMustWaitOut == false)
-        #expect(VMStatus.installing.terminationMustWaitOut == false)
-        #expect(VMStatus.running.terminationMustWaitOut == false)
-        #expect(VMStatus.paused.terminationMustWaitOut == false)
-        #expect(VMStatus.stopped.terminationMustWaitOut == false)
-        #expect(VMStatus.initialBoot.terminationMustWaitOut == false)
-        #expect(VMStatus.error.terminationMustWaitOut == false)
-    }
-
-    @Test(
-        "terminationMustWaitOut stays a subset of isTransitioning",
-        arguments: [
-            VMStatus.stopped, .starting, .running, .paused, .saving, .restoring, .installing, .initialBoot, .error,
-        ])
-    func terminationWaitIsSubsetOfTransitioning(status: VMStatus) {
-        // The window reconcile holds a quit for anything transitioning; the
-        // explicit gate waits out a strict subset of that.
-        #expect(!status.terminationMustWaitOut || status.isTransitioning)
-    }
-
-    // MARK: - Transition Label
-
-    @Test("transitionLabel returns label for saving and restoring, nil otherwise")
-    func transitionLabel() {
-        #expect(VMStatus.saving.transitionLabel == "Suspending\u{2026}")
-        #expect(VMStatus.restoring.transitionLabel == "Restoring\u{2026}")
-        #expect(VMStatus.stopped.transitionLabel == nil)
-        #expect(VMStatus.starting.transitionLabel == nil)
-        #expect(VMStatus.running.transitionLabel == nil)
-        #expect(VMStatus.paused.transitionLabel == nil)
-        #expect(VMStatus.installing.transitionLabel == nil)
-        #expect(VMStatus.initialBoot.transitionLabel == nil)
-        #expect(VMStatus.error.transitionLabel == nil)
-    }
-
     // MARK: - Display Name
 
     @Test("displayName returns expected string for each status")
@@ -223,30 +20,35 @@ struct VMStatusTests {
         #expect(VMStatus.snapshotting.displayName == "Taking Snapshot")
     }
 
-    // MARK: - Snapshotting
+    // MARK: - Transition Label
 
-    @Test("snapshotting is a transitional state a quit has to wait out")
-    func snapshottingIsTransitional() {
-        // The saved state is written in place, so exiting mid-write leaves a
-        // truncated file where a restore point belongs.
-        #expect(VMStatus.snapshotting.isTransitioning == true)
-        #expect(VMStatus.snapshotting.terminationMustWaitOut == true)
-        #expect(VMStatus.snapshotting.isActive == true)
+    @Test("transitionLabel returns a label for the write-in-place transitions only")
+    func transitionLabel() {
+        #expect(VMStatus.saving.transitionLabel == "Suspending\u{2026}")
+        #expect(VMStatus.restoring.transitionLabel == "Restoring\u{2026}")
+        #expect(VMStatus.snapshotting.transitionLabel == "Taking Snapshot\u{2026}")
+        #expect(VMStatus.stopped.transitionLabel == nil)
+        #expect(VMStatus.starting.transitionLabel == nil)
+        #expect(VMStatus.running.transitionLabel == nil)
+        #expect(VMStatus.paused.transitionLabel == nil)
+        #expect(VMStatus.installing.transitionLabel == nil)
+        #expect(VMStatus.initialBoot.transitionLabel == nil)
+        #expect(VMStatus.error.transitionLabel == nil)
     }
 
-    @Test("snapshotting refuses every lifecycle command and keeps the display up")
-    func snapshottingRefusesCommands() {
-        #expect(VMStatus.snapshotting.canStart == false)
-        #expect(VMStatus.snapshotting.canStop == false)
-        #expect(VMStatus.snapshotting.canPause == false)
-        #expect(VMStatus.snapshotting.canResume == false)
-        #expect(VMStatus.snapshotting.canSave == false)
-        #expect(VMStatus.snapshotting.canEditSettings == false)
-        #expect(VMStatus.snapshotting.canRename == false)
-        // The guest is still live, so its display keeps rendering, and a wedged
-        // capture is still force-stoppable.
-        #expect(VMStatus.snapshotting.hasActiveDisplay == true)
-        #expect(VMStatus.snapshotting.canForceStop == true)
-        #expect(VMStatus.snapshotting.transitionLabel == "Taking Snapshot\u{2026}")
+    // MARK: - Wire Vocabulary
+
+    @Test("The raw value every automation surface reads is the case name")
+    func rawValuesAreTheWireVocabulary() {
+        #expect(VMStatus.stopped.rawValue == "stopped")
+        #expect(VMStatus.starting.rawValue == "starting")
+        #expect(VMStatus.running.rawValue == "running")
+        #expect(VMStatus.paused.rawValue == "paused")
+        #expect(VMStatus.saving.rawValue == "saving")
+        #expect(VMStatus.snapshotting.rawValue == "snapshotting")
+        #expect(VMStatus.restoring.rawValue == "restoring")
+        #expect(VMStatus.installing.rawValue == "installing")
+        #expect(VMStatus.initialBoot.rawValue == "initialBoot")
+        #expect(VMStatus.error.rawValue == "error")
     }
 }
