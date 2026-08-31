@@ -56,8 +56,6 @@ jobs:
           key: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-
 
-      # These invocations mirror the Makefile's XCODEBUILD_FLAGS by hand.
-      #
       # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
       # which needs no identity or team, so it embeds the app's sandbox
       # entitlements and the TEST_HOST-hosted unit tests run sandboxed here
@@ -67,17 +65,7 @@ jobs:
       # the failing test names alone, dropping the `#expect` text and the
       # source line that say what actually failed.
       - name: Build for testing
-        run: |
-          xcodebuild build-for-testing \
-            -project Kernova.xcodeproj \
-            -scheme Kernova \
-            -destination 'platform=macOS' \
-            -derivedDataPath DerivedData/Kernova \
-            -configuration Debug \
-            -skipPackagePluginValidation \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            COMPILATION_CACHE_ENABLE_CACHING=YES \
-            2>&1
+        run: make build-for-testing 2>&1
 
       # The store's size after a build is the signal that caching engaged:
       # empty or missing means COMPILATION_CACHE_ENABLE_CACHING no-opped, and
@@ -98,17 +86,7 @@ jobs:
       - name: Test without building
         env:
           TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
-        run: |
-          xcodebuild test-without-building \
-            -project Kernova.xcodeproj \
-            -scheme Kernova \
-            -destination 'platform=macOS' \
-            -derivedDataPath DerivedData/Kernova \
-            -configuration Debug \
-            -resultBundlePath artifacts/TestResults.xcresult \
-            -skipPackagePluginValidation \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            2>&1
+        run: make test-without-building 2>&1
 
       # xcodebuild's own stream interleaves parallel test hosts, so a failure's
       # message can land far from the test that raised it. This pairs each

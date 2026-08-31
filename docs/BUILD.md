@@ -55,7 +55,7 @@ That holds in every preference mode: Xcode's default per-path-hashed `~/Library/
 
 **Omitting the flag is load-bearing.** Passing `-derivedDataPath`, even pointed at the identical resolved path, records a different build-arena identity in the build description, and every CLI↔GUI switch then re-runs the entire compile graph in both directions (measured in Relative mode: all object files rewritten each way).
 
-Only CI keeps the explicit `-derivedDataPath DerivedData/Kernova` — the Makefile passes it when `$CI` is set and the workflows mirror it by hand. There is no GUI to share with there, and a deterministic in-worktree path keeps artifact handling simple. The path nests one level to match how Relative mode nests a per-project subfolder, so the flag form and a Relative-mode build agree on layout.
+Only CI keeps the explicit `-derivedDataPath DerivedData/Kernova` — the Makefile passes it when `$CI` is set. There is no GUI to share with there, and a deterministic in-worktree path keeps artifact handling simple. The path nests one level to match how Relative mode nests a per-project subfolder, so the flag form and a Relative-mode build agree on layout.
 
 ### Resolving an arena
 
