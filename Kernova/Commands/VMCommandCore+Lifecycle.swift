@@ -13,7 +13,7 @@ extension VMCommandCore {
     /// The start every surface reaches, with the instance already resolved.
     func start(_ instance: VMInstance, recovery: Bool = false) async throws {
         try require(.start, on: instance)
-        if recovery, !instance.canStartInRecovery {
+        if recovery, !capabilities.accepts(.startInRecovery, on: instance) {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
         }
 
@@ -332,6 +332,7 @@ extension VMCommandCore {
     /// bundle is preserved — this is the non-destructive cancel.
     func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
         let instance = try resolve(selector)
+        try require(.cancelGuestSetup, on: instance)
         guard let task = instance.setupTask else { throw invalidState(instance) }
         guard confirmed else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))

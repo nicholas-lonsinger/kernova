@@ -322,6 +322,7 @@ extension VMCommandCore {
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
         let instance = try resolve(selector)
         guard confirmed else {
+            try require(.cancelPreparing, on: instance)
             guard let state = instance.preparingState else { throw invalidState(instance) }
             throw CommandError.confirmationRequired(
                 Self.cancelPreparingPrompt(state.operation, on: instance))
