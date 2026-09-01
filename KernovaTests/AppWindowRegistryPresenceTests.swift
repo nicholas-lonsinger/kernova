@@ -6,9 +6,10 @@ import Testing
 
 /// Covers `AppWindowRegistry.hasTrackedUserWindow(countingMiniaturized:)` — the
 /// deterministic half of the window-presence answer the activation-policy
-/// reconcile and the reopen leg both read.
+/// reconcile and the reopen leg both read — and the clipboard window's
+/// close-driven deregistration.
 ///
-/// Only the tracked windows are exercised: the `NSApp.windows` scan
+/// Only the tracked windows are exercised for presence: the `NSApp.windows` scan
 /// `hasUserWindow(countingMiniaturized:)` layers on top sees every other suite's
 /// windows in the shared test host, so it has no deterministic answer here.
 @Suite("AppWindowRegistry presence", .serialized, .admissionGated)
@@ -18,7 +19,14 @@ struct AppWindowRegistryPresenceTests {
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appwindowregistry")
 
     private func makeRegistry() -> AppWindowRegistry {
-        let viewModel = VMLibraryViewModel(
+        let viewModel = makeViewModel()
+        return AppWindowRegistry(
+            viewModel: viewModel,
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
+    }
+
+    private func makeViewModel() -> VMLibraryViewModel {
+        VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
@@ -27,9 +35,17 @@ struct AppWindowRegistryPresenceTests {
             usbDeviceService: MockUSBDeviceService(),
             preferences: preferences
         )
-        return AppWindowRegistry(
-            viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
+    }
+
+    /// A VM the clipboard window opens for: sharing on, and a live session, which
+    /// is what `accepts(.showClipboard, on:)` asks for.
+    private func makeClipboardEligibleInstance() -> VMInstance {
+        var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
+        config.clipboardSharingEnabled = true
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        return VMInstance(
+            configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
     }
 
     @Test("A registry that has shown nothing tracks no on-screen window")
@@ -79,5 +95,39 @@ struct AppWindowRegistryPresenceTests {
         registry.showSettings(nil)
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
+    }
+
+    @Test("Closing a clipboard window deregisters it")
+    func clipboardWindowCloseDeregisters() throws {
+        let registry = makeRegistry()
+        defer { registry.closeAll() }
+        let instance = makeClipboardEligibleInstance()
+        registry.showClipboard(for: instance)
+        let window = try #require(registry.clipboardWindow(for: instance.instanceID))
+        #expect(registry.hasAuxiliaryWindows)
+        #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
+
+        // `close()` dispatches `windowWillClose` synchronously, which is what
+        // drives `ClipboardWindowController.onWillClose`.
+        window.close()
+
+        #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
+        #expect(!registry.hasAuxiliaryWindows)
+    }
+
+    @Test("A VM whose state refuses the clipboard opens no window")
+    func clipboardRefusedForIneligibleVM() {
+        let registry = makeRegistry()
+        defer { registry.closeAll() }
+        let config = VMConfiguration(name: "Stopped VM", guestOS: .linux, bootMode: .efi)
+        let instance = VMInstance(
+            configuration: config,
+            bundleURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(config.id.uuidString, isDirectory: true))
+
+        registry.showClipboard(for: instance)
+
+        #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
+        #expect(!registry.hasAuxiliaryWindows)
     }
 }

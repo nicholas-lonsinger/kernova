@@ -107,9 +107,13 @@ final class AppWindowRegistry {
         }
 
         let controller = ClipboardWindowController(instance: instance, viewModel: viewModel)
-        // Synchronous, unlike the display windows' deferred close handling: the
-        // registry entry is dropped before the reconcile reads it, so nothing
-        // here depends on the closing window having left `NSApp.windows`.
+        // Synchronous, unlike the display windows' deferred close handling, and
+        // not because the closing window has left `NSApp.windows` — it has not,
+        // so `hasUserWindow` still counts it through the untracked-panel scan.
+        // Neither reconcile reads that here: the test host's `isIdle` reads
+        // registry state only, and the resident app's `automationIdleOutcome`
+        // short-circuits on the `hasPresentedInterface` latch
+        // `prepareToPresentWindow()` set when this window was shown.
         controller.onWillClose = { [weak self] in
             guard let self else { return }
             self.clipboardWindows.removeValue(forKey: vmID)
@@ -176,7 +180,7 @@ final class AppWindowRegistry {
     /// normal-level + titled filter excludes chrome: the status item's backing
     /// `NSStatusBarWindow` is borderless and sits above `.normal`, so an
     /// unfiltered `NSApp.windows` scan would pin the agent to `.regular` forever.
-    nonisolated static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
+    static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
         (window.isVisible || window.isMiniaturized)
             && window.level == .normal
             && window.styleMask.contains(.titled)
