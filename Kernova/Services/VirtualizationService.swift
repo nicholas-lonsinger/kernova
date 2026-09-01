@@ -30,13 +30,16 @@ final class VirtualizationService {
 
         instance.enter(.starting(sessionID: nil))
 
+        var attemptSessionID: UUID?
         do {
             let sessionID: UUID
             if instance.hasSaveFile {
-                sessionID = try await restoreFromSaveFile(instance)
+                sessionID = try await restoreFromSaveFile(
+                    instance, attemptSessionID: &attemptSessionID)
             } else {
                 sessionID = try await coldBootRetryingLockContention(
-                    instance, bootIntoRecovery: bootIntoRecovery)
+                    instance, bootIntoRecovery: bootIntoRecovery,
+                    attemptSessionID: &attemptSessionID)
             }
 
             guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
@@ -72,11 +75,11 @@ final class VirtualizationService {
                     "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
                 )
             }
-            if Self.attemptStillOwnsThePhase(instance, actingFor: nil) {
-                instance.tearDownSession(
-                    restingAt: Self.restingPhaseAfterLifecycleFailure(
-                        error, on: instance, transientRestingPhase: .stopped))
-            } else {
+            if !Self.tearDownIfStillOwned(
+                instance, actingFor: attemptSessionID,
+                restingAt: Self.restingPhaseAfterLifecycleFailure(
+                    error, on: instance, transientRestingPhase: .stopped))
+            {
                 Self.logger.notice(
                     "Start of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
                 )
@@ -95,17 +98,33 @@ final class VirtualizationService {
     /// which lags `vm.state == .stopped` by more the more guest memory there is to
     /// tear down. No public VZ API observes the release, so gating on state cannot
     /// be airtight; a bounded retry against the ground-truth failure is.
+    ///
+    /// `attemptSessionID` carries out the session the attempt in flight owns
+    /// right now: `nil` before its `VZVirtualMachine` exists, and again once it
+    /// is released.
     private func coldBootRetryingLockContention(
-        _ instance: VMInstance, bootIntoRecovery: Bool
+        _ instance: VMInstance, bootIntoRecovery: Bool, attemptSessionID: inout UUID?
     ) async throws -> UUID {
         var attempt = 0
         while true {
             do {
-                return try await coldBoot(instance, bootIntoRecovery: bootIntoRecovery)
+                return try await coldBoot(
+                    instance, bootIntoRecovery: bootIntoRecovery,
+                    attemptSessionID: &attemptSessionID)
             } catch let startError {
                 guard Self.isFileLockContention(startError),
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw startError }
+                // An interrupt that landed on this attempt's session has already
+                // rested the VM; retrying would release a successor's context and
+                // boot a second machine behind it. Rethrowing hands the outer
+                // catch the same non-ownership answer.
+                guard Self.attemptStillOwnsThePhase(instance, actingFor: attemptSessionID) else {
+                    Self.logger.notice(
+                        "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention after it was overtaken — not retrying"
+                    )
+                    throw startError
+                }
                 attempt += 1
                 Self.logger.warning(
                     "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
@@ -114,6 +133,7 @@ final class VirtualizationService {
                 // the attempt's `VZVirtualMachine` is released, and the VM is
                 // still starting.
                 instance.tearDownSession(restingAt: .starting(sessionID: nil))
+                attemptSessionID = nil
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
@@ -129,14 +149,22 @@ final class VirtualizationService {
     /// Builds a fresh configuration and `VZVirtualMachine`, wires the session
     /// plumbing, and starts the machine — one cold-boot attempt, returning the
     /// identity of the session it brought up.
-    private func coldBoot(_ instance: VMInstance, bootIntoRecovery: Bool) async throws -> UUID {
+    ///
+    /// `attemptSessionID` carries out the session this attempt owns right now:
+    /// `nil` before its `VZVirtualMachine` exists, and again once it is
+    /// released. A throw leaves it naming whatever the caller must act for.
+    private func coldBoot(
+        _ instance: VMInstance, bootIntoRecovery: Bool, attemptSessionID: inout UUID?
+    ) async throws -> UUID {
         // Per attempt, not once per start: the lock-contention retry loop tears the
         // session down between attempts, taking this context's scopes with it.
+        attemptSessionID = nil
         instance.beginSessionContext(bootedIntoRecovery: bootIntoRecovery)
         let result = try await buildConfiguration(for: instance)
         guard let session = await instance.bringUpSession(with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
+        attemptSessionID = session.id
         let startOptions = Self.recoveryStartOptions(
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
         try await session.start(options: startOptions)
@@ -297,6 +325,9 @@ final class VirtualizationService {
             throw VirtualizationError.noSaveFile
         }
 
+        // A hot resume acts for the session it already holds; a cold one for
+        // whichever session the restore brings up.
+        var attemptSessionID = hotResumeSessionID
         do {
             let sessionID: UUID
             if let session = instance.session {
@@ -308,7 +339,8 @@ final class VirtualizationService {
                 // never runs the agent, and no host-side flag survives the save
                 // to say which. The accept path arms once a control channel
                 // actually shows up.
-                sessionID = try await restoreFromSaveFile(instance)
+                sessionID = try await restoreFromSaveFile(
+                    instance, attemptSessionID: &attemptSessionID)
             }
 
             guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
@@ -337,11 +369,11 @@ final class VirtualizationService {
                     "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }
-            if Self.attemptStillOwnsThePhase(instance, actingFor: hotResumeSessionID) {
-                instance.tearDownSession(
-                    restingAt: Self.restingPhaseAfterLifecycleFailure(
-                        error, on: instance, transientRestingPhase: nil))
-            } else {
+            if !Self.tearDownIfStillOwned(
+                instance, actingFor: attemptSessionID,
+                restingAt: Self.restingPhaseAfterLifecycleFailure(
+                    error, on: instance, transientRestingPhase: nil))
+            {
                 Self.logger.notice(
                     "Resume of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
                 )
@@ -368,7 +400,8 @@ final class VirtualizationService {
             // No sidecar metadata is needed beside the save file: removable media
             // carry stable UUIDs and storage disks stable virtio block identifiers
             // in `config`, and VZ matches both on restore.
-            guard Self.attemptStillOwnsThePhase(instance, actingFor: sessionID) else {
+            guard Self.tearDownIfStillOwned(instance, actingFor: sessionID, restingAt: .suspended)
+            else {
                 // The guest went away mid-write, so the slot on disk is however
                 // far VZ got. Resting suspended would offer it as resumable;
                 // the VM stays where the teardown put it instead.
@@ -377,7 +410,6 @@ final class VirtualizationService {
                 )
                 return
             }
-            instance.tearDownSession(restingAt: .suspended)
             Self.logger.notice("Saved state for VM '\(instance.name, privacy: .public)'")
         } catch {
             Self.logger.error(
@@ -386,9 +418,10 @@ final class VirtualizationService {
             // A force stop is the interrupt this operation is most likely to
             // meet — it aborts the write and rests the VM `.stopped`, which a
             // failure banner over the top would misreport as a crash.
-            if Self.attemptStillOwnsThePhase(instance, actingFor: sessionID) {
-                instance.tearDownSession(restingAt: .failed(message: error.localizedDescription))
-            } else {
+            if !Self.tearDownIfStillOwned(
+                instance, actingFor: sessionID,
+                restingAt: .failed(message: error.localizedDescription))
+            {
                 Self.logger.notice(
                     "Suspend of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
                 )
@@ -838,15 +871,34 @@ final class VirtualizationService {
     /// failure. Resting again over that reports a state the attempt did not
     /// produce, and puts a red banner on a deliberate force stop.
     ///
-    /// `sessionID` names the session the attempt acted for. An attempt that may
-    /// never have created one passes `nil` and is recognized instead by the VM
-    /// still being mid-operation, since every phase an interruption rests at is
-    /// a settled one.
+    /// `sessionID` names the session the attempt acted for, and is `nil` while
+    /// it has yet to create one — recognized instead by the VM still being
+    /// mid-operation, since every phase an interruption rests at is a settled
+    /// one. That fallback is sound because a sessionless in-flight phase offers
+    /// no interrupt to be overtaken by: ``VMLifecyclePhase/canForceStop``
+    /// requires an identity at `.starting` and `.restoringSavedState`, and
+    /// ``VMLifecyclePhase/canStart`` is false at both.
     static func attemptStillOwnsThePhase(
         _ instance: VMInstance, actingFor sessionID: UUID?
     ) -> Bool {
         if let sessionID { return instance.liveSessionID == sessionID }
         return instance.isTransitioning
+    }
+
+    /// Rests `instance` at `phase`, tearing its session down, unless the attempt
+    /// acting for `sessionID` has been overtaken — in which case nothing is
+    /// touched and `false` comes back for the caller to log.
+    ///
+    /// The one shape every lifecycle failure path takes, so no site can settle a
+    /// VM another operation already settled. `phase` is an ordinary parameter:
+    /// classifying where a failure rests reads the instance without changing it,
+    /// so computing one an overtaken attempt will not use costs nothing.
+    static func tearDownIfStillOwned(
+        _ instance: VMInstance, actingFor sessionID: UUID?, restingAt phase: VMLifecyclePhase
+    ) -> Bool {
+        guard attemptStillOwnsThePhase(instance, actingFor: sessionID) else { return false }
+        instance.tearDownSession(restingAt: phase)
+        return true
     }
 
     /// Where a failed start or resume leaves `instance`, for the caller to rest
@@ -915,20 +967,38 @@ final class VirtualizationService {
     /// left in place — a cold boot over a suspended session destroys it, so
     /// discarding the saved state stays an explicit user action
     /// (`stop(_:)` on a cold-paused VM).
-    private func restoreFromSaveFile(_ instance: VMInstance) async throws -> UUID {
+    ///
+    /// `attemptSessionID` carries out the session the attempt in flight owns
+    /// right now: `nil` before its `VZVirtualMachine` exists, and again once it
+    /// is released.
+    private func restoreFromSaveFile(
+        _ instance: VMInstance, attemptSessionID: inout UUID?
+    ) async throws -> UUID {
         var attempt = 0
         while true {
             do {
-                return try await restoreFromSaveFileAttempt(instance)
+                return try await restoreFromSaveFileAttempt(
+                    instance, attemptSessionID: &attemptSessionID)
             } catch let attemptError {
                 guard Self.isFileLockContention(Self.unwrappedRestoreFailure(attemptError)),
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw attemptError }
+                // An interrupt that landed on this attempt's session has already
+                // rested the VM; retrying would release a successor's context and
+                // boot a second machine behind it. Rethrowing hands the outer
+                // catch the same non-ownership answer.
+                guard Self.attemptStillOwnsThePhase(instance, actingFor: attemptSessionID) else {
+                    Self.logger.notice(
+                        "Restore of '\(instance.name, privacy: .public)' hit file-lock contention after it was overtaken — not retrying"
+                    )
+                    throw attemptError
+                }
                 attempt += 1
                 Self.logger.warning(
                     "Restore of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
                 instance.tearDownSession(restingAt: .restoringSavedState(sessionID: nil))
+                attemptSessionID = nil
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
@@ -950,13 +1020,21 @@ final class VirtualizationService {
     /// bring-up: it is what ``VMInstance/attachSession(from:)`` promotes to name
     /// the session, and a start and a cold resume reach here from different
     /// phases.
-    private func restoreFromSaveFileAttempt(_ instance: VMInstance) async throws -> UUID {
+    ///
+    /// `attemptSessionID` carries out the session this attempt owns right now:
+    /// `nil` before its `VZVirtualMachine` exists, and again once it is
+    /// released. A throw leaves it naming whatever the caller must act for.
+    private func restoreFromSaveFileAttempt(
+        _ instance: VMInstance, attemptSessionID: inout UUID?
+    ) async throws -> UUID {
+        attemptSessionID = nil
         instance.enter(.restoringSavedState(sessionID: nil))
         instance.beginSessionContext()
         let result = try await buildConfiguration(for: instance)
         guard let session = await instance.bringUpSession(with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
+        attemptSessionID = session.id
 
         Self.logger.debug("restoreFromSaveFile: attempting restore from save file")
         do {
