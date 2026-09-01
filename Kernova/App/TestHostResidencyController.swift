@@ -4,10 +4,10 @@ import os
 /// The unit-test host's residency: a plain foreground app that shows the library
 /// at launch and leaves once the last VM a suite started stops.
 ///
-/// Constructed only by `AppDelegate.main()`'s test-host arm, so none of the
-/// resident-app machinery — status item, activation-policy switching, login-item
-/// registration, the App Intents front door — exists here, and none of this
-/// exists in a shipped build.
+/// Constructed only by `AppDelegate.main()`'s test-host arm, under XCTest, so
+/// none of the resident-app machinery — status item, activation-policy
+/// switching, login-item registration, the App Intents front door — is reached
+/// through this one.
 ///
 /// The process is `.regular` throughout, which is what leaves
 /// ``prepareToPresentWindow()`` and ``syncActivationPolicy()`` with nothing to

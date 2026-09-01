@@ -102,8 +102,12 @@ final class AppWindowRegistry {
         // not because the closing window has left `NSApp.windows` — it has not,
         // so the `hasUserWindow` both reconciles now read still counts it
         // through the untracked-panel scan. That only ever errs toward staying
-        // resident, and the authoritative trigger follows this one: AppKit asks
-        // its own last-window rule once the window is gone.
+        // resident, and each mode has its own follow-up: the test host is asked
+        // AppKit's last-window rule once the window is gone, while the resident
+        // app — which answers that rule `false` on purpose — re-runs from
+        // `AppResidencyController`'s deferred window-close observer, and its
+        // idle leg short-circuits on the `hasPresentedInterface` latch set when
+        // this window was shown.
         controller.onWillClose = { [weak self] in
             guard let self else { return }
             self.clipboardWindows.removeValue(forKey: vmID)
