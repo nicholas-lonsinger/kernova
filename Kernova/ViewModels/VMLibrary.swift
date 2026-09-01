@@ -1005,20 +1005,18 @@ final class VMLibrary {
         for device in toDetach {
             do {
                 try await lifecycle.detachUSBDevice(device, from: instance)
-                instance.sessionContext?.fileAccess.releaseHotAttach(id: device.id)
             } catch USBDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
                 )
                 return
             } catch USBDeviceError.deviceNotFound {
-                // The lifecycle layer's `removeAll` is skipped when the framework call
+                // The coordinator's detach is skipped when the framework call
                 // throws, so clear stale tracking explicitly here.
                 Self.logger.notice(
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
-                instance.sessionContext?.liveRemovableMedia.removeAll { $0.id == device.id }
-                instance.sessionContext?.fileAccess.releaseHotAttach(id: device.id)
+                instance.forgetAttachedMedia(id: device.id)
             } catch {
                 Self.logger.error(
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -1043,7 +1041,7 @@ final class VMLibrary {
                     to: instance
                 )
                 if let scope {
-                    instance.sessionContext?.fileAccess.addHotAttach(id: item.id, scope)
+                    instance.retainMediaScope(scope, for: item.id)
                 }
                 Self.logger.notice(
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"

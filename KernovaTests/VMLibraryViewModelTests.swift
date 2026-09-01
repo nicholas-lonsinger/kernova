@@ -5222,9 +5222,8 @@ struct VMLibraryViewModelTests {
         instance.beginSessionContext()
         let installerItem = RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         instance.configuration.removableMedia = [installerItem]
-        instance.sessionContext?.liveRemovableMedia = [
-            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly)
-        ]
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly))
         viewModel.instances.append(instance)
 
         viewModel.unmountGuestAgentInstaller(from: instance)
@@ -5284,9 +5283,8 @@ struct VMLibraryViewModelTests {
         let installerItem = RemovableMediaItem(
             path: installerURL.path(percentEncoded: false), readOnly: true)
         instance.configuration.removableMedia = [installerItem]
-        instance.sessionContext?.liveRemovableMedia = [
-            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly)
-        ]
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly))
         viewModel.instances.append(instance)
 
         viewModel.unmountGuestAgentInstaller(from: instance)
@@ -5789,10 +5787,8 @@ struct VMLibraryViewModelTests {
         instance.beginSessionContext()
         let idA = UUID()
         let idB = UUID()
-        instance.sessionContext?.liveRemovableMedia = [
-            USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true),
-            USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true),
-        ]
+        instance.recordAttachedMedia(USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true))
+        instance.recordAttachedMedia(USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: idA, path: "/tmp/a.iso", readOnly: true),
@@ -5828,9 +5824,7 @@ struct VMLibraryViewModelTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
-        instance.sessionContext?.liveRemovableMedia = [
-            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
-        ]
+        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)
@@ -5866,7 +5860,6 @@ struct VMLibraryViewModelTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
-        instance.sessionContext?.liveRemovableMedia = []
         var old = instance.configuration
         old.removableMedia = nil
         instance.configuration = old
@@ -5898,9 +5891,7 @@ struct VMLibraryViewModelTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
-        instance.sessionContext?.liveRemovableMedia = [
-            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
-        ]
+        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true))
         var oldItem = RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true, label: "Installer")
         oldItem.notes = "from the Ubuntu mirror"
         var old = instance.configuration
@@ -5938,9 +5929,7 @@ struct VMLibraryViewModelTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
-        instance.sessionContext?.liveRemovableMedia = [
-            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
-        ]
+        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)

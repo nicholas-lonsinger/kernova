@@ -779,8 +779,8 @@ final class VMLifecycleCoordinator {
 
     // MARK: - USB Device Management
 
-    /// Attaches a USB mass storage device to a running VM and appends it to
-    /// `instance.liveRemovableMedia`.
+    /// Attaches a USB mass storage device to a running VM and records it on
+    /// `instance`, making it visible through `instance.liveRemovableMedia`.
     ///
     /// `desiredUUID` overrides the framework-generated
     /// `VZUSBDeviceConfiguration.uuid` so the runtime device matches the caller's
@@ -803,12 +803,12 @@ final class VMLifecycleCoordinator {
         let tracked = USBDeviceInfo(
             id: info.id, path: diskImagePath, readOnly: info.readOnly,
             attachedAt: info.attachedAt)
-        instance.sessionContext?.liveRemovableMedia.append(tracked)
+        instance.recordAttachedMedia(tracked)
         return tracked
     }
 
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
-        instance.sessionContext?.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
+        instance.forgetAttachedMedia(id: deviceInfo.id)
     }
 }
