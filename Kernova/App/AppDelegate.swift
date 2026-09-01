@@ -6,7 +6,7 @@ import os
 
 @main
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Whether this process is the unit-test host.
     ///
     /// `true` for the `BUNDLE_LOADER` test host — a plain foreground app that
@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// The one owner of which user-facing windows exist, and whether any is on
     /// screen.
     private let windows: AppWindowRegistry
+    /// The one owner of the menu bar — construction, the open-time rebuilds, and
+    /// menu-item validation. Strongly held: `NSMenu.delegate` is weak, and this
+    /// is the delegate of every menu whose opening it answers for.
+    private let mainMenu: MainMenuController
     private let viewModel: VMLibraryViewModel
     /// The library's first read from disk, started in
     /// `applicationWillFinishLaunching`.
@@ -72,34 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Never reset, matching the quit flags below: every later quit defers to the
     /// pass, which always replies and terminates the app.
     private var isRunningTerminationSavePass = false
-    private let clipboardMenuItem: NSMenuItem
-
-    /// The application menu, retained so its quit section can be rebuilt when it opens.
-    private var appMenu: NSMenu?
-    /// The quit-section items currently installed in `appMenu`, tracked so a
-    /// rebuild removes exactly what it added.
-    private var appMenuQuitItemViews: [NSMenuItem] = []
-    /// The model `appMenuQuitItemViews` was last built from, so a rebuild that
-    /// would produce identical items is skipped.
-    private var appMenuQuitModel: [AppMenuQuitItem] = []
-
-    /// The Virtual Machine menu, retained so its opening can refresh the revert
-    /// submenu that decides one of its items' enablement.
-    private var virtualMachineMenu: NSMenu?
-    /// That menu's "Revert to Snapshot" submenu, retained so it can be rebuilt
-    /// from the selected VM's manifest when it opens.
-    private var revertSnapshotMenu: NSMenu?
-    /// What that submenu currently lists, so an open that would produce
-    /// identical items skips the rebuild — `menuNeedsUpdate(_:)` also fires
-    /// while AppKit matches key equivalents.
-    private var revertSnapshotMenuModel: RevertSnapshotMenuModel?
-
-    /// Value snapshot of the revert submenu's rendered contents.
-    private struct RevertSnapshotMenuModel: Equatable {
-        let instanceID: UUID?
-        let snapshots: [VMSnapshot]
-        let isEnabled: Bool
-    }
 
     /// Single close-side trigger for the activation-policy reconcile.
     ///
@@ -222,63 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return .terminateAndSave
     }
 
-    /// One item in the app menu's quit section, as decided by `appMenuQuitItems`.
-    struct AppMenuQuitItem: Equatable {
-        /// What invoking the item does.
-        enum Action: Equatable {
-            /// Routes through `NSApplication.terminate(_:)` and thus the
-            /// `applicationShouldTerminate` gate.
-            case terminateThroughGate
-            /// Requests an unconditional full quit, bypassing the
-            /// keep-in-menu-bar downgrade.
-            case quitCompletely
-        }
-
-        let title: String
-        /// The key-equivalent character (always `"q"`; ⌘ is always part of the shortcut).
-        let keyEquivalent: String
-        /// Whether Option joins Command: `false` = ⌘Q, `true` = ⌥⌘Q.
-        let usesOptionModifier: Bool
-        let action: Action
-    }
-
-    /// Decides the app menu's quit-section items, so every state presents an
-    /// honest command.
-    ///
-    /// The resident app with keep-in-menu-bar on gets the honest split — "Close
-    /// All Windows" (⌘Q) plus the true "Quit Kernova" (⌥⌘Q); every other mode
-    /// gets a single ⌘Q that really quits.
-    nonisolated static func appMenuQuitItems(
-        isTestHost: Bool, keepInMenuBar: Bool
-    ) -> [AppMenuQuitItem] {
-        if !isTestHost && keepInMenuBar {
-            return [
-                AppMenuQuitItem(
-                    title: "Close All Windows", keyEquivalent: "q",
-                    usesOptionModifier: false, action: .terminateThroughGate),
-                AppMenuQuitItem(
-                    title: "Quit Kernova", keyEquivalent: "q",
-                    usesOptionModifier: true, action: .quitCompletely),
-            ]
-        }
-        return [
-            AppMenuQuitItem(
-                title: "Quit Kernova", keyEquivalent: "q",
-                usesOptionModifier: false, action: .terminateThroughGate)
-        ]
-    }
-
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
-    private static let guestAgentDiskPath: String? = {
-        guard
-            let path = Bundle.main.url(forResource: "KernovaMacOSAgent", withExtension: "dmg")?.path(
-                percentEncoded: false)
-        else {
-            logger.warning("Guest agent disk image not found in app bundle — 'Install Guest Agent' will be unavailable")
-            return nil
-        }
-        return path
-    }()
 
     /// Returns the VM that menu actions should target: the display or clipboard
     /// window's VM if its window is key, otherwise the sidebar-selected VM.
@@ -318,18 +238,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         self.windows = AppWindowRegistry(
             viewModel: viewModel,
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
-
-        let clipboardItem = NSMenuItem(
-            title: "Clipboard",
-            action: #selector(showClipboard(_:)),
-            keyEquivalent: "v"
-        )
-        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
-        self.clipboardMenuItem = clipboardItem
+        self.mainMenu = MainMenuController(
+            viewModel: viewModel, preferences: preferences, isTestHost: isTestHost)
 
         super.init()
 
         windows.host = self
+        mainMenu.host = self
         windows.displayPlacement.host = self
         viewModel.onSurfaceLibrary = { [weak self] in
             guard let self, !self.isTestHost else { return }
@@ -395,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        setupMainMenu()
+        mainMenu.install()
 
         // Reclaim orphaned clipboard staging files from a previous run or crash —
         // every label family under the shared parent (`host`, per-VM `host-<vm>`
@@ -1740,8 +1655,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func toggleGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        // Same single source of truth as `validateMenuItem`, so the action can
-        // never disagree with the title the user clicked.
+        // Same single source of truth as `MainMenuController.validate`, so the
+        // action can never disagree with the title the user clicked.
         let model = GuestAgentDiskMenuItem.model(
             status: instance.agentStatus,
             isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
@@ -1868,383 +1783,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Menu Validation
 
-    /// The capability a menu selector performs, or `nil` for an app-level
-    /// command no VM's state gates.
-    ///
-    /// Selectors are AppKit's vocabulary, so the mapping lives here rather than
-    /// in the headless catalog.
-    private static func capability(for action: Selector?) -> VMCapability? {
-        switch action {
-        case #selector(startVM(_:)): .start
-        case #selector(startVMInRecovery(_:)): .startInRecovery
-        case #selector(pauseVM(_:)): .pause
-        case #selector(resumeVM(_:)): .resume
-        // Cold-paused VMs have no live VM to stop — `stopVM(_:)` routes them to
-        // the discard-saved-state confirmation instead, so the menu bar's one
-        // stop item covers both capabilities and is validated against both.
-        case #selector(stopVM(_:)): .stop
-        // Cold-paused is excluded: the retitled stop item ("Discard Saved
-        // State…") is the one surface for that action, and two enabled items
-        // must not alias one action under two names.
-        case #selector(forceStopVM(_:)): .forceStop
-        case #selector(saveVM(_:)): .suspend
-        case #selector(takeSnapshot(_:)): .takeSnapshot
-        case #selector(renameVM(_:)): .rename
-        // Same gate for the primary and its ⌥-alternate, in both pairs.
-        case #selector(cloneVM(_:)), #selector(cloneVMAlternate(_:)): .clone
-        case #selector(deleteVM(_:)), #selector(deleteImmediatelyVM(_:)): .delete
-        case #selector(showVMInFinder(_:)): .showInFinder
-        // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
-        // menuNeedsUpdate(_:) handles the Clipboard item's visual state. This
-        // entry covers its keyboard shortcut, which still routes through
-        // validateMenuItem(_:).
-        case #selector(showClipboard(_:)): .showClipboard
-        case #selector(toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
-        case #selector(togglePopOut(_:)): .togglePopOut
-        case #selector(toggleFullscreen(_:)): .toggleFullscreen
-        case #selector(toggleSettingsPane(_:)): .toggleSettingsPane
-        default: nil
-        }
-    }
-
+    /// AppKit asks a menu item's *target*, and a nil-target item resolves to
+    /// this delegate — so the answer is forwarded to the menu's own owner.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        // App-level commands — New, Show Library, Open VMs Folder, Quit
-        // Completely — are never gated on the selected VM's state, or a
-        // preparing import would disable the GUI's only full-quit affordance.
-        guard let capability = Self.capability(for: menuItem.action) else { return true }
-
-        // The two titles that do not depend on a VM, applied before the
-        // selection guard so neither strands the last selection's wording: the
-        // guest-agent item's title is part of what it reports (see
-        // `unavailableTitle`), and the clone alternate's names a preference.
-        switch menuItem.action {
-        case #selector(toggleGuestAgentDisk(_:)):
-            menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
-        case #selector(cloneVMAlternate(_:)):
-            menuItem.title = preferences.cloneAlternateMenuTitle
-        default:
-            break
-        }
-
-        guard let instance = target(of: menuItem) else { return false }
-        let isAvailable = viewModel.capabilities.isAvailable(capability, on: instance)
-
-        switch menuItem.action {
-        case #selector(startVM(_:)):
-            // Install-flavored title for pending-install VMs.
-            menuItem.title = instance.startAction.label
-        case #selector(stopVM(_:)):
-            // The title names what this VM's stop does, which is what its own
-            // state admits; enablement is the availability read beside it.
-            let discardsSavedState = viewModel.capabilities.isApplicable(
-                .discardSavedState, to: instance)
-            menuItem.title = VMInstance.stopActionMenuTitle(
-                discardingSavedState: discardsSavedState)
-            return isAvailable
-                || viewModel.capabilities.isAvailable(.discardSavedState, on: instance)
-        case #selector(toggleGuestAgentDisk(_:)):
-            // Layered over the capability: a bundled DMG for the VM to hold, and
-            // the mount/eject model that decides both title and enablement. The
-            // unavailable title set above stands unless both hold.
-            guard isAvailable, Self.guestAgentDiskPath != nil else { return false }
-            let model = GuestAgentDiskMenuItem.model(
-                status: instance.agentStatus,
-                isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
-            menuItem.title = model.title
-            return model.isEnabled
-        case #selector(togglePopOut(_:)):
-            // `isDisplayDetached` (not window existence): a hidden (headless)
-            // display has no window but still pops back *in*.
-            menuItem.title = instance.isDisplayDetached ? "Pop In Display" : "Pop Out Display"
-        case #selector(toggleFullscreen(_:)):
-            menuItem.title =
-                instance.isInFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display"
-        default:
-            break
-        }
-        return isAvailable
-    }
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        if menu === NSApp.windowsMenu {
-            clipboardMenuItem.isEnabled =
-                activeInstance.map { viewModel.capabilities.isAvailable(.showClipboard, on: $0) }
-                ?? false
-        } else if menu === appMenu {
-            // Re-derive the quit section so a Settings toggle flip is reflected on
-            // the next open.
-            rebuildAppMenuQuitItems()
-        } else if menu === revertSnapshotMenu {
-            rebuildRevertSnapshotMenu(menu)
-        } else if menu === virtualMachineMenu, let revertSnapshotMenu {
-            rebuildRevertSnapshotMenu(revertSnapshotMenu)
-        }
-    }
-
-    /// Rebuilds the revert submenu from the selected VM's snapshots.
-    ///
-    /// The unchanged-model guard is load-bearing for the same reason it is in
-    /// ``rebuildAppMenuQuitItems()``: this also runs while AppKit matches key
-    /// equivalents, and tearing items down mid-match is what must not happen.
-    private func rebuildRevertSnapshotMenu(_ menu: NSMenu) {
-        let instance = activeInstance
-        let model = RevertSnapshotMenuModel(
-            instanceID: instance?.id,
-            snapshots: instance?.snapshotManifest.ordered ?? [],
-            isEnabled: instance.map {
-                viewModel.capabilities.isAvailable(.revertToSnapshot, on: $0)
-            } ?? false)
-        guard model != revertSnapshotMenuModel else { return }
-        revertSnapshotMenuModel = model
-        SnapshotRevertMenu.rebuild(
-            menu, for: instance, isEnabled: model.isEnabled, target: self,
-            action: #selector(revertToSnapshot(_:)))
-    }
-
-    /// Rebuilds the app menu's quit section from `appMenuQuitItems` for the
-    /// current mode, removing exactly the items a prior rebuild added.
-    ///
-    /// The unchanged-model guard is load-bearing, not an optimization: AppKit also
-    /// calls `menuNeedsUpdate(_:)` while *matching key equivalents*, so this runs
-    /// on every ⌘-keystroke — and tearing the items down mid-match is exactly the
-    /// mutation that must not happen.
-    private func rebuildAppMenuQuitItems() {
-        guard let appMenu else { return }
-        let model = Self.appMenuQuitItems(
-            isTestHost: isTestHost, keepInMenuBar: viewModel.keepInMenuBarOnQuit)
-        guard model != appMenuQuitModel else { return }
-        appMenuQuitModel = model
-
-        for item in appMenuQuitItemViews { appMenu.removeItem(item) }
-        appMenuQuitItemViews = model.map { model in
-            let item: NSMenuItem
-            switch model.action {
-            case .terminateThroughGate:
-                // nil target → the responder chain resolves it to NSApp, funneling
-                // through `applicationShouldTerminate`'s gate.
-                item = NSMenuItem(
-                    title: model.title,
-                    action: #selector(NSApplication.terminate(_:)),
-                    keyEquivalent: model.keyEquivalent)
-            case .quitCompletely:
-                item = NSMenuItem(
-                    title: model.title,
-                    action: #selector(quitCompletely(_:)),
-                    keyEquivalent: model.keyEquivalent)
-                item.target = self
-            }
-            item.keyEquivalentModifierMask =
-                model.usesOptionModifier ? [.command, .option] : [.command]
-            return item
-        }
-        for item in appMenuQuitItemViews { appMenu.addItem(item) }
-    }
-
-    // MARK: - Main Menu
-
-    private func setupMainMenu() {
-        let mainMenu = NSMenu()
-
-        // Application menu
-        let appMenuItem = NSMenuItem()
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Kernova", action: #selector(showAboutPanel(_:)), keyEquivalent: "")
-        appMenu.addItem(.separator())
-        let settingsItem = appMenu.addItem(
-            withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
-        settingsItem.keyEquivalentModifierMask = [.command]
-        appMenu.addItem(.separator())
-        let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
-        let servicesMenu = NSMenu(title: "Services")
-        servicesItem.submenu = servicesMenu
-        NSApp.servicesMenu = servicesMenu
-        appMenu.addItem(servicesItem)
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Kernova", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthersItem = appMenu.addItem(
-            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
-        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(
-            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
-        appMenu.addItem(.separator())
-        // The quit section is built dynamically per mode; `menuNeedsUpdate`
-        // rebuilds it, so build it once now for the first open.
-        self.appMenu = appMenu
-        appMenu.delegate = self
-        rebuildAppMenuQuitItems()
-        appMenuItem.submenu = appMenu
-        mainMenu.addItem(appMenuItem)
-
-        // File menu
-        let fileMenuItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(withTitle: "New Virtual Machine…", action: #selector(newVM(_:)), keyEquivalent: "n")
-        fileMenu.addItem(.separator())
-        // "Open … Folder" (a Finder window of the contents), not "Show in Finder",
-        // which reveals an item selected in its parent — and "VMs Folder", not
-        // "Library", which the Window menu already uses for the main window.
-        fileMenu.addItem(withTitle: "Open VMs Folder", action: #selector(openVMsFolder(_:)), keyEquivalent: "")
-        fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        fileMenuItem.submenu = fileMenu
-        mainMenu.addItem(fileMenuItem)
-
-        // Edit menu
-        let editMenuItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
-        editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
-
-        // View menu
-        // Nil-target standard `NSWindow` actions resolve against the key window's
-        // responder chain, so AppKit retitles and disables these items itself.
-        let viewMenuItem = NSMenuItem()
-        let viewMenu = NSMenu(title: "View")
-        let toggleToolbarItem = viewMenu.addItem(
-            withTitle: "Show Toolbar",
-            action: #selector(NSWindow.toggleToolbarShown(_:)),
-            keyEquivalent: "t"
-        )
-        toggleToolbarItem.keyEquivalentModifierMask = [.command, .option]
-        viewMenu.addItem(
-            withTitle: "Customize Toolbar…",
-            action: #selector(NSWindow.runToolbarCustomizationPalette(_:)),
-            keyEquivalent: ""
-        )
-        viewMenuItem.submenu = viewMenu
-        mainMenu.addItem(viewMenuItem)
-
-        // Virtual Machine menu
-        let vmMenuItem = NSMenuItem()
-        let vmMenu = NSMenu(title: "Virtual Machine")
-        vmMenu.addItem(withTitle: "Start", action: #selector(startVM(_:)), keyEquivalent: "r")
-        // The ⌥⌘R shortcut is shared with "Resume" — unambiguous because a VM is
-        // never both stopped and paused, and recovery precedes Resume in menu order.
-        let recoveryItem = vmMenu.addItem(
-            withTitle: "Start in Recovery Mode", action: #selector(startVMInRecovery(_:)), keyEquivalent: "r")
-        recoveryItem.keyEquivalentModifierMask = [.command, .option]
-        let pauseItem = vmMenu.addItem(withTitle: "Pause", action: #selector(pauseVM(_:)), keyEquivalent: "p")
-        pauseItem.keyEquivalentModifierMask = [.command, .option]
-        let resumeItem = vmMenu.addItem(withTitle: "Resume", action: #selector(resumeVM(_:)), keyEquivalent: "r")
-        resumeItem.keyEquivalentModifierMask = [.command, .option]
-        vmMenu.addItem(withTitle: "Stop", action: #selector(stopVM(_:)), keyEquivalent: "")
-        vmMenu.addItem(withTitle: "Force Stop…", action: #selector(forceStopVM(_:)), keyEquivalent: "")
-        vmMenu.addItem(.separator())
-        let saveItem = vmMenu.addItem(withTitle: "Suspend", action: #selector(saveVM(_:)), keyEquivalent: "s")
-        saveItem.keyEquivalentModifierMask = [.command, .option]
-        // "Take Snapshot…" gathers input (the sheet's name and notes), so the
-        // ellipsis is HIG-correct here.
-        let takeSnapshotItem = vmMenu.addItem(
-            withTitle: "Take Snapshot\u{2026}", action: #selector(takeSnapshot(_:)),
-            keyEquivalent: "s")
-        takeSnapshotItem.keyEquivalentModifierMask = [.command, .shift]
-        let revertItem = NSMenuItem(title: SnapshotRevertMenu.title, action: nil, keyEquivalent: "")
-        let revertMenu = NSMenu(title: SnapshotRevertMenu.title)
-        // Rebuilt from the selected VM's manifest whenever this submenu or the
-        // menu holding it opens — the latter because AppKit decides the parent
-        // item's enablement from the submenu's contents, before the submenu
-        // itself is ever asked to update.
-        revertMenu.delegate = self
-        revertItem.submenu = revertMenu
-        revertSnapshotMenu = revertMenu
-        // Seeded so the parent item is never a live entry onto an empty submenu.
-        rebuildRevertSnapshotMenu(revertMenu)
-        vmMenu.addItem(revertItem)
-        vmMenu.delegate = self
-        virtualMachineMenu = vmMenu
-        vmMenu.addItem(.separator())
-        let popOutItem = vmMenu.addItem(
-            withTitle: "Pop Out Display",
-            action: #selector(togglePopOut(_:)),
-            keyEquivalent: "o"
-        )
-        popOutItem.keyEquivalentModifierMask = [.command, .shift]
-        let fullscreenItem = vmMenu.addItem(
-            withTitle: "Fullscreen Display",
-            action: #selector(toggleFullscreen(_:)),
-            keyEquivalent: "f"
-        )
-        fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
-        vmMenu.addItem(.separator())
-        // No ellipsis on "Rename": it starts an inline edit on the sidebar row (like
-        // Finder's single-item Rename), not a dialog.
-        vmMenu.addItem(withTitle: "Rename", action: #selector(renameVM(_:)), keyEquivalent: "")
-        vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
-        // Clones with the opposite machine-identity behavior to the setting.
-        // Always visible, like Start in Recovery Mode: this menu shows advanced
-        // actions plainly, reserving ⌥-alternates for irreversible ones.
-        // `validateMenuItem(_:)` re-reads the title on every menu open, so a
-        // setting change while the menu exists is picked up. The ⌥⌘D key
-        // equivalent is eclipsed by the system's Dock-hiding hotkey; the item
-        // fires from the pointer.
-        let cloneAlternateItem = vmMenu.addItem(
-            withTitle: preferences.cloneAlternateMenuTitle, action: #selector(cloneVMAlternate(_:)),
-            keyEquivalent: "d")
-        cloneAlternateItem.keyEquivalentModifierMask = [.command, .option]
-        vmMenu.addItem(withTitle: "Show in Finder", action: #selector(showVMInFinder(_:)), keyEquivalent: "")
-        vmMenu.addItem(.separator())
-        // "Move to Trash…" gathers input (the delete sheet lets the user pick which
-        // external files to remove too), so the ellipsis is HIG-correct here.
-        let deleteItem = vmMenu.addItem(
-            withTitle: "Move to Trash…", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
-        deleteItem.keyEquivalentModifierMask = [.command]
-        // ⌥-alternate, Finder's idiom for this pair: it is irreversible, so it stays
-        // tucked behind Option rather than one slip from the pointer.
-        let deleteImmediatelyItem = vmMenu.addItem(
-            withTitle: "Delete Immediately…", action: #selector(deleteImmediatelyVM(_:)), keyEquivalent: "\u{08}")
-        deleteImmediatelyItem.keyEquivalentModifierMask = [.command, .option]
-        deleteImmediatelyItem.isAlternate = true
-        vmMenu.addItem(.separator())
-        // Title is a placeholder — `validateMenuItem(_:)` retitles per agent status
-        // and attach state on every menu open.
-        vmMenu.addItem(
-            NSMenuItem(
-                title: GuestAgentDiskMenuItem.unavailableTitle,
-                action: #selector(toggleGuestAgentDisk(_:)),
-                keyEquivalent: ""
-            ))
-        vmMenuItem.submenu = vmMenu
-        mainMenu.addItem(vmMenuItem)
-
-        // Window menu
-        let windowMenuItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Window")
-        let showLibraryItem = NSMenuItem(
-            title: "Show Library",
-            action: #selector(showLibrary(_:)),
-            keyEquivalent: "0"
-        )
-        windowMenu.addItem(showLibraryItem)
-        windowMenu.addItem(.separator())
-        windowMenu.addItem(clipboardMenuItem)
-        windowMenu.addItem(.separator())
-        windowMenu.addItem(
-            withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(.separator())
-        windowMenu.addItem(
-            withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        windowMenuItem.submenu = windowMenu
-        NSApp.windowsMenu = windowMenu
-        windowMenu.delegate = self
-        mainMenu.addItem(windowMenuItem)
-
-        // Help menu
-        let helpMenuItem = NSMenuItem()
-        let helpMenu = NSMenu(title: "Help")
-        helpMenu.addItem(withTitle: "Kernova Help", action: #selector(NSApplication.showHelp(_:)), keyEquivalent: "?")
-        helpMenuItem.submenu = helpMenu
-        NSApp.helpMenu = helpMenu
-        mainMenu.addItem(helpMenuItem)
-
-        NSApp.mainMenu = mainMenu
+        mainMenu.validate(menuItem)
     }
 }
 
@@ -2267,6 +1809,12 @@ extension AppDelegate: VMDisplayPlacementHosting {
 // MARK: - AppWindowRegistryHosting
 
 extension AppDelegate: AppWindowRegistryHosting {}
+
+// MARK: - MainMenuHosting
+
+extension AppDelegate: MainMenuHosting {
+    func menuCommandTarget(of sender: Any?) -> VMInstance? { target(of: sender) }
+}
 
 // MARK: - DisplayBootGeometryProviding
 

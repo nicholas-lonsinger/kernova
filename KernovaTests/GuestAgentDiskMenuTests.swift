@@ -4,7 +4,7 @@ import Testing
 @testable import Kernova
 
 /// Unit tests for `GuestAgentDiskMenuItem.model(status:isInstallerMounted:)` —
-/// the single source of truth shared by `AppDelegate.validateMenuItem` and
+/// the single source of truth shared by `MainMenuController.validate` and
 /// `toggleGuestAgentDisk`, so the menu title can never disagree with the action.
 @Suite("GuestAgentDiskMenuItem.model", .admissionGated)
 struct GuestAgentDiskMenuTests {
@@ -83,7 +83,7 @@ struct GuestAgentDiskMenuTests {
 }
 
 /// Unit tests for `VMInstance.canManageGuestAgentDisk` — the hard gate
-/// `AppDelegate.validateMenuItem` applies before consulting the model above.
+/// `MainMenuController.validate` applies before consulting the model above.
 @Suite("VMInstance.canManageGuestAgentDisk", .admissionGated)
 @MainActor
 struct GuestAgentDiskEligibilityTests {
