@@ -87,6 +87,70 @@ struct MainMenuRebuildTests {
         #expect(!appMenu.items.contains { item in before.contains { $0 === item } })
     }
 
+    @Test("A foreign item in the quit section does not survive a rebuild")
+    func foreignQuitSectionItemDoesNotSurviveARebuild() throws {
+        let fixture = makeFixture(instance: nil)
+        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
+        // Stands in for the alternate AppKit injects beside a `terminate:` item:
+        // the rebuild never created it, so only a positional sweep clears it.
+        let intruder = NSMenuItem(
+            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        intruder.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(intruder)
+        // Ahead of the section start, so the sweep's lower bound is asserted and
+        // not just its effect.
+        let bystander = NSMenuItem(title: "Bystander", action: nil, keyEquivalent: "")
+        appMenu.insertItem(bystander, at: 0)
+
+        fixture.viewModel.keepInMenuBarOnQuit = true
+        fixture.controller.menuNeedsUpdate(appMenu)
+
+        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        #expect(!appMenu.items.contains { $0 === intruder })
+        #expect(appMenu.items.first === bystander)
+        #expect(quitItems(in: appMenu, count: model.count).map(\.title) == model.map(\.title))
+    }
+
+    @Test("Only the full-quit item claims ⌥⌘Q after a toggle")
+    func optionCommandQIsOwnedByTheFullQuit() throws {
+        let fixture = makeFixture(instance: nil)
+        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
+        let intruder = NSMenuItem(
+            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        intruder.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(intruder)
+
+        fixture.viewModel.keepInMenuBarOnQuit = true
+        fixture.controller.menuNeedsUpdate(appMenu)
+
+        let claimants = appMenu.items.filter {
+            $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
+        }
+        #expect(claimants.count == 1)
+        #expect(claimants.first?.action == #selector(AppDelegate.quitCompletely(_:)))
+    }
+
+    @Test("A toggled menu matches one freshly built in the same mode")
+    func toggledMenuMatchesAFreshlyBuiltOne() throws {
+        let fixture = makeFixture(instance: nil)
+        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
+        let intruder = NSMenuItem(
+            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        intruder.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(intruder)
+
+        fixture.viewModel.keepInMenuBarOnQuit = true
+        fixture.controller.menuNeedsUpdate(appMenu)
+
+        let fresh = makeFixture(instance: nil, keepInMenuBar: true)
+        let freshAppMenu = try #require(fresh.mainMenu.items.first?.submenu)
+        #expect(appMenu.items.count == freshAppMenu.items.count)
+        #expect(appMenu.items.map(\.title) == freshAppMenu.items.map(\.title))
+    }
+
     // MARK: - Revert submenu
 
     @Test("An update with the same snapshots keeps the same items")

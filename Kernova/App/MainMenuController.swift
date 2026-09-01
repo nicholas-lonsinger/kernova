@@ -1,4 +1,5 @@
 import Cocoa
+import os
 
 /// The application-level seam a ``MainMenuController`` needs but cannot own:
 /// which VM a command acts on, and the object its explicitly-targeted items fire
@@ -20,6 +21,8 @@ protocol MainMenuHosting: AnyObject {
 /// not part of. It reaches the app through ``MainMenuHosting``.
 @MainActor
 final class MainMenuController: NSObject, NSMenuDelegate {
+    private static let logger = Logger(subsystem: "app.kernova", category: "MainMenu")
+
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, read for the clone alternate's title.
     private let preferences: AppPreferences
@@ -35,11 +38,14 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     /// The application menu, retained so its quit section can be rebuilt when it opens.
     private var appMenu: NSMenu?
-    /// The quit-section items currently installed in `appMenu`, tracked so a
-    /// rebuild removes exactly what it added.
-    private var appMenuQuitItemViews: [NSMenuItem] = []
-    /// The model `appMenuQuitItemViews` was last built from, so a rebuild that
-    /// would produce identical items is skipped.
+    /// The separator opening the app menu's quit section, retained so the
+    /// rebuild owns every item after it — including the alternate AppKit adds
+    /// beside a `terminate:` item titled "Quit …". The quit section is the app
+    /// menu's tail by macOS convention, so everything past this separator is the
+    /// whole section.
+    private var appMenuQuitSectionStart: NSMenuItem?
+    /// The model the quit section was last built from, so a rebuild that would
+    /// produce identical items is skipped.
     private var appMenuQuitModel: [AppMenuQuitItem] = []
 
     /// The Virtual Machine menu, retained so its opening can refresh the revert
@@ -171,23 +177,35 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     }
 
     /// Rebuilds the app menu's quit section from `appMenuQuitItems` for the
-    /// current mode, removing exactly the items a prior rebuild added.
+    /// current mode, clearing whatever occupies the section first so the result
+    /// is the model and nothing else.
     ///
     /// The unchanged-model guard is load-bearing, not an optimization: AppKit also
     /// calls `menuNeedsUpdate(_:)` while *matching key equivalents*, so this runs
     /// on every ⌘-keystroke — and tearing the items down mid-match is exactly the
     /// mutation that must not happen.
     private func rebuildAppMenuQuitItems() {
-        guard let appMenu else { return }
+        guard let appMenu, let sectionStart = appMenuQuitSectionStart else { return }
         // The preference is read live here, not captured, so a Settings flip is
         // reflected on the next open.
         let model = Self.appMenuQuitItems(
             downgradesQuitToGUIClose: hasSoftQuit && viewModel.keepInMenuBarOnQuit)
         guard model != appMenuQuitModel else { return }
-        appMenuQuitModel = model
 
-        for item in appMenuQuitItemViews { appMenu.removeItem(item) }
-        appMenuQuitItemViews = model.map { model in
+        let sectionStartIndex = appMenu.index(of: sectionStart)
+        guard sectionStartIndex >= 0 else {
+            Self.logger.fault("App menu quit-section separator is not in the app menu")
+            assertionFailure("App menu quit-section separator is not in the app menu")
+            return
+        }
+        // Recorded only once the rebuild is committed to running, so the cache
+        // names what is installed and a bailed-out rebuild is retried.
+        appMenuQuitModel = model
+        while appMenu.numberOfItems > sectionStartIndex + 1 {
+            appMenu.removeItem(at: appMenu.numberOfItems - 1)
+        }
+
+        let items = model.map { model in
             let item: NSMenuItem
             switch model.action {
             case .terminateThroughGate:
@@ -208,7 +226,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
                 model.usesOptionModifier ? [.command, .option] : [.command]
             return item
         }
-        for item in appMenuQuitItemViews { appMenu.addItem(item) }
+        for item in items { appMenu.addItem(item) }
     }
 
     // MARK: - Menu Validation
@@ -354,9 +372,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         hideOthersItem.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(
             withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
-        appMenu.addItem(.separator())
+        let quitSectionStart = NSMenuItem.separator()
+        appMenu.addItem(quitSectionStart)
         // The quit section is built dynamically per mode; `menuNeedsUpdate`
         // rebuilds it, so build it once now for the first open.
+        self.appMenuQuitSectionStart = quitSectionStart
         self.appMenu = appMenu
         appMenu.delegate = self
         rebuildAppMenuQuitItems()
