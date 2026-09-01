@@ -18,9 +18,13 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 
 ### App Layer
 
-- `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator` and
-  `AppWindowRegistry`, owns the application menu, and decides the activation policy, the quit gate
+- `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator`,
+  `AppWindowRegistry` and `MainMenuController`, and decides the activation policy, the quit gate
   and idle termination.
+- `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
+  menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
+  to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches
+  them nil-target down the responder chain.
 - `AppWindowRegistry` — the one owner of which user-facing windows exist and whether any is on
   screen: the library window, the Settings window, the per-VM clipboard windows, and the
   `VMDisplayPlacementController` it holds. It reaches the app through `AppWindowRegistryHosting`,
@@ -368,6 +372,7 @@ AppDelegate
     │                 ├── MacOSInstallService
     │                 ├── IPSWService
     │                 └── USBDeviceService
+    ├── creates → MainMenuController
     └── creates → AppWindowRegistry
                       ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
                       ├── manages → ClipboardWindowController (per VM), SettingsWindowController

@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Models only the status→item mapping: the hard gates that disable the item
 /// regardless of status (no live VM for USB hot-plug, missing bundled DMG) stay
-/// in `AppDelegate.validateMenuItem`.
+/// in `MainMenuController.validate`.
 enum GuestAgentDiskMenuItem {
     /// What clicking the item does in its current mode.
     enum Action: Equatable {
