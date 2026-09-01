@@ -763,6 +763,7 @@ struct VMInstanceTests {
         let coordinator = attachNetworkCoordinator(
             to: instance, device: device, linkObserver: observer)
         coordinator.activate()
+        #expect(observer.isObserving)
         #expect(instance.networkAttachmentPending)
         let context = try #require(instance.sessionContext)
 

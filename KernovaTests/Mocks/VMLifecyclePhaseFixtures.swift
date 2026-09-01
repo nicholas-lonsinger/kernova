@@ -5,7 +5,7 @@ import Foundation
 /// `VMLifecyclePhase` cannot be `CaseIterable` itself because of those, so
 /// this is what lets ``VMLifecyclePhaseFixtures/all`` be checked against
 /// `allCases` rather than trusted by inspection.
-enum VMLifecyclePhaseKind: CaseIterable {
+enum VMLifecyclePhaseKind: CaseIterable, Hashable {
     case stopped
     case initialBoot
     case failed
@@ -48,12 +48,15 @@ extension VMLifecyclePhase {
 
 /// Every `VMLifecyclePhase` case, shared by the suites that sweep all of
 /// them — the sessionless and session-bearing variants of the three phases
-/// that admit either, `starting`, `installing` and `restoringSavedState`.
+/// that admit either, `starting`, `installing` and `restoringSavedState`,
+/// each appearing twice.
 ///
-/// A test asserting `Set(all.map(\.kind)) == Set(VMLifecyclePhaseKind.allCases)`
-/// is what keeps this list complete: the kind switch above cannot be
-/// answered without a case, and this constant cannot claim completeness
-/// without listing it.
+/// `VMLifecyclePhaseTests.fixtureListIsComplete` is what keeps this list
+/// complete: it checks each kind's count, not just its presence, since a
+/// plain `Set(all.map(\.kind)) == Set(VMLifecyclePhaseKind.allCases)` would
+/// stay true with one of a nil/session pair missing. The kind switch above
+/// cannot be answered without a case, and the count check cannot pass
+/// without this constant listing that case the right number of times.
 enum VMLifecyclePhaseFixtures {
     /// A stand-in session identity: a live phase names the `VZVirtualMachine`
     /// it describes, and no CI test host can create one.

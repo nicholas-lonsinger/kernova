@@ -164,7 +164,9 @@ struct VMCapabilityCatalogTests {
     @Test("A bundle still being copied offers only its reads, its cancel, and Show in Finder")
     func preparingLeavesOnlyTheReadsAndItsCancel() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()),
+            snapshots: [VMSnapshot(name: "Clean install")])
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
@@ -174,6 +176,9 @@ struct VMCapabilityCatalogTests {
 
         #expect(
             available == [.info, .ipAddress, .snapshots, .cancelPreparing, .showInFinder])
+        // A snapshot exists and the phase is settled, so only `isPreparing`
+        // keeps Revert to Snapshot from applying to a bundle still copying.
+        #expect(!harness.catalog.isApplicable(.revertToSnapshot, to: instance))
     }
 
     @Test("Clone stays available while a different VM is being copied")
@@ -199,9 +204,12 @@ struct VMCapabilityCatalogTests {
         let suspending = SuspendingMockVirtualizationService()
         suspending.shouldSuspendOnResume = true
         let harness = makeHarness(virtualization: suspending)
-        let instance = makeInstance(in: harness, phase: .livePaused(sessionID: UUID()))
+        let instance = makeInstance(
+            in: harness, phase: .livePaused(sessionID: UUID()),
+            snapshots: [VMSnapshot(name: "Clean install")])
 
         #expect(harness.catalog.isAvailable(.takeSnapshot, on: instance))
+        #expect(harness.catalog.isAvailable(.revertToSnapshot, on: instance))
 
         let resume = Task { @MainActor in try await harness.lifecycle.resume(instance) }
         await suspending.waitUntilSuspended()
