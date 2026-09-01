@@ -78,24 +78,19 @@ enum VMLifecyclePhase: Sendable, Equatable {
     }
 
     /// This phase with `sessionID` filled in — how a bring-up promotes the
-    /// sessionless phase it started under once the `VZVirtualMachine` exists.
+    /// sessionless phase it started under once the `VZVirtualMachine` exists —
+    /// or `nil` for a phase that names no session, which is a bring-up that
+    /// skipped its in-flight phase.
     ///
-    /// Only the three phases a session is created during can be promoted;
-    /// anything else is a bring-up that skipped its in-flight phase.
-    func naming(_ sessionID: UUID) -> VMLifecyclePhase {
+    /// Exhaustive rather than `default`, so a new phase has to choose a side.
+    func naming(_ sessionID: UUID) -> VMLifecyclePhase? {
         switch self {
         case .starting: .starting(sessionID: sessionID)
         case .installing: .installing(sessionID: sessionID)
         case .restoringSavedState: .restoringSavedState(sessionID: sessionID)
-        default: self
-        }
-    }
-
-    /// Whether ``naming(_:)`` can carry a session identity into this phase.
-    var admitsSessionIdentity: Bool {
-        switch self {
-        case .starting, .installing, .restoringSavedState: true
-        default: false
+        case .stopped, .initialBoot, .failed, .running, .livePaused, .saving,
+            .capturingLive, .suspended, .capturingAtRest, .revertingToSnapshot:
+            nil
         }
     }
 
@@ -231,12 +226,10 @@ enum VMLifecyclePhase: Sendable, Equatable {
     /// Whether the guest's memory can be written to the bundle's suspend slot.
     var canSave: Bool { hasLiveSession }
 
-    var canEditSettings: Bool {
-        switch self {
-        case .stopped, .failed, .initialBoot: true
-        default: false
-        }
-    }
+    /// Whether the VM's configuration can be edited — the same at-rest set
+    /// ``canStart`` admits, since a live or suspended VM's hardware is pinned
+    /// by the `VZVirtualMachine` or the saved state it will resume into.
+    var canEditSettings: Bool { canStart }
 
     var canRename: Bool { !isTransitioning }
 

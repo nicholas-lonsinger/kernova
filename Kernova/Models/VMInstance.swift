@@ -830,7 +830,7 @@ final class VMInstance {
             assertionFailure("attachSession without beginSessionContext for '\(name)'")
             return nil
         }
-        guard phase.admitsSessionIdentity else {
+        guard let promoted = phase.naming(session.id) else {
             Self.logger.fault(
                 "Session attached to '\(self.name, privacy: .public)' while at \(self.status.rawValue, privacy: .public), which names no session"
             )
@@ -838,7 +838,7 @@ final class VMInstance {
             return nil
         }
         sessionContext.session = session
-        phase = phase.naming(session.id)
+        phase = promoted
         await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
         return session
     }
