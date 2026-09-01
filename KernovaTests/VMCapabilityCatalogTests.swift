@@ -49,32 +49,11 @@ struct VMCapabilityCatalogTests {
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String = "Catalog VM", phase: VMLifecyclePhase = .stopped,
-        guestOS: VMGuestOS = .linux
+        guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = []
     ) -> VMInstance {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-        config.networkEnabled = false
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
-        harness.storage.bundles[bundleURL] = config
-        harness.library.instances.append(instance)
-        return instance
-    }
-
-    /// Every phase, each with the session identity its own case admits.
-    private static var everyPhase: [VMLifecyclePhase] {
-        let id = UUID()
-        return [
-            .stopped, .initialBoot, .failed(message: "Boot failed."), .suspended,
-            .capturingAtRest, .revertingToSnapshot,
-            .starting(sessionID: nil), .installing(sessionID: nil),
-            .restoringSavedState(sessionID: nil),
-            .starting(sessionID: id), .installing(sessionID: id), .running(sessionID: id),
-            .livePaused(sessionID: id), .saving(sessionID: id), .capturingLive(sessionID: id),
-            .restoringSavedState(sessionID: id),
-        ]
+        RegisteredVMInstanceFixture.register(
+            name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
+            library: harness.library, storage: harness.storage, preferences: preferences)
     }
 
     /// Applicable in every state, so each case below names only what its state
@@ -88,7 +67,7 @@ struct VMCapabilityCatalogTests {
 
     @Test("Each phase admits exactly the capabilities its own predicates allow")
     func applicabilityByPhase() {
-        let id = UUID()
+        let id = VMLifecyclePhaseFixtures.session
         let display: Set<VMCapability> = [.open, .toggleSettingsPane]
         let cases: [(label: String, phase: VMLifecyclePhase, added: Set<VMCapability>)] = [
             ("stopped", .stopped, [.start, .takeSnapshot, .clone, .rename, .delete]),
@@ -137,19 +116,46 @@ struct VMCapabilityCatalogTests {
 
             #expect(applicable == Self.universal.union(testCase.added), "\(testCase.label)")
         }
+
+        // `VMLifecyclePhase` is `Equatable` but not `Hashable`, so completeness
+        // is containment plus a count check rather than a `Set` comparison —
+        // containment alone would still pass if a phase were dropped from the
+        // fixture list, since a shorter list asks fewer questions.
+        #expect(cases.count == VMLifecyclePhaseFixtures.all.count)
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(cases.contains { $0.phase == phase }, "\(phase)")
+        }
     }
 
     @Test("Nothing is available that is not applicable")
     func availabilityImpliesApplicability() {
-        for phase in Self.everyPhase {
-            let harness = makeHarness()
-            let instance = makeInstance(in: harness, phase: phase)
-            for capability in VMCapability.allCases
-            where harness.catalog.isAvailable(capability, on: instance) {
-                #expect(
-                    harness.catalog.isApplicable(capability, to: instance),
-                    "\(capability) on \(phase)")
+        for phase in VMLifecyclePhaseFixtures.all {
+            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
+                let harness = makeHarness()
+                let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
+                for capability in VMCapability.allCases
+                where harness.catalog.isAvailable(capability, on: instance) {
+                    #expect(
+                        harness.catalog.isApplicable(capability, to: instance),
+                        "\(capability) on \(phase), snapshots: \(snapshots.count)")
+                }
             }
+        }
+    }
+
+    @Test("A revert is applicable exactly when a snapshot exists to revert to and the VM is settled")
+    func revertToSnapshotApplicability() {
+        for phase in VMLifecyclePhaseFixtures.all {
+            let stockedHarness = makeHarness()
+            let stocked = makeInstance(
+                in: stockedHarness, phase: phase, snapshots: [VMSnapshot(name: "Clean install")])
+            #expect(
+                stockedHarness.catalog.isApplicable(.revertToSnapshot, to: stocked)
+                    == !phase.isTransitioning, "\(phase)")
+
+            let emptyHarness = makeHarness()
+            let empty = makeInstance(in: emptyHarness, phase: phase)
+            #expect(!emptyHarness.catalog.isApplicable(.revertToSnapshot, to: empty), "\(phase)")
         }
     }
 
@@ -250,14 +256,16 @@ struct VMCapabilityCatalogTests {
 
     @Test("Every capability but rename accepts exactly what it makes available")
     func acceptanceMatchesAvailabilityElsewhere() {
-        for phase in Self.everyPhase {
-            let harness = makeHarness()
-            let instance = makeInstance(in: harness, phase: phase)
-            for capability in VMCapability.allCases where capability != .rename {
-                #expect(
-                    harness.catalog.accepts(capability, on: instance)
-                        == harness.catalog.isAvailable(capability, on: instance),
-                    "\(capability) on \(phase)")
+        for phase in VMLifecyclePhaseFixtures.all {
+            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
+                let harness = makeHarness()
+                let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
+                for capability in VMCapability.allCases where capability != .rename {
+                    #expect(
+                        harness.catalog.accepts(capability, on: instance)
+                            == harness.catalog.isAvailable(capability, on: instance),
+                        "\(capability) on \(phase), snapshots: \(snapshots.count)")
+                }
             }
         }
     }

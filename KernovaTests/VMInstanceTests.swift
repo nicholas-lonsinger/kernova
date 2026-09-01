@@ -620,13 +620,14 @@ struct VMInstanceTests {
     private func attachNetworkCoordinator(
         to instance: VMInstance,
         device: MockNetworkDeviceControl,
-        provider: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider()
+        provider: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
+        linkObserver: MockNetworkLinkObserver = MockNetworkLinkObserver()
     ) -> NetworkAttachmentCoordinator {
         let coordinator = NetworkAttachmentCoordinator(
             vmName: instance.name,
             device: device,
             interfaces: provider,
-            linkObserver: MockNetworkLinkObserver(),
+            linkObserver: linkObserver,
             // Pinned rather than read from the test host's signature, so the
             // plans these tests assert on don't vary with how it was signed.
             isVMNetworkingEntitled: false,
@@ -753,19 +754,28 @@ struct VMInstanceTests {
     }
 
     @Test("tearDownSession stops network recovery and clears the pending flag")
-    func tearDownSessionStopsNetworkRecovery() {
+    func tearDownSessionStopsNetworkRecovery() throws {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .bridged
         let device = MockNetworkDeviceControl()
-        let coordinator = attachNetworkCoordinator(to: instance, device: device)
+        let observer = MockNetworkLinkObserver()
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device, linkObserver: observer)
         coordinator.activate()
         #expect(instance.networkAttachmentPending)
+        let context = try #require(instance.sessionContext)
 
         instance.tearDownSession(restingAt: .stopped)
 
-        #expect(instance.networkAttachmentCoordinator == nil)
-        #expect(!instance.networkAttachmentPending)
+        // `NetworkAttachmentCoordinator.isActive` is private, so the mock link
+        // observer is the only external signal that `stop()` actually ran —
+        // reading `instance.networkAttachmentCoordinator` here would pass
+        // whether or not `tearDown()` stopped the coordinator, since it is
+        // that same context's slot the teardown nils regardless.
+        #expect(context.networkAttachmentCoordinator == nil)
+        #expect(!context.networkAttachmentPending)
+        #expect(!observer.isObserving)
     }
 
     // MARK: - Lifecycle Action Labels
@@ -1504,15 +1514,16 @@ struct VMInstanceTests {
     }
 
     @Test("tearDownSession clears hasSeenAgentThisSession")
-    func tearDownSessionClearsSeenAgentFlag() {
+    func tearDownSessionClearsSeenAgentFlag() throws {
         // The flag is per-session: the next boot's no-show must be free to
         // rewrite persisted agent state again.
         let instance = makeMacOSInstanceWithAgentInstalled()
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "26.0"))
         #expect(instance.hasSeenAgentThisSession)
+        let context = try #require(instance.sessionContext)
 
         instance.tearDownSession(restingAt: .stopped)
-        #expect(!instance.hasSeenAgentThisSession)
+        #expect(!context.hasSeenAgentThisSession)
     }
 
     @Test("tearDownSession clears agentExpectedButMissing and cancels the watchdog")
@@ -1521,10 +1532,11 @@ struct VMInstanceTests {
         // Drive the flag manually to simulate the watchdog having fired.
         instance.sessionContext?.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
+        let context = try #require(instance.sessionContext)
 
         instance.tearDownSession(restingAt: .stopped)
 
-        #expect(instance.agentExpectedButMissing == false)
+        #expect(context.agentExpectedButMissing == false)
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
         instance.enter(.running(sessionID: UUID()))

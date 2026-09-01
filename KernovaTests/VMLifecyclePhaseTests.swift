@@ -5,36 +5,19 @@ import Testing
 
 @Suite("VMLifecyclePhase Tests", .admissionGated)
 struct VMLifecyclePhaseTests {
-    /// A stand-in session identity: a live phase names the `VZVirtualMachine` it
-    /// describes, and no CI test host can create one.
-    private static let session = UUID()
+    // MARK: - Fixture completeness
 
-    /// Every case, so a phase added without an answer here fails the projection
-    /// and subset tests below rather than going unexamined.
-    private static let all: [VMLifecyclePhase] = [
-        .stopped,
-        .initialBoot,
-        .failed(message: "Boot failed."),
-        .suspended,
-        .capturingAtRest,
-        .revertingToSnapshot,
-        .starting(sessionID: nil),
-        .installing(sessionID: nil),
-        .restoringSavedState(sessionID: nil),
-        .starting(sessionID: session),
-        .installing(sessionID: session),
-        .restoringSavedState(sessionID: session),
-        .running(sessionID: session),
-        .livePaused(sessionID: session),
-        .saving(sessionID: session),
-        .capturingLive(sessionID: session),
-    ]
+    @Test("The fixture list has every phase kind, so a case added later cannot go uncovered")
+    func fixtureListIsComplete() {
+        #expect(
+            Set(VMLifecyclePhaseFixtures.all.map(\.kind)) == Set(VMLifecyclePhaseKind.allCases))
+    }
 
     // MARK: - Status Projection
 
     @Test("Every phase projects the status its vocabulary names")
     func statusProjection() {
-        let id = Self.session
+        let id = VMLifecyclePhaseFixtures.session
         let expected: [(VMLifecyclePhase, VMStatus)] = [
             (.stopped, .stopped),
             (.initialBoot, .initialBoot),
@@ -58,13 +41,13 @@ struct VMLifecyclePhaseTests {
         }
         // Every case is answered above, so a new one cannot slip past the
         // projection unexamined.
-        #expect(expected.count == Self.all.count)
+        #expect(expected.count == VMLifecyclePhaseFixtures.all.count)
     }
 
     @Test("The failure message is a payload of the failed phase and of nothing else")
     func errorMessageBelongsToFailedAlone() {
         #expect(VMLifecyclePhase.failed(message: "Disk went away").errorMessage == "Disk went away")
-        for phase in Self.all where phase.status != .error {
+        for phase in VMLifecyclePhaseFixtures.all where phase.status != .error {
             #expect(phase.errorMessage == nil, "\(phase)")
         }
     }
@@ -73,7 +56,7 @@ struct VMLifecyclePhaseTests {
 
     @Test("Only the phases a `VZVirtualMachine` can exist during name a session")
     func sessionIdentity() {
-        let id = Self.session
+        let id = VMLifecyclePhaseFixtures.session
         #expect(VMLifecyclePhase.running(sessionID: id).sessionID == id)
         #expect(VMLifecyclePhase.livePaused(sessionID: id).sessionID == id)
         #expect(VMLifecyclePhase.saving(sessionID: id).sessionID == id)
@@ -93,7 +76,7 @@ struct VMLifecyclePhaseTests {
 
     @Test("A bring-up promotes only the three phases it can start from")
     func promotionCoversTheBringUpPhases() {
-        let id = Self.session
+        let id = VMLifecyclePhaseFixtures.session
         #expect(VMLifecyclePhase.starting(sessionID: nil).naming(id) == .starting(sessionID: id))
         #expect(
             VMLifecyclePhase.installing(sessionID: nil).naming(id) == .installing(sessionID: id))
@@ -103,7 +86,7 @@ struct VMLifecyclePhaseTests {
 
         // Every other phase is left alone rather than silently gaining an
         // identity it cannot carry.
-        for phase in Self.all where !phase.admitsSessionIdentity {
+        for phase in VMLifecyclePhaseFixtures.all where !phase.admitsSessionIdentity {
             #expect(phase.naming(id) == phase, "\(phase)")
         }
         #expect(!VMLifecyclePhase.stopped.admitsSessionIdentity)
@@ -115,44 +98,47 @@ struct VMLifecyclePhaseTests {
 
     @Test("The mid-operation phases are exactly the ones with work to interrupt")
     func isTransitioning() {
-        let transitioning = Set(Self.all.filter(\.isTransitioning).map { "\($0)" })
+        let transitioning = Set(VMLifecyclePhaseFixtures.all.filter(\.isTransitioning).map { "\($0)" })
         #expect(
             transitioning
                 == Set(
                     [
-                        VMLifecyclePhase.starting(sessionID: nil), .starting(sessionID: Self.session),
-                        .installing(sessionID: nil), .installing(sessionID: Self.session),
+                        VMLifecyclePhase.starting(sessionID: nil),
+                        .starting(sessionID: VMLifecyclePhaseFixtures.session),
+                        .installing(sessionID: nil), .installing(sessionID: VMLifecyclePhaseFixtures.session),
                         .restoringSavedState(sessionID: nil),
-                        .restoringSavedState(sessionID: Self.session),
-                        .saving(sessionID: Self.session), .capturingLive(sessionID: Self.session),
+                        .restoringSavedState(sessionID: VMLifecyclePhaseFixtures.session),
+                        .saving(sessionID: VMLifecyclePhaseFixtures.session),
+                        .capturingLive(sessionID: VMLifecyclePhaseFixtures.session),
                         .capturingAtRest, .revertingToSnapshot,
                     ].map { "\($0)" }))
     }
 
     @Test("terminationMustWaitOut covers the in-place writes and stays a subset of transitioning")
     func terminationMustWaitOut() {
-        #expect(VMLifecyclePhase.saving(sessionID: Self.session).terminationMustWaitOut)
-        #expect(VMLifecyclePhase.capturingLive(sessionID: Self.session).terminationMustWaitOut)
+        #expect(VMLifecyclePhase.saving(sessionID: VMLifecyclePhaseFixtures.session).terminationMustWaitOut)
+        #expect(VMLifecyclePhase.capturingLive(sessionID: VMLifecyclePhaseFixtures.session).terminationMustWaitOut)
         #expect(VMLifecyclePhase.capturingAtRest.terminationMustWaitOut)
         // A restore keeps the file it reads until its resume succeeds, and a
         // start or install writes nothing a relaunch cannot redo.
-        #expect(!VMLifecyclePhase.restoringSavedState(sessionID: Self.session).terminationMustWaitOut)
+        #expect(
+            !VMLifecyclePhase.restoringSavedState(sessionID: VMLifecyclePhaseFixtures.session).terminationMustWaitOut)
         #expect(!VMLifecyclePhase.revertingToSnapshot.terminationMustWaitOut)
-        #expect(!VMLifecyclePhase.starting(sessionID: Self.session).terminationMustWaitOut)
-        #expect(!VMLifecyclePhase.installing(sessionID: Self.session).terminationMustWaitOut)
+        #expect(!VMLifecyclePhase.starting(sessionID: VMLifecyclePhaseFixtures.session).terminationMustWaitOut)
+        #expect(!VMLifecyclePhase.installing(sessionID: VMLifecyclePhaseFixtures.session).terminationMustWaitOut)
 
-        for phase in Self.all {
+        for phase in VMLifecyclePhaseFixtures.all {
             #expect(!phase.terminationMustWaitOut || phase.isTransitioning, "\(phase)")
         }
     }
 
     @Test("isActive excludes both paused meanings and every resting phase")
     func isActive() {
-        #expect(VMLifecyclePhase.running(sessionID: Self.session).isActive)
+        #expect(VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session).isActive)
         #expect(VMLifecyclePhase.capturingAtRest.isActive)
         #expect(VMLifecyclePhase.revertingToSnapshot.isActive)
         for phase in [
-            VMLifecyclePhase.livePaused(sessionID: Self.session), .suspended, .stopped,
+            VMLifecyclePhase.livePaused(sessionID: VMLifecyclePhaseFixtures.session), .suspended, .stopped,
             .failed(message: "Boot failed."), .initialBoot,
         ] {
             #expect(!phase.isActive, "\(phase)")
@@ -163,11 +149,11 @@ struct VMLifecyclePhaseTests {
 
     @Test("A live session is the running and live-paused pair, and nothing else")
     func hasLiveSession() {
-        #expect(VMLifecyclePhase.running(sessionID: Self.session).hasLiveSession)
-        #expect(VMLifecyclePhase.livePaused(sessionID: Self.session).hasLiveSession)
-        for phase in Self.all
-        where phase != .running(sessionID: Self.session)
-            && phase != .livePaused(sessionID: Self.session)
+        #expect(VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session).hasLiveSession)
+        #expect(VMLifecyclePhase.livePaused(sessionID: VMLifecyclePhaseFixtures.session).hasLiveSession)
+        for phase in VMLifecyclePhaseFixtures.all
+        where phase != .running(sessionID: VMLifecyclePhaseFixtures.session)
+            && phase != .livePaused(sessionID: VMLifecyclePhaseFixtures.session)
         {
             #expect(!phase.hasLiveSession, "\(phase)")
         }
@@ -177,11 +163,11 @@ struct VMLifecyclePhaseTests {
     func pausedMeaningsAreDistinct() {
         #expect(VMLifecyclePhase.suspended.isColdPaused)
         #expect(!VMLifecyclePhase.suspended.isLivePaused)
-        #expect(VMLifecyclePhase.livePaused(sessionID: Self.session).isLivePaused)
-        #expect(!VMLifecyclePhase.livePaused(sessionID: Self.session).isColdPaused)
+        #expect(VMLifecyclePhase.livePaused(sessionID: VMLifecyclePhaseFixtures.session).isLivePaused)
+        #expect(!VMLifecyclePhase.livePaused(sessionID: VMLifecyclePhaseFixtures.session).isColdPaused)
         // Both report the one status the wire has for them.
         #expect(VMLifecyclePhase.suspended.status == .paused)
-        #expect(VMLifecyclePhase.livePaused(sessionID: Self.session).status == .paused)
+        #expect(VMLifecyclePhase.livePaused(sessionID: VMLifecyclePhaseFixtures.session).status == .paused)
     }
 
     // MARK: - Command Predicates
@@ -193,7 +179,7 @@ struct VMLifecyclePhaseTests {
         ] {
             #expect(phase.canStart, "\(phase)")
         }
-        for phase in Self.all where !phase.canEditSettings {
+        for phase in VMLifecyclePhaseFixtures.all where !phase.canEditSettings {
             #expect(!phase.canStart, "\(phase)")
         }
         // A suspended VM resumes rather than starting.
@@ -203,8 +189,8 @@ struct VMLifecyclePhaseTests {
 
     @Test("Stop, Suspend and Pause need a live session; Resume takes either paused meaning")
     func lifecycleCommands() {
-        let running = VMLifecyclePhase.running(sessionID: Self.session)
-        let livePaused = VMLifecyclePhase.livePaused(sessionID: Self.session)
+        let running = VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session)
+        let livePaused = VMLifecyclePhase.livePaused(sessionID: VMLifecyclePhaseFixtures.session)
         #expect(running.canStop && livePaused.canStop)
         #expect(running.canSave && livePaused.canSave)
         #expect(running.canPause && !livePaused.canPause)
@@ -212,7 +198,7 @@ struct VMLifecyclePhaseTests {
         #expect(VMLifecyclePhase.suspended.canResume)
         #expect(!VMLifecyclePhase.suspended.canStop)
         #expect(!VMLifecyclePhase.suspended.canSave)
-        for phase in Self.all where phase.isTransitioning {
+        for phase in VMLifecyclePhaseFixtures.all where phase.isTransitioning {
             #expect(
                 !phase.canStop && !phase.canSave && !phase.canPause && !phase.canResume,
                 "\(phase)")
@@ -221,12 +207,12 @@ struct VMLifecyclePhaseTests {
 
     @Test("A rename is offered outside a transition and taken outside a restore")
     func renaming() {
-        for phase in Self.all {
+        for phase in VMLifecyclePhaseFixtures.all {
             #expect(phase.canRename == !phase.isTransitioning, "\(phase)")
         }
         #expect(!VMLifecyclePhase.revertingToSnapshot.renamePersists)
-        #expect(!VMLifecyclePhase.restoringSavedState(sessionID: Self.session).renamePersists)
-        for phase in Self.all where phase.status != .restoring {
+        #expect(!VMLifecyclePhase.restoringSavedState(sessionID: VMLifecyclePhaseFixtures.session).renamePersists)
+        for phase in VMLifecyclePhaseFixtures.all where phase.status != .restoring {
             #expect(phase.renamePersists, "\(phase)")
         }
     }
@@ -234,10 +220,12 @@ struct VMLifecyclePhaseTests {
     @Test("canForceStop needs a live VM to terminate, and skips the install that owns its cancel")
     func canForceStop() {
         for phase in [
-            VMLifecyclePhase.running(sessionID: Self.session),
-            .livePaused(sessionID: Self.session), .saving(sessionID: Self.session),
-            .capturingLive(sessionID: Self.session), .starting(sessionID: Self.session),
-            .restoringSavedState(sessionID: Self.session),
+            VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session),
+            .livePaused(sessionID: VMLifecyclePhaseFixtures.session),
+            .saving(sessionID: VMLifecyclePhaseFixtures.session),
+            .capturingLive(sessionID: VMLifecyclePhaseFixtures.session),
+            .starting(sessionID: VMLifecyclePhaseFixtures.session),
+            .restoringSavedState(sessionID: VMLifecyclePhaseFixtures.session),
         ] {
             #expect(phase.canForceStop, "\(phase)")
         }
@@ -246,7 +234,7 @@ struct VMLifecyclePhaseTests {
         for phase in [
             VMLifecyclePhase.capturingAtRest, .revertingToSnapshot, .suspended,
             .starting(sessionID: nil), .restoringSavedState(sessionID: nil),
-            .installing(sessionID: Self.session), .stopped, .initialBoot,
+            .installing(sessionID: VMLifecyclePhaseFixtures.session), .stopped, .initialBoot,
             .failed(message: "Boot failed."),
         ] {
             #expect(!phase.canForceStop, "\(phase)")
@@ -256,16 +244,18 @@ struct VMLifecyclePhaseTests {
     @Test("hasActiveDisplay covers every phase whose backing view has something to show")
     func hasActiveDisplay() {
         for phase in [
-            VMLifecyclePhase.running(sessionID: Self.session),
-            .livePaused(sessionID: Self.session), .suspended, .saving(sessionID: Self.session),
-            .capturingLive(sessionID: Self.session), .capturingAtRest,
-            .restoringSavedState(sessionID: Self.session), .revertingToSnapshot,
+            VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session),
+            .livePaused(sessionID: VMLifecyclePhaseFixtures.session), .suspended,
+            .saving(sessionID: VMLifecyclePhaseFixtures.session),
+            .capturingLive(sessionID: VMLifecyclePhaseFixtures.session), .capturingAtRest,
+            .restoringSavedState(sessionID: VMLifecyclePhaseFixtures.session), .revertingToSnapshot,
         ] {
             #expect(phase.hasActiveDisplay, "\(phase)")
         }
         for phase in [
             VMLifecyclePhase.stopped, .initialBoot, .failed(message: "Boot failed."),
-            .starting(sessionID: Self.session), .installing(sessionID: Self.session),
+            .starting(sessionID: VMLifecyclePhaseFixtures.session),
+            .installing(sessionID: VMLifecyclePhaseFixtures.session),
         ] {
             #expect(!phase.hasActiveDisplay, "\(phase)")
         }
@@ -273,7 +263,7 @@ struct VMLifecyclePhaseTests {
 
     @Test("canEditSettings is exactly the set canStart admits")
     func canEditSettingsMatchesCanStart() {
-        for phase in Self.all {
+        for phase in VMLifecyclePhaseFixtures.all {
             #expect(phase.canEditSettings == phase.canStart, "\(phase)")
         }
     }
