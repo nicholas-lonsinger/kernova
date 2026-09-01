@@ -373,7 +373,7 @@ struct VirtualizationServiceTests {
         // The bundle's own slot is untouched — a suspended capture consumes nothing.
         let bundleSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
         #expect(String(decoding: bundleSlot, as: UTF8.self) == "bundle-suspend-slot")
-        #expect(fixture.instance.status == .paused)
+        #expect(fixture.instance.phase == .suspended)
     }
 
     @Test("A cold-paused VM with no save file is refused")
@@ -388,7 +388,7 @@ struct VirtualizationServiceTests {
                 fixture.instance, snapshot: VMSnapshot(name: "No slot", kind: .warm),
                 store: fixture.store)
         }
-        #expect(fixture.instance.status == .paused)
+        #expect(fixture.instance.phase == .suspended)
     }
 
     @Test("A disks-only-stamped capture of a suspended VM is refused with the status untouched")
@@ -402,7 +402,7 @@ struct VirtualizationServiceTests {
                 fixture.instance, snapshot: VMSnapshot(name: "Mis-stamped", kind: .cold),
                 store: fixture.store)
         }
-        #expect(fixture.instance.status == .paused)
+        #expect(fixture.instance.phase == .suspended)
     }
 
     @Test("Reverting to a suspended-state capture restores the cloned suspend slot and disks")
@@ -415,12 +415,12 @@ struct VirtualizationServiceTests {
         fixture.instance.snapshotManifest.insert(checkpoint)
 
         try await service.takeSnapshot(fixture.instance, snapshot: checkpoint, store: fixture.store)
-        #expect(fixture.instance.status == .paused)
+        #expect(fixture.instance.phase == .suspended)
 
         try await service.revertToSnapshot(
             fixture.instance, snapshot: checkpoint, store: fixture.store)
 
-        #expect(fixture.instance.status == .paused)
+        #expect(fixture.instance.phase == .suspended)
         let restoredSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
         #expect(String(decoding: restoredSlot, as: UTF8.self) == "own-suspend-slot")
         let restoredDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)

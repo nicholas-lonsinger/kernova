@@ -77,18 +77,11 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     // MARK: - VirtualizationProviding
 
-    /// The identity a phase this mock installs names — the live one when the
-    /// instance already holds a session, and a fresh one otherwise, since a CI
-    /// host can mint no real `VZVirtualMachine`.
-    private func sessionIdentity(for instance: VMInstance) -> UUID {
-        instance.liveSessionID ?? UUID()
-    }
-
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
-        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func stop(_ instance: VMInstance) async throws {
@@ -103,14 +96,14 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnPause {
             await suspendIfNeeded()
         }
-        instance.enter(.livePaused(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.livePaused(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func resume(_ instance: VMInstance) async throws {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
-        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func save(_ instance: VMInstance) async throws {
@@ -120,10 +113,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let sessionID = sessionIdentity(for: instance)
-        instance.enter(
-            instance.status == .running
-                ? .running(sessionID: sessionID) : .livePaused(sessionID: sessionID))
+        let phases = try MockVirtualizationPhases.capturePhases(for: instance)
+        instance.enter(phases.capturing)
+        instance.enter(phases.resting)
     }
 
     func revertToSnapshot(

@@ -163,6 +163,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
         #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.cold])
         #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
+        #expect(instance.phase == .stopped)
     }
 
     @Test("A capture of a cold-paused VM is stamped as memory-and-disks and lands in the manifest")
@@ -183,17 +184,33 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
         #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.warm])
         #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
+        #expect(instance.phase == .suspended)
+        #expect(!instance.hasLiveVirtualMachine)
     }
 
     @Test("A capture of a running VM is stamped as memory-and-disks")
     func runningCaptureIsWarm() async {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: UUID()))
+        let sessionID = UUID()
+        let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: sessionID))
 
         await harness.viewModel.takeSnapshot(instance, name: "Mid-session").value
 
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
         #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.warm])
+        #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
+    @Test("A capture of a live-paused VM is stamped as memory-and-disks and stays live-paused")
+    func livePausedCaptureIsWarm() async {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let instance = makeInstance(in: harness.viewModel, phase: .livePaused(sessionID: sessionID))
+
+        await harness.viewModel.takeSnapshot(instance, name: "Paused mid-session").value
+
+        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
+        #expect(instance.phase == .livePaused(sessionID: sessionID))
     }
 
     @Test("Taking a snapshot captures it and lists it as current")

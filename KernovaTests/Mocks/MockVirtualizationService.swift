@@ -33,12 +33,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// hands a VM off to a boot be asserted on the state it hands over.
     var statusAtStart: VMStatus?
 
-    /// The identity a phase this mock installs names — the live one when the
-    /// instance already holds a session, and a fresh one otherwise.
-    private func sessionIdentity(for instance: VMInstance) -> UUID {
-        instance.liveSessionID ?? UUID()
-    }
-
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
@@ -70,7 +64,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                     error, on: instance, transientRestingPhase: .stopped))
             throw error
         }
-        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func stop(_ instance: VMInstance) async throws {
@@ -91,7 +85,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         // pause did not take, so the VM is where it was and still holds its
         // session.
         if let error = pauseError { throw error }
-        instance.enter(.livePaused(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.livePaused(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func resume(_ instance: VMInstance) async throws {
@@ -102,7 +96,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                     error, on: instance, transientRestingPhase: nil))
             throw error
         }
-        instance.enter(.running(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func save(_ instance: VMInstance) async throws {
@@ -110,7 +104,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         // The real service marks the VM `.saving` before tearing the session
         // down, so the teardown hook fires from a phase that reads as
         // transitioning.
-        instance.enter(.saving(sessionID: sessionIdentity(for: instance)))
+        instance.enter(.saving(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
         if let error = saveError {
             instance.tearDownSession(restingAt: .failed(message: error.localizedDescription))
             throw error
@@ -119,22 +113,16 @@ final class MockVirtualizationService: VirtualizationProviding {
     }
 
     /// Mirrors the real service's state machine without VZ: the VM passes
-    /// through `.snapshotting` and comes back where it started — running or
-    /// paused for a warm capture, stopped for a cold one.
+    /// through `.snapshotting` and comes back where it started — live back
+    /// where it was found, suspended and stopped resting session-less where
+    /// they started.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let sessionID = sessionIdentity(for: instance)
-        let resting: VMLifecyclePhase =
-            switch (snapshot.kind, instance.status) {
-            case (.cold, _): .stopped
-            case (.warm, .running): .running(sessionID: sessionID)
-            case (.warm, _): .livePaused(sessionID: sessionID)
-            }
-        instance.enter(
-            snapshot.kind == .cold ? .capturingAtRest : .capturingLive(sessionID: sessionID))
+        let phases = try MockVirtualizationPhases.capturePhases(for: instance)
+        instance.enter(phases.capturing)
         if let error = takeSnapshotError {
-            instance.enter(resting)
+            instance.enter(phases.resting)
             throw error
         }
         // The store is exercised for real so a test can assert on the files the
@@ -149,7 +137,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                 relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
-        instance.enter(resting)
+        instance.enter(phases.resting)
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn
