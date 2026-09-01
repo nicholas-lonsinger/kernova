@@ -179,7 +179,7 @@ struct VsockGuestClipboardAgentTests {
     ) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
-            port: 49152,
+            port: KernovaVsockPort.clipboard,
             label: "clipboard-test",
             clock: MonotonicEngineClock(),
             retryInterval: 0.05
@@ -1956,7 +1956,7 @@ struct VsockGuestClipboardAgentTests {
         let provideCount = AtomicInt()
 
         let client = VsockGuestClient(
-            port: 49152,
+            port: KernovaVsockPort.clipboard,
             label: "clipboard-reconnect-test",
             clock: MonotonicEngineClock(),
             retryInterval: 0.05
@@ -2027,7 +2027,7 @@ struct VsockGuestClipboardAgentTests {
         let fdBox = FdBox(fds: [agentFd0, agentFd1])
         let provideCount = AtomicInt()
         let client = VsockGuestClient(
-            port: 49152, label: "clipboard-promise-reconnect-test",
+            port: KernovaVsockPort.clipboard, label: "clipboard-promise-reconnect-test",
             clock: MonotonicEngineClock(), retryInterval: 0.05
         ) { _, _ in
             let n = provideCount.increment()
@@ -2106,7 +2106,7 @@ struct VsockGuestClipboardAgentTests {
         // A retry interval far past `testWaitBackstop`, so the second connect can
         // only land inside the test because the policy update woke the loop.
         let client = VsockGuestClient(
-            port: 49152,
+            port: KernovaVsockPort.clipboard,
             label: "clipboard-restated-policy-test",
             clock: MonotonicEngineClock(),
             retryInterval: 600
@@ -2227,7 +2227,7 @@ struct VsockGuestClipboardAgentTests {
         // and the publish committed before it.
         let provideCount = AtomicInt()
         let client = VsockGuestClient(
-            port: 49152,
+            port: KernovaVsockPort.clipboard,
             label: "clipboard-sync-publish-test",
             clock: MonotonicEngineClock(),
             retryInterval: 0.05
@@ -2354,7 +2354,7 @@ struct VsockGuestClipboardAgentTests {
     ) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
-            port: 49152, label: "clipboard-dead-peer-test", clock: MonotonicEngineClock(),
+            port: KernovaVsockPort.clipboard, label: "clipboard-dead-peer-test", clock: MonotonicEngineClock(),
             retryInterval: 0.05
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
