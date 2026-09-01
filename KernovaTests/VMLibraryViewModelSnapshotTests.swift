@@ -213,6 +213,22 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.phase == .livePaused(sessionID: sessionID))
     }
 
+    @Test("A capture stamped with the wrong kind for the VM's capture mode is refused")
+    func mismatchedKindIsRefused() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: sessionID))
+
+        await #expect(throws: VirtualizationError.self) {
+            try await harness.virtualization.takeSnapshot(
+                instance, snapshot: VMSnapshot(name: "Mis-stamped", kind: .cold),
+                store: harness.snapshots)
+        }
+
+        #expect(harness.virtualization.takenSnapshots.isEmpty)
+        #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
     @Test("Taking a snapshot captures it and lists it as current")
     func takeSnapshotListsIt() async {
         let harness = makeHarness()

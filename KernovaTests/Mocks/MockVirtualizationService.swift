@@ -119,7 +119,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let phases = try MockVirtualizationPhases.capturePhases(for: instance)
+        let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
         if let error = takeSnapshotError {
             instance.enter(phases.resting)

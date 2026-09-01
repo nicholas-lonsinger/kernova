@@ -16,10 +16,16 @@ enum MockVirtualizationPhases {
     /// to rest it at afterward, derived from `instance.snapshotCaptureMode` —
     /// production's own source of truth — read before either phase is
     /// written, since a capture phase changes the answer.
+    ///
+    /// Mirrors the same two-part guard `VirtualizationService.takeSnapshot`
+    /// checks: a `nil` mode refuses, and so does a mode whose kind does not
+    /// match `kind` — a caller that stamped a snapshot for one capture shape
+    /// and then handed it to a VM that settled into another between the stamp
+    /// and the call.
     static func capturePhases(
-        for instance: VMInstance
+        for instance: VMInstance, kind: VMSnapshotKind
     ) throws -> (capturing: VMLifecyclePhase, resting: VMLifecyclePhase) {
-        guard let mode = instance.snapshotCaptureMode else {
+        guard let mode = instance.snapshotCaptureMode, mode.kind == kind else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
         }
