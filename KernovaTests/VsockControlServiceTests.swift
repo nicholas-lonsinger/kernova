@@ -110,9 +110,10 @@ struct VsockControlServiceTests {
             label: "test",
             bundledAgentVersion: bundledAgentVersion,
             clock: clock,
-            heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
-            unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
-            terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
+            cadence: ControlChannelCadence(
+                heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
+                unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
+                terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate),
             policyProvider: policyProvider,
             onAgentInfoObserved: onAgentInfoObserved,
             isGuestSuspended: isGuestSuspended
