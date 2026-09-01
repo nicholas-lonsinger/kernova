@@ -146,10 +146,9 @@ through `PathValidation` before every hand-off. This is not defensive: under the
 
 The vsock stack (macOS guests only):
 
-- `VsockPorts` — the port registry. Each service gets its own listener instead of in-band
+- `KernovaVsockPort` — the port registry. Each service gets its own listener instead of in-band
   multiplexing, and the clipboard and drop kinds get a second port apiece, carrying one
-  guest-dialed connection per transfer in place of a long-lived channel;
-  `KernovaMacOSAgent/VsockPorts.swift` mirrors the same assignments guest-side. What a connection
+  guest-dialed connection per transfer in place of a long-lived channel. What a connection
   costs, and why nothing above the kernel meters a
   stream: [research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md](research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
 - `VsockListenerHost` — one `VZVirtioSocketListener` per port, nonisolated so the whole accept path

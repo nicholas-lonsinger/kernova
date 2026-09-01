@@ -427,7 +427,7 @@ struct VsockHostConnectionTests {
         // A retry interval far past `testWaitBackstop`, so the second connect can
         // only land inside the test because the policy update woke the loop.
         let client = VsockGuestClient(
-            port: 49153,
+            port: KernovaVsockPort.log,
             label: "log-restated-policy-test",
             clock: MonotonicEngineClock(),
             retryInterval: 600
