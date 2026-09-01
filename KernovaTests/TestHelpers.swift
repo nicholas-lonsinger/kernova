@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import Observation
 import KernovaKit
@@ -66,6 +67,48 @@ func drainMainQueue() async {
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
         MainActorBridge.async { continuation.resume() }
     }
+}
+
+// MARK: - Live-session vsock fixtures
+
+/// An instance standing in for one with a live session: every feature toggle on
+/// and the handshake published, so each channel's listener admits a connection
+/// and its accept path installs a service.
+///
+/// The phase's session identity stands in for a live `VZVirtualMachine`, not for
+/// the session context the services and their hand-offs live in — hence the
+/// explicit `beginSessionContext()`.
+@MainActor
+func makeInstanceWithLiveSession(named name: String = "Live Session VM")
+    -> (instance: VMInstance, sessionID: UUID)
+{
+    var config = VMConfiguration(name: name, guestOS: .macOS, bootMode: .macOS)
+    config.clipboardSharingEnabled = true
+    config.agentLogForwardingEnabled = true
+    config.dropFilesEnabled = true
+    let bundleURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(config.id.uuidString, isDirectory: true)
+    let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+    let sessionID = UUID()
+    instance.enter(.running(sessionID: sessionID))
+    instance.beginSessionContext()
+    instance.vsockAdmissionGate.publish(
+        VsockAdmissionGate.State(
+            handshakeComplete: true,
+            capabilities: Set(KernovaCapability.controlChannelDefaults)))
+    return (instance, sessionID)
+}
+
+/// Asserts `sink` forwards nothing — a descriptor handed to it is closed, which
+/// the peer of a socket pair sees as EOF.
+@MainActor
+func expectSinkCleared(_ sink: VsockDataConnectionSink) throws {
+    let (a, b) = try makeRawSocketPair()
+    defer { close(b) }  // `a` is owned — and must be closed — by the sink.
+    sink.accept(fd: a)
+    #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
+    var byte: UInt8 = 0
+    #expect(recv(b, &byte, 1, 0) == 0)
 }
 
 // MARK: - expectEOF

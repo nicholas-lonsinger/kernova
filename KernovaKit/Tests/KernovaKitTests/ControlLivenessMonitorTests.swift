@@ -15,12 +15,12 @@ struct ControlLivenessMonitorTests {
     }
 
     @Test("A channel that never spoke is not judged silent")
-    func noSignalBeforeAnyFrame() {
+    func silenceBeforeAnyFrameIsNotJudged() {
         let (monitor, clock) = makeMonitor()
 
         clock.advance(seconds: 600)
 
-        #expect(monitor.evaluate(at: clock.now) == .noSignal)
+        #expect(monitor.evaluate(at: clock.now) == .unchanged)
         #expect(!monitor.isUnresponsive)
     }
 
@@ -75,21 +75,20 @@ struct ControlLivenessMonitorTests {
         #expect(monitor.record(at: clock.now) == .unchanged)
     }
 
-    @Test("An evaluation back inside the window leaves the unresponsive stage")
-    func evaluateRecovers() {
+    @Test("An evaluation never lifts the unresponsive stage; only an inbound frame does")
+    func evaluateNeverRecovers() {
         let (monitor, clock) = makeMonitor()
         monitor.record(at: clock.now)
         clock.advance(seconds: 11)
         #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))
 
-        // `evaluate` is total over the monitor's own state, so an evaluation
-        // point inside the window lifts the stage. Both peers evaluate at
-        // `clock.now` against a monotonic instant and leave the stage through
-        // `record`/`hold` instead, so this arm answers for the type rather than
-        // for a path either peer takes.
+        // The stage is left through `record`/`hold`, which are the only writers
+        // of the deadline — so even an evaluation point back inside the window
+        // reports no crossing, and a peer that has gone quiet stays unresponsive
+        // until it speaks.
         let insideTheWindow = EngineInstant(nanoseconds: clock.now.nanoseconds - 10_000_000_000)
-        #expect(monitor.evaluate(at: insideTheWindow) == .recovered)
-        #expect(!monitor.isUnresponsive)
+        #expect(monitor.evaluate(at: insideTheWindow) == .unchanged)
+        #expect(monitor.isUnresponsive)
     }
 
     @Test("A hold never stands in for the first signal")
@@ -100,12 +99,13 @@ struct ControlLivenessMonitorTests {
         // of them may arm a deadline the peer would then be judged against.
         for _ in 0..<5 {
             clock.advance(seconds: 30)
-            #expect(monitor.hold(at: clock.now) == .noSignal)
+            #expect(monitor.hold(at: clock.now) == .unchanged)
         }
 
         // Resumed, and still judged as never having spoken.
         clock.advance(seconds: 30)
-        #expect(monitor.evaluate(at: clock.now) == .noSignal)
+        #expect(monitor.evaluate(at: clock.now) == .unchanged)
+        #expect(!monitor.isUnresponsive)
     }
 
     @Test("A hold defers the deadline of a peer that has spoken")
@@ -164,7 +164,9 @@ struct ControlLivenessMonitorTests {
         monitor.reset()
 
         #expect(!monitor.isUnresponsive)
+        // Forgotten, so the silence measures nothing — the shape a fresh
+        // connection starts in, not the expiry the elapsed time would name.
         clock.advance(seconds: 600)
-        #expect(monitor.evaluate(at: clock.now) == .noSignal)
+        #expect(monitor.evaluate(at: clock.now) == .unchanged)
     }
 }

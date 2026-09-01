@@ -39,6 +39,28 @@ extension Frame {
         }
         return frame
     }
+
+    /// The host's toggle snapshot, sent at every guest `Hello` and on every live
+    /// edit. Host→guest only.
+    ///
+    /// `clipboardSharingEnabled` is the effective value, already gated on the
+    /// guest's advertised streaming capability.
+    public static func controlPolicyUpdate(
+        logForwardingEnabled: Bool,
+        clipboardSharingEnabled: Bool,
+        clipboardMaxPasteBytes: UInt64,
+        dropFilesEnabled: Bool
+    ) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
+            $0.logForwardingEnabled = logForwardingEnabled
+            $0.clipboardSharingEnabled = clipboardSharingEnabled
+            $0.clipboardMaxPasteBytes = clipboardMaxPasteBytes
+            $0.dropFilesEnabled = dropFilesEnabled
+        }
+        return frame
+    }
 }
 
 // MARK: - Inbound classification

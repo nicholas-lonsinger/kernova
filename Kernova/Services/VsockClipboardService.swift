@@ -242,7 +242,17 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// Tears the service down at the owner's request.
     ///
     /// The owner is not called back — it already knows.
+    ///
+    /// A `stop()` reaching an already-settled service — the clipboard slot is
+    /// kept on channel loss, so the next accept displaces this one — has nothing
+    /// left to settle, but still collects drop directories: the window's Clear
+    /// button and text editor keep releasing files against a retained service,
+    /// so a directory still referenced at the settle is reclaimable by now.
     func stop() {
+        guard !hasStopped else {
+            retireUnreferencedDropDirectories()
+            return
+        }
         settle(reason: .ownerRequested)
     }
 
@@ -250,18 +260,14 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// or the channel simply ended.
     ///
     /// Idempotent and terminal: the consume loop's own settle and an owner's
-    /// `stop()` race by construction, the first one through does the work, and
-    /// `hasStopped` keeps a later `start()` from reopening. `isConnected` guards
-    /// the notification, so `onChannelLost` fires at most once and never after
-    /// an owner teardown has already settled.
+    /// `stop()` race by construction, the `hasStopped` latch lets the first one
+    /// through do the work, and it keeps a later `start()` from reopening.
+    /// `isConnected` is what a service settled before it ever connected skips
+    /// the notification and the log line on.
     private func settle(reason: VsockSettleReason) {
+        guard !hasStopped else { return }
         hasStopped = true
         endpoint.stop()
-        // A garbage-collection pass, not a one-shot: it runs on every settle,
-        // not just the first, because a drop the buffer no longer shows keeps
-        // acquiring new unreferenced directories to reclaim for as long as the
-        // window's Clear button and text editor stay live against a retained,
-        // already-settled service.
         retireUnreferencedDropDirectories()
         guard isConnected else { return }
         isConnected = false

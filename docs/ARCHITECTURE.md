@@ -159,15 +159,11 @@ The vsock stack (macOS guests only):
   forward through a `VsockDataConnectionSink` apiece. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockFeatureCoordinator` — the per-session owner of the four channels, one per
-  `VMSessionContext`. A static `VsockFeatureDescriptor` table says what each channel binds, gates,
-  builds and releases; the accept ritual, the teardown loop and the live-policy pass — including
-  the install-before-frame / withdraw-after-frame ordering rule — are each written once against
-  it, and the service slots live here. The gate and both data sinks are the
+  `VMSessionContext`, driven by a static `VsockFeatureDescriptor` table saying what each channel
+  binds, gates, builds and releases. The gate and both data sinks are the
   VM's and handed in, because the accept path reads them without touching the main actor.
-- `VsockFeatureService` — the settle contract each feature service keeps: `start()`, an idempotent
-  and terminal owner `stop()` that calls nobody back, and an `onChannelLost` hook fired once, on
-  fully-settled state, when the channel ends on its own. The coordinator wires it at one accept
-  site; each descriptor says whether a settled service is dropped or kept.
+- `VsockFeatureService` — the settle contract the four services conform to, which the coordinator
+  wires at accept.
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, the observed `agentVersion`, and `PolicyUpdate` pushes carrying an
   `AgentPolicySnapshot`. Built per accepted channel by `VMInstance.makeControlService(for:)`, and

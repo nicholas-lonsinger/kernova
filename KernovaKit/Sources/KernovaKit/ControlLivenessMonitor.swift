@@ -14,15 +14,16 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
     /// ``recovered`` are emitted exactly once per crossing — so a caller acts
     /// on them directly instead of tracking whether it already reacted.
     public enum Verdict: Equatable, Sendable {
-        /// Nothing has been recorded: the peer has never been heard from, so
-        /// its silence measures nothing.
-        case noSignal
-
-        /// No crossing — the peer stands where the previous observation left
-        /// it.
+        /// No crossing: the peer stands where the previous observation left it,
+        /// or has never been heard from at all, so its silence measures
+        /// nothing. One case, because a caller does nothing either way.
         case unchanged
 
         /// The peer was unresponsive and has been heard from again.
+        ///
+        /// Only ``record(at:)`` and ``hold(at:)`` reach it: they are the sole
+        /// writers of the deadline, so an evaluation against a monotonic clock
+        /// can only ever find the peer further into its silence.
         case recovered
 
         /// The peer has just crossed `unresponsiveAfter` seconds of silence.
@@ -68,13 +69,13 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
     /// the host holding a live-paused guest's clock.
     ///
     /// A peer that has never been heard from has no deadline to defer, so this
-    /// records nothing and answers ``Verdict/noSignal``: a hold must never
+    /// records nothing and answers ``Verdict/unchanged``: a hold must never
     /// stand in for the first signal, or a pause would arm the watchdog against
     /// a channel that never spoke. Otherwise it behaves as ``record(at:)``.
     @discardableResult
     public func hold(at instant: EngineInstant) -> Verdict {
         lock.withLock {
-            guard lastSignal != nil else { return .noSignal }
+            guard lastSignal != nil else { return .unchanged }
             lastSignal = instant
             guard unresponsive else { return .unchanged }
             unresponsive = false
@@ -82,22 +83,21 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
         }
     }
 
-    /// Judges the peer's silence as of `instant`.
+    /// Judges the peer's silence as of `instant`, which is how it enters the
+    /// unresponsive stage and how the channel expires — never how it leaves
+    /// either. A peer that has not spoken yet is not judged at all.
     public func evaluate(at instant: EngineInstant) -> Verdict {
         lock.withLock {
-            guard let lastSignal else { return .noSignal }
+            guard let lastSignal else { return .unchanged }
             let silentFor = lastSignal.seconds(to: instant)
             if silentFor > cadence.terminateAfter {
                 return .expired(silentFor: silentFor)
             }
-            if silentFor > cadence.unresponsiveAfter {
-                guard !unresponsive else { return .unchanged }
+            if silentFor > cadence.unresponsiveAfter, !unresponsive {
                 unresponsive = true
                 return .becameUnresponsive(silentFor: silentFor)
             }
-            guard unresponsive else { return .unchanged }
-            unresponsive = false
-            return .recovered
+            return .unchanged
         }
     }
 

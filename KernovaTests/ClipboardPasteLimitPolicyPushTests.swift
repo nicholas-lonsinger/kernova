@@ -29,21 +29,6 @@ struct ClipboardPasteLimitPolicyPushTests {
         return instance
     }
 
-    private func makeGuestHello() -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = KernovaCapability.controlChannelDefaults
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.osVersion = "26.0"
-                $0.agentVersion = "0.54.0"
-            }
-        }
-        return frame
-    }
-
     /// Installs a production-wired control service on `instance`, mirroring the
     /// accept closure in `startVsockServices()`, and returns the guest end.
     private func attachControlService(to instance: VMInstance) throws -> VsockChannel {
@@ -91,7 +76,7 @@ struct ClipboardPasteLimitPolicyPushTests {
         }
 
         _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello())
+        try guest.send(Frame.controlHello(agentVersion: "0.54.0"))
 
         // The connect-time push carries whatever is stored now.
         let initial = try await nextPolicy(from: guest)
