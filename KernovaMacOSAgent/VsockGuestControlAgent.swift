@@ -268,17 +268,16 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     private func checkLiveness(channel: VsockChannel) {
         switch liveness.evaluate(at: clock.now) {
-        case .noSignal, .unchanged:
+        case .unchanged, .recovered:
             // The host hasn't sent anything yet, or nothing crossed a stage —
-            // keep waiting.
+            // keep waiting. An evaluation never recovers a peer; the inbound
+            // frame that does is what `handle(frame:)` reconnects on.
             break
         case .becameUnresponsive(let silentFor):
             Self.logger.warning(
                 "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — host appears unresponsive"
             )
             updateConnectionState(.unresponsive)
-        case .recovered:
-            updateConnectionState(.connected)
         case .expired(let silentFor):
             Self.logger.warning(
                 "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — closing"

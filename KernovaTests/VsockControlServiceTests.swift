@@ -38,13 +38,6 @@ struct VsockControlServiceTests {
         return frame
     }
 
-    private func makeHeartbeat(nonce: UInt64 = 1) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.heartbeat = Kernova_V1_Heartbeat.with { $0.nonce = nonce }
-        return frame
-    }
-
     /// Default outbound-heartbeat cadence: small, and harmless to every test
     /// (extra heartbeats only keep the connection alive).
     private static let testHeartbeat: TimeInterval = 0.04
@@ -66,7 +59,7 @@ struct VsockControlServiceTests {
     ) -> Task<Void, Never> {
         Task {
             while !Task.isCancelled {
-                try? guest.send(makeHeartbeat())
+                try? guest.send(Frame.controlHeartbeat(nonce: 1))
                 try? await Task.sleep(for: interval)
             }
         }
@@ -569,7 +562,7 @@ struct VsockControlServiceTests {
         #expect(service.agentStatus == .waiting)
         // The channel went with it: the teardown closes before clearing
         // `isConnected`, so this is ordered, not racy.
-        #expect(throws: VsockChannelError.closed) { try host.send(makeHeartbeat()) }
+        #expect(throws: VsockChannelError.closed) { try host.send(Frame.controlHeartbeat(nonce: 1)) }
     }
 
     @Test("A channel closed by the peer settles the service")
@@ -632,6 +625,41 @@ struct VsockControlServiceTests {
         #expect(service.lifecycleTasksForTesting.isEmpty)
     }
 
+    // MARK: - Wrong-port payloads
+
+    /// The control channel is the admission anchor every feature channel gates
+    /// on — so unlike the log and drop channels, which settle on one, a payload
+    /// belonging elsewhere may not take this one down: a single stray frame
+    /// would otherwise flap the agent-status UI and every dependent channel.
+    @Test("A payload belonging to another channel leaves the control channel up")
+    func wrongPortPayloadLeavesTheChannelUp() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let lost = ChannelLostRecorder()
+        let service = makeService(
+            channel: host, bundledAgentVersion: "0.9.0", onChannelLost: { lost.record() })
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        // A clipboard offer on the control port: the guest talking out of turn.
+        try guest.send(Frame.clipboardOffer(generation: 1, reps: [], isConcealed: false))
+        // The frames are ordered on one channel, so a second Hello landing is
+        // what proves the service kept serving past the stray one — no
+        // observation window needed for a "still up" assertion.
+        try guest.send(makeGuestHello(agentVersion: "0.9.1"))
+
+        try await waitForChange { service.agentVersion == "0.9.1" }
+        #expect(service.isConnected)
+        #expect(lost.count == 0)
+    }
+
     // MARK: - Live-paused guest
 
     @Test("A suspended guest is never judged silent, however long the pause runs")
@@ -682,14 +710,23 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        // Production-scale windows crossed by advancing the clock, not by
+        // sleeping through a shrunken cadence (docs/TESTING.md). The liveness
+        // tick derives to 20 s — `unresponsiveAfter / 3`, under the heartbeat
+        // interval — which is what tells it apart from the heartbeat sleep
+        // parked on the same clock.
+        let clock = GatedEngineClock()
+        let livenessTick: TimeInterval = 20
+        let terminateAfter: TimeInterval = 120
         let suspension = SuspensionFlag()
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: 0.05,
-            unresponsiveAfter: 0.1,
-            terminateAfter: 0.2,
+            clock: clock,
+            heartbeatInterval: 25,
+            unresponsiveAfter: 60,
+            terminateAfter: terminateAfter,
             isGuestSuspended: { suspension.isSuspended },
             onChannelLost: { lost.record() }
         )
@@ -702,14 +739,29 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)  // host hello
 
-        // RATIONALE: negative assertion ("prove the watchdog never fired") — a
-        // fixed observation window, per docs/TESTING.md "Async waits in tests".
-        // Three terminate windows paused, then three more running.
-        try await Task.sleep(for: .milliseconds(600))
-        suspension.isSuspended = false
-        try await Task.sleep(for: .milliseconds(600))
+        // A terminate window crossed held, then another crossed judged — eight
+        // ticks is 160 s of watchdog time either way. Only the liveness loop is
+        // ever released, so the frozen guest is never written to and every
+        // second the watchdog sees is one this test added.
+        let ticksPerHalf = 8
+        for tick in 1...(2 * ticksPerHalf) {
+            if tick > ticksPerHalf { suspension.isSuspended = false }
+            try await clock.sleepRequested.wait {
+                clock.parked.contains { $0.seconds == livenessTick }
+            }
+            let sleeper = try #require(clock.parked.first { $0.seconds == livenessTick })
+            clock.advance(seconds: livenessTick)
+            clock.release(sleeper)
+        }
+        // The last released tick has run once its loop is parked again.
+        try await clock.sleepRequested.wait {
+            clock.parked.contains { $0.seconds == livenessTick }
+        }
 
+        // Both windows crossed with nothing ever recorded: the watchdog has no
+        // deadline to expire, held or judged.
         #expect(lost.count == 0)
+        #expect(!service.isConnected)
         #expect(service.agentStatus == .waiting)
     }
 

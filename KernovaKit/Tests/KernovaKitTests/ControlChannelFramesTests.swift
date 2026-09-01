@@ -48,6 +48,25 @@ struct ControlChannelFramesTests {
         #expect(heartbeat.nonce == 42)
     }
 
+    @Test("PolicyUpdate carries every toggle the guest enforces")
+    func policyUpdateCarriesEveryToggle() throws {
+        let frame = Frame.controlPolicyUpdate(
+            logForwardingEnabled: true,
+            clipboardSharingEnabled: false,
+            clipboardMaxPasteBytes: 1_234,
+            dropFilesEnabled: true)
+
+        #expect(frame.protocolVersion == 1)
+        guard case .policyUpdate(let policy) = frame.payload else {
+            throw TestFailure(
+                "Expected a policyUpdate payload, got \(String(describing: frame.payload))")
+        }
+        #expect(policy.logForwardingEnabled)
+        #expect(!policy.clipboardSharingEnabled)
+        #expect(policy.clipboardMaxPasteBytes == 1_234)
+        #expect(policy.dropFilesEnabled)
+    }
+
     // MARK: - Classification
 
     @Test("A frame from an unspoken protocol version is classified, not read")
@@ -105,12 +124,9 @@ struct ControlChannelFramesTests {
 
     @Test("PolicyUpdate classifies to the snapshot it carries")
     func classifiesPolicyUpdate() throws {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
-            $0.logForwardingEnabled = true
-            $0.clipboardSharingEnabled = true
-        }
+        let frame = Frame.controlPolicyUpdate(
+            logForwardingEnabled: true, clipboardSharingEnabled: true,
+            clipboardMaxPasteBytes: 0, dropFilesEnabled: false)
 
         guard case .policyUpdate(let policy) = ControlChannelInbound.classify(frame) else {
             throw TestFailure("Expected a policyUpdate classification")

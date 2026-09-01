@@ -13,8 +13,9 @@ import KernovaKit
 /// clock: a `sleep` that returns immediately lets the loop *not* under test
 /// free-run, so a liveness watchdog sharing the clock burns through its stages
 /// while the test is still asserting on the heartbeat loop. Here the loops step
-/// only when released, and the reading never moves — a deadline measured against
-/// it cannot expire, so releasing one loop's sleep cannot age another's.
+/// only when released, and the reading moves only in ``advance(seconds:)`` — so
+/// a deadline measured against it ages exactly as much as the test says, and
+/// releasing one loop's sleep cannot age another's at all.
 public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// A `sleep` call parked on the gate.
     public struct ParkedSleep: Sendable, Equatable {
@@ -50,6 +51,7 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     private let lock = NSLock()
     private var sleepers: [Sleeper] = []
     private var requested: [TimeInterval] = []
+    private var nanoseconds: UInt64 = 0
 
     /// Outcomes for sleeps settled before their continuation was installed —
     /// a release racing the registration. Consumed by that registration.
@@ -63,8 +65,16 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// Creates a clock with no parked sleeps.
     public init() {}
 
-    /// The one reading this clock ever returns.
-    public var now: EngineInstant { EngineInstant(nanoseconds: 0) }
+    /// The reading as last advanced; zero until a test moves it.
+    public var now: EngineInstant {
+        EngineInstant(nanoseconds: lock.withLock { nanoseconds })
+    }
+
+    /// Moves the reading forward by `seconds`, ageing every deadline measured
+    /// against this clock without releasing anything parked on it.
+    public func advance(seconds: TimeInterval) {
+        lock.withLock { nanoseconds &+= UInt64(max(0, seconds) * 1_000_000_000) }
+    }
 
     /// The sleeps currently parked, in the order they were requested.
     public var parked: [ParkedSleep] {

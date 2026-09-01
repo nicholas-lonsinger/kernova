@@ -21,30 +21,6 @@ struct VMInstanceLiveVsockPolicyTests {
         }
     }
 
-    /// An instance standing in for one with a live session, its handshake
-    /// published so the feature ports admit a connection.
-    private func makeInstanceWithLiveSession() -> (instance: VMInstance, sessionID: UUID) {
-        let config = VMConfiguration(name: "Live Policy VM", guestOS: .macOS, bootMode: .macOS)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
-        // A feature listener exists only while its setting is on, and its
-        // hand-off re-reads that setting — so a fixture standing in for a bound
-        // feature port has to have them on.
-        instance.configuration.clipboardSharingEnabled = true
-        instance.configuration.agentLogForwardingEnabled = true
-        let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
-        // The phase's session identity stands in for a live `VZVirtualMachine`,
-        // not for the session context the services and their hand-offs live in.
-        instance.beginSessionContext()
-        instance.vsockAdmissionGate.publish(
-            VsockAdmissionGate.State(
-                handshakeComplete: true,
-                capabilities: Set(KernovaCapability.controlChannelDefaults)))
-        return (instance, sessionID)
-    }
-
     /// This instance's live session coordinator, which the live-policy pass and
     /// the accept path both run through.
     private func coordinator(of instance: VMInstance) throws -> VsockFeatureCoordinator {
@@ -73,22 +49,11 @@ struct VMInstanceLiveVsockPolicyTests {
         await drainMainQueue()
     }
 
-    /// Asserts `sink` forwards nothing — a descriptor handed to it is closed,
-    /// which the peer of a socket pair sees as EOF.
-    private func expectSinkCleared(_ sink: VsockDataConnectionSink) throws {
-        let (a, b) = try makeRawSocketPair()
-        defer { close(b) }  // `a` is owned — and must be closed — by the sink.
-        sink.accept(fd: a)
-        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(b, &byte, 1, 0) == 0)
-    }
-
     // MARK: - Log port
 
     @Test("Enabling log forwarding live installs the log listener")
     func enablingLogInstallsItsListener() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let installer = MockVsockListenerInstall()
 
         try await coordinator(of: instance)
@@ -100,7 +65,7 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("Disabling log forwarding live withdraws the listener and stops the service")
     func disablingLogWithdrawsItsListener() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
@@ -121,7 +86,7 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("Enabling clipboard sharing live installs the channel and data ports in one hop")
     func enablingClipboardInstallsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let installer = MockVsockListenerInstall()
 
         try await coordinator(of: instance)
@@ -136,7 +101,7 @@ struct VMInstanceLiveVsockPolicyTests {
     /// onto 49156 after the clipboard service is gone has nothing to serve it.
     @Test("Disabling clipboard sharing live withdraws the channel and data ports in one hop")
     func disablingClipboardWithdrawsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
@@ -162,7 +127,7 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("Enabling drag and drop live installs the channel and data ports in one hop")
     func enablingDropInstallsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let installer = MockVsockListenerInstall()
 
         try await coordinator(of: instance)
@@ -176,7 +141,7 @@ struct VMInstanceLiveVsockPolicyTests {
     /// data port after the drop service is gone has nothing to serve it.
     @Test("Disabling drag and drop live withdraws both ports and stops the service")
     func disablingDropWithdrawsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
@@ -201,7 +166,7 @@ struct VMInstanceLiveVsockPolicyTests {
     /// notification is uniform, the owner's reaction is not.
     @Test("A log channel dying under its service clears the instance's reference")
     func logChannelDeathClearsTheReference() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
@@ -222,7 +187,7 @@ struct VMInstanceLiveVsockPolicyTests {
     /// through `ClipboardServicing`, so the reference outlives the channel.
     @Test("A clipboard channel dying under its service keeps the instance's reference")
     func clipboardChannelDeathKeepsTheReference() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
@@ -245,7 +210,7 @@ struct VMInstanceLiveVsockPolicyTests {
     /// running on the accepted channel for the rest of the session.
     @Test("A log hand-off queued before the toggle-off installs nothing")
     func logHandOffCrossingDisableIsRefused() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .log, on: instance, sessionID: sessionID)
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
@@ -267,7 +232,7 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("A drop hand-off queued before the toggle-off installs nothing")
     func dropHandOffCrossingDisableIsRefused() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .drop, on: instance, sessionID: sessionID)
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
@@ -287,7 +252,7 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("A clipboard hand-off queued before the toggle-off installs nothing")
     func clipboardHandOffCrossingDisableIsRefused() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .clipboard, on: instance, sessionID: sessionID)
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)

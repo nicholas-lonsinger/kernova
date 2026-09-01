@@ -56,11 +56,7 @@ struct VsockFeatureServiceSettleTests {
     }
 
     private func makeFixture(_ kind: ServiceKind) throws -> Fixture {
-        let (hostFd, guestFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        let peer = VsockChannel(fileDescriptor: guestFd)
-        host.start()
-        peer.start()
+        let (host, peer) = try makeStartedChannelPair()
         let service = makeService(kind, channel: host)
         let lost = ChannelLostRecorder()
         service.onChannelLost = { lost.record() }

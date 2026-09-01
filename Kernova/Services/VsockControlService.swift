@@ -326,16 +326,13 @@ final class VsockControlService: VsockFeatureService {
                 "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardTransferV3, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
             )
         }
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
-            $0.logForwardingEnabled = policy.logForwardingEnabled
-            $0.clipboardSharingEnabled = clipboardEnabled
-            $0.clipboardMaxPasteBytes = UInt64(policy.clipboardMaxPasteBytes)
-            $0.dropFilesEnabled = policy.dropFilesEnabled
-        }
         do {
-            try channel.send(frame)
+            try channel.send(
+                Frame.controlPolicyUpdate(
+                    logForwardingEnabled: policy.logForwardingEnabled,
+                    clipboardSharingEnabled: clipboardEnabled,
+                    clipboardMaxPasteBytes: UInt64(policy.clipboardMaxPasteBytes),
+                    dropFilesEnabled: policy.dropFilesEnabled))
             Self.logger.notice(
                 "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public), maxPasteBytes=\(policy.clipboardMaxPasteBytes, privacy: .public), dropFiles=\(policy.dropFilesEnabled, privacy: .public))"
             )
@@ -347,6 +344,10 @@ final class VsockControlService: VsockFeatureService {
     }
 
     private func sendHeartbeat() {
+        // The timer bodies hop onto the main actor, so a tick cancelled by the
+        // teardown can still land after it — and this one would send on a closed
+        // channel and bump the nonce past a settle that reset everything else.
+        guard !hasStopped else { return }
         // A frozen guest drains nothing, and `VsockChannel.writeFramed` parks in
         // a blocking `write(2)` once the peer's receive buffer fills — here, on
         // the main actor. Send nothing while the guest is suspended.
@@ -395,7 +396,7 @@ final class VsockControlService: VsockFeatureService {
     /// notification tracks the transition rather than the tick.
     private func apply(_ verdict: ControlLivenessMonitor.Verdict) {
         switch verdict {
-        case .noSignal, .unchanged:
+        case .unchanged:
             // No inbound frame ever, or nothing changed — with no frame,
             // `agentStatus` already reports `.waiting`.
             break
@@ -496,12 +497,9 @@ final class VsockControlService: VsockFeatureService {
             )
         case .policyUpdate, .wrongPort:
             // PolicyUpdate is host→guest and never arrives here; other payloads
-            // belong on other channels. RATIONALE: verified 2026-09-01 against
-            // this file's teardown path — the clipboard and log channels close
-            // on a wrong-port payload, but this one stays up, because it is the
-            // admission anchor they gate on (`admissionGate?.clear()` in
-            // `stop`), so closing it would flap the agent-status UI and every
-            // dependent channel on one stray frame.
+            // belong on other channels. Unlike the clipboard and log channels,
+            // this one stays up — it is the admission anchor they gate on, so a
+            // stray frame may not take it down (`wrongPortPayloadLeavesTheChannelUp`).
             Self.logger.warning(
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )

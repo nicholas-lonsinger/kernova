@@ -11,45 +11,6 @@ import Testing
 @Suite("VsockFeatureCoordinator", .admissionGated)
 @MainActor
 struct VsockFeatureCoordinatorTests {
-    // MARK: - Helpers
-
-    private final class RetainingAcceptor: VsockDataConnectionAccepting {
-        nonisolated func acceptDataConnection(fd: Int32) {
-            // Keep the descriptor open: a forwarded fd is the probe's signal.
-        }
-    }
-
-    /// An instance with a live session and a completed handshake, every feature
-    /// toggled on so each descriptor's accept path is reachable.
-    private func makeInstanceWithLiveSession() -> (instance: VMInstance, sessionID: UUID) {
-        var config = VMConfiguration(name: "Coordinator VM", guestOS: .macOS, bootMode: .macOS)
-        config.clipboardSharingEnabled = true
-        config.agentLogForwardingEnabled = true
-        config.dropFilesEnabled = true
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
-        let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
-        instance.beginSessionContext()
-        instance.vsockAdmissionGate.publish(
-            VsockAdmissionGate.State(
-                handshakeComplete: true,
-                capabilities: Set(KernovaCapability.controlChannelDefaults)))
-        return (instance, sessionID)
-    }
-
-    /// Asserts `sink` forwards nothing — a descriptor handed to it is closed,
-    /// which the peer of a socket pair sees as EOF.
-    private func expectSinkCleared(_ sink: VsockDataConnectionSink) throws {
-        let (a, b) = try makeRawSocketPair()
-        defer { close(b) }  // `a` is owned — and must be closed — by the sink.
-        sink.accept(fd: a)
-        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
-        var byte: UInt8 = 0
-        #expect(recv(b, &byte, 1, 0) == 0)
-    }
-
     // MARK: - The table
 
     /// A collision would silently hand one channel's connections to another's
@@ -131,13 +92,9 @@ struct VsockFeatureCoordinatorTests {
     @Test("A hand-off naming a released session builds nothing and closes the channel")
     func staleSessionHandOffIsRefused() async throws {
         for descriptor in VsockFeatureDescriptor.all {
-            let (instance, _) = makeInstanceWithLiveSession()
+            let (instance, _) = makeInstanceWithLiveSession(named: "Coordinator VM")
             let vsock = try #require(instance.sessionContext?.vsock)
-            let (hostFd, guestFd) = try makeRawSocketPair()
-            let guest = VsockChannel(fileDescriptor: guestFd)
-            let host = VsockChannel(fileDescriptor: hostFd)
-            guest.start()
-            host.start()
+            let (host, guest) = try makeStartedChannelPair()
             defer { guest.close() }
 
             vsock.accept(host, as: descriptor, sessionID: UUID())
@@ -153,16 +110,12 @@ struct VsockFeatureCoordinatorTests {
 
     @Test("stopAll settles every slot and clears the gate and both data sinks")
     func stopAllReleasesEverything() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Coordinator VM")
         let vsock = try #require(instance.sessionContext?.vsock)
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         for descriptor in VsockFeatureDescriptor.all {
-            let (hostFd, guestFd) = try makeRawSocketPair()
-            let guest = VsockChannel(fileDescriptor: guestFd)
-            let host = VsockChannel(fileDescriptor: hostFd)
-            guest.start()
-            host.start()
+            let (host, guest) = try makeStartedChannelPair()
             guests.append(guest)
             vsock.accept(host, as: descriptor, sessionID: sessionID)
             #expect(
