@@ -1655,8 +1655,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func toggleGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        // Same single source of truth as `validateMenuItem`, so the action can
-        // never disagree with the title the user clicked.
+        // Same single source of truth as `MainMenuController.validate`, so the
+        // action can never disagree with the title the user clicked.
         let model = GuestAgentDiskMenuItem.model(
             status: instance.agentStatus,
             isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
