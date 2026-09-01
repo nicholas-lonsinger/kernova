@@ -422,7 +422,6 @@ final class AppResidencyController {
     /// redundant activation request — and on the reopen leg, our own self-open
     /// would loop.
     private func presentSummonedInterface(showing target: SummonTarget) {
-        hasPresentedInterface = true
         // Idempotent — re-asserted here since a reopen can arrive with the
         // policy already `.regular`.
         setActivationPolicy(.regular)

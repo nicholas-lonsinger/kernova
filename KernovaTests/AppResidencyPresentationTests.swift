@@ -5,8 +5,9 @@ import Testing
 @testable import Kernova
 
 /// Covers ``AppResidencyController/prepareToPresentWindow()`` — the chokepoint
-/// every window that bypasses the summon path goes through, and the only setter
-/// of the `hasPresentedInterface` latch.
+/// every window that bypasses the summon path goes through to reach
+/// `markInterfacePresented()`, the one setter of the `hasPresentedInterface`
+/// latch.
 ///
 /// That latch is what
 /// ``AppResidencyController/automationIdleOutcome(isAutomationLaunch:hasPresentedInterface:hasVisibleUserWindow:keepInMenuBar:hasUninterruptibleWork:hasLiveGuest:hasIntentInFlight:)``
