@@ -1,16 +1,6 @@
 import Cocoa
 import os
 
-/// The application-level seams an ``AppWindowRegistry`` needs but cannot own:
-/// the activation policy and the idle reconcile.
-@MainActor
-protocol AppWindowRegistryHosting: AnyObject {
-    /// Re-asserts whatever the app must be before a window goes on screen.
-    func prepareToPresentWindow()
-    /// A tracked window closed — re-decide whether the process still has work.
-    func reconcileIdleTermination()
-}
-
 /// The one owner of which user-facing windows exist, and whether any of them is
 /// on screen.
 ///
@@ -24,7 +14,8 @@ final class AppWindowRegistry {
     /// The one owner of where each VM's display lives, held here so the display
     /// windows count toward presence alongside the rest.
     let displayPlacement: VMDisplayPlacementController
-    weak var host: (any AppWindowRegistryHosting)?
+    /// The residency decisions this registry needs but cannot make.
+    weak var residency: (any WindowResidencyHosting)?
 
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
@@ -56,7 +47,7 @@ final class AppWindowRegistry {
     }
 
     func showLibrary(bringToFront: Bool) {
-        host?.prepareToPresentWindow()
+        residency?.prepareToPresentWindow()
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
                 Self.logger.debug("showLibrary: focusing existing window")
@@ -84,7 +75,7 @@ final class AppWindowRegistry {
     // MARK: - Settings
 
     func showSettings(_ sender: Any?) {
-        host?.prepareToPresentWindow()
+        residency?.prepareToPresentWindow()
         let controller = settingsWindowController ?? SettingsWindowController(viewModel: viewModel)
         settingsWindowController = controller
         NSApp.activate()
@@ -98,7 +89,7 @@ final class AppWindowRegistry {
     /// admits one.
     func showClipboard(for instance: VMInstance) {
         guard viewModel.capabilities.accepts(.showClipboard, on: instance) else { return }
-        host?.prepareToPresentWindow()
+        residency?.prepareToPresentWindow()
 
         let vmID = instance.instanceID
         if let existing = clipboardWindows[vmID] {
@@ -113,11 +104,12 @@ final class AppWindowRegistry {
         // Neither reconcile reads that here: the test host's `isIdle` reads
         // registry state only, and the resident app's `automationIdleOutcome`
         // short-circuits on the `hasPresentedInterface` latch
-        // `prepareToPresentWindow()` set when this window was shown.
+        // `AppResidencyController.prepareToPresentWindow()` set when this window
+        // was shown.
         controller.onWillClose = { [weak self] in
             guard let self else { return }
             self.clipboardWindows.removeValue(forKey: vmID)
-            self.host?.reconcileIdleTermination()
+            self.residency?.reconcileIdleTermination()
         }
         clipboardWindows[vmID] = controller
         controller.showWindow(nil)
@@ -201,4 +193,10 @@ final class AppWindowRegistry {
         settingsWindowController?.window?.close()
         mainWindowController?.window?.close()
     }
+}
+
+// MARK: - VMDisplayPlacementHosting
+
+extension AppWindowRegistry: VMDisplayPlacementHosting {
+    var libraryScreen: NSScreen? { libraryWindow?.screen }
 }

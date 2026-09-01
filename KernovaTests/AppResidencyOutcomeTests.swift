@@ -2,17 +2,17 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppDelegate.residencyOutcome` — what the window reconcile does
+/// Unit tests for `AppResidencyController.residencyOutcome` — what the window reconcile does
 /// once no window is on screen (#793).
-@Suite("AppDelegate residency outcome", .admissionGated)
-struct AppDelegateResidencyOutcomeTests {
+@Suite("AppResidencyController residency outcome", .admissionGated)
+struct AppResidencyOutcomeTests {
     private func outcome(
         hasVisibleUserWindow: Bool = false,
         isHidden: Bool = false,
         keepInMenuBar: Bool = false,
         hasUninterruptibleWork: Bool = false
-    ) -> AppDelegate.ResidencyOutcome {
-        AppDelegate.residencyOutcome(
+    ) -> AppResidencyController.ResidencyOutcome {
+        AppResidencyController.residencyOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
             isHidden: isHidden,
             keepInMenuBar: keepInMenuBar,

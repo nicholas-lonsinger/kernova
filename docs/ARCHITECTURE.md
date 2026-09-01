@@ -19,22 +19,27 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 ### App Layer
 
 - `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator`,
-  `AppWindowRegistry` and `MainMenuController`, and decides the activation policy, the quit gate
-  and idle termination.
+  `AppWindowRegistry`, `MainMenuController` and `AppResidencyController`, and owns the launch
+  classification and the quit gate. It conforms to `WindowResidencyHosting` by forwarding to the
+  residency controller, and answers for the test host, which has none.
+- `AppResidencyController` — the one owner of what the process *is* when no window is on screen:
+  the activation policy, the menu-bar status item, the GUI summon, and the idle quit an automation
+  launch settles into. Built only for the resident app — under XCTest the same binary is a plain
+  foreground test host, which holds none and idle-quits on its own.
 - `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
   menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
   to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches
   them nil-target down the responder chain.
 - `AppWindowRegistry` — the one owner of which user-facing windows exist and whether any is on
   screen: the library window, the Settings window, the per-VM clipboard windows, and the
-  `VMDisplayPlacementController` it holds. It reaches the app through `AppWindowRegistryHosting`,
-  conformed to by `AppDelegate`.
+  `VMDisplayPlacementController` it holds. It reaches residency through `WindowResidencyHosting`,
+  and answers `VMDisplayPlacementHosting` for the display windows it holds.
 - `VMDisplayPlacementController` — the one owner of where each VM's display lives: the display-window
   registry, and the sole writer of `VMInstance.displayMode` and `VMConfiguration.displayPreference`
-  for every transition. It reaches the app through `VMDisplayPlacementHosting`, conformed to by
-  `AppDelegate`.
-- `HostAgentStatusItemController` — the menu-bar status item, created and torn down by `AppDelegate`
-  as *Continue running in Status Bar* flips. Kernova is a resident `.accessory` app whose VMs keep
+  for every transition. It reaches the window layer through `VMDisplayPlacementHosting`, conformed
+  to by `AppWindowRegistry`, and residency through `WindowResidencyHosting`.
+- `HostAgentStatusItemController` — the menu-bar status item, created and torn down by
+  `AppResidencyController` as *Continue running in Status Bar* flips. Kernova is a resident `.accessory` app whose VMs keep
   running with no window open, so this is the only affordance while headless; under XCTest
   (`isTestHost`) the same binary is a plain foreground test host instead.
 - `MainWindowController` — the library window: a `SnapToFitSplitViewController` holding the
@@ -279,7 +284,7 @@ session down without that hook, so a suspended session survives to revert at its
   since an intent can be delivered while that read is still in flight. It presents nothing: a
   `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
   gathered by re-issuing the verb with `confirmed: true`. It also counts intents in flight and
-  reports the process idle to `AppDelegate` when the last one finishes — the only signal a process
+  reports the process idle to `AppResidencyController` when the last one finishes — the only signal a process
   the system launched to service an intent, and which therefore has no window, can settle on.
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommandCore` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
@@ -373,6 +378,7 @@ AppDelegate
     │                 ├── IPSWService
     │                 └── USBDeviceService
     ├── creates → MainMenuController
+    ├── creates → AppResidencyController (activation policy, status item, summon, idle quit)
     └── creates → AppWindowRegistry
                       ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
                       ├── manages → ClipboardWindowController (per VM), SettingsWindowController
@@ -386,7 +392,7 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
 A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
 
 Siri / Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
-                                              VMIntentGateway ──idle───→ AppDelegate
+                                              VMIntentGateway ──idle───→ AppResidencyController
 
 VMCommandCore ──reads/writes──→ VMLibrary
               ──delegates────→ VMLifecycleCoordinator ──→ Services
