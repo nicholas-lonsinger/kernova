@@ -2,7 +2,7 @@ import AppKit
 
 /// Hosts the app-wide Settings window (⌘,).
 ///
-/// A single instance is retained by `AppDelegate` and reused across opens. The
+/// A single instance is retained by `AppWindowRegistry` and reused across opens. The
 /// content is a toolbar-style `SettingsTabViewController`; the window is
 /// non-resizable, matching the platform convention for settings.
 @MainActor

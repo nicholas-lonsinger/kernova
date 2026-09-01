@@ -15,7 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let isTestHost: Bool
     /// App-wide preferences (the single DI seam for `UserDefaults`-backed state).
     private let preferences: AppPreferences
-    private var mainWindowController: MainWindowController?
+    /// The one owner of which user-facing windows exist, and whether any is on
+    /// screen.
+    private let windows: AppWindowRegistry
     private let viewModel: VMLibraryViewModel
     /// The library's first read from disk, started in
     /// `applicationWillFinishLaunching`.
@@ -54,11 +56,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Whether `application(_:open:)` ran with a launch document, latched the
     /// same way.
     private var didOpenLaunchDocuments = false
-    private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
-    private var clipboardObservers: [UUID: Any] = [:]
-    /// The one owner of where each VM's display lives — the display-window
-    /// registry and both placement fields.
-    private let displayPlacement: VMDisplayPlacementController
     private var terminationObservation: ObservationLoop?
     /// Watches the residency toggle so the status item and the reconcile follow it
     /// live. Resident app only.
@@ -76,7 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// pass, which always replies and terminates the app.
     private var isRunningTerminationSavePass = false
     private let clipboardMenuItem: NSMenuItem
-    private var settingsWindowController: SettingsWindowController?
 
     /// The application menu, retained so its quit section can be rebuilt when it opens.
     private var appMenu: NSMenu?
@@ -287,15 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Returns the VM that menu actions should target: the display or clipboard
     /// window's VM if its window is key, otherwise the sidebar-selected VM.
     private var activeInstance: VMInstance? {
-        if let keyWindow = NSApp.keyWindow {
-            if let instance = displayPlacement.instance(forKeyWindow: keyWindow) {
-                return instance
-            }
-            if let controller = clipboardWindows.values.first(where: { $0.window === keyWindow }) {
-                return controller.instance
-            }
-        }
-        return viewModel.selectedInstance
+        NSApp.keyWindow.flatMap(windows.instance(forKeyWindow:)) ?? viewModel.selectedInstance
     }
 
     /// The VM a nil-target action acts on: the one the sending item names, else
@@ -327,7 +315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         self.preferences = preferences
         let viewModel = VMLibraryViewModel()
         self.viewModel = viewModel
-        self.displayPlacement = VMDisplayPlacementController(viewModel: viewModel)
+        self.windows = AppWindowRegistry(
+            viewModel: viewModel,
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
 
         let clipboardItem = NSMenuItem(
             title: "Clipboard",
@@ -339,13 +329,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         super.init()
 
-        displayPlacement.host = self
+        windows.host = self
+        windows.displayPlacement.host = self
         viewModel.onSurfaceLibrary = { [weak self] in
             guard let self, !self.isTestHost else { return }
             self.presentSummonedInterface()
         }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
-            self?.displayPlacement.showDisplayWindow(for: instance)
+            self?.windows.displayPlacement.showDisplayWindow(for: instance)
         }
         viewModel.displayBootGeometryProvider = self
     }
@@ -430,9 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // None of the resident-app machinery (status item, activation-policy
             // switching) runs in the test host, so CI unit tests never register
             // login items.
-            let windowController = MainWindowController(viewModel: viewModel)
-            windowController.showWindow(nil)
-            mainWindowController = windowController
+            windows.showLibrary(bringToFront: true)
             observeForTermination()
         } else {
             startResidentApp(provenance: readLaunchProvenance(notification))
@@ -541,7 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 // reconciles itself afterwards. A second reconcile scheduled here
                 // runs before that restore, sees no window on screen, and would
                 // quit the app instead of popping the display back in.
-                guard !self.displayPlacement.isPoppingIn(window) else { return }
+                guard !self.windows.displayPlacement.isPoppingIn(window) else { return }
                 self.scheduleAgentActivationPolicySync()
             }
         }
@@ -841,14 +830,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let summoned: NSWindow?
             switch target {
             case .library:
-                self.showLibraryWindow(bringToFront: true)
-                summoned = self.mainWindowController?.window
+                self.windows.showLibrary(bringToFront: true)
+                summoned = self.windows.libraryWindow
             case .display(let instance):
-                self.displayPlacement.showDisplayWindow(for: instance)
-                summoned = self.displayPlacement.window(for: instance.instanceID)
+                self.windows.displayPlacement.showDisplayWindow(for: instance)
+                summoned = self.windows.displayPlacement.window(for: instance.instanceID)
             case .clipboard(let instance):
-                self.showClipboardWindow(for: instance)
-                summoned = self.clipboardWindows[instance.instanceID]?.window
+                self.windows.showClipboard(for: instance)
+                summoned = self.windows.clipboardWindow(for: instance.instanceID)
             }
             // The activation request above may still be refused; the window has
             // to arrive either way. `orderFrontRegardless` is the only ordering
@@ -893,41 +882,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setAgentActivationPolicy(.regular)
     }
 
-    /// Whether any user-facing Kernova window is currently on screen, optionally
-    /// counting a miniaturized one as present.
-    ///
-    /// Deliberately does NOT special-case `NSApp.isHidden`: plain ⌘H closes no
-    /// window, so no reconcile fires and the Dock icon persists. Forcing
-    /// `.regular` while hidden strands the agent with a Dock icon and zero
-    /// windows when a background close (a VM shutting down empties the last
-    /// display window mid-hide) fires the reconcile.
-    private func hasUserWindow(countingMiniaturized: Bool) -> Bool {
-        func onScreen(_ window: NSWindow?) -> Bool {
-            guard let window else { return false }
-            return window.isVisible || (countingMiniaturized && window.isMiniaturized)
-        }
-        if onScreen(mainWindowController?.window) { return true }
-        if displayPlacement.hasWindow(where: { onScreen($0) }) { return true }
-        if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
-        if onScreen(settingsWindowController?.window) { return true }
-        // Untracked AppKit-owned panels are genuine on-screen windows: count them
-        // so a reconcile can't strip the Dock icon while one is the last visible.
-        // `isUntrackedUserPanel` itself always admits a miniaturized panel, so
-        // the parameter is honored here by additionally requiring `isVisible`
-        // when miniaturized windows don't count.
-        func isOnScreenUntrackedPanel(_ window: NSWindow) -> Bool {
-            Self.isUntrackedUserPanel(window) && (countingMiniaturized || window.isVisible)
-        }
-        if NSApp.windows.contains(where: isOnScreenUntrackedPanel) { return true }
-        return false
-    }
-
     /// Whether any user-facing Kernova window is currently on screen, counting a
     /// miniaturized one as present.
     ///
     /// The Dock icon (`.regular`) must be present iff this is `true`.
     private var hasVisibleUserWindow: Bool {
-        hasUserWindow(countingMiniaturized: true)
+        windows.hasUserWindow(countingMiniaturized: true)
     }
 
     /// Whether any user-facing Kernova window is currently on screen, excluding
@@ -937,7 +897,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// miniaturized window must still present, matching AppKit's own Dock-click
     /// behavior of deminiaturizing it.
     private var hasOnScreenUserWindow: Bool {
-        hasUserWindow(countingMiniaturized: false)
+        windows.hasUserWindow(countingMiniaturized: false)
     }
 
     /// Whether closing `window` can change what `hasVisibleUserWindow` returns,
@@ -954,19 +914,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// the freshly summoned app last in ⌘-Tab.
     static func windowCloseAffectsActivationPolicy(_ window: NSWindow) -> Bool {
         window.styleMask.contains(.titled)
-    }
-
-    /// Whether `window` is an untracked, AppKit-owned top-level panel whose
-    /// presence must keep the Dock icon.
-    ///
-    /// The standard About panel is the motivating example. The visible +
-    /// normal-level + titled filter excludes chrome: the status item's backing
-    /// `NSStatusBarWindow` is borderless and sits above `.normal`, so an
-    /// unfiltered `NSApp.windows` scan would pin the agent to `.regular` forever.
-    static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
-        (window.isVisible || window.isMiniaturized)
-            && window.level == .normal
-            && window.styleMask.contains(.titled)
     }
 
     /// What the window reconcile does with the resident app.
@@ -1210,9 +1157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         let hasActiveVMs = viewModel.instances.contains(where: \.isKeepingAppAlive)
 
-        if hasActiveVMs || !displayPlacement.isEmpty {
+        if hasActiveVMs || !windows.displayPlacement.isEmpty {
             Self.logger.debug(
-                "applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.displayPlacement.count, privacy: .public))"
+                "applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.windows.displayPlacement.count, privacy: .public))"
             )
             return false
         }
@@ -1254,7 +1201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         if !flag {
             showLibrary(nil)
-        } else if !justActivated && isMainWindowDismissed {
+        } else if !justActivated && windows.isLibraryDismissed {
             Self.logger.debug("applicationShouldHandleReopen: reopening dismissed library window")
             showLibrary(nil)
         } else if justActivated {
@@ -1280,20 +1227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         summonUserInterface()
     }
 
-    /// Closes every user-facing window, returning the agent to its headless
-    /// `.accessory` state.
-    ///
-    /// Display windows close as app-initiated dismissals so their handler returns
-    /// `displayMode` to `.inline` (not the user-close `.hidden`) and leaves
-    /// `displayPreference` intact. Collections are snapshotted because closing
-    /// mutates them.
-    private func closeAllGUIWindows() {
-        displayPlacement.closeAllForAppDismissal()
-        for controller in Array(clipboardWindows.values) { controller.window?.close() }
-        settingsWindowController?.window?.close()
-        mainWindowController?.window?.close()
-    }
-
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Every quit path funnels through `terminate:` and thus this method, so
         // this single gate covers them all — see `quitShouldTerminateAgent`.
@@ -1308,7 +1241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             Self.logger.notice("GUI-origin quit — closing the GUI; app stays resident")
             // Defer so the close runs after this termination request is fully cancelled.
             Task { @MainActor in
-                self.closeAllGUIWindows()
+                self.windows.closeAll()
                 // Settle the Dock-presence policy BEFORE anchoring the reminder.
                 // Left to the deferred per-window reconciles, the popover is shown
                 // first and the `.regular` → `.accessory` flip lands 20–75ms later,
@@ -1687,25 +1620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func showLibraryWindow(bringToFront: Bool) {
-        ensureRegularActivationIfAgent()
-        if let existingWindow = mainWindowController?.window {
-            if bringToFront {
-                Self.logger.debug("showLibrary: focusing existing window")
-                existingWindow.makeKeyAndOrderFront(nil)
-            } else {
-                Self.logger.debug("showLibrary: showing existing window in background")
-                existingWindow.orderBack(nil)
-            }
-        } else {
-            Self.logger.notice("showLibrary: recreating main window controller")
-            let windowController = MainWindowController(viewModel: viewModel)
-            if bringToFront {
-                windowController.showWindow(nil)
-            } else {
-                windowController.showWindowInBackground()
-            }
-            mainWindowController = windowController
-        }
+        windows.showLibrary(bringToFront: bringToFront)
     }
 
     @objc func showAboutPanel(_ sender: Any?) {
@@ -1719,12 +1634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc func showSettings(_ sender: Any?) {
-        ensureRegularActivationIfAgent()
-        let controller = settingsWindowController ?? SettingsWindowController(viewModel: viewModel)
-        settingsWindowController = controller
-        NSApp.activate()
-        controller.showWindow(sender)
-        controller.window?.makeKeyAndOrderFront(sender)
+        windows.showSettings(sender)
     }
 
     // MARK: - VM Actions
@@ -1793,8 +1703,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let instance = activeInstance else { return }
         // Reveal the sidebar first so the inline rename always lands on a visible
         // row.
-        showLibraryWindow(bringToFront: true)
-        mainWindowController?.revealSidebar()
+        windows.showLibrary(bringToFront: true)
+        windows.revealLibrarySidebar()
         viewModel.renameVMInSidebar(instance)
     }
 
@@ -1823,66 +1733,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
     }
 
-    // MARK: - Auxiliary Windows (Serial Console, Clipboard)
-
-    /// Shows or focuses an auxiliary window for the given VM instance.
-    private func showAuxiliaryWindow<C: NSWindowController>(
-        for instance: VMInstance,
-        isEligible: Bool,
-        windowsPath: ReferenceWritableKeyPath<AppDelegate, [UUID: C]>,
-        observersPath: ReferenceWritableKeyPath<AppDelegate, [UUID: Any]>,
-        factory: (VMInstance) -> C
-    ) {
-        guard isEligible else { return }
-        ensureRegularActivationIfAgent()
-
-        let vmID = instance.instanceID
-
-        if let existing = self[keyPath: windowsPath][vmID] {
-            existing.window?.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        let controller = factory(instance)
-        self[keyPath: windowsPath][vmID] = controller
-
-        // `ReferenceWritableKeyPath` is not Sendable, but the observer closure runs
-        // on `queue: .main`, where `AppDelegate` is `@MainActor`-isolated.
-        nonisolated(unsafe) let observersKP = observersPath
-        nonisolated(unsafe) let windowsKP = windowsPath
-        let token = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: controller.window,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if let token = self[keyPath: observersKP].removeValue(forKey: vmID) {
-                    NotificationCenter.default.removeObserver(token)
-                }
-                self[keyPath: windowsKP].removeValue(forKey: vmID)
-                self.reconcileIdleTermination()
-            }
-        }
-        self[keyPath: observersPath][vmID] = token
-
-        controller.showWindow(nil)
-    }
-
     @objc func showClipboard(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        showClipboardWindow(for: instance)
-    }
-
-    /// Shows or focuses the clipboard window for `instance`.
-    private func showClipboardWindow(for instance: VMInstance) {
-        showAuxiliaryWindow(
-            for: instance,
-            isEligible: viewModel.capabilities.accepts(.showClipboard, on: instance),
-            windowsPath: \.clipboardWindows,
-            observersPath: \.clipboardObservers,
-            factory: { [viewModel] in ClipboardWindowController(instance: $0, viewModel: viewModel) }
-        )
+        windows.showClipboard(for: instance)
     }
 
     @objc func toggleGuestAgentDisk(_ sender: Any?) {
@@ -1904,19 +1757,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func togglePopOut(_ sender: Any?) {
         guard let instance = target(of: sender) else { return }
-        displayPlacement.togglePopOut(for: instance)
+        windows.displayPlacement.togglePopOut(for: instance)
     }
 
     /// Brings the VM's display window forward, reopening it (in its persisted
     /// style) if the user previously closed it while the VM ran headless.
     @objc func showDisplayWindow(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        displayPlacement.showDisplayWindow(for: instance)
+        windows.displayPlacement.showDisplayWindow(for: instance)
     }
 
     @objc func toggleFullscreen(_ sender: Any?) {
         guard let instance = target(of: sender) else { return }
-        displayPlacement.toggleFullscreen(for: instance)
+        windows.displayPlacement.toggleFullscreen(for: instance)
     }
 
     /// Returns the best screen for entering fullscreen: the display the VM was
@@ -1933,7 +1786,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 "targetScreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back"
             )
         }
-        if let libraryScreen = mainWindowController?.window?.screen {
+        if let libraryScreen = windows.libraryWindow?.screen {
             return libraryScreen
         }
         return NSScreen.screens.first
@@ -1941,21 +1794,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Idle Termination
 
-    /// Whether the main library window has been dismissed (closed by the user).
-    ///
-    /// Distinguishes closed from hidden (Cmd+H) and minimized (Cmd+M).
-    private var isMainWindowDismissed: Bool {
-        guard let window = mainWindowController?.window else { return false }
-        if NSApp.isHidden || window.isMiniaturized { return false }
-        return !window.isVisible
-    }
-
-    /// Whether the app has no reason to stay alive: main window dismissed,
+    /// Whether the app has no reason to stay alive: library window dismissed,
     /// no auxiliary windows remain, and no VMs are active.
     private var isIdle: Bool {
-        guard isMainWindowDismissed else { return false }
-        guard displayPlacement.isEmpty else { return false }
-        guard clipboardWindows.isEmpty else { return false }
+        guard windows.isLibraryDismissed else { return false }
+        guard !windows.hasAuxiliaryWindows else { return false }
         return !viewModel.instances.contains(where: \.isKeepingAppAlive)
     }
 
@@ -1992,8 +1835,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Terminates the test host if `isIdle` is true.
     ///
-    /// `isIdle` reads `isMainWindowDismissed`, which answers `false` when no main
-    /// window was ever created — so it can never speak for an automation launch.
+    /// `isIdle` reads `AppWindowRegistry.isLibraryDismissed`, which answers
+    /// `false` when no library window was ever created — so it can never speak
+    /// for an automation launch.
     /// `automationIdleOutcome` covers that case on `hasVisibleUserWindow`.
     private func terminateIfIdle() {
         guard isTestHost else { return }
@@ -2420,6 +2264,10 @@ extension AppDelegate: VMDisplayPlacementHosting {
     }
 }
 
+// MARK: - AppWindowRegistryHosting
+
+extension AppDelegate: AppWindowRegistryHosting {}
+
 // MARK: - DisplayBootGeometryProviding
 
 extension AppDelegate: DisplayBootGeometryProviding {
@@ -2429,7 +2277,7 @@ extension AppDelegate: DisplayBootGeometryProviding {
             // `start` opens the display window before consulting this, and
             // `setFrameAutosaveName` restores the saved frame at init, so the
             // content view already carries the size the guest will fill.
-            guard let window = displayPlacement.window(for: instance.instanceID),
+            guard let window = windows.displayPlacement.window(for: instance.instanceID),
                 let content = window.contentView
             else { return nil }
             return surface(pointSize: content.bounds.size, scale: window.backingScaleFactor)
@@ -2443,7 +2291,7 @@ extension AppDelegate: DisplayBootGeometryProviding {
             size.height -= screen.safeAreaInsets.top
             return surface(pointSize: size, scale: screen.backingScaleFactor)
         case .inline:
-            return mainWindowController?.detailContainer.displayBootSurface()
+            return windows.libraryDetailContainer?.displayBootSurface()
         }
     }
 

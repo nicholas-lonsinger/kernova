@@ -11,6 +11,8 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardWindowController")
 
     let instance: VMInstance
+    /// Reports the close, while the window is still dispatching it.
+    var onWillClose: (() -> Void)?
     private var statusObservation: ObservationLoop?
 
     /// The hosted content controller, retained so blur/close can hand off a typed
@@ -66,6 +68,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         statusObservation?.cancel()
         statusObservation = nil
         Self.logger.debug("Clipboard window closing for VM '\(self.instance.name, privacy: .public)'")
+        onWillClose?()
     }
 
     func windowDidResignKey(_ notification: Notification) {

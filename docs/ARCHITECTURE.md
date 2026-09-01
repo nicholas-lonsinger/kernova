@@ -19,9 +19,12 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 ### App Layer
 
 - `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator` and
-  `VMDisplayPlacementController`, owns the application menu, and tracks clipboard window controllers
-  keyed by VM UUID, so one VM can have a detail pane, a display window, and a clipboard window open
-  at once.
+  `AppWindowRegistry`, owns the application menu, and decides the activation policy, the quit gate
+  and idle termination.
+- `AppWindowRegistry` — the one owner of which user-facing windows exist and whether any is on
+  screen: the library window, the Settings window, the per-VM clipboard windows, and the
+  `VMDisplayPlacementController` it holds. It reaches the app through `AppWindowRegistryHosting`,
+  conformed to by `AppDelegate`.
 - `VMDisplayPlacementController` — the one owner of where each VM's display lives: the display-window
   registry, and the sole writer of `VMInstance.displayMode` and `VMConfiguration.displayPreference`
   for every transition. It reaches the app through `VMDisplayPlacementHosting`, conformed to by
@@ -35,8 +38,8 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 - `VMToolbarManager` — the toolbar items shared between the library window and the pop-out display
   window; window-specific items stay with their own controller.
 - `VMDisplayWindowController` — per VM, created by `VMDisplayPlacementController`, to which it
-  reports the transitions AppKit performs. `ClipboardWindowController` is per VM under `AppDelegate`;
-  `SettingsWindowController` is an app-level singleton.
+  reports the transitions AppKit performs. `ClipboardWindowController` is per VM under
+  `AppWindowRegistry`; `SettingsWindowController` is an app-level singleton.
 - `DisplayBootGeometryProviding` — the App→ViewModel seam for on-screen geometry, conformed to by
   `AppDelegate` and read by `VMLibraryViewModel.start` before the VZ configuration is built.
 
@@ -365,10 +368,11 @@ AppDelegate
     │                 ├── MacOSInstallService
     │                 ├── IPSWService
     │                 └── USBDeviceService
-    ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
-    ├── creates → VMDisplayPlacementController
-    │                 └── manages → VMDisplayWindowController (per VM)
-    └── manages → ClipboardWindowController (per VM)
+    └── creates → AppWindowRegistry
+                      ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
+                      ├── manages → ClipboardWindowController (per VM), SettingsWindowController
+                      └── holds → VMDisplayPlacementController
+                                      └── manages → VMDisplayWindowController (per VM)
 
 AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ VMLibrary (state, persistence)
                           VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
