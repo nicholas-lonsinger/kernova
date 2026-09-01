@@ -26,12 +26,17 @@ struct AppResidencyPresentationTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appresidency")
 
-    /// Counts the `onInterfacePresented` seam the launch cluster owns.
-    private final class PresentationRecorder {
+    /// Counts the ``AppLaunchHosting/armAutoStartPass()`` seam the launch cluster
+    /// owns. Held alongside the controller, which references it weakly.
+    private final class StubLaunchHost: AppLaunchHosting {
         var count = 0
+
+        func armAutoStartPass() { count += 1 }
+        func awaitLibraryReady() async {}
+        func requestFullQuit() {}
     }
 
-    private func makeController() -> (AppResidencyController, PresentationRecorder) {
+    private func makeController() -> (AppResidencyController, StubLaunchHost) {
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
@@ -41,46 +46,44 @@ struct AppResidencyPresentationTests {
             usbDeviceService: MockUSBDeviceService(),
             preferences: preferences
         )
-        let recorder = PresentationRecorder()
+        let host = StubLaunchHost()
         let controller = AppResidencyController(
             viewModel: viewModel,
             preferences: preferences,
             windows: AppWindowRegistry(
                 viewModel: viewModel,
-                displayPlacement: VMDisplayPlacementController(viewModel: viewModel)),
-            hasIntentInFlight: { false },
-            onInterfacePresented: { recorder.count += 1 },
-            onRequestFullQuit: {}
+                displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
         )
-        return (controller, recorder)
+        controller.host = host
+        return (controller, host)
     }
 
     @Test("A controller that has presented nothing holds the latch clear")
     func freshControllerHasNotPresented() {
-        let (controller, recorder) = makeController()
+        let (controller, launchHost) = makeController()
 
         #expect(!controller.hasPresentedInterface)
-        #expect(recorder.count == 0)
+        #expect(launchHost.count == 0)
     }
 
     @Test("Preparing to present a window latches the interface as presented")
     func prepareLatchesPresented() {
-        let (controller, recorder) = makeController()
+        let (controller, launchHost) = makeController()
 
         controller.prepareToPresentWindow()
 
         #expect(controller.hasPresentedInterface)
-        #expect(recorder.count == 1)
+        #expect(launchHost.count == 1)
     }
 
     @Test("A second window keeps the latch and re-arms the auto-start pass seam")
     func repeatedPreparesKeepTheLatch() {
-        let (controller, recorder) = makeController()
+        let (controller, launchHost) = makeController()
 
         controller.prepareToPresentWindow()
         controller.prepareToPresentWindow()
 
         #expect(controller.hasPresentedInterface)
-        #expect(recorder.count == 2)
+        #expect(launchHost.count == 2)
     }
 }

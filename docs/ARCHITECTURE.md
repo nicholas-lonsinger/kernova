@@ -19,19 +19,26 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 ### App Layer
 
 - `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator`,
-  `AppWindowRegistry`, `MainMenuController`, `AppResidencyController` and
-  `AppTerminationController`, and owns the launch classification. It conforms to
-  `WindowResidencyHosting` by forwarding to the residency controller, and answers for the test host,
-  which has none.
-- `AppResidencyController` — the one owner of what the process *is* when no window is on screen:
-  the activation policy, the menu-bar status item, the GUI summon, and the idle quit an automation
-  launch settles into. Built only for the resident app — under XCTest the same binary is a plain
-  foreground test host, which holds none and idle-quits on its own.
+  `AppWindowRegistry`, `MainMenuController`, `AppTerminationController` and one `AppResidencyHosting`,
+  and owns the launch classification. `main()` picking that residency is the only place the process
+  mode is branched on; every delegate method below it forwards without forking. It answers the
+  residency's `AppLaunchHosting` seam — the auto-start pass, the first library read, the true quit.
+- `AppResidencyHosting` — everything the delegate asks of the process's residency: the launch, the
+  reopen, the summon, the quit-after-last-window answer, and the App Intents front door. Two peer
+  implementations, `AppResidencyController` and `TestHostResidencyController`. It refines
+  `WindowResidencyHosting`, which is the narrower seam the window layer holds.
+- `AppResidencyController` — the resident app's residency: the activation policy, the menu-bar
+  status item, the GUI summon, the idle quit an automation launch settles into, and the
+  `VMIntentGateway` it publishes and then reads for intents in flight.
+- `TestHostResidencyController` — the test host's residency, built only under XCTest: a plain
+  foreground `.regular` app that shows the library at launch and idle-quits once no window is on
+  screen, the app is not hidden, and no guest is live. It publishes no intent gateway and offers no
+  soft quit.
 - `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
   rather than downgrade to a GUI close, the save pass that suspends every live guest before the
   process exits, and the relaunch a TCC revocation needs. It reaches the GUI close through
-  `SoftQuitHosting`, conformed to by `AppResidencyController`; holding none is what makes every quit
-  in the test host a real one.
+  `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is what makes every
+  quit in the test host a real one.
 - `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
   menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
   to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches
@@ -46,8 +53,8 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   to by `AppWindowRegistry`, and residency through `WindowResidencyHosting`.
 - `HostAgentStatusItemController` — the menu-bar status item, created and torn down by
   `AppResidencyController` as *Continue running in Status Bar* flips. Kernova is a resident `.accessory` app whose VMs keep
-  running with no window open, so this is the only affordance while headless; under XCTest
-  (`isTestHost`) the same binary is a plain foreground test host instead.
+  running with no window open, so this is the only affordance while headless; the test host's
+  residency creates none.
 - `MainWindowController` — the library window: a `SnapToFitSplitViewController` holding the
   `SidebarViewController` source list and `DetailContainerViewController`, plus an `NSToolbar`.
 - `VMToolbarManager` — the toolbar items shared between the library window and the pop-out display
@@ -284,7 +291,8 @@ session down without that hook, so a suspended session survives to revert at its
   claim the same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
   encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
-- `VMIntentGateway` — the App Intents boundary, published through `AppDependencyManager` so every
+- `VMIntentGateway` — the App Intents boundary, built and published through `AppDependencyManager`
+  by `AppResidencyController` so every
   intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity
   carries the resolved identifier), and awaits the app's first library read before any verb or read,
   since an intent can be delivered while that read is still in flight. It presents nothing: a
@@ -384,7 +392,8 @@ AppDelegate
     │                 ├── IPSWService
     │                 └── USBDeviceService
     ├── creates → MainMenuController
-    ├── creates → AppResidencyController (activation policy, status item, summon, idle quit)
+    ├── creates → AppResidencyHosting: AppResidencyController (activation policy, status item,
+    │                 summon, intent gateway, idle quit) or TestHostResidencyController
     ├── creates → AppTerminationController (quit gate, save pass, relaunch)
     └── creates → AppWindowRegistry
                       ├── creates → MainWindowController (NSSplitViewController + NSToolbar)

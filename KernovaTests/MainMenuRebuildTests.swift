@@ -26,7 +26,7 @@ struct MainMenuRebuildTests {
         let viewModel = makeMenuViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         let controller = MainMenuController(
-            viewModel: viewModel, preferences: preferences, isTestHost: false,
+            viewModel: viewModel, preferences: preferences, hasSoftQuit: true,
             hasBundledGuestAgentDisk: true)
         let host = StubMenuHost(instance: instance)
         controller.host = host
@@ -47,7 +47,7 @@ struct MainMenuRebuildTests {
     func quitSectionMatchesModel() throws {
         let fixture = makeFixture(instance: nil)
         let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let model = MainMenuController.appMenuQuitItems(isTestHost: false, keepInMenuBar: false)
+        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: false)
 
         let items = quitItems(in: appMenu, count: model.count)
         #expect(items.map(\.title) == model.map(\.title))
@@ -77,7 +77,7 @@ struct MainMenuRebuildTests {
         fixture.viewModel.keepInMenuBarOnQuit = true
         fixture.controller.menuNeedsUpdate(appMenu)
 
-        let model = MainMenuController.appMenuQuitItems(isTestHost: false, keepInMenuBar: true)
+        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
         let after = quitItems(in: appMenu, count: model.count)
         #expect(after.map(\.title) == model.map(\.title))
         #expect(after.last?.keyEquivalentModifierMask == [.command, .option])

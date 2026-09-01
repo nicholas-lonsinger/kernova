@@ -117,7 +117,6 @@ struct AppWindowRegistryPresenceTests {
         let instance = makeClipboardEligibleInstance()
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
-        #expect(registry.hasAuxiliaryWindows)
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
 
         // `close()` dispatches `windowWillClose` synchronously, which is what
@@ -125,7 +124,6 @@ struct AppWindowRegistryPresenceTests {
         window.close()
 
         #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
-        #expect(!registry.hasAuxiliaryWindows)
     }
 
     @Test("Showing a clipboard window asks residency to prepare, and its close reconciles")
@@ -160,6 +158,5 @@ struct AppWindowRegistryPresenceTests {
         registry.showClipboard(for: instance)
 
         #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
-        #expect(!registry.hasAuxiliaryWindows)
     }
 }

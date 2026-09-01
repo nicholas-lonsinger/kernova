@@ -2,13 +2,13 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `MainMenuController.appMenuQuitItems(isTestHost:keepInMenuBar:)` — the
-/// pure helper that decides the app menu's quit section so every mode presents an
-/// *honest* command (#624).
+/// Unit tests for `MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose:)` —
+/// the pure helper that decides the app menu's quit section so every mode
+/// presents an *honest* command (#624).
 @Suite("MainMenuController.appMenuQuitItems", .admissionGated)
 struct MainMenuQuitItemsTests {
-    /// The single-item presentation shared by the test host and the resident app
-    /// with the preference off: one "Quit Kernova" ⌘Q routed through the gate.
+    /// The single-item presentation every process whose ⌘Q really quits gets:
+    /// one "Quit Kernova" ⌘Q routed through the gate.
     private func expectSingleTrueQuit(_ items: [MainMenuController.AppMenuQuitItem]) {
         #expect(items.count == 1)
         let item = items.first
@@ -18,9 +18,9 @@ struct MainMenuQuitItemsTests {
         #expect(item?.action == .terminateThroughGate)
     }
 
-    @Test("Resident app with keep-in-menu-bar on shows the honest split")
-    func residentKeepOn() {
-        let items = MainMenuController.appMenuQuitItems(isTestHost: false, keepInMenuBar: true)
+    @Test("A quit that downgrades to a GUI close shows the honest split")
+    func downgradedQuitSplits() {
+        let items = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
         #expect(items.count == 2)
 
         // "Close All Windows" ⌘Q — the soft quit that downgrades to a GUI close.
@@ -36,21 +36,9 @@ struct MainMenuQuitItemsTests {
         #expect(items.last?.action == .quitCompletely)
     }
 
-    @Test("Resident app with keep-in-menu-bar off shows a single quit that terminates")
-    func residentKeepOff() {
+    @Test("A quit that really quits shows one item that says so")
+    func trueQuitIsSingleItem() {
         expectSingleTrueQuit(
-            MainMenuController.appMenuQuitItems(isTestHost: false, keepInMenuBar: false))
-    }
-
-    @Test("Test host shows a single standard quit regardless of the preference (on)")
-    func testHostPreferenceOn() {
-        expectSingleTrueQuit(
-            MainMenuController.appMenuQuitItems(isTestHost: true, keepInMenuBar: true))
-    }
-
-    @Test("Test host shows a single standard quit regardless of the preference (off)")
-    func testHostPreferenceOff() {
-        expectSingleTrueQuit(
-            MainMenuController.appMenuQuitItems(isTestHost: true, keepInMenuBar: false))
+            MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: false))
     }
 }

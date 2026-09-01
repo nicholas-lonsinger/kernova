@@ -100,12 +100,10 @@ final class AppWindowRegistry {
         let controller = ClipboardWindowController(instance: instance, viewModel: viewModel)
         // Synchronous, unlike the display windows' deferred close handling, and
         // not because the closing window has left `NSApp.windows` — it has not,
-        // so `hasUserWindow` still counts it through the untracked-panel scan.
-        // Neither reconcile reads that here: the test host's `isIdle` reads
-        // registry state only, and the resident app's `automationIdleOutcome`
-        // short-circuits on the `hasPresentedInterface` latch
-        // `AppResidencyController.prepareToPresentWindow()` set when this window
-        // was shown.
+        // so the `hasUserWindow` both reconciles now read still counts it
+        // through the untracked-panel scan. That only ever errs toward staying
+        // resident, and the authoritative trigger follows this one: AppKit asks
+        // its own last-window rule once the window is gone.
         controller.onWillClose = { [weak self] in
             guard let self else { return }
             self.clipboardWindows.removeValue(forKey: vmID)
@@ -158,11 +156,6 @@ final class AppWindowRegistry {
             Self.isUntrackedUserPanel(window) && (countingMiniaturized || window.isVisible)
         }
         return NSApp.windows.contains(where: isOnScreenUntrackedPanel)
-    }
-
-    /// Whether any window beyond the library and Settings is open.
-    var hasAuxiliaryWindows: Bool {
-        !displayPlacement.isEmpty || !clipboardWindows.isEmpty
     }
 
     /// Whether `window` is an untracked, AppKit-owned top-level panel whose
