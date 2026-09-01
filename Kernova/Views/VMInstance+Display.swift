@@ -164,17 +164,20 @@ extension VMInstance {
 
     /// Menu item title for the stop slot.
     ///
-    /// A cold-paused VM has no live `VZVirtualMachine` to stop gracefully — the
-    /// action discards the on-disk saved state instead, and the title names that
-    /// consequence; the ellipsis is there because the discard variant confirms.
-    var stopActionMenuTitle: String {
-        isColdPaused ? "Discard Saved State…" : "Stop"
+    /// A stop that discards the saved state has no live `VZVirtualMachine` to
+    /// shut down gracefully, so the title names that consequence instead; the
+    /// ellipsis is there because the discard variant confirms. Callers pass
+    /// what the catalog answers for ``VMCapability/discardSavedState``, so the
+    /// title and the command the slot invokes come from one derivation.
+    static func stopActionMenuTitle(discardingSavedState: Bool) -> String {
+        discardingSavedState ? "Discard Saved State…" : "Stop"
     }
 
-    /// Toolbar label for the stop segment — same wording as `stopActionMenuTitle`
-    /// without the trailing ellipsis, which is a menu-only convention.
-    var stopActionToolbarLabel: String {
-        isColdPaused ? "Discard Saved State" : "Stop"
+    /// Toolbar label for the stop segment — same wording as
+    /// ``stopActionMenuTitle(discardingSavedState:)`` without the trailing
+    /// ellipsis, which is a menu-only convention.
+    static func stopActionToolbarLabel(discardingSavedState: Bool) -> String {
+        discardingSavedState ? "Discard Saved State" : "Stop"
     }
 
     /// `true` when this VM's pending setup fetches its image, a

@@ -177,8 +177,28 @@ final class VMCommandCore: VMCommanding {
     /// flight when that is what is blocking rather than a status the summary
     /// already reports as `"preparing"`.
     func require(_ capability: VMCapability, on instance: VMInstance) throws {
-        guard !capabilities.accepts(capability, on: instance) else { return }
-        throw invalidState(instance)
+        try require(anyOf: [capability], on: instance)
+    }
+
+    /// Refuses unless `instance` takes at least one of `options` — for the
+    /// commands one control reaches through more than one capability, the
+    /// suspended VM's Stop that discards its saved state above all.
+    func require(anyOf options: [VMCapability], on instance: VMInstance) throws {
+        guard !options.contains(where: { capabilities.accepts($0, on: instance) }) else { return }
+        throw refusal(for: options, on: instance)
+    }
+
+    /// What a refused ``require(anyOf:on:)`` throws: an operation still
+    /// settling is what blocks a settle-gated capability, and saying so names
+    /// something the user can wait out rather than a status that reads as
+    /// eligible.
+    private func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
+        if instance.preparingState == nil, options.contains(where: \.waitsForSettle),
+            library.isBusy(instance)
+        {
+            return .busy(vm: summary(instance), operation: instance.status.displayName.lowercased())
+        }
+        return invalidState(instance)
     }
 
     /// The refusal for a verb the VM's current state does not admit.
@@ -221,14 +241,6 @@ final class VMCommandCore: VMCommanding {
                 vm: summary(instance), operation: instance.status.displayName.lowercased())
         }
         return .operationFailed(verb: verb, message: error.localizedDescription)
-    }
-
-    /// Refuses while an operation this verb would race is still settling.
-    func refuseIfBusy(_ instance: VMInstance) throws {
-        try refuseIfPreparing(instance)
-        guard library.isBusy(instance) else { return }
-        throw CommandError.busy(
-            vm: summary(instance), operation: instance.status.displayName.lowercased())
     }
 
     // MARK: - Reads

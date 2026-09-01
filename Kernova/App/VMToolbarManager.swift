@@ -339,7 +339,10 @@ final class VMToolbarManager: NSObject {
             return
         }
 
-        let canResume = instance.canResume
+        // Labels answer what a command is called for this VM, which is what its
+        // own state admits — so they read applicability while the enablement
+        // below reads availability.
+        let canResume = capabilities.isApplicable(.resume, to: instance)
         // `startAction` triggers on the pending setup context (not status), so
         // an .error retry also gets the setup-flavored labels.
         let startAction = instance.startAction
@@ -380,11 +383,12 @@ final class VMToolbarManager: NSObject {
         // The graceful stop excludes cold-paused, which the discard-saved-state
         // capability covers instead; the label names that consequence.
         let stop = group.subitems[LifecycleSegment.stop.rawValue]
-        let stopLabel = instance.stopActionToolbarLabel
+        let discardsSavedState = capabilities.isApplicable(.discardSavedState, to: instance)
+        let stopLabel = VMInstance.stopActionToolbarLabel(discardingSavedState: discardsSavedState)
         if stop.label != stopLabel {
             stop.label = stopLabel
             stop.image = .systemSymbol("stop.fill", accessibilityDescription: stopLabel)
-            stop.toolTip = instance.isColdPaused ? Self.discardSavedStateToolTip : Self.stopToolTip
+            stop.toolTip = discardsSavedState ? Self.discardSavedStateToolTip : Self.stopToolTip
         }
         stop.isEnabled =
             isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)

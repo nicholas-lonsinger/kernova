@@ -327,7 +327,7 @@ extension VMCommandCore {
                 Self.cancelPreparingPrompt(state.operation, on: instance))
         }
         guard var state = instance.preparingState else {
-            guard instance.canDelete else { throw invalidState(instance) }
+            try require(.delete, on: instance)
             guard !lifecycle.hasActiveOperation(for: instance.id) else {
                 throw CommandError.busy(
                     vm: summary(instance), operation: instance.status.displayName.lowercased())
@@ -378,7 +378,7 @@ extension VMCommandCore {
         // can land between opening it and confirming, which is what this
         // re-check catches — trashing the bundle then would pull the disk
         // image out from under a guest that is running or about to be.
-        guard instance.canDelete else { throw invalidState(instance) }
+        try require(.delete, on: instance)
         guard !lifecycle.hasActiveOperation(for: instance.id) else {
             throw CommandError.busy(
                 vm: summary(instance), operation: instance.status.displayName.lowercased())

@@ -216,7 +216,7 @@ final class VMOverviewResolver {
             micPermission, audioInputEnabled: config.audioInputEnabled)
         resolved.warnings[.system] =
             resolved.micWarning == .denied ? Self.micPermissionDeniedWarning : nil
-        resolved.canTakeSnapshot = viewModel.canTakeSnapshot(instance)
+        resolved.canTakeSnapshot = viewModel.capabilities.isAvailable(.takeSnapshot, on: instance)
         refreshNetwork(config)
         refreshBootDisk()
         refreshSnapshotSizes()

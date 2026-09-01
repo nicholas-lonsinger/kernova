@@ -246,10 +246,10 @@ session down without that hook, so a suspended session survives to revert at its
   `AsyncStream<VMLibraryEvent>` fed by one diffing observation plus the clone/import copy failures
   no model field survives to hold, for callers that cannot observe the model. Whether a given VM
   admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's
-  enablement reads it, and the core's rename and clone guards route through it. Clone and import
-  register a preparing "phantom" `VMInstance` **synchronously, before any
-  `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
-  imports and clones cannot claim the same bundle URL.
+  enablement and every one of the core's verb guards derive from it. Clone and import register a
+  preparing "phantom" `VMInstance` **synchronously, before any `await`** — that is what reserves
+  the destination atomically on the MainActor, so overlapping imports and clones cannot claim the
+  same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
   encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
 - `VMIntentGateway` — the App Intents boundary, published through `AppDependencyManager` so every

@@ -455,6 +455,28 @@ struct VMToolbarManagerTests {
         #expect(item("testSettingsToggle", in: toolbar)?.isEnabled == false)
     }
 
+    @Test("A preparing VM's lifecycle labels name what its own state admits")
+    func preparingKeepsTheLabelsItsStateAdmits() {
+        let instance = makeInstance(phase: .suspended)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        // Labels follow applicability and enablement follows availability: a
+        // suspended row names the Resume and the discard its state admits while
+        // the copy that is still writing disables all three.
+        let lifecycle =
+            toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" }
+            as? NSToolbarItemGroup
+        #expect(lifecycle?.subitems[0].label == "Resume")
+        #expect(lifecycle?.subitems[2].label == "Discard Saved State")
+        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
+    }
+
     // MARK: - Lifecycle Labels
 
     @Test("Play button shows 'Start' when status is stopped")
