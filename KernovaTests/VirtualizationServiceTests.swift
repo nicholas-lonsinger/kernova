@@ -115,6 +115,40 @@ struct VirtualizationServiceTests {
         }
     }
 
+    @Test("A start overtaken by a force stop and a re-Start leaves the successor alone")
+    func overtakenStartLeavesTheSuccessorsBringUpAlone() {
+        let abortedSessionID = UUID()
+        let instance = makeInstance(phase: .starting(sessionID: abortedSessionID))
+
+        // Force Stop, then an immediate re-Start, both landing before the
+        // aborted start's `session.start()` throws.
+        instance.resetToStopped()
+        instance.enter(.starting(sessionID: nil))
+        let successor = instance.beginSessionContext()
+
+        #expect(
+            !VirtualizationService.tearDownIfStillOwned(
+                instance, actingFor: abortedSessionID, restingAt: .stopped))
+        // The successor keeps the phase it is bringing a machine up in, and the
+        // context that machine gets attached to.
+        #expect(instance.phase == .starting(sessionID: nil))
+        #expect(instance.sessionContext === successor)
+    }
+
+    @Test("An attempt that still owns the VM rests it and releases its session")
+    func owningAttemptRestsTheVMAndReleasesItsSession() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .starting(sessionID: sessionID))
+        instance.beginSessionContext()
+
+        #expect(
+            VirtualizationService.tearDownIfStillOwned(
+                instance, actingFor: sessionID,
+                restingAt: .failed(message: "The guest stopped.")))
+        #expect(instance.phase == .failed(message: "The guest stopped."))
+        #expect(instance.sessionContext == nil)
+    }
+
     // MARK: - Warm capture over a session that goes away
 
     @Test("A guest that dies mid-capture leaves the VM where the teardown put it, not running")

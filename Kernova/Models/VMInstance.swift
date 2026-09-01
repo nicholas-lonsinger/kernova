@@ -757,12 +757,14 @@ final class VMInstance {
     /// be a window in which a `VZVirtualMachine` exists and every predicate
     /// answers that none does.
     ///
-    /// `nil` when no session context is open — a programming error, since every
-    /// bring-up path opens one before building the configuration this takes.
-    /// The just-created `VZVirtualMachine` is released rather than handed back:
-    /// a session this instance does not hold is one nothing can stop, so a
-    /// caller starting it would leave the guest running past every liveness
-    /// predicate, force stop included.
+    /// `nil` when no session context is open, or when the phase admits no
+    /// session identity to promote — both programming errors, since every
+    /// bring-up path opens a context and stands in an admitting phase before
+    /// building the configuration this takes. Either way the just-created
+    /// `VZVirtualMachine` is released rather than handed back: a session this
+    /// instance does not hold is one nothing can stop, so a caller starting it
+    /// would leave the guest running past every liveness predicate, force stop
+    /// included.
     func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession? {
         // The configuration was assembled off-main and is handed over whole:
         // nothing touches it after the VM is created from it.
@@ -774,15 +776,15 @@ final class VMInstance {
             assertionFailure("attachSession without beginSessionContext for '\(name)'")
             return nil
         }
-        sessionContext.session = session
-        if phase.admitsSessionIdentity {
-            phase = phase.naming(session.id)
-        } else {
+        guard phase.admitsSessionIdentity else {
             Self.logger.fault(
                 "Session attached to '\(self.name, privacy: .public)' while at \(self.status.rawValue, privacy: .public), which names no session"
             )
             assertionFailure("attachSession from a phase that admits no session identity")
+            return nil
         }
+        sessionContext.session = session
+        phase = phase.naming(session.id)
         await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
         return session
     }
