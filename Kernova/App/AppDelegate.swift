@@ -56,8 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var didOpenLaunchDocuments = false
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var clipboardObservers: [UUID: Any] = [:]
-    private var displayWindows: [UUID: VMDisplayWindowController] = [:]
-    private var displayWindowObservers: [UUID: Any] = [:]
+    /// The one owner of where each VM's display lives — the display-window
+    /// registry and both placement fields.
+    private let displayPlacement: VMDisplayPlacementController
     private var terminationObservation: ObservationLoop?
     /// Watches the residency toggle so the status item and the reconcile follow it
     /// live. Resident app only.
@@ -287,8 +288,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// window's VM if its window is key, otherwise the sidebar-selected VM.
     private var activeInstance: VMInstance? {
         if let keyWindow = NSApp.keyWindow {
-            if let controller = displayWindows.values.first(where: { $0.window === keyWindow }) {
-                return controller.instance
+            if let instance = displayPlacement.instance(forKeyWindow: keyWindow) {
+                return instance
             }
             if let controller = clipboardWindows.values.first(where: { $0.window === keyWindow }) {
                 return controller.instance
@@ -324,7 +325,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     init(isTestHost: Bool, preferences: AppPreferences = .shared) {
         self.isTestHost = isTestHost
         self.preferences = preferences
-        self.viewModel = VMLibraryViewModel()
+        let viewModel = VMLibraryViewModel()
+        self.viewModel = viewModel
+        self.displayPlacement = VMDisplayPlacementController(viewModel: viewModel)
 
         let clipboardItem = NSMenuItem(
             title: "Clipboard",
@@ -336,12 +339,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         super.init()
 
+        displayPlacement.host = self
         viewModel.onSurfaceLibrary = { [weak self] in
             guard let self, !self.isTestHost else { return }
             self.presentSummonedInterface()
         }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
-            self?.openDisplayWindow(for: instance)
+            self?.displayPlacement.showDisplayWindow(for: instance)
         }
         viewModel.displayBootGeometryProvider = self
     }
@@ -537,7 +541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 // reconciles itself afterwards. A second reconcile scheduled here
                 // runs before that restore, sees no window on screen, and would
                 // quit the app instead of popping the display back in.
-                guard !self.isPoppingIn(window) else { return }
+                guard !self.displayPlacement.isPoppingIn(window) else { return }
                 self.scheduleAgentActivationPolicySync()
             }
         }
@@ -840,12 +844,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 self.showLibraryWindow(bringToFront: true)
                 summoned = self.mainWindowController?.window
             case .display(let instance):
-                if let existing = self.displayWindows[instance.instanceID] {
-                    existing.window?.makeKeyAndOrderFront(nil)
-                } else {
-                    self.openDisplayWindow(for: instance)
-                }
-                summoned = self.displayWindows[instance.instanceID]?.window
+                self.displayPlacement.showDisplayWindow(for: instance)
+                summoned = self.displayPlacement.window(for: instance.instanceID)
             case .clipboard(let instance):
                 self.showClipboardWindow(for: instance)
                 summoned = self.clipboardWindows[instance.instanceID]?.window
@@ -907,7 +907,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return window.isVisible || (countingMiniaturized && window.isMiniaturized)
         }
         if onScreen(mainWindowController?.window) { return true }
-        if displayWindows.values.contains(where: { onScreen($0.window) }) { return true }
+        if displayPlacement.hasWindow(where: { onScreen($0) }) { return true }
         if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
         if onScreen(settingsWindowController?.window) { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
@@ -938,12 +938,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// behavior of deminiaturizing it.
     private var hasOnScreenUserWindow: Bool {
         hasUserWindow(countingMiniaturized: false)
-    }
-
-    /// Whether `window` is a display window closing because the user popped it
-    /// back into the library, which owns the reconcile for that close.
-    private func isPoppingIn(_ window: NSWindow) -> Bool {
-        displayWindows.values.contains { $0.window === window && $0.closeReason == .popIn }
     }
 
     /// Whether closing `window` can change what `hasVisibleUserWindow` returns,
@@ -1216,9 +1210,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         let hasActiveVMs = viewModel.instances.contains(where: \.isKeepingAppAlive)
 
-        if hasActiveVMs || !displayWindows.isEmpty {
+        if hasActiveVMs || !displayPlacement.isEmpty {
             Self.logger.debug(
-                "applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.displayWindows.count, privacy: .public))"
+                "applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.displayPlacement.count, privacy: .public))"
             )
             return false
         }
@@ -1294,7 +1288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `displayPreference` intact. Collections are snapshotted because closing
     /// mutates them.
     private func closeAllGUIWindows() {
-        for controller in Array(displayWindows.values) { controller.closeForAppDismissal() }
+        displayPlacement.closeAllForAppDismissal()
         for controller in Array(clipboardWindows.values) { controller.window?.close() }
         settingsWindowController?.window?.close()
         mainWindowController?.window?.close()
@@ -1692,7 +1686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         showLibraryWindow(bringToFront: true)
     }
 
-    private func showLibraryWindow(bringToFront: Bool) {
+    func showLibraryWindow(bringToFront: Bool) {
         ensureRegularActivationIfAgent()
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
@@ -1910,158 +1904,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func togglePopOut(_ sender: Any?) {
         guard let instance = target(of: sender) else { return }
-
-        if let existing = displayWindows[instance.instanceID] {
-            existing.closeForPopIn()
-            return
-        }
-
-        if instance.displayMode == .hidden {
-            // Pop in from headless: there is no window to close — just return
-            // the display slot to the main window.
-            viewModel.updateConfiguration(of: instance) { $0.displayPreference = .inline }
-            instance.displayMode = .inline
-            viewModel.presenter?.focusGuestDisplay(for: instance)
-            return
-        }
-
-        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .popOut }
-        openDisplayWindow(for: instance, enterFullscreen: false)
+        displayPlacement.togglePopOut(for: instance)
     }
 
     /// Brings the VM's display window forward, reopening it (in its persisted
     /// style) if the user previously closed it while the VM ran headless.
     @objc func showDisplayWindow(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        if let existing = displayWindows[instance.instanceID] {
-            existing.window?.makeKeyAndOrderFront(nil)
-        } else {
-            openDisplayWindow(for: instance)
-        }
+        displayPlacement.showDisplayWindow(for: instance)
     }
 
     @objc func toggleFullscreen(_ sender: Any?) {
         guard let instance = target(of: sender) else { return }
-
-        if let existing = displayWindows[instance.instanceID] {
-            existing.window?.toggleFullScreen(nil)
-            return
-        }
-
-        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .fullscreen }
-        openDisplayWindow(for: instance, enterFullscreen: true)
-    }
-
-    private func openDisplayWindow(for instance: VMInstance) {
-        openDisplayWindow(for: instance, enterFullscreen: instance.configuration.displayPreference == .fullscreen)
-    }
-
-    private func openDisplayWindow(for instance: VMInstance, enterFullscreen: Bool) {
-        let vmID = instance.instanceID
-
-        // Already open (e.g. resuming a live-paused VM from the library):
-        // surface the existing window so keyboard input lands in the guest.
-        if let existing = displayWindows[vmID] {
-            existing.window?.makeKeyAndOrderFront(nil)
-            return
-        }
-        ensureRegularActivationIfAgent()
-
-        let controller = VMDisplayWindowController(
-            instance: instance,
-            capabilities: viewModel.capabilities,
-            enterFullscreen: enterFullscreen,
-            onResume: { [weak self] in
-                guard let self else { return }
-                Task { await self.viewModel.resume(instance) }
-            },
-            onUpdateConfiguration: { [weak self] mutate in
-                self?.viewModel.updateConfiguration(of: instance, mutate: mutate)
-            }
-        )
-        displayWindows[vmID] = controller
-
-        let token = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: controller.window,
-            queue: .main
-        ) { [weak self] notification in
-            // Capture window state synchronously before the Task runs (it may change).
-            let window = notification.object as? NSWindow
-            dispatchPrecondition(condition: .onQueue(.main))
-            let (wasKeyWindow, appWasActive) = MainActor.assumeIsolated {
-                (window?.isKeyWindow ?? false, NSApp.isActive)
-            }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let token = self.displayWindowObservers.removeValue(forKey: vmID) {
-                    NotificationCenter.default.removeObserver(token)
-                }
-                guard let controller = self.displayWindows.removeValue(forKey: vmID) else { return }
-                let closeReason = controller.closeReason ?? .userClose
-                self.viewModel.updateConfiguration(of: instance) { config in
-                    if let displayID = controller.lastDisplayID {
-                        config.lastFullscreenDisplayID = displayID
-                    }
-                    if closeReason == .popIn {
-                        config.displayPreference = .inline
-                        Self.logger.debug(
-                            "Cleared displayPreference for '\(instance.name, privacy: .public)' (popped display back in)"
-                        )
-                    }
-                }
-
-                Self.logger.notice(
-                    "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: closeReason), privacy: .public), policy=\(NSApp.activationPolicy().rawValue, privacy: .public))"
-                )
-                switch closeReason {
-                case .appDismissal:
-                    // VM stopped/errored/cold-paused, or the GUI was dismissed.
-                    self.reconcileIdleTermination()
-                case .userClose:
-                    // The VM keeps running headless and nothing pops back in; the
-                    // library window shows the "Display Closed" placeholder.
-                    break
-                case .popIn:
-                    self.viewModel.selectedID = vmID
-
-                    // Restore library window so the popped-in display is visible:
-                    // - Key + active app: user popped in from the display window → focus library
-                    // - App not active: popped in while elsewhere → show library in background
-                    // - Active but not key: user is in another Kernova window (e.g. the
-                    //   library's placeholder button) → no action needed
-                    if wasKeyWindow && appWasActive {
-                        self.showLibrary(nil)
-                    } else if !appWasActive {
-                        self.showLibraryWindow(bringToFront: false)
-                    }
-                    self.viewModel.presenter?.focusGuestDisplay(for: instance)
-                    // Reconcile synchronously here, after the restore, rather than
-                    // through `scheduleAgentActivationPolicySync()`: the global
-                    // `willClose` observer's independent `Task` isn't guaranteed to
-                    // run after the restore above, which would flip the Dock icon
-                    // to `.accessory` and back.
-                    self.syncAgentActivationPolicy()
-                }
-            }
-        }
-        displayWindowObservers[vmID] = token
-
-        // For fullscreen: position on the remembered display so toggleFullScreen picks the correct screen
-        if enterFullscreen {
-            if let screen = targetScreen(for: instance),
-                let window = controller.window
-            {
-                let frame = screen.frame
-                let centeredOrigin = NSPoint(
-                    x: frame.midX - window.frame.width / 2,
-                    y: frame.midY - window.frame.height / 2
-                )
-                window.setFrameOrigin(centeredOrigin)
-            }
-        }
-
-        controller.showWindow(nil)
+        displayPlacement.toggleFullscreen(for: instance)
     }
 
     /// Returns the best screen for entering fullscreen: the display the VM was
@@ -2099,7 +1954,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// no auxiliary windows remain, and no VMs are active.
     private var isIdle: Bool {
         guard isMainWindowDismissed else { return false }
-        guard displayWindows.isEmpty else { return false }
+        guard displayPlacement.isEmpty else { return false }
         guard clipboardWindows.isEmpty else { return false }
         return !viewModel.instances.contains(where: \.isKeepingAppAlive)
     }
@@ -2110,7 +1965,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// for an automation launch that has never presented — a windowed resident
     /// app is the window reconcile's to decide, and one the user has summoned
     /// has joined it.
-    private func reconcileIdleTermination() {
+    func reconcileIdleTermination() {
         guard !isTestHost else {
             terminateIfIdle()
             return
@@ -2258,8 +2113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // display has no window but still pops back *in*.
             menuItem.title = instance.isDisplayDetached ? "Pop In Display" : "Pop Out Display"
         case #selector(toggleFullscreen(_:)):
-            let isFullscreen = displayWindows[instance.instanceID] != nil && instance.isInFullscreen
-            menuItem.title = isFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display"
+            menuItem.title =
+                instance.isInFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display"
         default:
             break
         }
@@ -2549,6 +2404,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 }
 
+// MARK: - VMDisplayPlacementHosting
+
+extension AppDelegate: VMDisplayPlacementHosting {
+    func preferredScreenForFullscreen(of instance: VMInstance) -> NSScreen? {
+        targetScreen(for: instance)
+    }
+
+    func prepareToPresentWindow() {
+        ensureRegularActivationIfAgent()
+    }
+
+    func syncActivationPolicy() {
+        syncAgentActivationPolicy()
+    }
+}
+
 // MARK: - DisplayBootGeometryProviding
 
 extension AppDelegate: DisplayBootGeometryProviding {
@@ -2558,7 +2429,7 @@ extension AppDelegate: DisplayBootGeometryProviding {
             // `start` opens the display window before consulting this, and
             // `setFrameAutosaveName` restores the saved frame at init, so the
             // content view already carries the size the guest will fill.
-            guard let window = displayWindows[instance.instanceID]?.window,
+            guard let window = displayPlacement.window(for: instance.instanceID),
                 let content = window.contentView
             else { return nil }
             return surface(pointSize: content.bounds.size, scale: window.backingScaleFactor)

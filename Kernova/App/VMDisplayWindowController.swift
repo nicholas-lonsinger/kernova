@@ -1,36 +1,38 @@
 import Cocoa
 import os
 
-/// Manages a dedicated window displaying a single VM's screen, either as a
-/// resizable pop-out window or in native macOS fullscreen.
+/// A dedicated window displaying a single VM's screen, either as a resizable
+/// pop-out window or in native macOS fullscreen.
 ///
-/// On show the inline display in the main window is replaced by a placeholder
-/// (via `VMInstance.displayMode`). What happens on close depends on the
-/// `CloseReason`: a user close leaves the VM running headless (`displayMode ==
-/// .hidden`), while pop-in and app dismissal return the display slot to the
-/// main window.
+/// A view under ``VMDisplayPlacementController``: it reports the transitions
+/// AppKit performs and writes neither placement field itself.
 @MainActor
 final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
-    /// Why the display window is closing; `nil` while it is open.
-    enum CloseReason {
-        /// The user closed the window (red button / ⌘W): the VM keeps running
-        /// headless — nothing pops back into the main window.
-        case userClose
-        /// App-initiated dismissal — the VM stopped/errored/cold-paused out
-        /// from under the window, or the whole GUI is being dismissed.
-        case appDismissal
-        /// Explicit Pop In: the display returns to the main window's detail
-        /// pane and `displayPreference` reverts to `.inline`.
-        case popIn
+    /// What the window observed about itself as it closed, sampled while the
+    /// close is still dispatching.
+    struct CloseContext {
+        /// The display the window was on, which a fullscreen window has already
+        /// left by the time its close is handled.
+        let lastDisplayID: CGDirectDisplayID?
+        let wasKeyWindow: Bool
+        let appWasActive: Bool
     }
 
-    let vmID: UUID
-    private(set) var closeReason: CloseReason?
-    private(set) var lastDisplayID: CGDirectDisplayID?
     let instance: VMInstance
+    /// Reports a fullscreen enter/exit AppKit performed.
+    var onEnteredFullscreen: (() -> Void)?
+    var onExitedFullscreen: (() -> Void)?
+    /// Reports the close, while the window is still dispatching it.
+    var onWillClose: ((CloseContext) -> Void)?
+    /// Asks the owner to dismiss this window: the VM went away out from under
+    /// it. Fires on every observation tick while that holds.
+    var onRequestDismissal: (() -> Void)?
+    private var lastDisplayID: CGDirectDisplayID?
+    /// Whether a close is in flight, so a fullscreen exit that is part of it is
+    /// not reported as a placement transition.
+    private var isClosing = false
     private let toolbarManager: VMToolbarManager
     private let enterFullscreen: Bool
-    private let onUpdateConfiguration: ((inout VMConfiguration) -> Void) -> Void
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
 
@@ -38,10 +40,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
-        onResume: @escaping () -> Void,
-        onUpdateConfiguration: @escaping ((inout VMConfiguration) -> Void) -> Void
+        onResume: @escaping () -> Void
     ) {
-        self.vmID = instance.instanceID
         self.instance = instance
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
@@ -61,7 +61,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             instanceProvider: { [weak instance] in instance }
         )
         self.enterFullscreen = enterFullscreen
-        self.onUpdateConfiguration = onUpdateConfiguration
 
         let backing = VMDisplayBackingView()
         backing.onResume = onResume
@@ -121,7 +120,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Lifecycle
 
     override func showWindow(_ sender: Any?) {
-        instance.displayMode = enterFullscreen ? .fullscreen : .popOut
         super.showWindow(sender)
         // Land keyboard focus in the guest, so typing works without a click.
         window?.makeFirstResponder(backingView.machineView)
@@ -132,36 +130,31 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         observeInstance()
     }
 
-    /// Closes the window as an app-initiated dismissal rather than a user close.
-    func closeForAppDismissal() {
-        close(reason: .appDismissal)
-    }
-
-    /// Closes the window as an explicit Pop In.
-    func closeForPopIn() {
-        close(reason: .popIn)
-    }
-
-    /// The single programmatic-close path; idempotent via the `closeReason` guard.
-    private func close(reason: CloseReason) {
-        guard closeReason == nil else { return }
+    /// Closes the window on the owner's behalf; idempotent.
+    ///
+    /// The display is sampled here because a fullscreen window has left its
+    /// screen by the time `windowWillClose(_:)` runs.
+    func closeFromOwner() {
+        guard !isClosing else { return }
+        isClosing = true
         lastDisplayID = window?.screen?.displayID
-        closeReason = reason
         window?.close()
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        // A close that arrives without a programmatic reason is the user
-        // closing the window (red button / ⌘W).
-        if closeReason == nil { closeReason = .userClose }
+        isClosing = true
         if lastDisplayID == nil {
             lastDisplayID = window?.screen?.displayID
         }
         instanceObservation?.cancel()
         instanceObservation = nil
-        instance.displayMode = (closeReason == .userClose) ? .hidden : .inline
+        onWillClose?(
+            CloseContext(
+                lastDisplayID: lastDisplayID,
+                wasKeyWindow: window?.isKeyWindow ?? false,
+                appWasActive: NSApp.isActive))
     }
 
     func window(
@@ -177,18 +170,14 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
-        instance.displayMode = .fullscreen
-        onUpdateConfiguration { $0.displayPreference = .fullscreen }
+        onEnteredFullscreen?()
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
-        guard instance.displayMode == .fullscreen else { return }
-        instance.displayMode = .popOut
-        // Only persist user-initiated exits: during a programmatic close the
-        // preference must stay .fullscreen so it restores correctly when the
-        // display window is next opened.
-        guard closeReason == nil else { return }
-        onUpdateConfiguration { $0.displayPreference = .popOut }
+        // AppKit exits fullscreen as part of closing the window, and that exit
+        // is not a placement transition — only the view can tell the two apart.
+        guard !isClosing else { return }
+        onExitedFullscreen?()
     }
 
     // MARK: - Instance Observation
@@ -218,7 +207,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 let status = self.instance.status
                 if status == .stopped || status == .error || self.instance.isColdPaused {
                     // The VM went away out from under the window.
-                    self.closeForAppDismissal()
+                    self.onRequestDismissal?()
                 } else {
                     self.backingView.update(
                         display: self.instance.session?.displayHandle,
