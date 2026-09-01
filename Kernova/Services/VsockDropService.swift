@@ -18,7 +18,7 @@ import os
 /// generations, because the user asked for both sets of files.
 @MainActor
 @Observable
-final class VsockDropService: VsockDataConnectionAccepting {
+final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting {
     // MARK: - Observable state
 
     /// `true` between `start()` and `stop()`.
@@ -79,6 +79,19 @@ final class VsockDropService: VsockDataConnectionAccepting {
         let isDirectory: Bool
     }
 
+    // MARK: - Settle contract
+
+    /// Notified once when the channel dies on its own, never on an
+    /// owner-requested `stop()`.
+    @ObservationIgnored var onChannelLost: (@MainActor () -> Void)?
+
+    /// Latches the first settle, whichever reached it, so the teardown is
+    /// terminal rather than merely idempotent: `isConnected` alone would let a
+    /// `start()` after a settle reopen the endpoint over an already-closed
+    /// channel, whose immediate end reaches the owner as a channel loss it
+    /// never had a live connection for.
+    @ObservationIgnored private var hasStopped = false
+
     // MARK: - Init
 
     init(
@@ -116,7 +129,7 @@ final class VsockDropService: VsockDataConnectionAccepting {
     // MARK: - Lifecycle
 
     func start() {
-        guard !isConnected else { return }
+        guard !isConnected, !hasStopped else { return }
         isConnected = true
         endpoint.start()
         Self.logger.notice(
@@ -132,22 +145,34 @@ final class VsockDropService: VsockDataConnectionAccepting {
         endpoint.acceptDataConnection(fd: fd)
     }
 
+    /// Tears the service down at the owner's request.
+    ///
+    /// The owner is not called back — it already knows.
     func stop() {
-        settle()
+        settle(reason: .ownerRequested)
     }
 
     /// Tears the service down once its channel is over, whether the owner asked
     /// or the channel simply ended.
     ///
-    /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
-    /// construction, and the first one through does the work.
-    private func settle() {
+    /// Idempotent and terminal: the consume loop's own settle and an owner's
+    /// `stop()` race by construction, the first one through does the work, and
+    /// `hasStopped` keeps a later `start()` from reopening. `isConnected` guards
+    /// the notification, so `onChannelLost` fires at most once and never after
+    /// an owner teardown has already settled.
+    private func settle(reason: VsockSettleReason) {
+        hasStopped = true
         endpoint.stop()
         guard isConnected else { return }
         isConnected = false
         Self.logger.notice(
             "Vsock drop service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
+        // Last, so the owner observes fully-settled state from inside the
+        // callback.
+        if case .channelLost = reason {
+            onChannelLost?()
+        }
     }
 
     // MARK: - Refusals
@@ -370,6 +395,6 @@ extension VsockDropService: ClipboardEndpointDelegate {
     /// client pauses until the next `Hello`), so a service left standing would
     /// keep advertising a drop it can no longer send.
     func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
-        settle()
+        settle(reason: .channelLost)
     }
 }

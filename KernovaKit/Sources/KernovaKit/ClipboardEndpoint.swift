@@ -729,7 +729,4 @@ extension ClipboardEndpointDelegate {
     public func endpoint(
         _ endpoint: ClipboardEndpoint, didRecord activity: ClipboardEndpoint.Activity
     ) {}
-
-    /// Does nothing.
-    public func endpointDidEnd(_ endpoint: ClipboardEndpoint) {}
 }

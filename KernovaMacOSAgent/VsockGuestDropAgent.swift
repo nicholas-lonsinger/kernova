@@ -436,4 +436,9 @@ extension VsockGuestDropAgent: ClipboardEndpointDelegate {
     ) {
         takeOn(offer, on: endpoint)
     }
+
+    func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
+        // Nothing: this side's own reconnect loop settles the connection when
+        // its `waitUntilEnded()` returns, and dials the next one.
+    }
 }

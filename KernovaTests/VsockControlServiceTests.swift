@@ -105,7 +105,7 @@ struct VsockControlServiceTests {
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
         onChannelLost: (@MainActor () -> Void)? = nil
     ) -> VsockControlService {
-        VsockControlService(
+        let service = VsockControlService(
             channel: channel,
             label: "test",
             bundledAgentVersion: bundledAgentVersion,
@@ -115,9 +115,10 @@ struct VsockControlServiceTests {
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             policyProvider: policyProvider,
             onAgentInfoObserved: onAgentInfoObserved,
-            isGuestSuspended: isGuestSuspended,
-            onChannelLost: onChannelLost
+            isGuestSuspended: isGuestSuspended
         )
+        service.onChannelLost = onChannelLost
+        return service
     }
 
     /// Completes the handshake for a test that arms a sub-second
@@ -780,7 +781,7 @@ struct VsockControlServiceTests {
             terminateAfter: 0.5,
             onChannelLost: { lost.record() }
         )
-        lost.sampleAgentVersion = { [weak service] in service?.agentVersion }
+        lost.sample = { [weak service] in service?.agentVersion }
         service.start()
         defer { service.stop() }
 
@@ -794,7 +795,7 @@ struct VsockControlServiceTests {
         // The callback runs on fully-settled state, which is what lets
         // `VMInstance` re-arm its agent watchdog on a nil `agentVersion`
         // instead of no-oping against the stale one.
-        #expect(lost.sampledAgentVersions == [nil])
+        #expect(lost.samples == [nil])
     }
 
     @Test("onChannelLost fires when the peer closes the channel")
@@ -809,7 +810,7 @@ struct VsockControlServiceTests {
             bundledAgentVersion: "0.9.0",
             onChannelLost: { lost.record() }
         )
-        lost.sampleAgentVersion = { [weak service] in service?.agentVersion }
+        lost.sample = { [weak service] in service?.agentVersion }
         service.start()
         defer { service.stop() }
 
@@ -821,7 +822,7 @@ struct VsockControlServiceTests {
         guest.close()
 
         try await lost.changed.wait { lost.count == 1 }
-        #expect(lost.sampledAgentVersions == [nil])
+        #expect(lost.samples == [nil])
     }
 
     @Test("onChannelLost stays silent for an owner-requested stop()")
@@ -1340,27 +1341,4 @@ private final class ObservedRecorder {
 @MainActor
 private final class SuspensionFlag {
     var isSuspended = false
-}
-
-/// Counts `onChannelLost` invocations, sampling service state at callback time.
-///
-/// `sampleAgentVersion` is assigned after the service exists, since the thing
-/// worth sampling is the service the recorder is wired into. Main-bound because
-/// `onChannelLost` is `@MainActor` in production, not by convenience
-/// (docs/TESTING.md).
-@MainActor
-private final class ChannelLostRecorder {
-    private(set) var count = 0
-    private(set) var sampledAgentVersions: [String?] = []
-
-    var sampleAgentVersion: (@MainActor () -> String?)?
-
-    /// Fires on every `record`; await it instead of polling `count`.
-    let changed = AsyncGate()
-
-    func record() {
-        count += 1
-        sampledAgentVersions.append(sampleAgentVersion.flatMap { $0() })
-        changed.notify()
-    }
 }

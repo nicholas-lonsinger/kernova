@@ -756,4 +756,9 @@ extension VsockGuestClipboardAgent: ClipboardEndpointDelegate {
     ) {
         record(activity)
     }
+
+    func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
+        // Nothing: this side's own reconnect loop settles the connection when
+        // its `waitUntilEnded()` returns, and dials the next one.
+    }
 }

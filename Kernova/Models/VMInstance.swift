@@ -1127,7 +1127,7 @@ final class VMInstance {
     /// Every hook reads through `self` lazily, so all four track live
     /// configuration edits and pause/resume without being re-pushed.
     func makeControlService(for channel: VsockChannel) -> VsockControlService {
-        VsockControlService(
+        let service = VsockControlService(
             channel: channel,
             label: name,
             policyProvider: { [weak self] in
@@ -1137,15 +1137,16 @@ final class VMInstance {
                 self?.recordObservedAgentInfo(info)
             },
             isGuestSuspended: { [weak self] in self?.isLivePaused ?? false },
-            onChannelLost: { [weak self] in
-                // The agent went away mid-session. Re-arm the same grace clock
-                // the post-start path uses, so a channel that never comes back
-                // escalates to `.expectedMissing` instead of spinning at
-                // `.connecting` for the rest of the session.
-                self?.startAgentPostStartWatchdog()
-            },
             admissionGate: vsockAdmissionGate
         )
+        service.onChannelLost = { [weak self] in
+            // The agent went away mid-session. Re-arm the same grace clock
+            // the post-start path uses, so a channel that never comes back
+            // escalates to `.expectedMissing` instead of spinning at
+            // `.connecting` for the rest of the session.
+            self?.startAgentPostStartWatchdog()
+        }
+        return service
     }
 
     /// Builds the control-channel listener for the session identified by
@@ -1192,6 +1193,15 @@ final class VMInstance {
             self.sessionContext?.vsockLogService?.stop()
             let service = VsockGuestLogService(channel: channel, label: self.name)
             self.sessionContext?.vsockLogService = service
+            service.onChannelLost = { [weak self, weak service] in
+                // Drop the dead channel rather than hold it to the next accept.
+                // The identity check is what keeps a late callback from
+                // clearing a successor this path has already installed.
+                guard let self, let service,
+                    self.sessionContext?.vsockLogService === service
+                else { return }
+                self.sessionContext?.vsockLogService = nil
+            }
             service.start()
         }
     }
@@ -1217,6 +1227,9 @@ final class VMInstance {
             self.sessionContext?.vsockDropService = service
             self.dropDataSink.set(service)
             service.start()
+            // No `onChannelLost`: the settled service's `isConnected == false`
+            // already refuses the display gesture, and the reference is
+            // replaced by the next accept.
         }
     }
 
@@ -1281,6 +1294,10 @@ final class VMInstance {
             self.sessionContext?.clipboardService = service
             self.clipboardDataSink.set(service)
             service.start()
+            // No `onChannelLost`: a settled clipboard service stays referenced
+            // deliberately — its materialized representations remain servable
+            // and the clipboard window reads its buffer through
+            // `ClipboardServicing`.
         }
     }
 

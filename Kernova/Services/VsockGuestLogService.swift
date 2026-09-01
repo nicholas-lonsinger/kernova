@@ -6,10 +6,10 @@ import os
 /// stack so guest log output appears alongside host logs in Console.app.
 ///
 /// One instance manages one `VsockChannel` for the lifetime of one accepted
-/// connection. The service self-terminates when the channel closes (peer
-/// disconnect or local teardown).
+/// connection and settles when that channel dies under it; `stop()` is
+/// idempotent and terminal, so a reconnect is served by a fresh instance.
 @MainActor
-final class VsockGuestLogService {
+final class VsockGuestLogService: VsockFeatureService {
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockGuestLogService")
 
     private let channel: VsockChannel
@@ -17,6 +17,15 @@ final class VsockGuestLogService {
     private let label: String
 
     private var consumeTask: Task<Void, Never>?
+
+    /// Guards the teardown against re-entry: the consume task's tail and the
+    /// owner can each reach `settle(reason:)`, and whichever arrives first is
+    /// the one that settles.
+    private var hasStopped = false
+
+    /// Notified once when the channel dies on its own, never on an
+    /// owner-requested `stop()`.
+    var onChannelLost: (@MainActor () -> Void)?
 
     /// - Parameters:
     ///   - channel: the channel accepted from the guest's vsock connection.
@@ -35,22 +44,49 @@ final class VsockGuestLogService {
         self.emitter = emitter ?? OSLogGuestLogEmitter(label: label)
     }
 
-    /// Begins consuming frames from the channel (idempotent).
+    /// Begins consuming frames from the channel (idempotent, and a no-op once
+    /// the service has settled).
     func start() {
-        guard consumeTask == nil else { return }
+        guard consumeTask == nil, !hasStopped else { return }
         let label = self.label
         let channel = self.channel
         let emitter = self.emitter
-        consumeTask = Task {
+        consumeTask = Task { [weak self] in
             await Self.consume(channel: channel, emitter: emitter, label: label)
+            // The channel is gone once `consume` returns — the peer closed it,
+            // or it spoke on the wrong port and the loop closed it.
+            self?.settle(reason: .channelLost)
         }
         Self.logger.info("Guest log service started for '\(self.label, privacy: .public)'")
     }
 
+    /// Tears the service down at the owner's request.
+    ///
+    /// The owner is not called back — it already knows. Involuntary channel
+    /// death routes through `settle(reason: .channelLost)` instead.
     func stop() {
+        settle(reason: .ownerRequested)
+    }
+
+    /// Tears the service down, telling the owner when the channel died rather
+    /// than being closed on purpose.
+    ///
+    /// Safe to call from inside the task it cancels: `Task.cancel()` only sets
+    /// the cancellation flag, so a caller running inside the consume task's tail
+    /// runs this method to completion. The `hasStopped` latch makes
+    /// `onChannelLost` fire at most once, and never after an owner teardown has
+    /// already settled.
+    private func settle(reason: VsockSettleReason) {
+        guard !hasStopped else { return }
+        hasStopped = true
         consumeTask?.cancel()
         consumeTask = nil
         channel.close()
+        // Last, so the owner observes fully-settled state from inside the
+        // callback.
+        if case .channelLost = reason {
+            onChannelLost?()
+        }
     }
 
     private static func consume(
