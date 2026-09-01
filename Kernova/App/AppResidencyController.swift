@@ -1,3 +1,4 @@
+import AppIntents
 import Cocoa
 import os
 
@@ -12,31 +13,75 @@ protocol WindowResidencyHosting: AnyObject {
     func reconcileIdleTermination()
 }
 
+/// Everything ``AppDelegate`` asks of the process's residency — what it is
+/// between windows, and what a launch, a reopen and a summon do to it.
+///
+/// The one place the two modes differ: ``AppResidencyController`` is the
+/// resident app, ``TestHostResidencyController`` the plain foreground test host.
+/// The delegate holds one of them and forks nowhere.
+@MainActor
+protocol AppResidencyHosting: WindowResidencyHosting {
+    /// The launch cluster this residency reaches back into.
+    var host: (any AppLaunchHosting)? { get set }
+    /// Where a downgraded quit closes the GUI, or `nil` for a mode with no
+    /// headless state to downgrade into — which is what makes every quit there a
+    /// real one.
+    var softQuit: (any SoftQuitHosting)? { get }
+    /// Publishes the App Intents front door, before any launch presentation, so
+    /// an intent delivered during launch resolves it.
+    func registerIntentGateway()
+    /// Brings the process up for the launch it was given.
+    func start(provenance: AppResidencyController.LaunchProvenance)
+    /// The answer to `applicationShouldTerminateAfterLastWindowClosed(_:)`.
+    var terminatesAfterLastWindowClosed: Bool { get }
+    /// Records that the app is about to become active, so the reopen that may
+    /// follow can tell a dock click that activated the app from one on an
+    /// already-active app.
+    func noteWillBecomeActive()
+    /// The reopen leg — a Dock click, `open`, a Launch Services self-open.
+    func handleReopen(hasVisibleWindows: Bool)
+    /// Puts the summoned interface on screen, without requesting activation.
+    func presentSummonedInterface()
+    /// Brings the GUI forward, requesting activation.
+    func summonUserInterface()
+}
+
+/// The launch-cluster seam a residency needs but cannot own: the auto-start
+/// pass, the first library read, and the true quit.
+@MainActor
+protocol AppLaunchHosting: AnyObject {
+    /// Arms the pass that brings up the VMs marked to start automatically, once
+    /// per process.
+    func armAutoStartPass()
+    /// Awaits the app's first library read.
+    func awaitLibraryReady() async
+    /// Terminates the app unconditionally, bypassing the keep-in-menu-bar
+    /// downgrade.
+    func requestFullQuit()
+}
+
 /// The one owner of what the process *is* when no window is on screen: the
 /// activation policy, the status item, the GUI summon, and the idle quit an
 /// automation launch settles into.
 ///
-/// Constructed only for the resident app — the test host is a plain foreground
-/// app that idle-quits and holds no instance of this — so every path here can
-/// assume the resident-app machinery is the one that runs.
+/// Constructed only for the resident app — the test host runs
+/// ``TestHostResidencyController`` instead — so every path here can assume the
+/// resident-app machinery is the one that runs.
 @MainActor
-final class AppResidencyController {
+final class AppResidencyController: AppResidencyHosting {
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, handed to the status item.
     private let preferences: AppPreferences
     /// The one owner of which user-facing windows exist; every presentation and
     /// the window half of every reconcile goes through it.
     private let windows: AppWindowRegistry
-    /// Whether an App Intent is still running, which holds an otherwise-idle
-    /// automation launch open. The gateway that answers it belongs to the app's
-    /// launch cluster, not to residency.
-    private let hasIntentInFlight: () -> Bool
-    /// Called from ``markInterfacePresented()`` so the launch cluster can arm the
-    /// auto-start pass an automation launch deferred.
-    private let onInterfacePresented: () -> Void
-    /// The status item's Quit — a true, unconditional termination, which the
-    /// termination cluster owns.
-    private let onRequestFullQuit: () -> Void
+    weak var host: (any AppLaunchHosting)?
+
+    /// The App Intents front door, retained so the aliveness decision can ask
+    /// whether an intent is still running — which is what holds an otherwise-idle
+    /// automation launch open. `AppDependencyManager` owns the copy intents
+    /// resolve.
+    private var intentGateway: VMIntentGateway?
 
     /// How this process was brought up, decided once by ``start(provenance:)``.
     private var launchProvenance: LaunchProvenance = .user
@@ -81,17 +126,38 @@ final class AppResidencyController {
     init(
         viewModel: VMLibraryViewModel,
         preferences: AppPreferences,
-        windows: AppWindowRegistry,
-        hasIntentInFlight: @escaping () -> Bool,
-        onInterfacePresented: @escaping () -> Void,
-        onRequestFullQuit: @escaping () -> Void
+        windows: AppWindowRegistry
     ) {
         self.viewModel = viewModel
         self.preferences = preferences
         self.windows = windows
-        self.hasIntentInFlight = hasIntentInFlight
-        self.onInterfacePresented = onInterfacePresented
-        self.onRequestFullQuit = onRequestFullQuit
+    }
+
+    // MARK: - Intents
+
+    /// Publishes the App Intents front door, so an intent delivered during
+    /// launch resolves it rather than failing for a missing dependency.
+    ///
+    /// The gateway is retained by the dependency manager and lives as long as
+    /// the process. It takes the app's first library read as its readiness
+    /// await: an intent can arrive while that read is still in flight, and a verb
+    /// run against a library that has not landed yet finds no VM to address.
+    func registerIntentGateway() {
+        let gateway = VMIntentGateway(
+            commands: viewModel.commands,
+            awaitReady: { [weak self] in
+                guard let self else { return }
+                await self.awaitLibraryReady()
+            },
+            onIdle: { [weak self] in self?.reconcileIdleTermination() })
+        intentGateway = gateway
+        AppDependencyManager.shared.add(dependency: gateway)
+    }
+
+    /// Awaits the app's first library read on the main actor, so the gateway's
+    /// `@Sendable` readiness closure only ever captures this controller.
+    private func awaitLibraryReady() async {
+        await host?.awaitLibraryReady()
     }
 
     // MARK: - Start
@@ -152,6 +218,13 @@ final class AppResidencyController {
     /// *Continue running in Status Bar* is off.
     func start(provenance: LaunchProvenance) {
         launchProvenance = provenance
+        let line = Self.residentProvenanceLine(
+            bundlePath: Bundle.main.bundlePath,
+            build: Self.buildNumber,
+            configuration: Self.buildConfiguration,
+            vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking,
+            launch: provenance)
+        Self.logger.notice("Kernova resident app ready — \(line, privacy: .public)")
         syncStatusItem()
         observeResidencyPreference()
 
@@ -187,6 +260,39 @@ final class AppResidencyController {
         }
     }
 
+    #if DEBUG
+    private static let buildConfiguration = "Debug"
+    #else
+    private static let buildConfiguration = "Release"
+    #endif
+
+    /// The build number, substituted into Info.plist at build time by
+    /// `Tools/set-build-number.sh` — a missing value is a build misconfiguration.
+    private static let buildNumber: String = {
+        guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
+            logger.fault("CFBundleVersion not found in Info.plist")
+            assertionFailure("CFBundleVersion not found in Info.plist")
+            return "?"
+        }
+        return build
+    }()
+
+    /// Formats the resident-app startup provenance line.
+    nonisolated static func residentProvenanceLine(
+        bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool,
+        launch: LaunchProvenance
+    ) -> String {
+        let launchName =
+            switch launch {
+            case .user: "user"
+            case .loginItem: "loginItem"
+            case .automation: "automation"
+            }
+        return "bundle=\(bundlePath) build=\(build) config=\(configuration) "
+            + "vmNetworking=\(vmNetworkingEntitled ? "entitled" : "unentitled") "
+            + "launch=\(launchName)"
+    }
+
     // MARK: - Status Item
 
     /// Builds the menu-bar status item.
@@ -213,7 +319,7 @@ final class AppResidencyController {
                 self.viewModel.selectedID = vmID
                 self.summonUserInterface(showing: .clipboard(instance))
             },
-            onQuit: { [weak self] in self?.onRequestFullQuit() }
+            onQuit: { [weak self] in self?.host?.requestFullQuit() }
         )
     }
 
@@ -339,7 +445,11 @@ final class AppResidencyController {
     /// already on screen. Never requests activation — a reopen already carries
     /// one, and a second would make ``requestSummonActivation()``'s self-open
     /// loop.
-    func handleReopen() {
+    ///
+    /// `hasVisibleWindows` is ignored: AppKit's own count answers a different
+    /// question than ``reopenPresentation(hasOnScreenUserWindow:)`` — it counts
+    /// no untracked panel and reads a miniaturized window as absent.
+    func handleReopen(hasVisibleWindows: Bool) {
         switch Self.reopenPresentation(hasOnScreenUserWindow: hasOnScreenUserWindow) {
         case .library:
             presentSummonedInterface()
@@ -467,7 +577,7 @@ final class AppResidencyController {
     /// silently cost the user *Start automatically on launch*.
     private func markInterfacePresented() {
         hasPresentedInterface = true
-        onInterfacePresented()
+        host?.armAutoStartPass()
     }
 
     /// Re-asserts `.regular` before a window is shown, so a window can never be
@@ -481,6 +591,21 @@ final class AppResidencyController {
     }
 
     // MARK: - Soft Quit
+
+    /// The resident app has a headless state to downgrade a quit into, so ⌘Q and
+    /// the Dock's Quit land on ``closeGUIForSoftQuit()`` rather than terminating.
+    var softQuit: (any SoftQuitHosting)? { self }
+
+    /// Never: the global `willClose` observer's reconcile decides between the
+    /// Dock icon, a headless status-item app, and quitting. It keys on
+    /// ``hasVisibleUserWindow``, which counts miniaturized windows and untracked
+    /// panels that AppKit's own last-window rule does not, so letting AppKit
+    /// terminate too would double-fire on a different predicate.
+    var terminatesAfterLastWindowClosed: Bool { false }
+
+    /// Nothing to record: the reopen leg reads the window list, not whether the
+    /// activation that may precede it was the reopen's own.
+    func noteWillBecomeActive() {}
 
     /// Closes the GUI, settles the activation policy, then anchors the soft-quit
     /// reminder — in that order.
@@ -695,7 +820,7 @@ final class AppResidencyController {
             keepInMenuBar: viewModel.keepInMenuBarOnQuit,
             hasUninterruptibleWork: viewModel.hasUninterruptibleWork,
             hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive),
-            hasIntentInFlight: hasIntentInFlight()
+            hasIntentInFlight: intentGateway?.hasIntentInFlight ?? false
         ) {
         case .stayResident:
             break

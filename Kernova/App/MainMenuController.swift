@@ -23,9 +23,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, read for the clone alternate's title.
     private let preferences: AppPreferences
-    /// Whether this process is the unit-test host, which decides the quit
-    /// section's shape.
-    private let isTestHost: Bool
+    /// Whether a ⌘Q in this process downgrades to a GUI close rather than
+    /// terminating — the same predicate
+    /// ``AppTerminationController/shouldTerminateOnQuit`` gates on, so the menu
+    /// can never name a command the gate would not honor.
+    private let hasSoftQuit: Bool
     /// Whether this build carries the guest-agent installer disk image the
     /// guest-agent item mounts.
     private let hasBundledGuestAgentDisk: Bool
@@ -70,12 +72,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     init(
         viewModel: VMLibraryViewModel,
         preferences: AppPreferences,
-        isTestHost: Bool,
+        hasSoftQuit: Bool,
         hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
     ) {
         self.viewModel = viewModel
         self.preferences = preferences
-        self.isTestHost = isTestHost
+        self.hasSoftQuit = hasSoftQuit
         self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
     }
 
@@ -104,13 +106,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Decides the app menu's quit-section items, so every state presents an
     /// honest command.
     ///
-    /// The resident app with keep-in-menu-bar on gets the honest split — "Close
-    /// All Windows" (⌘Q) plus the true "Quit Kernova" (⌥⌘Q); every other mode
-    /// gets a single ⌘Q that really quits.
+    /// A process whose ⌘Q would be downgraded to a GUI close gets the honest
+    /// split — "Close All Windows" (⌘Q) plus the true "Quit Kernova" (⌥⌘Q);
+    /// anywhere ⌘Q really quits, it is the single item that says so.
     nonisolated static func appMenuQuitItems(
-        isTestHost: Bool, keepInMenuBar: Bool
+        downgradesQuitToGUIClose: Bool
     ) -> [AppMenuQuitItem] {
-        if !isTestHost && keepInMenuBar {
+        if downgradesQuitToGUIClose {
             return [
                 AppMenuQuitItem(
                     title: "Close All Windows", keyEquivalent: "q",
@@ -177,8 +179,10 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// mutation that must not happen.
     private func rebuildAppMenuQuitItems() {
         guard let appMenu else { return }
+        // The preference is read live here, not captured, so a Settings flip is
+        // reflected on the next open.
         let model = Self.appMenuQuitItems(
-            isTestHost: isTestHost, keepInMenuBar: viewModel.keepInMenuBarOnQuit)
+            downgradesQuitToGUIClose: hasSoftQuit && viewModel.keepInMenuBarOnQuit)
         guard model != appMenuQuitModel else { return }
         appMenuQuitModel = model
 

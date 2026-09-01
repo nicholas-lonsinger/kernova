@@ -6,14 +6,6 @@ import os
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
-    /// Whether this process is the unit-test host.
-    ///
-    /// `true` for the `BUNDLE_LOADER` test host — a plain foreground app that
-    /// idle-terminates, with none of the resident-app machinery (status item,
-    /// login-item registration, activation-policy switching).
-    private let isTestHost: Bool
-    /// App-wide preferences (the single DI seam for `UserDefaults`-backed state).
-    private let preferences: AppPreferences
     /// The one owner of which user-facing windows exist, and whether any is on
     /// screen.
     private let windows: AppWindowRegistry
@@ -21,13 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// menu-item validation. Strongly held: `NSMenu.delegate` is weak, and this
     /// is the delegate of every menu whose opening it answers for.
     private let mainMenu: MainMenuController
-    /// The one owner of what the process is when no window is on screen: the
-    /// activation policy, the status item, the GUI summon, and the idle quit.
+    /// The one owner of what the process is when no window is on screen, and of
+    /// what a launch, a reopen and a summon do to it.
     ///
-    /// Assigned once in `init` and never again — `nil` exactly for the test
-    /// host, which is a plain foreground app with none of that machinery, and
-    /// that `nil` is what stands in for every resident-app-only guard.
-    private var residency: AppResidencyController?
+    /// The mode's single branch point: assigned once in `init` to the resident
+    /// app's ``AppResidencyController`` or the test host's
+    /// ``TestHostResidencyController``, so nothing downstream forks on which
+    /// process this is.
+    private let lifecycle: any AppResidencyHosting
     /// The one owner of what a quit does: the classification latches, the
     /// termination gate, the save pass, and the TCC relaunch. Strongly held:
     /// `NSAppleEventManager` does not retain the quit-event handler this
@@ -40,29 +33,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
     private var libraryLoad: Task<Void, Never>?
-    /// Latched once ``armAutoStartPassIfNeeded()`` has armed the pass, so the
-    /// first interactive bring-up of an automation-launched process runs it and
-    /// no later one runs it a second time.
+    /// Latched once ``armAutoStartPass()`` has armed the pass, so the first
+    /// interactive bring-up of an automation-launched process runs it and no
+    /// later one runs it a second time.
     private var hasArmedAutoStartPass = false
-    /// The App Intents front door, retained so the aliveness decision can ask
-    /// whether an intent is still running. `AppDependencyManager` owns the copy
-    /// intents resolve.
-    private var intentGateway: VMIntentGateway?
     /// Whether `applicationOpenUntitledFile(_:)` ran, latched before
     /// `applicationDidFinishLaunching` reads it — see ``AppResidencyController/launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:isLoginItemLaunch:isDefaultLaunch:)``.
     private var didOpenUntitledFile = false
     /// Whether `application(_:open:)` ran with a launch document, latched the
     /// same way.
     private var didOpenLaunchDocuments = false
-    /// Watches guest liveness so the test host settles once the last VM stops.
-    private var idleTerminationObservation: ObservationLoop?
-    /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
-    /// to distinguish a dock click that activates the app from one on an already-active app.
-    ///
-    /// Cleared synchronously in `applicationShouldHandleReopen` as well as
-    /// asynchronously, so rapid successive dock clicks can't read a stale `true`
-    /// before the async clear runs.
-    private var wasJustActivated = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
 
@@ -97,38 +77,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     init(isTestHost: Bool, preferences: AppPreferences = .shared) {
-        self.isTestHost = isTestHost
-        self.preferences = preferences
         let viewModel = VMLibraryViewModel()
         self.viewModel = viewModel
-        self.windows = AppWindowRegistry(
+        let windows = AppWindowRegistry(
             viewModel: viewModel,
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
+        self.windows = windows
+        // The one place the mode is branched on. Everything below takes the
+        // residency it produced.
+        let lifecycle: any AppResidencyHosting =
+            isTestHost
+            ? TestHostResidencyController(viewModel: viewModel, windows: windows)
+            : AppResidencyController(
+                viewModel: viewModel, preferences: preferences, windows: windows)
+        self.lifecycle = lifecycle
         self.mainMenu = MainMenuController(
-            viewModel: viewModel, preferences: preferences, isTestHost: isTestHost)
+            viewModel: viewModel, preferences: preferences,
+            hasSoftQuit: lifecycle.softQuit != nil)
         self.termination = AppTerminationController(viewModel: viewModel)
 
         super.init()
 
-        if !isTestHost {
-            let residency = AppResidencyController(
-                viewModel: viewModel,
-                preferences: preferences,
-                windows: windows,
-                hasIntentInFlight: { [weak self] in
-                    self?.intentGateway?.hasIntentInFlight ?? false
-                },
-                onInterfacePresented: { [weak self] in self?.armAutoStartPassIfNeeded() },
-                onRequestFullQuit: { [weak self] in self?.termination.requestFullQuit() })
-            self.residency = residency
-            termination.residency = residency
-        }
-        windows.residency = self
-        windows.displayPlacement.residency = self
+        lifecycle.host = self
+        termination.residency = lifecycle.softQuit
+        windows.residency = lifecycle
+        windows.displayPlacement.residency = lifecycle
         windows.displayPlacement.host = windows
         mainMenu.host = self
-        viewModel.onSurfaceLibrary = { [weak self] in
-            self?.residency?.presentSummonedInterface()
+        viewModel.onSurfaceLibrary = { [weak lifecycle] in
+            lifecycle?.presentSummonedInterface()
         }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)
@@ -148,32 +125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// yields, and its file I/O is off the main actor either way.
     func applicationWillFinishLaunching(_ notification: Notification) {
         libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
-        registerIntentGateway()
-    }
-
-    /// Publishes the App Intents front door, so an intent delivered during
-    /// launch resolves it rather than failing for a missing dependency.
-    ///
-    /// The gateway is retained by the dependency manager and lives as long as
-    /// the process. It takes `libraryLoad` as its readiness await: an intent can
-    /// arrive while the first library read is still in flight, and a verb run
-    /// against a library that has not landed yet finds no VM to address.
-    ///
-    /// Not in the test host, with the rest of the resident-app machinery: the
-    /// gateway rebuilds Siri's parameter vocabulary, which writes to the
-    /// developer's own Shortcuts database, and holds an events subscription that
-    /// keeps the core's observation loop armed for every test.
-    private func registerIntentGateway() {
-        guard !isTestHost else { return }
-        let gateway = VMIntentGateway(
-            commands: viewModel.commands,
-            awaitReady: { [weak self] in
-                guard let load = await self?.libraryLoad else { return }
-                await load.value
-            },
-            onIdle: { [weak self] in self?.residency?.reconcileIdleTermination() })
-        intentGateway = gateway
-        AppDependencyManager.shared.add(dependency: gateway)
+        // Before `lifecycle.start(provenance:)`, so an intent delivered during
+        // launch resolves against a published gateway.
+        lifecycle.registerIntentGateway()
     }
 
     /// Records that Launch Services asked for the app's default surface.
@@ -207,23 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         termination.install()
 
-        if isTestHost {
-            // None of the resident-app machinery (status item, activation-policy
-            // switching) runs in the test host, so CI unit tests never register
-            // login items.
-            windows.showLibrary(bringToFront: true)
-            observeForTermination()
-        } else {
-            let provenance = readLaunchProvenance(notification)
-            let line = Self.residentProvenanceLine(
-                bundlePath: Bundle.main.bundlePath,
-                build: Self.buildNumber,
-                configuration: Self.buildConfiguration,
-                vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking,
-                launch: provenance)
-            Self.logger.notice("Kernova resident app ready — \(line, privacy: .public)")
-            residency?.start(provenance: provenance)
-        }
+        lifecycle.start(provenance: readLaunchProvenance(notification))
     }
 
     /// Reads the launch's raw signals and classifies them.
@@ -269,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// a document open, a status-item summon — runs the pass it never got. The
     /// pass is safe to run late because `VMLibraryViewModel.autoStartStep`
     /// re-reads each instance when it acts and skips one already running.
-    private func armAutoStartPassIfNeeded() {
+    func armAutoStartPass() {
         guard !hasArmedAutoStartPass else { return }
         hasArmedAutoStartPass = true
         termination.registerLaunchWork(
@@ -279,95 +217,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             })
     }
 
-    #if DEBUG
-    private static let buildConfiguration = "Debug"
-    #else
-    private static let buildConfiguration = "Release"
-    #endif
-
-    /// The build number, substituted into Info.plist at build time by
-    /// `Tools/set-build-number.sh` — a missing value is a build misconfiguration.
-    private static let buildNumber: String = {
-        guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
-            logger.fault("CFBundleVersion not found in Info.plist")
-            assertionFailure("CFBundleVersion not found in Info.plist")
-            return "?"
-        }
-        return build
-    }()
-
-    /// Formats the resident-app startup provenance line.
-    nonisolated static func residentProvenanceLine(
-        bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool,
-        launch: AppResidencyController.LaunchProvenance
-    ) -> String {
-        let launchName =
-            switch launch {
-            case .user: "user"
-            case .loginItem: "loginItem"
-            case .automation: "automation"
-            }
-        return "bundle=\(bundlePath) build=\(build) config=\(configuration) "
-            + "vmNetworking=\(vmNetworkingEntitled ? "entitled" : "unentitled") "
-            + "launch=\(launchName)"
-    }
-
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Resident app: the global `willClose` observer's reconcile decides
-        // between the Dock icon, a headless status-item app, and quitting. It
-        // keys on `hasVisibleUserWindow`, which counts miniaturized windows and
-        // untracked panels that AppKit's own last-window rule does not, so
-        // letting AppKit terminate too would double-fire on a different
-        // predicate.
-        if !isTestHost {
-            return false
-        }
-
-        let hasActiveVMs = viewModel.instances.contains(where: \.isKeepingAppAlive)
-
-        if hasActiveVMs || !windows.displayPlacement.isEmpty {
-            Self.logger.debug(
-                "applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.windows.displayPlacement.count, privacy: .public))"
-            )
-            return false
-        }
-
-        Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: true")
-        return true
+        lifecycle.terminatesAfterLastWindowClosed
     }
 
     func applicationWillBecomeActive(_ notification: Notification) {
-        Self.logger.debug("applicationWillBecomeActive: setting wasJustActivated")
-        wasJustActivated = true
-        // Clear after the current event cycle so the flag doesn't go stale for
-        // non-dock activations (Cmd-Tab, clicking a window), where
-        // `applicationShouldHandleReopen` is never called.
-        Task { @MainActor [weak self] in
-            self?.wasJustActivated = false
-        }
+        lifecycle.noteWillBecomeActive()
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let justActivated = wasJustActivated
-        wasJustActivated = false  // Synchronous clear — see wasJustActivated doc comment
-
-        // A Finder reopen (double-click / Dock click / `open` routed to the
-        // existing instance, including our own Launch Services self-open) already
-        // carries its own activation request, so the resident leg only ever
-        // presents — never re-requests activation, or a self-open would loop.
-        if let residency {
-            residency.handleReopen()
-            return true
-        }
-
-        if !flag {
-            showLibrary(nil)
-        } else if !justActivated && windows.isLibraryDismissed {
-            Self.logger.debug("applicationShouldHandleReopen: reopening dismissed library window")
-            showLibrary(nil)
-        } else if justActivated {
-            Self.logger.debug("applicationShouldHandleReopen: suppressed (initial activation with visible windows)")
-        }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool)
+        -> Bool
+    {
+        lifecycle.handleReopen(hasVisibleWindows: flag)
         return true
     }
 
@@ -385,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// already active), a Dock-menu selection can arrive while Kernova is
     /// inactive and needs the summon path's activation request.
     @objc private func summonLibraryFromDockMenu(_ sender: Any?) {
-        residency?.summonUserInterface()
+        lifecycle.summonUserInterface()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -416,9 +277,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // window here. Presentation only: a launch document open and a later
         // one delivered to the running app are both Launch-Services-mediated
         // and already carry their own activation request, per
-        // `presentSummonedInterface`'s invariant. The test host manages its
-        // own window.
-        residency?.presentSummonedInterface()
+        // `presentSummonedInterface`'s invariant.
+        lifecycle.presentSummonedInterface()
     }
 
     /// Filters to `.kernova` bundles and imports the batch, once the library is
@@ -612,38 +472,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         windows.displayPlacement.toggleFullscreen(for: instance)
     }
 
-    // MARK: - Idle Termination
-
-    /// Whether the app has no reason to stay alive: library window dismissed,
-    /// no auxiliary windows remain, and no VMs are active.
-    private var isIdle: Bool {
-        guard windows.isLibraryDismissed else { return false }
-        guard !windows.hasAuxiliaryWindows else { return false }
-        return !viewModel.instances.contains(where: \.isKeepingAppAlive)
-    }
-
-    /// Terminates the test host if `isIdle` is true.
-    ///
-    /// `isIdle` reads `AppWindowRegistry.isLibraryDismissed`, which answers
-    /// `false` when no library window was ever created — so it can never speak
-    /// for an automation launch.
-    /// `AppResidencyController.automationIdleOutcome` covers that case on its own
-    /// window-presence read.
-    private func terminateIfIdle() {
-        guard isTestHost else { return }
-        guard isIdle else { return }
-        Self.logger.notice("No visible windows and no active VMs — requesting termination")
-        NSApp.terminate(nil)
-    }
-
-    /// Arms the test host's idle quit, so it leaves once the last VM a suite
-    /// started stops.
-    private func observeForTermination() {
-        idleTerminationObservation = observeGuestLiveness(of: viewModel) { [weak self] in
-            self?.reconcileIdleTermination()
-        }
-    }
-
     // MARK: - Menu Validation
 
     /// AppKit asks a menu item's *target*, and a nil-target item resolves to
@@ -653,22 +481,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 }
 
-// MARK: - WindowResidencyHosting
+// MARK: - AppLaunchHosting
 
-extension AppDelegate: WindowResidencyHosting {
-    func prepareToPresentWindow() { residency?.prepareToPresentWindow() }
+extension AppDelegate: AppLaunchHosting {
+    /// Awaits the app's first library read, so an intent that arrives while it is
+    /// still in flight resolves against a landed library.
+    func awaitLibraryReady() async { await libraryLoad?.value }
 
-    func syncActivationPolicy() { residency?.syncActivationPolicy() }
-
-    /// The test host has residency behavior of its own — a plain foreground app
-    /// that idle-quits — with no `AppResidencyController` to hold it.
-    func reconcileIdleTermination() {
-        guard let residency else {
-            terminateIfIdle()
-            return
-        }
-        residency.reconcileIdleTermination()
-    }
+    func requestFullQuit() { termination.requestFullQuit() }
 }
 
 // MARK: - MainMenuHosting
