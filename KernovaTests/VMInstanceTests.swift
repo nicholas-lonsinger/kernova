@@ -1398,7 +1398,7 @@ struct VMInstanceTests {
         defer { guest.close() }
 
         let control = VsockControlService(channel: host, label: "watchdog-test")
-        instance.sessionContext?.vsockControlService = control
+        instance.sessionContext?.vsock.control = control
         control.start()
         defer { control.stop() }
 

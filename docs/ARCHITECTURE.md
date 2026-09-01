@@ -152,16 +152,22 @@ The vsock stack (macOS guests only):
   costs, and why nothing above the kernel meters a
   stream: [research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md](research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
 - `VsockListenerHost` — one `VZVirtioSocketListener` per port, nonisolated so the whole accept path
-  runs on whatever queue VZ delivers the callback on. `VMInstance` wires every feature listener to
-  its `VsockAdmissionGate` — the lock-guarded snapshot the control service publishes its completed
+  runs on whatever queue VZ delivers the callback on. Every feature listener is wired to the
+  VM's `VsockAdmissionGate` — the lock-guarded snapshot the control service publishes its completed
   handshake and advertised capabilities into — so no feature channel is admitted before the
   handshake, and each names the guest capability it additionally requires. The two data listeners
   forward through a `VsockDataConnectionSink` apiece. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
+- `VsockFeatureCoordinator` — the per-session owner of the four channels, one per
+  `VMSessionContext`. A static `VsockFeatureDescriptor` table says what each channel binds, gates,
+  builds and releases; the accept ritual, the teardown loop and the live-policy pass — including
+  the install-before-frame / withdraw-after-frame ordering rule — are each written once against
+  it, and the service slots live here. The gate and both data sinks are the
+  VM's and handed in, because the accept path reads them without touching the main actor.
 - `VsockFeatureService` — the settle contract each feature service keeps: `start()`, an idempotent
   and terminal owner `stop()` that calls nobody back, and an `onChannelLost` hook fired once, on
-  fully-settled state, when the channel ends on its own. The owner wires the hook per service and
-  decides there whether a settled service is dropped or kept.
+  fully-settled state, when the channel ends on its own. The coordinator wires it at one accept
+  site; each descriptor says whether a settled service is dropped or kept.
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, the observed `agentVersion`, and `PolicyUpdate` pushes carrying an
   `AgentPolicySnapshot`. Built per accepted channel by `VMInstance.makeControlService(for:)`, and
@@ -182,8 +188,9 @@ sharing is restart-only — its SPICE port must be declared at config-build time
 Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 
 - `ClipboardServicing` — the `@MainActor` protocol both transports implement.
-  `VMSessionContext.clipboardService` holds the existential, so the window controllers never branch
-  on transport. Agent install/version state lives on `VsockControlService` instead, which runs whether
+  `VMInstance.clipboardService` projects over the vsock service the feature coordinator owns and the
+  SPICE one `VMSessionContext.clipboardService` holds, so the window controllers never branch on
+  transport. Agent install/version state lives on `VsockControlService` instead, which runs whether
   or not clipboard sharing is enabled.
 - `SpiceClipboardService` — the Linux transport, over raw `VZFileHandleSerialPortAttachment` pipes
   parsed by `SpiceAgentParser`. Text only.

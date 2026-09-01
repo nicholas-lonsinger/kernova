@@ -42,7 +42,7 @@ struct VMInstanceDisplayDropTests {
         func attachControl() throws -> VsockChannel {
             let (guest, host) = try makePair()
             let control = VsockControlService(channel: host, label: "drop-test")
-            instance.sessionContext?.vsockControlService = control
+            instance.sessionContext?.vsock.control = control
             control.start()
             return guest
         }
@@ -53,7 +53,7 @@ struct VMInstanceDisplayDropTests {
             let (_, host) = try makePair()
             let service = VsockDropService(
                 channel: host, label: "Drop VM", reporter: instance.clipboardTransfers)
-            instance.sessionContext?.vsockDropService = service
+            instance.sessionContext?.vsock.drop = service
             service.start()
         }
 

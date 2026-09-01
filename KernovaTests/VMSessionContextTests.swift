@@ -76,7 +76,7 @@ struct VMSessionContextTests {
         context.agentExpectedButMissing = true
         context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
-        context.livePolicyApplication = Task<Void, Never> {}
+        context.vsock.livePolicyApplication = Task<Void, Never> {}
 
         context.tearDown()
 
@@ -85,9 +85,10 @@ struct VMSessionContextTests {
         #expect(context.clipboardInputPipe == nil)
         #expect(context.clipboardOutputPipe == nil)
         #expect(context.clipboardService == nil)
-        #expect(context.vsockControlService == nil)
-        #expect(context.vsockLogService == nil)
-        #expect(context.vsockDropService == nil)
+        #expect(context.vsock.control == nil)
+        #expect(context.vsock.log == nil)
+        #expect(context.vsock.clipboard == nil)
+        #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
         #expect(context.agentExpectedButMissing == false)
@@ -95,7 +96,7 @@ struct VMSessionContextTests {
         #expect(context.networkAttachmentPending == false)
         #expect(context.session == nil)
         #expect(context.agentPostStartTask == nil)
-        #expect(context.livePolicyApplication == nil)
+        #expect(context.vsock.livePolicyApplication == nil)
         // The instance-owned sinks the session published into are cleared too:
         // a descriptor handed to a cleared sink is closed, which its peer sees
         // as EOF.
@@ -265,7 +266,7 @@ struct VMSessionContextTests {
             })
         #expect(
             observationFires(reading: { _ = instance.displayDropAvailability }) {
-                context.vsockDropService = nil
+                context.vsock.drop = nil
             })
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {

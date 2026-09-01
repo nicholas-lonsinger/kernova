@@ -39,7 +39,7 @@ struct VMInstanceVsockAdmissionTests {
         for instance: VMInstance, channel: VsockChannel
     ) -> VsockControlService {
         let control = instance.makeControlService(for: channel)
-        instance.sessionContext?.vsockControlService = control
+        instance.sessionContext?.vsock.control = control
         control.start()
         return control
     }
@@ -291,33 +291,13 @@ struct VMInstanceVsockAdmissionTests {
 
     // MARK: - Stale-session hand-offs
 
-    /// One of the four framed listeners a session installs: how it is built,
-    /// and what an accepted channel populates on the instance.
-    private struct FramedListener {
-        let port: String
-        let makeHost: @MainActor (VMInstance, UUID) -> VsockListenerHost
-        let isInstalled: @MainActor (VMInstance) -> Bool
-    }
-
-    private var framedListeners: [FramedListener] {
-        [
-            FramedListener(
-                port: "control",
-                makeHost: { $0.makeControlListenerHost(sessionID: $1) },
-                isInstalled: { $0.vsockControlService != nil }),
-            FramedListener(
-                port: "log",
-                makeHost: { $0.makeLogListenerHost(sessionID: $1) },
-                isInstalled: { $0.vsockLogService != nil }),
-            FramedListener(
-                port: "drop",
-                makeHost: { $0.makeDropListenerHost(sessionID: $1) },
-                isInstalled: { $0.vsockDropService != nil }),
-            FramedListener(
-                port: "clipboard",
-                makeHost: { $0.makeClipboardListenerHost(sessionID: $1) },
-                isInstalled: { $0.clipboardService != nil }),
-        ]
+    /// The framed listener production builds for `descriptor`, off the live
+    /// session's coordinator — the channel port's host, ahead of any data one.
+    private func framedHost(
+        for descriptor: VsockFeatureDescriptor, on instance: VMInstance, sessionID: UUID
+    ) throws -> VsockListenerHost {
+        let vsock = try #require(instance.sessionContext?.vsock)
+        return try #require(vsock.makeHosts(for: descriptor, sessionID: sessionID).first)
     }
 
     /// An instance standing in for one with a live session, its handshake
@@ -340,9 +320,9 @@ struct VMInstanceVsockAdmissionTests {
 
     @Test("Each framed listener installs its service for the session that built it")
     func liveSessionHandOffInstallsTheService() async throws {
-        for listener in framedListeners {
+        for descriptor in VsockFeatureDescriptor.all {
             let (instance, sessionID) = makeInstanceWithLiveSession()
-            let host = listener.makeHost(instance, sessionID)
+            let host = try framedHost(for: descriptor, on: instance, sessionID: sessionID)
             let (acceptedFd, guestFd) = try makeRawSocketPair()
             let guest = VsockChannel(fileDescriptor: guestFd)
             guest.start()
@@ -351,25 +331,28 @@ struct VMInstanceVsockAdmissionTests {
             #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
             await drainMainQueue()
 
-            #expect(listener.isInstalled(instance), "\(listener.port): no service installed")
+            #expect(
+                instance.sessionContext?.vsock.service(for: descriptor) != nil,
+                "\(descriptor.name): no service installed")
             instance.tearDownSession(restingAt: .stopped)
         }
     }
 
     /// The accept runs on the VM's queue and queues the hand-off; a stop
-    /// running on main in between tears the session down, and the hand-off
-    /// that lands after it must not populate the *successor* session's
-    /// services — this is what the `liveSessionID == sessionID` guards in
-    /// `VMInstance`'s `makeControlListenerHost`/`makeLogListenerHost`/
-    /// `makeDropListenerHost`/the clipboard host actually protect. Asserting
-    /// against a torn-down instance's nil `sessionContext` would pass whether
-    /// or not those guards ran, since a nil context installs nothing either
-    /// way.
-    @Test("A hand-off queued by a released session installs nothing on its successor")
+    /// running on main in between tears the session down, and the hand-off that
+    /// lands after it must build nothing — this is what the
+    /// `liveSessionID == sessionID` guard in `VsockFeatureCoordinator.accept`
+    /// protects. A hand-off that got through would start a service on a dead
+    /// session and point the VM's data sinks, which outlive every session, at
+    /// it. Asserting against a torn-down instance's nil `sessionContext` would
+    /// pass whether or not the guard ran, so a successor session is opened
+    /// first and both coordinators are read.
+    @Test("A hand-off queued by a released session installs nothing")
     func releasedSessionHandOffIsRefused() async throws {
-        for listener in framedListeners {
+        for descriptor in VsockFeatureDescriptor.all {
             let (instance, sessionID) = makeInstanceWithLiveSession()
-            let host = listener.makeHost(instance, sessionID)
+            let released = try #require(instance.sessionContext?.vsock)
+            let host = try framedHost(for: descriptor, on: instance, sessionID: sessionID)
             let (acceptedFd, guestFd) = try makeRawSocketPair()
             let guest = VsockChannel(fileDescriptor: guestFd)
             guest.start()
@@ -383,7 +366,7 @@ struct VMInstanceVsockAdmissionTests {
             // the identity the hand-off is checked against.
             instance.tearDownSession(restingAt: .stopped)
             // A successor session opens before the hand-off is drained, so the
-            // assertion below reads a live context the guard must still keep
+            // assertions below read a live context the guard must still keep
             // the old hand-off out of.
             instance.enter(.running(sessionID: UUID()))
             instance.beginSessionContext()
@@ -391,8 +374,11 @@ struct VMInstanceVsockAdmissionTests {
             await drainMainQueue()
 
             #expect(
-                !listener.isInstalled(instance),
-                "\(listener.port): the successor session was repopulated")
+                released.service(for: descriptor) == nil,
+                "\(descriptor.name): the released session was repopulated")
+            #expect(
+                instance.sessionContext?.vsock.service(for: descriptor) == nil,
+                "\(descriptor.name): the successor session was repopulated")
             await expectEOF(on: guest)
         }
     }

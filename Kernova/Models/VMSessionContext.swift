@@ -8,8 +8,9 @@ import os
 /// ``VMInstance`` holds exactly one optional of this type: opening it begins a
 /// session, ``tearDown()`` ends it. Objects that outlive a session by intent —
 /// the admission gate, the two data sinks, the transfer reporter, the host
-/// clipboard publisher — belong to the instance and are handed in here, so a
-/// service can publish into them without owning them.
+/// clipboard publisher — belong to the instance and are handed to whatever
+/// session-scoped owner publishes into them, so a service can do so without
+/// owning them.
 @MainActor
 @Observable
 final class VMSessionContext {
@@ -17,19 +18,6 @@ final class VMSessionContext {
 
     /// The VM name, for log records.
     @ObservationIgnored private let label: String
-
-    // MARK: - Instance-owned hand-offs
-
-    /// The instance's admission gate; the live control service publishes into
-    /// it and ``stopVsockServices()`` clears it.
-    @ObservationIgnored private let admissionGate: VsockAdmissionGate
-
-    /// The instance's clipboard data sink, pointed at this session's clipboard
-    /// service.
-    @ObservationIgnored private let clipboardDataSink: VsockDataConnectionSink
-
-    /// The instance's drop data sink, pointed at this session's drop service.
-    @ObservationIgnored private let dropDataSink: VsockDataConnectionSink
 
     // MARK: - Session
 
@@ -60,10 +48,12 @@ final class VMSessionContext {
     var clipboardInputPipe: Pipe?
     var clipboardOutputPipe: Pipe?
 
-    /// Active clipboard service: `SpiceClipboardService` for Linux,
-    /// `VsockClipboardService` for macOS.
+    /// The clipboard service this session owns outside the vsock stack: a
+    /// `SpiceClipboardService` for a Linux guest.
     ///
-    /// Nil on macOS until the guest agent connects.
+    /// A macOS guest's transport is the vsock one, which lives in
+    /// ``VsockFeatureCoordinator/clipboard``; `VMInstance.clipboardService`
+    /// projects over both, so no window controller branches on transport.
     var clipboardService: (any ClipboardServicing)?
 
     /// Automatic clipboard passthrough driver, created and torn down by
@@ -72,22 +62,9 @@ final class VMSessionContext {
 
     // MARK: - Vsock Channel (macOS guests)
 
-    var vsockLogService: VsockGuestLogService?
-
-    var vsockControlService: VsockControlService?
-
-    /// Serves files dropped on this VM's display; populated once the guest
-    /// agent's drop client connects.
-    var vsockDropService: VsockDropService?
-
-    /// The vsock live-policy application in flight, chained so a second toggle
-    /// arriving before the first finishes runs after it rather than
-    /// interleaving with it.
-    ///
-    /// Per context, so an edit made to one session never queues behind a
-    /// previous session's chain — nor lands on a successor's listeners, which
-    /// the chain's own per-step context check refuses.
-    @ObservationIgnored var livePolicyApplication: Task<Void, Never>?
+    /// This session's vsock feature channels — the listeners, the services
+    /// behind them, and the accept and teardown paths that move both.
+    @ObservationIgnored let vsock: VsockFeatureCoordinator
 
     // MARK: - Guest Agent
 
@@ -150,15 +127,11 @@ final class VMSessionContext {
     init(
         label: String,
         bootedIntoRecovery: Bool,
-        admissionGate: VsockAdmissionGate,
-        clipboardDataSink: VsockDataConnectionSink,
-        dropDataSink: VsockDataConnectionSink
+        vsock: VsockFeatureCoordinator
     ) {
         self.label = label
         self.bootedIntoRecovery = bootedIntoRecovery
-        self.admissionGate = admissionGate
-        self.clipboardDataSink = clipboardDataSink
-        self.dropDataSink = dropDataSink
+        self.vsock = vsock
     }
 
     // MARK: - Teardown
@@ -173,12 +146,11 @@ final class VMSessionContext {
         networkAttachmentPending = false
         clipboardPassthroughCoordinator?.stop()
         clipboardPassthroughCoordinator = nil
-        // Dropping the handle is the whole release: `VMInstance.applyLivePolicy`
-        // re-checks that this context is still the live one before each of its
-        // steps, so a chain in flight settles into a no-op on its own — a
-        // `cancel()` would reach none of those steps, none of which suspend on
-        // anything cancellable.
-        livePolicyApplication = nil
+        // Dropping the handle is the whole release: the chain re-checks that
+        // this session is still the live one before each of its steps, so one
+        // in flight settles into a no-op on its own — a `cancel()` would reach
+        // none of those steps, none of which suspend on anything cancellable.
+        vsock.livePolicyApplication = nil
         stopVsockServices()
         stopClipboardService()
         stopSerialReading()
@@ -213,7 +185,6 @@ final class VMSessionContext {
     func stopClipboardService() {
         clipboardService?.stop()
         clipboardService = nil
-        clipboardDataSink.set(nil)
         closeSpiceClipboardPipes()
     }
 
@@ -259,29 +230,11 @@ final class VMSessionContext {
     /// port is gone, so there is nothing to await to keep a bound port's
     /// delegate alive.
     ///
-    /// Only the vsock clipboard service is stopped here — the SPICE service is
-    /// owned by ``stopClipboardService()``.
+    /// The SPICE clipboard service is ``stopClipboardService()``'s, and is
+    /// untouched here.
     func stopVsockServices() {
         session?.detachRemainingListeners()
-
-        vsockControlService?.stop()
-        vsockControlService = nil
-        // The stopped service cleared the gate; this also covers a service torn
-        // down before it ever published.
-        admissionGate.clear()
-
-        vsockLogService?.stop()
-        vsockLogService = nil
-
-        vsockDropService?.stop()
-        vsockDropService = nil
-        dropDataSink.set(nil)
-
-        if clipboardService is VsockClipboardService {
-            clipboardService?.stop()
-            clipboardService = nil
-        }
-        clipboardDataSink.set(nil)
+        vsock.stopAll()
     }
 
     // MARK: - Agent Post-Start Watchdog
