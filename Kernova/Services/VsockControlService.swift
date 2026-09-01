@@ -115,10 +115,10 @@ final class VsockControlService: VsockFeatureService {
     /// seam, so a test stepping the heartbeat cadence also holds the watchdog's
     /// clock.
     private let clock: any EngineClock
-    private let heartbeatInterval: TimeInterval
-    private let unresponsiveAfter: TimeInterval
-    private let terminateAfter: TimeInterval
-    private let livenessTickInterval: TimeInterval
+    private let cadence: ControlChannelCadence
+
+    /// The two-stage silence watchdog, shared with the guest agent.
+    private let liveness: ControlLivenessMonitor
 
     /// Reads the latest policy from the host configuration.
     ///
@@ -160,10 +160,6 @@ final class VsockControlService: VsockFeatureService {
         [consumeTask, outboundHeartbeatTask, livenessTask].compactMap { $0 }
     }
     #endif
-
-    /// Instant of the most recent inbound frame of any kind — `Hello` and
-    /// `Heartbeat` both count as liveness signals.
-    private var lastInboundFrame: EngineInstant?
 
     /// Outbound heartbeat sequence number, for diagnostics only — the peer does
     /// not respond to a specific nonce.
@@ -207,31 +203,18 @@ final class VsockControlService: VsockFeatureService {
         label: String,
         bundledAgentVersion: String? = KernovaMacOSAgentInfo.bundledVersion,
         clock: any EngineClock = makePlatformEngineClock(),
-        heartbeatInterval: TimeInterval = 5,
-        unresponsiveAfter: TimeInterval = 15,
-        terminateAfter: TimeInterval = 30,
+        cadence: ControlChannelCadence = .production,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
         onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
         admissionGate: VsockAdmissionGate? = nil
     ) {
-        // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`:
-        // reversed, `terminateAfter` fires first and `.unresponsive` is never
-        // reached.
-        precondition(
-            unresponsiveAfter < terminateAfter,
-            "VsockControlService: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
-        )
         self.channel = channel
         self.label = label
         self.bundledAgentVersion = bundledAgentVersion
         self.clock = clock
-        self.heartbeatInterval = heartbeatInterval
-        self.unresponsiveAfter = unresponsiveAfter
-        self.terminateAfter = terminateAfter
-        // Check liveness several times per `unresponsiveAfter` so the
-        // transition fires promptly, capped at the heartbeat interval.
-        self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
+        self.cadence = cadence
+        self.liveness = ControlLivenessMonitor(cadence: cadence)
         self.policyProvider = policyProvider
         self.onAgentInfoObserved = onAgentInfoObserved
         self.isGuestSuspended = isGuestSuspended
@@ -256,31 +239,16 @@ final class VsockControlService: VsockFeatureService {
             self?.stop(reason: .channelLost)
         }
 
-        let clock = self.clock
-        let heartbeatInterval = self.heartbeatInterval
-        outboundHeartbeatTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await clock.sleep(for: heartbeatInterval)
-                } catch {
-                    return
-                }
-                if Task.isCancelled { return }
-                self?.sendHeartbeat()
-            }
+        outboundHeartbeatTask = repeatingClockTask(
+            clock: clock, every: cadence.heartbeatInterval
+        ) { [weak self] in
+            await self?.sendHeartbeat()
         }
 
-        let livenessTickInterval = self.livenessTickInterval
-        livenessTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await clock.sleep(for: livenessTickInterval)
-                } catch {
-                    return
-                }
-                if Task.isCancelled { return }
-                self?.checkLiveness()
-            }
+        livenessTask = repeatingClockTask(
+            clock: clock, every: cadence.livenessTickInterval
+        ) { [weak self] in
+            await self?.checkLiveness()
         }
 
         Self.logger.info("Vsock control service started for '\(self.label, privacy: .public)'")
@@ -316,7 +284,7 @@ final class VsockControlService: VsockFeatureService {
         isConnected = false
         agentVersion = nil
         isUnresponsive = false
-        lastInboundFrame = nil
+        liveness.reset()
         guestSupportsClipboardStreamingStorage = false
         guestSupportsDropFilesStorage = false
         admissionGate?.clear()
@@ -331,21 +299,12 @@ final class VsockControlService: VsockFeatureService {
     // MARK: - Outbound
 
     private func sendHello() {
-        var hello = Frame()
-        hello.protocolVersion = 1
-        hello.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = KernovaCapability.controlChannelDefaults
-            // Tell the guest which agent version this host bundles so it can show
-            // its own update state. Empty when the sidecar is missing — the guest
-            // treats empty as "unknown" and shows no update prompt.
-            $0.bundledAgentVersion = bundledAgentVersion ?? ""
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.osVersion = KernovaOSVersion.current
-                $0.agentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "host"
-            }
-        }
+        // Tell the guest which agent version this host bundles so it can show
+        // its own update state. Empty when the sidecar is missing — the guest
+        // treats empty as "unknown" and shows no update prompt.
+        let hello = Frame.controlHello(
+            agentVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "host",
+            bundledAgentVersion: bundledAgentVersion ?? "")
         do {
             try channel.send(hello)
         } catch {
@@ -396,13 +355,8 @@ final class VsockControlService: VsockFeatureService {
         let nonce = nextHeartbeatNonce
         nextHeartbeatNonce += 1
 
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.heartbeat = Kernova_V1_Heartbeat.with {
-            $0.nonce = nonce
-        }
         do {
-            try channel.send(frame)
+            try channel.send(Frame.controlHeartbeat(nonce: nonce))
         } catch {
             // A failed send usually means the channel just tore down: the
             // consume task sees EOF momentarily and the listener accepts a
@@ -416,45 +370,50 @@ final class VsockControlService: VsockFeatureService {
     // MARK: - Liveness
 
     private func checkLiveness() {
-        guard let last = lastInboundFrame else {
-            // No inbound frame ever — the agent hasn't connected, and
-            // `agentStatus` already reports `.waiting`.
-            return
-        }
+        // The timer bodies hop onto the main actor, so a tick cancelled by the
+        // teardown can still land after it — nothing may re-arm settled state.
+        guard !hasStopped else { return }
         // A live-paused guest is frozen, not silent: it cannot answer, so
         // host-side elapsed time says nothing about the agent's health. Hold
-        // the clock at now for as long as it stays frozen, so the deadline the
-        // guest is judged against runs only while it is executing. This is also
-        // what survives host sleep: the VM is auto-paused for it, and an
-        // `EngineClock` counts the time the system spends asleep.
+        // the deadline at now for as long as it stays frozen, so the guest is
+        // judged only on time it spends executing. This is also what survives
+        // host sleep: the VM is auto-paused for it, and an `EngineClock` counts
+        // the time the system spends asleep.
         if isGuestSuspended?() ?? false {
-            lastInboundFrame = clock.now
-            // Guarded like the branches below: an unconditional write to an
-            // `@Observable` property notifies on every tick, and a pause can
-            // last hours.
-            if isUnresponsive { isUnresponsive = false }
+            // Not routed through `apply`: the guest did not resume responding,
+            // the host stopped judging it, so the stage lifts without the
+            // recovery notice.
+            if case .recovered = liveness.hold(at: clock.now) { isUnresponsive = false }
             return
         }
-        let elapsed = clock.seconds(since: last)
-        if elapsed > terminateAfter {
+        apply(liveness.evaluate(at: clock.now))
+    }
+
+    /// Reacts to one watchdog verdict.
+    ///
+    /// The monitor emits each stage crossing once, so an `@Observable`
+    /// notification tracks the transition rather than the tick.
+    private func apply(_ verdict: ControlLivenessMonitor.Verdict) {
+        switch verdict {
+        case .noSignal, .unchanged:
+            // No inbound frame ever, or nothing changed — with no frame,
+            // `agentStatus` already reports `.waiting`.
+            break
+        case .becameUnresponsive(let silentFor):
             Self.logger.warning(
-                "Control channel for '\(self.label, privacy: .public)' silent for \(Int(elapsed.rounded()), privacy: .public) s — closing"
+                "Control channel for '\(self.label, privacy: .public)' silent for \(Int(silentFor.rounded()), privacy: .public) s — marking unresponsive"
+            )
+            isUnresponsive = true
+        case .recovered:
+            Self.logger.notice(
+                "Control channel for '\(self.label, privacy: .public)' resumed responding"
+            )
+            isUnresponsive = false
+        case .expired(let silentFor):
+            Self.logger.warning(
+                "Control channel for '\(self.label, privacy: .public)' silent for \(Int(silentFor.rounded()), privacy: .public) s — closing"
             )
             stop(reason: .channelLost)
-        } else if elapsed > unresponsiveAfter {
-            if !isUnresponsive {
-                Self.logger.warning(
-                    "Control channel for '\(self.label, privacy: .public)' silent for \(Int(elapsed.rounded()), privacy: .public) s — marking unresponsive"
-                )
-                isUnresponsive = true
-            }
-        } else {
-            if isUnresponsive {
-                Self.logger.notice(
-                    "Control channel for '\(self.label, privacy: .public)' resumed responding"
-                )
-                isUnresponsive = false
-            }
         }
     }
 
@@ -482,21 +441,19 @@ final class VsockControlService: VsockFeatureService {
         // otherwise flip `isConnected` back on for a channel whose tasks are
         // already cancelled.
         guard !hasStopped else { return }
-        guard frame.protocolVersion == 1 else {
+        let inbound = ControlChannelInbound.classify(frame)
+        // Any inbound traffic counts as liveness. Refresh before dispatch, so a
+        // channel that resumed talking is out of `.unresponsive` by the time
+        // this frame's own handling reads the state.
+        if inbound.isLivenessSignal { apply(liveness.record(at: clock.now)) }
+
+        switch inbound {
+        case .unsupportedVersion(let version):
             Self.logger.warning(
-                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(self.label, privacy: .public)'"
+                "Dropping frame with unsupported protocol version \(version, privacy: .public) for '\(self.label, privacy: .public)'"
             )
-            return
-        }
-
-        // Any inbound traffic counts as liveness. Refresh before dispatch so a
-        // recovering channel clears `.unresponsive` on the next liveness tick.
-        lastInboundFrame = clock.now
-
-        switch frame.payload {
         case .hello(let hello):
             isConnected = true
-            isUnresponsive = false
             // Both version fields are peer-supplied — `boundedField` is the one
             // intake every downstream consumer inherits.
             let reportedVersion = ObservedAgentInfo.boundedField(hello.agentInfo.agentVersion)
@@ -529,8 +486,7 @@ final class VsockControlService: VsockFeatureService {
                 sendPolicyUpdate(provider())
             }
         case .heartbeat:
-            // The frame itself is the signal; recovery from `.unresponsive`
-            // happens on the next `checkLiveness()` tick.
+            // The frame itself is the signal, already recorded above.
             Self.logger.debug(
                 "Heartbeat from '\(self.label, privacy: .public)'"
             )
@@ -538,16 +494,14 @@ final class VsockControlService: VsockFeatureService {
             Self.logger.warning(
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .policyUpdate, .clipboardOffer, .clipboardRequest,
-            .clipboardRelease, .clipboardTransferRequest,
-            .clipboardTransferReply, .logRecord, .dropOffer, .dropComplete,
-            .dropRelease, .none:
+        case .policyUpdate, .wrongPort:
             // PolicyUpdate is host→guest and never arrives here; other payloads
-            // belong on other channels. RATIONALE: the clipboard and log
-            // channels close on a wrong-port payload, but this one stays up —
-            // it is the admission anchor they gate on, so closing it would flap
-            // the agent-status UI and every dependent channel on one stray
-            // frame.
+            // belong on other channels. RATIONALE: verified 2026-09-01 against
+            // this file's teardown path — the clipboard and log channels close
+            // on a wrong-port payload, but this one stays up, because it is the
+            // admission anchor they gate on (`admissionGate?.clear()` in
+            // `stop`), so closing it would flap the agent-status UI and every
+            // dependent channel on one stray frame.
             Self.logger.warning(
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )

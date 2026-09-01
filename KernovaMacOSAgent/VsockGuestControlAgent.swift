@@ -16,10 +16,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     private let clock: any EngineClock
     private let client: VsockGuestClient
-    private let heartbeatInterval: TimeInterval
-    private let unresponsiveAfter: TimeInterval
-    private let terminateAfter: TimeInterval
-    private let livenessTickInterval: TimeInterval
+    private let cadence: ControlChannelCadence
+
+    /// The two-stage silence watchdog, shared with the host service, and reset
+    /// per connection by ``serve(channel:)``.
+    private let liveness: ControlLivenessMonitor
 
     /// Invoked on every inbound `PolicyUpdate`, with the raw protobuf snapshot.
     private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
@@ -30,8 +31,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private let onStateChange: (@Sendable (HostConnectionState) -> Void)?
 
     private let lock = NSLock()
-    private var lastInboundFrame: EngineInstant?
-    private var unresponsiveLogged: Bool = false
     private var nextHeartbeatNonce: UInt64 = 1
 
     /// Connection state surfaced to the menu-bar UI.
@@ -72,25 +71,15 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         clock: any EngineClock = makePlatformEngineClock(),
         client: VsockGuestClient = VsockGuestClient(
             port: KernovaVsockPort.control, label: "control"),
-        heartbeatInterval: TimeInterval = 5,
-        unresponsiveAfter: TimeInterval = 15,
-        terminateAfter: TimeInterval = 30,
+        cadence: ControlChannelCadence = .production,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
         onHostCapabilitiesChanged: (@Sendable () -> Void)? = nil
     ) {
-        precondition(
-            unresponsiveAfter < terminateAfter,
-            "VsockGuestControlAgent: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
-        )
         self.clock = clock
         self.client = client
-        self.heartbeatInterval = heartbeatInterval
-        self.unresponsiveAfter = unresponsiveAfter
-        self.terminateAfter = terminateAfter
-        // Several checks per `unresponsiveAfter`, capped at the heartbeat
-        // interval so small test thresholds don't over-spin.
-        self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
+        self.cadence = cadence
+        self.liveness = ControlLivenessMonitor(cadence: cadence)
         self.onPolicy = onPolicy
         self.onStateChange = onStateChange
         self.onHostCapabilitiesChanged = onHostCapabilitiesChanged
@@ -148,9 +137,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private func serve(channel: VsockChannel) async {
         // Neither a stale liveness clock nor a stale capability may leak across
         // connections.
+        liveness.reset()
         lock.withLock {
-            lastInboundFrame = nil
-            unresponsiveLogged = false
             hostSupportsClipboardStreaming = false
             hostSupportsDropFilesStorage = false
         }
@@ -161,30 +149,15 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         sendHello(on: channel)
 
-        let heartbeatInterval = self.heartbeatInterval
-        let livenessTickInterval = self.livenessTickInterval
-        let clock = self.clock
-        let heartbeatTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await clock.sleep(for: heartbeatInterval)
-                } catch {
-                    return
-                }
-                if Task.isCancelled { return }
-                self?.sendHeartbeat(on: channel)
-            }
+        let heartbeatTask = repeatingClockTask(
+            clock: clock, every: cadence.heartbeatInterval
+        ) { [weak self] in
+            self?.sendHeartbeat(on: channel)
         }
-        let livenessTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await clock.sleep(for: livenessTickInterval)
-                } catch {
-                    return
-                }
-                if Task.isCancelled { return }
-                self?.checkLiveness(channel: channel)
-            }
+        let livenessTask = repeatingClockTask(
+            clock: clock, every: cadence.livenessTickInterval
+        ) { [weak self] in
+            self?.checkLiveness(channel: channel)
         }
         defer {
             heartbeatTask.cancel()
@@ -207,21 +180,18 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     // MARK: - Inbound
 
     private func handle(frame: Frame) {
-        guard frame.protocolVersion == 1 else {
-            Self.logger.warning(
-                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
-            )
-            return
-        }
-
+        let inbound = ControlChannelInbound.classify(frame)
         // Any inbound traffic counts as liveness.
-        lock.withLock {
-            lastInboundFrame = clock.now
-            unresponsiveLogged = false
+        if inbound.isLivenessSignal {
+            liveness.record(at: clock.now)
+            updateConnectionState(.connected)
         }
-        updateConnectionState(.connected)
 
-        switch frame.payload {
+        switch inbound {
+        case .unsupportedVersion(let version):
+            Self.logger.warning(
+                "Dropping frame with unsupported protocol version \(version, privacy: .public)"
+            )
         case .hello(let hello):
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardTransferV3)
             let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV3)
@@ -258,9 +228,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 "PolicyUpdate received (logForwarding=\(effective.logForwardingEnabled, privacy: .public), clipboard=\(effective.clipboardSharingEnabled, privacy: .public))"
             )
             onPolicy?(effective)
-        case .clipboardOffer, .clipboardRequest, .clipboardRelease,
-            .clipboardTransferRequest, .clipboardTransferReply, .logRecord,
-            .dropOffer, .dropComplete, .dropRelease, .none:
+        case .wrongPort:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }
     }
@@ -268,17 +236,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     // MARK: - Outbound
 
     private func sendHello(on channel: VsockChannel) {
-        var hello = Frame()
-        hello.protocolVersion = 1
-        hello.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = KernovaCapability.controlChannelDefaults
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.osVersion = KernovaOSVersion.current
-                $0.agentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
-            }
-        }
+        let hello = Frame.controlHello(
+            agentVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
+                ?? "unknown")
         do {
             try channel.send(hello)
         } catch {
@@ -293,13 +253,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             defer { nextHeartbeatNonce += 1 }
             return nextHeartbeatNonce
         }
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.heartbeat = Kernova_V1_Heartbeat.with {
-            $0.nonce = nonce
-        }
         do {
-            try channel.send(frame)
+            try channel.send(Frame.controlHeartbeat(nonce: nonce))
         } catch {
             // A failed send usually means the channel just tore down; the serve
             // loop sees EOF and `VsockGuestClient` reconnects.
@@ -312,27 +267,23 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     // MARK: - Liveness
 
     private func checkLiveness(channel: VsockChannel) {
-        let snapshot: (last: EngineInstant?, alreadyLogged: Bool) = lock.withLock {
-            (lastInboundFrame, unresponsiveLogged)
-        }
-        guard let last = snapshot.last else {
-            // Host hasn't sent anything yet — keep waiting.
-            return
-        }
-        let elapsed = clock.seconds(since: last)
-        if elapsed > terminateAfter {
+        switch liveness.evaluate(at: clock.now) {
+        case .noSignal, .unchanged:
+            // The host hasn't sent anything yet, or nothing crossed a stage —
+            // keep waiting.
+            break
+        case .becameUnresponsive(let silentFor):
             Self.logger.warning(
-                "Host control channel silent for \(Int(elapsed.rounded()), privacy: .public) s — closing"
+                "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — host appears unresponsive"
+            )
+            updateConnectionState(.unresponsive)
+        case .recovered:
+            updateConnectionState(.connected)
+        case .expired(let silentFor):
+            Self.logger.warning(
+                "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — closing"
             )
             channel.close()
-        } else if elapsed > unresponsiveAfter {
-            if !snapshot.alreadyLogged {
-                Self.logger.warning(
-                    "Host control channel silent for \(Int(elapsed.rounded()), privacy: .public) s — host appears unresponsive"
-                )
-                lock.withLock { unresponsiveLogged = true }
-            }
-            updateConnectionState(.unresponsive)
         }
     }
 }
