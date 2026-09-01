@@ -368,56 +368,66 @@ final class VMInstance {
     /// running; cleared on stop/teardown.
     var liveRemovableMedia: [USBDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
 
-    /// Records a device that was just attached, live, on the open session.
+    /// Records a device that was just attached, live, on the session
+    /// `sessionID` names.
     ///
-    /// Dropped and logged, rather than asserting, when no session is open:
+    /// Dropped and logged, rather than asserting, once that session is no
+    /// longer the live one — see ``liveSessionID``:
     /// `VMLibrary.runRemovableMediaReconciliation` awaits the framework
-    /// attach call, and a power-off landing on main during that suspension
-    /// can tear the session down before the continuation resumes — the same
-    /// race its own `USBDeviceError.noVirtualMachine` handling already
-    /// treats as a normal bail, not a programming error.
-    func recordAttachedMedia(_ info: USBDeviceInfo) {
-        guard let sessionContext else {
-            Self.logger.notice(
-                "Dropping attached-media record for '\(self.name, privacy: .public)' device \(info.id, privacy: .public): session already ended"
-            )
-            return
-        }
-        sessionContext.liveRemovableMedia.append(info)
+    /// attach call, and a power-off (or a power-off and restart) landing on
+    /// main during that suspension resolves the continuation against a VM this
+    /// record no longer describes — the same race its own
+    /// `USBDeviceError.noVirtualMachine` handling already treats as a normal
+    /// bail, not a programming error.
+    func recordAttachedMedia(_ info: USBDeviceInfo, for sessionID: UUID) {
+        guard let context = mediaWriteTarget(for: sessionID, deviceID: info.id, "attached-media record")
+        else { return }
+        context.liveRemovableMedia.append(info)
     }
 
     /// Removes a device's tracking entry and releases the security-scoped
     /// access grant backing it, in that order.
     ///
-    /// A no-op, logged, when no session is open — see
-    /// ``recordAttachedMedia(_:)``.
-    func forgetAttachedMedia(id: UUID) {
-        guard let sessionContext else {
-            Self.logger.notice(
-                "Dropping detached-media record for '\(self.name, privacy: .public)' device \(id, privacy: .public): session already ended"
-            )
-            return
-        }
-        sessionContext.liveRemovableMedia.removeAll { $0.id == id }
-        sessionContext.fileAccess.releaseHotAttach(id: id)
+    /// A no-op, logged, when `sessionID` no longer names the live session — see
+    /// ``recordAttachedMedia(_:for:)``. Nothing is released in that case: the
+    /// grant this would have dropped belongs to whichever session is live now.
+    func forgetAttachedMedia(deviceID: UUID, for sessionID: UUID) {
+        guard let context = mediaWriteTarget(for: sessionID, deviceID: deviceID, "detached-media record")
+        else { return }
+        context.liveRemovableMedia.removeAll { $0.id == deviceID }
+        context.fileAccess.releaseHotAttach(id: deviceID)
     }
 
     /// Registers the security-scoped access grant backing a hot-attached
-    /// device with the open session, so it is released at detach or teardown
-    /// instead of the caller's local scope.
+    /// device with the session `sessionID` names, so it is released at detach
+    /// or teardown instead of the caller's local scope.
     ///
-    /// When no session is open, the scope is released here directly — see
-    /// ``recordAttachedMedia(_:)`` — rather than left for the caller's local
-    /// `deinit`, since `ScopedAccess.release()` is idempotent.
-    func retainMediaScope(_ scope: ScopedAccess, for id: UUID) {
-        guard let sessionContext else {
-            Self.logger.notice(
-                "Releasing media scope for '\(self.name, privacy: .public)' device \(id, privacy: .public): session already ended"
-            )
+    /// When that session is no longer the live one, `scope` is released here
+    /// directly — see ``recordAttachedMedia(_:for:)`` — rather than left for
+    /// the caller's local `deinit`, since `ScopedAccess.release()` is
+    /// idempotent.
+    func retainMediaScope(_ scope: ScopedAccess, deviceID: UUID, for sessionID: UUID) {
+        guard let context = mediaWriteTarget(for: sessionID, deviceID: deviceID, "media scope") else {
             scope.release()
             return
         }
-        sessionContext.fileAccess.addHotAttach(id: id, scope)
+        context.fileAccess.addHotAttach(id: deviceID, scope)
+    }
+
+    /// The context a removable-media write issued against `sessionID` belongs
+    /// to, or `nil` — logged — when that session has been released.
+    private func mediaWriteTarget(
+        for sessionID: UUID,
+        deviceID: UUID,
+        _ what: StaticString
+    ) -> VMSessionContext? {
+        guard let sessionContext, liveSessionID == sessionID else {
+            Self.logger.notice(
+                "Dropping \(what, privacy: .public) for '\(self.name, privacy: .public)' device \(deviceID, privacy: .public): session \(sessionID, privacy: .public) is no longer live"
+            )
+            return nil
+        }
+        return sessionContext
     }
 
     /// The live session's identity — the token every asynchronous hand-off and
@@ -442,9 +452,14 @@ final class VMInstance {
     /// live to act on.
     var hasLiveSession: Bool { phase.hasLiveSession }
 
-    var canAttachUSBDevices: Bool {
-        hasLiveSession
-    }
+    /// The session a removable-media attach or detach acts on, or `nil` when
+    /// the VM has none to act on.
+    ///
+    /// The token every step of a reconcile pass carries, so the pass and the
+    /// capability it was admitted by cannot answer for different sessions.
+    var attachableSessionID: UUID? { hasLiveSession ? liveSessionID : nil }
+
+    var canAttachUSBDevices: Bool { attachableSessionID != nil }
 
     /// `true` when the bundled guest-agent installer disk can be attached to or
     /// ejected from this VM.

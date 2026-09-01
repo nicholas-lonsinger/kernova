@@ -787,13 +787,20 @@ final class VMLifecycleCoordinator {
     /// persisted identity, which save-state restore matches on. `resolvedURL`,
     /// when supplied, is what actually gets attached, while the *tracked* identity
     /// stays `diskImagePath`.
+    ///
+    /// `sessionID` is the session the caller's pass is acting for; a pass that
+    /// has been overtaken throws `USBDeviceError.noVirtualMachine` without
+    /// reaching the framework, so its remaining attaches cannot drive a
+    /// successor's controller from the predecessor's diff.
     func attachUSBDevice(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID? = nil,
         resolvedURL: URL? = nil,
-        to instance: VMInstance
+        to instance: VMInstance,
+        for sessionID: UUID
     ) async throws -> USBDeviceInfo {
+        guard instance.liveSessionID == sessionID else { throw USBDeviceError.noVirtualMachine }
         let info = try await usbDeviceService.attach(
             diskImagePath: resolvedURL?.path(percentEncoded: false) ?? diskImagePath,
             readOnly: readOnly,
@@ -803,12 +810,22 @@ final class VMLifecycleCoordinator {
         let tracked = USBDeviceInfo(
             id: info.id, path: diskImagePath, readOnly: info.readOnly,
             attachedAt: info.attachedAt)
-        instance.recordAttachedMedia(tracked)
+        instance.recordAttachedMedia(tracked, for: sessionID)
         return tracked
     }
 
-    func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
+    /// Detaches a device the session `sessionID` names is holding, and clears
+    /// its tracking entry — dropping to `USBDeviceError.noVirtualMachine`
+    /// before the framework call for the reason
+    /// ``attachUSBDevice(diskImagePath:readOnly:desiredUUID:resolvedURL:to:for:)``
+    /// does.
+    func detachUSBDevice(
+        _ deviceInfo: USBDeviceInfo,
+        from instance: VMInstance,
+        for sessionID: UUID
+    ) async throws {
+        guard instance.liveSessionID == sessionID else { throw USBDeviceError.noVirtualMachine }
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
-        instance.forgetAttachedMedia(id: deviceInfo.id)
+        instance.forgetAttachedMedia(deviceID: deviceInfo.id, for: sessionID)
     }
 }

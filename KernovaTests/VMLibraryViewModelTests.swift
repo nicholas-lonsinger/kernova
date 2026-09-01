@@ -5218,12 +5218,14 @@ struct VMLibraryViewModelTests {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let installerItem = RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         instance.configuration.removableMedia = [installerItem]
         instance.recordAttachedMedia(
-            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly))
+            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly),
+            for: sessionID)
         viewModel.instances.append(instance)
 
         viewModel.unmountGuestAgentInstaller(from: instance)
@@ -5278,13 +5280,15 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance(guestOS: .macOS)
         instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let installerItem = RemovableMediaItem(
             path: installerURL.path(percentEncoded: false), readOnly: true)
         instance.configuration.removableMedia = [installerItem]
         instance.recordAttachedMedia(
-            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly))
+            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly),
+            for: sessionID)
         viewModel.instances.append(instance)
 
         viewModel.unmountGuestAgentInstaller(from: instance)
@@ -5783,12 +5787,13 @@ struct VMLibraryViewModelTests {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let idA = UUID()
         let idB = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true))
-        instance.recordAttachedMedia(USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true))
+        instance.recordAttachedMedia(USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true), for: sessionID)
+        instance.recordAttachedMedia(USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: idA, path: "/tmp/a.iso", readOnly: true),
@@ -5821,10 +5826,12 @@ struct VMLibraryViewModelTests {
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)
@@ -5888,10 +5895,12 @@ struct VMLibraryViewModelTests {
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var oldItem = RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true, label: "Installer")
         oldItem.notes = "from the Ubuntu mirror"
         var old = instance.configuration
@@ -5926,10 +5935,12 @@ struct VMLibraryViewModelTests {
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)
