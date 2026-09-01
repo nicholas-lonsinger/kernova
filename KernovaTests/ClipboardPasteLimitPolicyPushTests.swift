@@ -53,9 +53,9 @@ struct ClipboardPasteLimitPolicyPushTests {
         guest.start()
         host.start()
 
-        instance.sessionContext?.vsockControlService?.stop()
+        instance.sessionContext?.vsock.control?.stop()
         let service = instance.makeControlService(for: host)
-        instance.sessionContext?.vsockControlService = service
+        instance.sessionContext?.vsock.control = service
         service.start()
         return guest
     }

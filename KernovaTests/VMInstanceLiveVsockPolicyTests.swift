@@ -45,6 +45,15 @@ struct VMInstanceLiveVsockPolicyTests {
         return (instance, sessionID)
     }
 
+    /// The framed listener production builds for `descriptor`, off the live
+    /// session's coordinator — the channel port's host, ahead of any data one.
+    private func framedHost(
+        for descriptor: VsockFeatureDescriptor, on instance: VMInstance, sessionID: UUID
+    ) throws -> VsockListenerHost {
+        let vsock = try #require(instance.sessionContext?.vsock)
+        return try #require(vsock.makeHosts(for: descriptor, sessionID: sessionID).first)
+    }
+
     /// Runs `host`'s accept path against a live peer, the way a guest dial
     /// installs the service behind a framed port.
     private func connectGuest(
@@ -88,7 +97,8 @@ struct VMInstanceLiveVsockPolicyTests {
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
-            to: instance.makeLogListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+            to: try framedHost(for: .log, on: instance, sessionID: sessionID),
+            keptOpenBy: &guests)
         #expect(instance.vsockLogService != nil)
 
         let installer = MockVsockListenerInstall()
@@ -121,7 +131,8 @@ struct VMInstanceLiveVsockPolicyTests {
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
-            to: instance.makeClipboardListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+            to: try framedHost(for: .clipboard, on: instance, sessionID: sessionID),
+            keptOpenBy: &guests)
         #expect(instance.clipboardService != nil)
         // A probe that would keep a forwarded descriptor open, so the EOF below
         // proves the sink was cleared rather than never set.
@@ -158,7 +169,8 @@ struct VMInstanceLiveVsockPolicyTests {
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
-            to: instance.makeDropListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+            to: try framedHost(for: .drop, on: instance, sessionID: sessionID),
+            keptOpenBy: &guests)
         #expect(instance.vsockDropService != nil)
         instance.dropDataSink.set(RecordingAcceptor())
 
@@ -181,7 +193,8 @@ struct VMInstanceLiveVsockPolicyTests {
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
-            to: instance.makeLogListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+            to: try framedHost(for: .log, on: instance, sessionID: sessionID),
+            keptOpenBy: &guests)
         #expect(instance.vsockLogService != nil)
 
         // The guest agent quits mid-session. Nothing reads a settled log
@@ -201,7 +214,8 @@ struct VMInstanceLiveVsockPolicyTests {
         var guests: [VsockChannel] = []
         defer { guests.forEach { $0.close() } }
         try await connectGuest(
-            to: instance.makeClipboardListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+            to: try framedHost(for: .clipboard, on: instance, sessionID: sessionID),
+            keptOpenBy: &guests)
         #expect(instance.clipboardService != nil)
 
         guests.forEach { $0.close() }
@@ -220,7 +234,7 @@ struct VMInstanceLiveVsockPolicyTests {
     @Test("A log hand-off queued before the toggle-off installs nothing")
     func logHandOffCrossingDisableIsRefused() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession()
-        let host = instance.makeLogListenerHost(sessionID: sessionID)
+        let host = try framedHost(for: .log, on: instance, sessionID: sessionID)
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -242,7 +256,7 @@ struct VMInstanceLiveVsockPolicyTests {
     @Test("A drop hand-off queued before the toggle-off installs nothing")
     func dropHandOffCrossingDisableIsRefused() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession()
-        let host = instance.makeDropListenerHost(sessionID: sessionID)
+        let host = try framedHost(for: .drop, on: instance, sessionID: sessionID)
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -262,7 +276,7 @@ struct VMInstanceLiveVsockPolicyTests {
     @Test("A clipboard hand-off queued before the toggle-off installs nothing")
     func clipboardHandOffCrossingDisableIsRefused() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession()
-        let host = instance.makeClipboardListenerHost(sessionID: sessionID)
+        let host = try framedHost(for: .clipboard, on: instance, sessionID: sessionID)
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()

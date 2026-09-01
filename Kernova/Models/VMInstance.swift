@@ -140,8 +140,13 @@ final class VMInstance {
     /// Active clipboard service: `SpiceClipboardService` for Linux,
     /// `VsockClipboardService` for macOS.
     ///
-    /// Nil on macOS until the guest agent connects.
-    var clipboardService: (any ClipboardServicing)? { sessionContext?.clipboardService }
+    /// Nil on macOS until the guest agent connects. The two transports are
+    /// owned separately — the vsock one by this session's feature coordinator,
+    /// the SPICE one by the session context — and projected into one existential
+    /// here, so no window controller branches on transport.
+    var clipboardService: (any ClipboardServicing)? {
+        sessionContext?.vsock.clipboard ?? sessionContext?.clipboardService
+    }
 
     /// Host-pasteboard writer shared by the clipboard window's "Copy to Mac" and
     /// the passthrough coordinator.
@@ -167,13 +172,13 @@ final class VMInstance {
 
     // MARK: - Vsock Channel (macOS guests)
 
-    var vsockLogService: VsockGuestLogService? { sessionContext?.vsockLogService }
+    var vsockLogService: VsockGuestLogService? { sessionContext?.vsock.log }
 
-    var vsockControlService: VsockControlService? { sessionContext?.vsockControlService }
+    var vsockControlService: VsockControlService? { sessionContext?.vsock.control }
 
     /// Serves files dropped on this VM's display; populated once the guest
     /// agent's drop client connects.
-    var vsockDropService: VsockDropService? { sessionContext?.vsockDropService }
+    var vsockDropService: VsockDropService? { sessionContext?.vsock.drop }
 
     /// Where the feature listeners read admission verdicts, off the main actor.
     ///
@@ -742,9 +747,11 @@ final class VMInstance {
         let context = VMSessionContext(
             label: name,
             bootedIntoRecovery: bootedIntoRecovery,
-            admissionGate: vsockAdmissionGate,
-            clipboardDataSink: clipboardDataSink,
-            dropDataSink: dropDataSink)
+            vsock: VsockFeatureCoordinator(
+                instance: self,
+                admissionGate: vsockAdmissionGate,
+                clipboardDataSink: clipboardDataSink,
+                dropDataSink: dropDataSink))
         openRuntimeFileAccess(into: context.fileAccess)
         sessionContext = context
         return context
@@ -1039,26 +1046,11 @@ final class VMInstance {
     /// `dropFilesEnabled`.
     func startVsockServices() async {
         stopVsockServices()
-        guard let session, session.hasVirtioSocketDevice else { return }
+        guard let session, session.hasVirtioSocketDevice, let vsock = sessionContext?.vsock
+        else { return }
 
-        let sessionID = session.id
-        let controlHost = makeControlListenerHost(sessionID: sessionID)
-
-        let dropHost =
-            configuration.dropFilesEnabled ? makeDropListenerHost(sessionID: sessionID) : nil
-        let dropDataHost = configuration.dropFilesEnabled ? makeDropDataListenerHost() : nil
-        let logHost =
-            configuration.agentLogForwardingEnabled
-            ? makeLogListenerHost(sessionID: sessionID) : nil
-        let clipHost =
-            configuration.clipboardSharingEnabled
-            ? makeClipboardListenerHost(sessionID: sessionID) : nil
-        let clipDataHost =
-            configuration.clipboardSharingEnabled ? makeClipboardDataListenerHost() : nil
-
-        let hosts = [controlHost, dropHost, dropDataHost, logHost, clipHost, clipDataHost]
-            .compactMap { $0 }
-        await session.attach(hosts)
+        await session.attach(
+            vsock.listenerHosts(for: configuration, sessionID: session.id))
         // Torn down while installing: these hosts live and die with the
         // session that retains them, so nothing is left dangling on a device
         // the teardown already walked — and there is no start to announce.
@@ -1122,12 +1114,13 @@ final class VMInstance {
     }
 
     /// Builds the control service for one accepted channel, wired to this
-    /// instance's policy, agent-info, guest-suspension and channel-loss hooks.
+    /// instance's policy, agent-info and guest-suspension hooks. Channel loss is
+    /// the accept site's to wire, uniformly for every feature.
     ///
-    /// Every hook reads through `self` lazily, so all four track live
+    /// Every hook reads through `self` lazily, so all three track live
     /// configuration edits and pause/resume without being re-pushed.
     func makeControlService(for channel: VsockChannel) -> VsockControlService {
-        let service = VsockControlService(
+        VsockControlService(
             channel: channel,
             label: name,
             policyProvider: { [weak self] in
@@ -1137,168 +1130,7 @@ final class VMInstance {
                 self?.recordObservedAgentInfo(info)
             },
             isGuestSuspended: { [weak self] in self?.isLivePaused ?? false },
-            admissionGate: vsockAdmissionGate
-        )
-        service.onChannelLost = { [weak self] in
-            // The agent went away mid-session. Re-arm the same grace clock
-            // the post-start path uses, so a channel that never comes back
-            // escalates to `.expectedMissing` instead of spinning at
-            // `.connecting` for the rest of the session.
-            self?.startAgentPostStartWatchdog()
-        }
-        return service
-    }
-
-    /// Builds the control-channel listener for the session identified by
-    /// `sessionID`; each accepted channel replaces any prior control service.
-    func makeControlListenerHost(sessionID: UUID) -> VsockListenerHost {
-        VsockListenerHost(port: KernovaVsockPort.control) { [weak self] channel in
-            guard let self, self.liveSessionID == sessionID else {
-                channel.close()
-                return
-            }
-            // Replace any prior service from a previous reconnect.
-            self.sessionContext?.vsockControlService?.stop()
-            let service = self.makeControlService(for: channel)
-            self.sessionContext?.vsockControlService = service
-            service.start()
-            // Any accepted channel that never completes its Hello is on a
-            // clock. Replacing a live service settles the old one as
-            // owner-requested, so `onChannelLost` does not fire and nothing
-            // else would arm here — and an agent that connects but cannot
-            // handshake (a half-finished update) is exactly when the reinstall
-            // affordance is wanted. Idempotent; the Hello cancels it.
-            self.startAgentPostStartWatchdog()
-        }
-    }
-
-    /// Builds the log-channel listener for the session identified by
-    /// `sessionID`; each accepted channel replaces any prior log service.
-    func makeLogListenerHost(sessionID: UUID) -> VsockListenerHost {
-        VsockListenerHost(
-            port: KernovaVsockPort.log,
-            shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .none) }
-        ) { [weak self] channel in
-            // The accept ran on the VM's queue and this hand-off is a
-            // main-actor hop behind it, so the setting is re-read rather than
-            // captured: a toggle-off landing in between has already stopped the
-            // service and unbound the port, and this connection must not put
-            // them back.
-            guard let self, self.liveSessionID == sessionID,
-                self.configuration.agentLogForwardingEnabled
-            else {
-                channel.close()
-                return
-            }
-            self.sessionContext?.vsockLogService?.stop()
-            let service = VsockGuestLogService(channel: channel, label: self.name)
-            self.sessionContext?.vsockLogService = service
-            service.onChannelLost = { [weak self, weak service] in
-                // Drop the dead channel rather than hold it to the next accept.
-                // The identity check is what keeps a late callback from
-                // clearing a successor this path has already installed.
-                guard let self, let service,
-                    self.sessionContext?.vsockLogService === service
-                else { return }
-                self.sessionContext?.vsockLogService = nil
-            }
-            service.start()
-        }
-    }
-
-    /// Builds the drop-channel listener for the session identified by
-    /// `sessionID`; each accepted channel replaces any prior drop service.
-    func makeDropListenerHost(sessionID: UUID) -> VsockListenerHost {
-        VsockListenerHost(
-            port: KernovaVsockPort.drop,
-            shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .dropFiles) }
-        ) { [weak self] channel in
-            // Re-read on the hop, as the clipboard listener does: a toggle-off
-            // between the accept and this hand-off must not reinstate the
-            // service and data sink it just cleared.
-            guard let self, self.liveSessionID == sessionID, self.configuration.dropFilesEnabled
-            else {
-                channel.close()
-                return
-            }
-            self.sessionContext?.vsockDropService?.stop()
-            let service = VsockDropService(
-                channel: channel, label: self.name, reporter: self.clipboardTransfers)
-            self.sessionContext?.vsockDropService = service
-            self.dropDataSink.set(service)
-            service.start()
-            // No `onChannelLost`: the settled service's `isConnected == false`
-            // already refuses the display gesture, and the reference is
-            // replaced by the next accept.
-        }
-    }
-
-    /// Builds the drop data listener, which hands each accepted connection to
-    /// the live drop service as one item's transfer.
-    private func makeDropDataListenerHost() -> VsockListenerHost {
-        VsockListenerHost(
-            port: KernovaVsockPort.dropData,
-            shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .dropFiles) },
-            onAcceptFd: { [sink = dropDataSink] fd in sink.accept(fd: fd) })
-    }
-
-    /// Builds the clipboard data listener, which hands each accepted connection
-    /// to the live clipboard service as one transfer.
-    private func makeClipboardDataListenerHost() -> VsockListenerHost {
-        VsockListenerHost(
-            port: KernovaVsockPort.clipboardData,
-            shouldAdmit: { [gate = vsockAdmissionGate] in
-                gate.admission(for: .clipboardStreaming)
-            },
-            onAcceptFd: { [sink = clipboardDataSink] fd in sink.accept(fd: fd) })
-    }
-
-    /// Builds the clipboard-channel listener for the session identified by
-    /// `sessionID`; each accepted channel replaces any prior clipboard service.
-    func makeClipboardListenerHost(sessionID: UUID) -> VsockListenerHost {
-        VsockListenerHost(
-            port: KernovaVsockPort.clipboard,
-            shouldAdmit: { [gate = vsockAdmissionGate] in
-                gate.admission(for: .clipboardStreaming)
-            }
-        ) { [weak self] channel in
-            // Re-read on the hop, as the log listener does: a toggle-off
-            // between the accept and this hand-off must not reinstate the
-            // service and data sink it just cleared.
-            guard let self, self.liveSessionID == sessionID,
-                self.configuration.clipboardSharingEnabled
-            else {
-                channel.close()
-                return
-            }
-            self.sessionContext?.clipboardService?.stop()
-            // Read through `self` at each budget check, so a Settings change
-            // lands on the live session without restarting the service.
-            let service = VsockClipboardService(
-                channel: channel, label: self.name, reporter: self.clipboardTransfers,
-                maxPasteBytes: { [weak self] in
-                    self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-                })
-            let publisher = self.hostClipboardPublisher
-            service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
-            service.retractStaleHostWrite = { [weak self] in
-                // With passthrough on, the newer offer's automatic re-publish is
-                // what supersedes the stale write; retracting too would only
-                // flash an empty pasteboard and a Copy-to-Mac hint for a button
-                // passthrough hides.
-                guard let self,
-                    self.sessionContext?.clipboardPassthroughCoordinator == nil
-                else { return false }
-                return publisher.retractPromisedWrite()
-            }
-            self.sessionContext?.clipboardService = service
-            self.clipboardDataSink.set(service)
-            service.start()
-            // No `onChannelLost`: a settled clipboard service stays referenced
-            // deliberately — its materialized representations remain servable
-            // and the clipboard window reads its buffer through
-            // `ClipboardServicing`.
-        }
+            admissionGate: vsockAdmissionGate)
     }
 
     // MARK: - Agent Post-Start Watchdog
@@ -1324,7 +1156,7 @@ final class VMInstance {
         guard !context.bootedIntoRecovery else { return }
         guard status == .running else { return }
         guard configuration.lastSeenAgentVersion != nil else { return }
-        guard context.vsockControlService?.agentVersion == nil else { return }
+        guard context.vsock.control?.agentVersion == nil else { return }
         guard setupState == nil else { return }
         guard context.agentPostStartTask == nil else { return }
 
@@ -1352,7 +1184,7 @@ final class VMInstance {
             guard let self, let armed = context, armed === self.sessionContext,
                 armed.agentPostStartGeneration == generation
             else { return }
-            if armed.vsockControlService?.agentVersion == nil {
+            if armed.vsock.control?.agentVersion == nil {
                 Self.logger.notice(
                     "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
@@ -1570,56 +1402,46 @@ final class VMInstance {
     func applyLiveLogPolicy(
         enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
     ) async {
-        if enabled {
-            // Idempotent reinstall: `attach` rebinds the port before releasing
-            // the host it displaces, so no accept can land on a dead delegate.
-            await installer.attach([makeLogListenerHost(sessionID: sessionID)])
-        } else {
-            sessionContext?.vsockLogService?.stop()
-            sessionContext?.vsockLogService = nil
-            await installer.detach(ports: [KernovaVsockPort.log])
-        }
+        await applyLive(
+            VsockFeatureDescriptor.log, enabled: enabled, on: installer, sessionID: sessionID)
     }
 
     /// Installs or withdraws the clipboard channel and its per-transfer data
     /// port together.
-    ///
-    /// Both ports move in one hop: a data port outliving the channel port that
-    /// admits transfers onto it would accept a transfer no service can serve.
     func applyLiveClipboardPolicy(
         enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
     ) async {
-        if enabled {
-            await installer.attach([
-                makeClipboardListenerHost(sessionID: sessionID),
-                makeClipboardDataListenerHost(),
-            ])
-        } else {
-            // The caller gates this branch on macOS guests, so any
-            // `clipboardService` here is a `VsockClipboardService`.
-            sessionContext?.clipboardService?.stop()
-            sessionContext?.clipboardService = nil
-            clipboardDataSink.set(nil)
-            await installer.detach(
-                ports: [KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData])
-        }
+        await applyLive(
+            VsockFeatureDescriptor.clipboard, enabled: enabled, on: installer,
+            sessionID: sessionID)
     }
 
     /// Installs or withdraws the drop channel and its per-item data port
-    /// together, for the same reason the clipboard pair moves as one.
+    /// together.
     func applyLiveDropPolicy(
         enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
     ) async {
+        await applyLive(
+            VsockFeatureDescriptor.drop, enabled: enabled, on: installer, sessionID: sessionID)
+    }
+
+    /// Installs or withdraws one feature channel's ports on a running VM.
+    ///
+    /// A channel and its data port move in one hop: a data port outliving the
+    /// channel port that admits transfers onto it would accept a transfer no
+    /// service is left to serve. The install is an idempotent reinstall —
+    /// `attach` rebinds a port before releasing the host it displaces, so no
+    /// accept can land on a dead delegate.
+    private func applyLive(
+        _ descriptor: VsockFeatureDescriptor, enabled: Bool,
+        on installer: any VsockListenerInstalling, sessionID: UUID
+    ) async {
+        guard let vsock = sessionContext?.vsock else { return }
         if enabled {
-            await installer.attach([
-                makeDropListenerHost(sessionID: sessionID),
-                makeDropDataListenerHost(),
-            ])
+            await installer.attach(vsock.makeHosts(for: descriptor, sessionID: sessionID))
         } else {
-            sessionContext?.vsockDropService?.stop()
-            sessionContext?.vsockDropService = nil
-            dropDataSink.set(nil)
-            await installer.detach(ports: [KernovaVsockPort.drop, KernovaVsockPort.dropData])
+            vsock.settle(descriptor)
+            await installer.detach(ports: descriptor.ports)
         }
     }
 }

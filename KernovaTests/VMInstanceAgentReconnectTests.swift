@@ -52,11 +52,11 @@ struct VMInstanceAgentReconnectTests {
     }
 
     /// Installs a production-wired control service on `instance` over a socket
-    /// pair, mirroring what the accept closure in `startVsockServices()` does,
-    /// and returns the guest end for the test to drive.
+    /// pair, and returns the guest end for the test to drive.
     ///
-    /// Every step the accept closure takes, in its order — settle whatever is
-    /// installed, build, install, start, arm.
+    /// Runs the production accept ritual rather than restating it, so the
+    /// channel-loss re-arm these tests turn on is the one the coordinator
+    /// wires.
     private func attachControlService(to instance: VMInstance) throws -> VsockChannel {
         let (guestFd, hostFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
@@ -64,11 +64,10 @@ struct VMInstanceAgentReconnectTests {
         guest.start()
         host.start()
 
-        instance.sessionContext?.vsockControlService?.stop()
-        let service = instance.makeControlService(for: host)
-        instance.sessionContext?.vsockControlService = service
-        service.start()
-        instance.startAgentPostStartWatchdog()
+        let vsock = try #require(instance.sessionContext?.vsock)
+        vsock.accept(
+            host, as: VsockFeatureDescriptor.control,
+            sessionID: try #require(instance.liveSessionID))
         return guest
     }
 
