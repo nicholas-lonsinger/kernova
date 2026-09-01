@@ -917,7 +917,7 @@ struct VMLibraryTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
-        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
+        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         instance.configuration = old
@@ -943,7 +943,7 @@ struct VMLibraryTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -972,7 +972,7 @@ struct VMLibraryTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
-        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
+        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         instance.configuration = old
@@ -1066,7 +1066,7 @@ struct VMLibraryTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1095,7 +1095,7 @@ struct VMLibraryTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1123,7 +1123,7 @@ struct VMLibraryTests {
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.sessionContext?.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old

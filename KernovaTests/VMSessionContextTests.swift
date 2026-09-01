@@ -169,6 +169,48 @@ struct VMSessionContextTests {
         #expect(instance.liveRemovableMedia == [media])
     }
 
+    // MARK: - Runtime removable media write surface
+
+    @Test("recordAttachedMedia appends, and a second call appends rather than replaces")
+    func recordAttachedMediaAppends() {
+        let instance = makeInstance()
+        instance.beginSessionContext()
+        let first = USBDeviceInfo(path: "/tmp/a.iso", readOnly: true)
+        let second = USBDeviceInfo(path: "/tmp/b.iso", readOnly: false)
+
+        instance.recordAttachedMedia(first)
+        instance.recordAttachedMedia(second)
+
+        #expect(instance.liveRemovableMedia == [first, second])
+    }
+
+    @Test("forgetAttachedMedia removes only the matching entry")
+    func forgetAttachedMediaRemovesOnlyTheMatch() {
+        let instance = makeInstance()
+        instance.beginSessionContext()
+        let kept = USBDeviceInfo(path: "/tmp/keep.iso", readOnly: true)
+        let removed = USBDeviceInfo(path: "/tmp/remove.iso", readOnly: false)
+        instance.recordAttachedMedia(kept)
+        instance.recordAttachedMedia(removed)
+
+        instance.forgetAttachedMedia(id: removed.id)
+
+        #expect(instance.liveRemovableMedia == [kept])
+    }
+
+    @Test("recordAttachedMedia and forgetAttachedMedia are no-ops, logged, with no session open")
+    func mediaWritesAreNoOpsWithNoSessionOpen() {
+        let instance = makeInstance()
+        instance.beginSessionContext()
+        instance.tearDownSession(restingAt: .stopped)
+        #expect(instance.sessionContext == nil)
+
+        instance.recordAttachedMedia(USBDeviceInfo(path: "/tmp/late.iso", readOnly: true))
+        instance.forgetAttachedMedia(id: UUID())
+
+        #expect(instance.liveRemovableMedia.isEmpty)
+    }
+
     // MARK: - Observation propagation
     //
     // A projection is computed, so an observer reading one registers two
@@ -196,6 +238,10 @@ struct VMSessionContextTests {
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {
                 context.liveRemovableMedia = [USBDeviceInfo(path: "/tmp/a.iso", readOnly: true)]
+            })
+        #expect(
+            observationFires(reading: { _ = instance.liveRemovableMedia }) {
+                instance.recordAttachedMedia(USBDeviceInfo(path: "/tmp/b.iso", readOnly: true))
             })
     }
 
