@@ -1287,6 +1287,53 @@ struct VMLibraryTests {
         #expect(instance.configuration == configA)
     }
 
+    @Test("A target queued for a session that ends is dropped, not drained onto its successor")
+    func liveRemovableQueuedTargetIsNotDrainedOntoTheSuccessor() async throws {
+        let mock = SuspendingMockUSBDeviceService()
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        instance.beginSessionContext()
+        library.instances.append(instance)
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
+        let configC = configWithRemovable(baseConfig, path: "/tmp/C.iso")
+
+        // The pass for A suspends inside the attach; B queues behind it.
+        instance.configuration = configA
+        library.applyLivePolicy(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+        instance.configuration = configB
+        library.applyLivePolicy(for: instance, old: configA, new: configB)
+
+        // Force Stop; an edit to C made while stopped persists but queues
+        // nothing, so B stays queued; then Start, cold-booting C.
+        instance.tearDownSession(restingAt: .stopped)
+        instance.configuration = configC
+        library.applyLivePolicy(for: instance, old: configB, new: configC)
+        instance.beginSessionContext()
+        let successorID = UUID()
+        instance.enter(.running(sessionID: successorID))
+        let coldBooted = USBDeviceInfo(
+            id: try #require(configC.removableMedia?.first?.id), path: "/tmp/C.iso", readOnly: true)
+        instance.recordAttachedMedia(coldBooted, for: successorID)
+
+        mock.resumeSuspended()
+        try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
+        for _ in 0..<10 { await Task.yield() }
+
+        // Draining B here would detach C's medium and attach B's, leaving the
+        // guest on B while the config says C.
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedPath == "/tmp/A.iso")
+        #expect(mock.detachCallCount == 0)
+        #expect(instance.liveRemovableMedia == [coldBooted])
+        #expect(instance.configuration == configC)
+        #expect(!failures.showError)
+    }
+
     @Test("Rapid-fire media swaps coalesce — one Task drains to the latest target")
     func liveRemovableRapidFireCoalescesToLatest() async throws {
         let mock = SuspendingMockUSBDeviceService()

@@ -76,7 +76,21 @@ final class VMLibrary {
 
     /// Latest desired removable media list per instance, drained by
     /// `runRemovableMediaReconciliation` until empty.
-    private var pendingRemovableMediaTarget: [UUID: [RemovableMediaItem]] = [:]
+    private var pendingRemovableMediaTarget: [UUID: PendingRemovableMediaChange] = [:]
+
+    /// A removable-media target waiting to be applied, bound to the session it
+    /// was queued for.
+    ///
+    /// The binding is what a queued entry needs and a per-pass capture cannot
+    /// give it: an entry outlives the session that queued it whenever the drain
+    /// is behind — a stop, an edit made while stopped (which returns before
+    /// replacing the entry, having no session to act on), and a restart all
+    /// leave it queued — and draining it under the successor's token would
+    /// drive the new session's controller to a list its user never asked for.
+    private struct PendingRemovableMediaChange {
+        let sessionID: UUID
+        let target: [RemovableMediaItem]
+    }
 
     /// `true` when any instance is mid-clone or mid-import.
     // RATIONALE: global and unbounded on purpose. `reconcileWithDisk` skips while
@@ -909,10 +923,11 @@ final class VMLibrary {
         // Only dispatch when there is a session to attach to — every other VM,
         // a cold-paused one included, persists the new media list and picks it
         // up on next start.
-        guard mediaChanged, instance.canAttachUSBDevices else { return }
+        guard mediaChanged, let sessionID = instance.attachableSessionID else { return }
 
         let id = instance.instanceID
-        pendingRemovableMediaTarget[id] = new.removableMedia ?? []
+        pendingRemovableMediaTarget[id] = PendingRemovableMediaChange(
+            sessionID: sessionID, target: new.removableMedia ?? [])
         guard !reconcilingRemovableMediaInstances.contains(id) else { return }
         reconcilingRemovableMediaInstances.insert(id)
         Task { [weak self] in
@@ -925,14 +940,26 @@ final class VMLibrary {
     /// Writes that arrive during a pass are picked up by the next iteration, so rapid
     /// edits always converge to the final user-selected state.
     ///
-    /// Each pass captures the session it acts for and carries that token all
-    /// the way down, so a stop — or a stop and a restart — mid-pass abandons
-    /// the pass rather than driving whatever is live by then.
+    /// Each pass carries the token its entry was queued with all the way down,
+    /// so a stop — or a stop and a restart — mid-pass abandons the pass rather
+    /// than driving whatever is live by then.
+    ///
+    /// Attachability is read before the dequeue, so an entry the VM is only
+    /// momentarily unable to act on (a save in flight on the same session)
+    /// stays queued for a later pass instead of being consumed and dropped.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
         defer { reconcilingRemovableMediaInstances.remove(id) }
-        while let target = pendingRemovableMediaTarget.removeValue(forKey: id) {
+        while let pending = pendingRemovableMediaTarget[id] {
             guard let sessionID = instance.attachableSessionID else { break }
-            await applyLiveRemovableMediaChange(for: instance, target: target, actingFor: sessionID)
+            pendingRemovableMediaTarget.removeValue(forKey: id)
+            guard pending.sessionID == sessionID else {
+                Self.logger.notice(
+                    "Dropping queued removable-media target for '\(instance.name, privacy: .public)': session \(pending.sessionID, privacy: .public) is no longer live"
+                )
+                continue
+            }
+            await applyLiveRemovableMediaChange(
+                for: instance, target: pending.target, actingFor: sessionID)
         }
     }
 
