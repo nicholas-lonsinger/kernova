@@ -191,7 +191,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         let model = Self.appMenuQuitItems(
             downgradesQuitToGUIClose: hasSoftQuit && viewModel.keepInMenuBarOnQuit)
         guard model != appMenuQuitModel else { return }
-        appMenuQuitModel = model
 
         let sectionStartIndex = appMenu.index(of: sectionStart)
         guard sectionStartIndex >= 0 else {
@@ -199,6 +198,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             assertionFailure("App menu quit-section separator is not in the app menu")
             return
         }
+        // Recorded only once the rebuild is committed to running, so the cache
+        // names what is installed and a bailed-out rebuild is retried.
+        appMenuQuitModel = model
         while appMenu.numberOfItems > sectionStartIndex + 1 {
             appMenu.removeItem(at: appMenu.numberOfItems - 1)
         }
