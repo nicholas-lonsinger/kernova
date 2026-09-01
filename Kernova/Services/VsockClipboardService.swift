@@ -135,6 +135,14 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     @ObservationIgnored
     var onChannelLost: (@MainActor () -> Void)?
 
+    /// Latches the first settle, whichever reached it, so the teardown is
+    /// terminal rather than merely idempotent: `isConnected` alone would let a
+    /// `start()` after a settle reopen the endpoint over an already-closed
+    /// channel, whose immediate end reaches the owner as a channel loss it
+    /// never had a live connection for.
+    @ObservationIgnored
+    private var hasStopped = false
+
     #if DEBUG
     /// Test seam: awaited inside `materialize` in the window between a pull
     /// resolving and the supersession re-check, so a test can drive a newer
@@ -207,7 +215,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     // MARK: - Lifecycle
 
     func start() {
-        guard !isConnected else { return }
+        guard !isConnected, !hasStopped else { return }
         // Earlier sessions' receive and drop roots may still be serving the
         // pasteboard's current write (a stopped session's materialized reps stay
         // servable, and a dropped file's URL is copied as-is), so they are
@@ -241,11 +249,13 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// Tears the service down once its channel is over, whether the owner asked
     /// or the channel simply ended.
     ///
-    /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
-    /// construction, and the first one through does the work. `isConnected` is
-    /// the latch, so `onChannelLost` fires at most once and never after an owner
-    /// teardown has already settled.
+    /// Idempotent and terminal: the consume loop's own settle and an owner's
+    /// `stop()` race by construction, the first one through does the work, and
+    /// `hasStopped` keeps a later `start()` from reopening. `isConnected` guards
+    /// the notification, so `onChannelLost` fires at most once and never after
+    /// an owner teardown has already settled.
     private func settle(reason: VsockSettleReason) {
+        hasStopped = true
         endpoint.stop()
         // A garbage-collection pass, not a one-shot: it runs on every settle,
         // not just the first, because a drop the buffer no longer shows keeps

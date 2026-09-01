@@ -179,7 +179,7 @@ struct VsockGuestLogServiceTests {
         defer { sender.close() }
 
         let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
-        let lost = LogChannelLostRecorder()
+        let lost = ChannelLostRecorder()
         service.onChannelLost = { lost.record() }
         service.start()
         defer { service.stop() }
@@ -243,23 +243,6 @@ struct VsockGuestLogServiceTests {
         service.stop()
 
         #expect(emitter.snapshot().count == 1)
-    }
-}
-
-// MARK: - Channel-lost recorder
-
-/// Counts `onChannelLost` invocations. Main-bound because the callback is
-/// `@MainActor` in production, not by convenience (docs/TESTING.md).
-@MainActor
-private final class LogChannelLostRecorder {
-    private(set) var count = 0
-
-    /// Fires on every `record`; await it instead of polling `count`.
-    let changed = AsyncGate()
-
-    func record() {
-        count += 1
-        changed.notify()
     }
 }
 

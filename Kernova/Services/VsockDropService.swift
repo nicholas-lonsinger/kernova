@@ -85,6 +85,13 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
     /// owner-requested `stop()`.
     @ObservationIgnored var onChannelLost: (@MainActor () -> Void)?
 
+    /// Latches the first settle, whichever reached it, so the teardown is
+    /// terminal rather than merely idempotent: `isConnected` alone would let a
+    /// `start()` after a settle reopen the endpoint over an already-closed
+    /// channel, whose immediate end reaches the owner as a channel loss it
+    /// never had a live connection for.
+    @ObservationIgnored private var hasStopped = false
+
     // MARK: - Init
 
     init(
@@ -122,7 +129,7 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
     // MARK: - Lifecycle
 
     func start() {
-        guard !isConnected else { return }
+        guard !isConnected, !hasStopped else { return }
         isConnected = true
         endpoint.start()
         Self.logger.notice(
@@ -148,11 +155,13 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
     /// Tears the service down once its channel is over, whether the owner asked
     /// or the channel simply ended.
     ///
-    /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
-    /// construction, and the first one through does the work. `isConnected` is
-    /// the latch, so `onChannelLost` fires at most once and never after an owner
-    /// teardown has already settled.
+    /// Idempotent and terminal: the consume loop's own settle and an owner's
+    /// `stop()` race by construction, the first one through does the work, and
+    /// `hasStopped` keeps a later `start()` from reopening. `isConnected` guards
+    /// the notification, so `onChannelLost` fires at most once and never after
+    /// an owner teardown has already settled.
     private func settle(reason: VsockSettleReason) {
+        hasStopped = true
         endpoint.stop()
         guard isConnected else { return }
         isConnected = false

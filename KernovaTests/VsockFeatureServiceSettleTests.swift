@@ -52,7 +52,7 @@ struct VsockFeatureServiceSettleTests {
     private struct Fixture {
         let service: any VsockFeatureService
         let peer: VsockChannel
-        let lost: SettleRecorder
+        let lost: ChannelLostRecorder
     }
 
     private func makeFixture(_ kind: ServiceKind) throws -> Fixture {
@@ -62,7 +62,7 @@ struct VsockFeatureServiceSettleTests {
         host.start()
         peer.start()
         let service = makeService(kind, channel: host)
-        let lost = SettleRecorder()
+        let lost = ChannelLostRecorder()
         service.onChannelLost = { lost.record() }
         service.start()
         return Fixture(service: service, peer: peer, lost: lost)
@@ -105,6 +105,25 @@ struct VsockFeatureServiceSettleTests {
         #expect(fixture.lost.count == 0)
     }
 
+    @Test("start() after a settle does not reopen the service", arguments: ServiceKind.allCases)
+    fileprivate func startAfterSettleIsANoOp(kind: ServiceKind) async throws {
+        let fixture = try makeFixture(kind)
+        defer { fixture.peer.close() }
+
+        fixture.service.stop()
+        // Terminal, not merely idempotent: a reconnect is served by a fresh
+        // instance. A service that reopened here would be draining an
+        // already-closed channel, and that channel's immediate end would reach
+        // the owner as a loss it never had a live connection for — after a
+        // teardown the owner itself asked for.
+        fixture.service.start()
+
+        // RATIONALE: negative assertion ("prove the callback never fired") — a
+        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(fixture.lost.count == 0)
+    }
+
     @Test(
         "A stop() after the channel already died adds no second notification",
         arguments: ServiceKind.allCases)
@@ -122,22 +141,5 @@ struct VsockFeatureServiceSettleTests {
         // fixed observation window, per docs/TESTING.md "Async waits in tests".
         try await Task.sleep(for: .milliseconds(200))
         #expect(fixture.lost.count == 1)
-    }
-}
-
-// MARK: - Settle recorder
-
-/// Counts `onChannelLost` invocations. Main-bound because the callback is
-/// `@MainActor` in production, not by convenience (docs/TESTING.md).
-@MainActor
-private final class SettleRecorder {
-    private(set) var count = 0
-
-    /// Fires on every `record`; await it instead of polling `count`.
-    let changed = AsyncGate()
-
-    func record() {
-        count += 1
-        changed.notify()
     }
 }

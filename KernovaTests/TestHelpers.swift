@@ -290,3 +290,32 @@ func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
     window.orderFront(nil)
     return window
 }
+
+// MARK: - ChannelLostRecorder
+
+/// Counts a vsock feature service's `onChannelLost` invocations, optionally
+/// sampling service state at callback time.
+///
+/// `sample` is assigned after the service exists, since the thing worth sampling
+/// is the service the recorder is wired into. Main-bound because `onChannelLost`
+/// is `@MainActor` in production, not by convenience (docs/TESTING.md).
+@MainActor
+final class ChannelLostRecorder {
+    private(set) var count = 0
+
+    /// What `sample` returned at each invocation, in order — the state the owner
+    /// observes from inside the callback.
+    private(set) var samples: [String?] = []
+
+    /// Read once per `record`; leave it nil for a test asserting only on `count`.
+    var sample: (@MainActor () -> String?)?
+
+    /// Fires on every `record`; await it instead of polling `count`.
+    let changed = AsyncGate()
+
+    func record() {
+        count += 1
+        samples.append(sample.flatMap { $0() })
+        changed.notify()
+    }
+}
