@@ -24,8 +24,8 @@ extension VMCommandCore {
         capabilities.isAvailable(.revertToSnapshot, on: instance)
     }
 
-    /// Whether the snapshot list may be edited — the deletes, renames and notes
-    /// that go through the same per-VM serialization a revert holds.
+    /// Whether a snapshot may be deleted right now, subject to
+    /// ``canDeleteSnapshot(_:snapshot:)``'s further per-snapshot check.
     func canDeleteSnapshots(_ instance: VMInstance) -> Bool {
         capabilities.isAvailable(.deleteSnapshot, on: instance)
     }

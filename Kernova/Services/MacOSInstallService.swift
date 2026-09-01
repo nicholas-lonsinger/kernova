@@ -64,10 +64,10 @@ final class MacOSInstallService {
         instance.adoptBuildResult(result)
         // RATIONALE (2026-08-31): `attachSession` runs *before* the cancellation
         // check below on purpose. A cancel in this window unwinds with
-        // `instance.session` set, which
-        // `VMLibraryViewModel.runGuestSetup`'s `catch is CancellationError`
-        // tears down. Checking first would leave the open session context —
-        // its pipes and its security scopes — with no matching VM.
+        // `instance.session` set, which `VMCommandCore.runGuestSetup`'s `catch
+        // is CancellationError` tears down. Checking first would leave the
+        // open session context — its pipes and its security scopes — with no
+        // matching VM.
         guard let session = await instance.attachSession(from: result.configuration) else {
             throw VirtualizationError.noVirtualMachine
         }
