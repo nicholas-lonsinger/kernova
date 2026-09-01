@@ -108,14 +108,6 @@ final class VMLibraryViewModel {
     /// Every per-VM capability predicate the AppKit surfaces read.
     var capabilities: VMCapabilityCatalog { commands.capabilities }
 
-    func canTakeSnapshot(_ instance: VMInstance) -> Bool { commands.canTakeSnapshot(instance) }
-
-    func canRevertToSnapshot(_ instance: VMInstance) -> Bool {
-        commands.canRevertToSnapshot(instance)
-    }
-
-    func canDeleteSnapshots(_ instance: VMInstance) -> Bool { commands.canDeleteSnapshots(instance) }
-
     func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
         commands.canDeleteSnapshot(instance, snapshot: snapshot)
     }
@@ -534,7 +526,7 @@ final class VMLibraryViewModel {
 
     /// Opens the Take Snapshot sheet.
     func requestTakeSnapshot(_ instance: VMInstance) {
-        guard canTakeSnapshot(instance) else { return }
+        guard capabilities.isAvailable(.takeSnapshot, on: instance) else { return }
         presenter?.presentTakeSnapshotSheet(for: instance)
     }
 
@@ -554,7 +546,7 @@ final class VMLibraryViewModel {
 
     /// Opens the revert confirmation.
     func requestRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
-        guard canRevertToSnapshot(instance) else { return }
+        guard capabilities.isAvailable(.revertToSnapshot, on: instance) else { return }
         presenter?.presentRevertSnapshot(snapshot, for: instance)
     }
 

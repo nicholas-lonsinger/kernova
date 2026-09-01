@@ -119,11 +119,11 @@ struct VMCommandCoreTests {
     @discardableResult
     private func makeInstance(
         in harness: SuspendingHarness, name: String = "Core VM",
-        phase: VMLifecyclePhase = .stopped
+        phase: VMLifecyclePhase = .stopped, snapshots: [VMSnapshot] = []
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
-            name: name, phase: phase, guestOS: .linux, library: harness.library,
-            storage: harness.storage, preferences: preferences)
+            name: name, phase: phase, guestOS: .linux, snapshots: snapshots,
+            library: harness.library, storage: harness.storage, preferences: preferences)
     }
 
     private func commandError(_ body: () async throws -> Void) async -> CommandError? {
@@ -404,6 +404,20 @@ struct VMCommandCoreTests {
     }
 
     // MARK: - State gates
+
+    @Test("A suspended VM's stop passes the gate on discard-saved-state, not on stop")
+    func suspendedStopIsAdmittedByTheDiscardCapability() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+
+        // Nothing to shut down gracefully — the discard half of the stop slot's
+        // pair is what admits this one.
+        #expect(!harness.core.capabilities.accepts(.stop, on: instance))
+        #expect(harness.core.capabilities.accepts(.discardSavedState, on: instance))
+
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: true)
+        #expect(harness.virtualization.stopCallCount == 1)
+    }
 
     @Test("start refuses a VM that is already running")
     func startRefusesARunningVM() async throws {
@@ -970,6 +984,45 @@ struct VMCommandCoreTests {
             })
         #expect(error.isBusy || error.isInvalidState)
         #expect(instance.snapshotManifest.isEmpty)
+    }
+
+    @Test("Every snapshot verb refuses as busy while an operation settles")
+    func snapshotVerbsRefuseWhileAnOperationSettles() async throws {
+        let harness = makeSuspendingHarness()
+        harness.virtualization.shouldSuspendOnResume = true
+        let snapshot = VMSnapshot(name: "Clean install")
+        let instance = makeInstance(
+            in: harness, name: "Settling", phase: .livePaused(sessionID: UUID()),
+            snapshots: [snapshot])
+
+        let resume = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
+        await harness.virtualization.waitUntilSuspended()
+
+        // The VM's own state admits all three — what refuses them is the resume
+        // still settling, which is something the user can wait out rather than
+        // a state the VM is not in.
+        let take = try #require(
+            await commandError {
+                _ = try await harness.core.takeSnapshot(.id(instance.id), name: "Now", notes: "")
+            })
+        #expect(take.isBusy)
+        let revert = try #require(
+            await commandError {
+                try await harness.core.revertToSnapshot(
+                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
+                    confirmed: true)
+            })
+        #expect(revert.isBusy)
+        let delete = try #require(
+            await commandError {
+                try await harness.core.deleteSnapshot(
+                    .id(instance.id), snapshot: snapshot.id, confirmed: true)
+            })
+        #expect(delete.isBusy)
+        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Clean install"])
+
+        harness.virtualization.resumeSuspended()
+        try await resume.value
     }
 
     @Test("A failed capture reports the failure and lists nothing")

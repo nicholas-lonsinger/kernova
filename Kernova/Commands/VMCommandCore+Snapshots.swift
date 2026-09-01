@@ -14,26 +14,11 @@ final class RevertOutcome {
 extension VMCommandCore {
     // MARK: - Gates
 
-    /// Whether Take Snapshot is offered right now.
-    func canTakeSnapshot(_ instance: VMInstance) -> Bool {
-        capabilities.isAvailable(.takeSnapshot, on: instance)
-    }
-
-    /// Whether a revert is offered right now.
-    func canRevertToSnapshot(_ instance: VMInstance) -> Bool {
-        capabilities.isAvailable(.revertToSnapshot, on: instance)
-    }
-
-    /// Whether a snapshot may be deleted right now, subject to
-    /// ``canDeleteSnapshot(_:snapshot:)``'s further per-snapshot check.
-    func canDeleteSnapshots(_ instance: VMInstance) -> Bool {
-        capabilities.isAvailable(.deleteSnapshot, on: instance)
-    }
-
     /// Whether `snapshot` may be deleted: the manifest has to be editable, and
     /// a VM's Ephemeral baseline is the restore point its every power-off needs.
     func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        canDeleteSnapshots(instance) && !instance.isEphemeralBaseline(snapshot)
+        capabilities.isAvailable(.deleteSnapshot, on: instance)
+            && !instance.isEphemeralBaseline(snapshot)
     }
 
     /// Re-reads a bundle's snapshot manifest into its instance.
@@ -75,8 +60,7 @@ extension VMCommandCore {
     func takeSnapshot(_ instance: VMInstance, name: String, notes: String) async throws
         -> SnapshotSummary
     {
-        try refuseIfBusy(instance)
-        guard instance.canTakeSnapshot else { throw invalidState(instance) }
+        try require(.takeSnapshot, on: instance)
         let snapshot = try await captureSnapshot(instance, name: name, notes: notes)
         return snapshotSummary(snapshot, on: instance)
     }
@@ -134,8 +118,7 @@ extension VMCommandCore {
     ) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance, verb: .revertToSnapshot)
-        guard instance.canRevertToSnapshot else { throw invalidState(instance) }
-        try refuseIfBusy(instance)
+        try require(.revertToSnapshot, on: instance)
         guard confirmed else {
             throw CommandError.confirmationRequired(
                 Self.revertPrompt(snapshot, on: instance))
@@ -357,7 +340,7 @@ extension VMCommandCore {
             )
             throw CommandError.unsupported(capability: "deleting a VM's Ephemeral Mode baseline")
         }
-        try refuseIfBusy(instance)
+        try require(.deleteSnapshot, on: instance)
         guard confirmed else {
             throw CommandError.confirmationRequired(
                 Self.deleteSnapshotPrompt(snapshot, on: instance))

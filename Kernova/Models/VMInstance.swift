@@ -459,7 +459,7 @@ final class VMInstance {
 
     var canEditSettings: Bool { phase.canEditSettings }
 
-    var canRename: Bool { phase.canRename }
+    var canRename: Bool { !isPreparing && phase.canRename }
 
     /// Whether a rename committed now survives — see
     /// ``VMLifecyclePhase/renamePersists``.

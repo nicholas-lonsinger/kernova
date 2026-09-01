@@ -925,23 +925,30 @@ struct VMInstanceTests {
         #expect(instance.startAction.label == "Resume Download")
     }
 
-    @Test("stopActionMenuTitle names the discard consequence when cold-paused")
-    func stopActionMenuTitleColdPaused() {
-        let instance = makeInstance(phase: .suspended)
-        #expect(instance.isColdPaused == true)
-        #expect(instance.stopActionMenuTitle == "Discard Saved State…")
-        #expect(instance.stopActionToolbarLabel == "Discard Saved State")
+    @Test("The stop labels name the discard consequence when the stop discards")
+    func stopActionTitlesNameTheDiscard() {
+        #expect(
+            VMInstance.stopActionMenuTitle(discardingSavedState: true) == "Discard Saved State…")
+        #expect(
+            VMInstance.stopActionToolbarLabel(discardingSavedState: true)
+                == "Discard Saved State")
     }
 
-    @Test("stopActionMenuTitle is Stop for non-cold-paused states")
-    func stopActionMenuTitleDefault() {
-        for phase in [
-            VMLifecyclePhase.stopped, .running(sessionID: UUID()), .starting(sessionID: nil),
-        ] {
-            let instance = makeInstance(phase: phase)
-            #expect(instance.stopActionMenuTitle == "Stop")
-            #expect(instance.stopActionToolbarLabel == "Stop")
-        }
+    @Test("The stop labels are Stop for a stop that shuts the guest down")
+    func stopActionTitlesDefault() {
+        #expect(VMInstance.stopActionMenuTitle(discardingSavedState: false) == "Stop")
+        #expect(VMInstance.stopActionToolbarLabel(discardingSavedState: false) == "Stop")
+    }
+
+    @Test("canRename refuses a bundle a clone or import is still writing into")
+    func canRenameRefusesWhilePreparing() {
+        let instance = makeInstance(phase: .stopped)
+        #expect(instance.canRename)
+
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(!instance.canRename)
     }
 
     // MARK: - Preparing State

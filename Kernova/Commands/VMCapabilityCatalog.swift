@@ -94,6 +94,29 @@ enum VMCapability: CaseIterable, Hashable {
             false
         }
     }
+
+    /// Whether this capability waits for an operation that is still settling.
+    ///
+    /// Each of these moves VM state or snapshot files and would race an
+    /// operation that is still settling, so it reads as unavailable rather than
+    /// erroring on click. A snapshot's name and note are metadata-only manifest
+    /// writes no operation reads mid-flight, and are deliberately not on this
+    /// list.
+    ///
+    /// Exhaustive rather than `default`, so a new capability has to choose a
+    /// side.
+    var waitsForSettle: Bool {
+        switch self {
+        case .takeSnapshot, .revertToSnapshot, .deleteSnapshot:
+            true
+        case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
+            .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete, .cancelPreparing,
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
+            .toggleSettingsPane:
+            false
+        }
+    }
 }
 
 /// Where every per-VM capability predicate is derived, for the headless verbs
@@ -168,26 +191,12 @@ struct VMCapabilityCatalog {
     /// The level every `isEnabled` and every menu- or toolbar-validation reads.
     /// Two things are layered over applicability: one uniform rule for a bundle
     /// a clone or import is still writing into (``VMCapability/survivesPreparing``),
-    /// and the per-capability settle check for the commands an unsettled
-    /// operation would reject.
+    /// and the settle check for the commands an unsettled operation would
+    /// reject (``VMCapability/waitsForSettle``).
     func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         guard capability.survivesPreparing || !instance.isPreparing else { return false }
         guard isApplicable(capability, to: instance) else { return false }
-        switch capability {
-        case .takeSnapshot, .revertToSnapshot, .deleteSnapshot:
-            // Each of these moves VM state or snapshot files and would race an
-            // operation that is still settling, so it reads as unavailable
-            // rather than erroring on click. A snapshot's name and note are
-            // metadata-only manifest writes no operation reads mid-flight, and
-            // are deliberately not on this list.
-            return !library.isBusy(instance)
-        case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
-            .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete, .cancelPreparing,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
-            .toggleSettingsPane:
-            return true
-        }
+        return !(capability.waitsForSettle && library.isBusy(instance))
     }
 
     /// Whether a commit of `capability` is taken now — what a verb's own guard

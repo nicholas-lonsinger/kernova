@@ -12,9 +12,8 @@ extension VMCommandCore {
 
     /// The start every surface reaches, with the instance already resolved.
     func start(_ instance: VMInstance, recovery: Bool = false) async throws {
-        try refuseIfPreparing(instance)
-        guard instance.canStart else { throw invalidState(instance) }
-        if recovery, !instance.canStartInRecovery {
+        try require(.start, on: instance)
+        if recovery, !capabilities.accepts(.startInRecovery, on: instance) {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
         }
 
@@ -333,6 +332,7 @@ extension VMCommandCore {
     /// bundle is preserved — this is the non-destructive cancel.
     func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
         let instance = try resolve(selector)
+        try require(.cancelGuestSetup, on: instance)
         guard let task = instance.setupTask else { throw invalidState(instance) }
         guard confirmed else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
@@ -404,9 +404,7 @@ extension VMCommandCore {
             // baseline on top of that. It passes the gate alongside the VMs that
             // do take a shutdown, and asks the same consent the force path does
             // — which is also what the UI asks at every suspended Stop.
-            guard instance.canStop || instance.isColdPaused else {
-                throw invalidState(instance)
-            }
+            try require(anyOf: [.stop, .discardSavedState], on: instance)
             guard confirmed || !instance.isColdPaused else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
@@ -417,7 +415,7 @@ extension VMCommandCore {
                 throw failure(error, verb: .stop, on: instance)
             }
         case .resumeThenShutDown:
-            guard instance.canResume else { throw invalidState(instance) }
+            try require(.resume, on: instance)
             try await resumeThenShutDown(instance)
         case .force:
             // No state gate: a force stop is the interrupt of last resort, and
@@ -508,7 +506,7 @@ extension VMCommandCore {
 
     func pause(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
-        guard instance.canPause else { throw invalidState(instance) }
+        try require(.pause, on: instance)
         do {
             try await lifecycle.pause(instance)
         } catch {
@@ -521,8 +519,7 @@ extension VMCommandCore {
 
     func resume(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
-        try refuseIfPreparing(instance)
-        guard instance.canResume else { throw invalidState(instance) }
+        try require(.resume, on: instance)
 
         // A cold resume builds a fresh VZVirtualMachine from the save file, so it
         // claims the machine identity — and puts its MAC address back on a
@@ -548,7 +545,7 @@ extension VMCommandCore {
     }
 
     func suspend(_ instance: VMInstance) async throws {
-        guard instance.canSave else { throw invalidState(instance) }
+        try require(.suspend, on: instance)
         do {
             try await lifecycle.save(instance)
         } catch {
@@ -581,7 +578,7 @@ extension VMCommandCore {
     /// on for a `.stopped` that is not coming.
     func restart(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
-        guard instance.canStop else { throw invalidState(instance) }
+        try require(.restart, on: instance)
         try await stop(instance, disposition: .graceful, confirmed: true)
         await waitForObservedChange { [library] in
             !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
@@ -601,8 +598,7 @@ extension VMCommandCore {
         // An imported bundle carrying a save file rests its phantom `.paused`,
         // which reads as having a display while the copy is still writing —
         // and `allowedVerbs` offers a preparing row nothing but its cancel.
-        try refuseIfPreparing(instance)
-        guard instance.hasActiveDisplay else { throw invalidState(instance) }
+        try require(.open, on: instance)
         surfaceDisplay?(instance)
     }
 

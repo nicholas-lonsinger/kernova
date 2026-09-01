@@ -604,7 +604,7 @@ struct VMSettingsOverviewTests {
 
         let take = try #require(actionButton(.takeSnapshot, in: try card(.snapshots, in: vc)))
         #expect(!take.isEnabled)
-        #expect(!viewModel.canTakeSnapshot(instance))
+        #expect(!viewModel.capabilities.isAvailable(.takeSnapshot, on: instance))
     }
 
     @Test("A duplicate MAC address raises the Network card's warning glyph")

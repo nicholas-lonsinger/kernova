@@ -70,9 +70,9 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         guard let snapshotSection else { return }
         snapshotSection.update(
             manifest: instance.snapshotManifest,
-            canTakeSnapshot: viewModel.canTakeSnapshot(instance),
-            canRevert: viewModel.canRevertToSnapshot(instance),
-            canDelete: viewModel.canDeleteSnapshots(instance),
+            canTakeSnapshot: viewModel.capabilities.isAvailable(.takeSnapshot, on: instance),
+            canRevert: viewModel.capabilities.isAvailable(.revertToSnapshot, on: instance),
+            canDelete: viewModel.capabilities.isAvailable(.deleteSnapshot, on: instance),
             baselineID: instance.ephemeralBaselineSnapshot?.id)
         // The sizes are a directory walk over gigabyte-scale copies, read off
         // the main actor by the pane — which states the same total on the card.

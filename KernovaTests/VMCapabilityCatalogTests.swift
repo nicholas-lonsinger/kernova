@@ -231,6 +231,12 @@ struct VMCapabilityCatalogTests {
         try await resume.value
     }
 
+    @Test("Only the three snapshot capabilities wait for an operation to settle")
+    func settleTermCoversOnlyTheSnapshotCapabilities() {
+        let waiting = VMCapability.allCases.filter(\.waitsForSettle)
+        #expect(Set(waiting) == Set([.takeSnapshot, .revertToSnapshot, .deleteSnapshot]))
+    }
+
     // MARK: - Rename: offer versus accept
 
     @Test("A rename typed while the VM began a transient is offered no longer but still taken")

@@ -720,8 +720,11 @@ extension SidebarViewController {
             menu.addItem(item("Resume", #selector(menuResume(_:)), instance))
         }
         let canStop = capabilities.isApplicable(.stop, to: instance)
+        let discardsSavedState = capabilities.isApplicable(.discardSavedState, to: instance)
         if canStop {
-            let stop = item(instance.stopActionMenuTitle, #selector(menuStop(_:)), instance)
+            let stop = item(
+                VMInstance.stopActionMenuTitle(discardingSavedState: discardsSavedState),
+                #selector(menuStop(_:)), instance)
             menu.addItem(stop)
             // An Option-alternate of "Stop". No zero-height anchor is needed: when
             // a graceful stop is offered, a Pause or Resume item always precedes
@@ -735,8 +738,11 @@ extension SidebarViewController {
             }
             menu.addItem(forceStop)
         }
-        if capabilities.isApplicable(.discardSavedState, to: instance) {
-            menu.addItem(item(instance.stopActionMenuTitle, #selector(menuForceStop(_:)), instance))
+        if discardsSavedState {
+            menu.addItem(
+                item(
+                    VMInstance.stopActionMenuTitle(discardingSavedState: discardsSavedState),
+                    #selector(menuForceStop(_:)), instance))
         } else if capabilities.isApplicable(.forceStop, to: instance) && !canStop {
             // Transient states (starting/saving/restoring) where graceful stop isn't
             // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.

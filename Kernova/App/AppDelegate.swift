@@ -2235,7 +2235,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // Install-flavored title for pending-install VMs.
             menuItem.title = instance.startAction.label
         case #selector(stopVM(_:)):
-            menuItem.title = instance.stopActionMenuTitle
+            // The title names what this VM's stop does, which is what its own
+            // state admits; enablement is the availability read beside it.
+            let discardsSavedState = viewModel.capabilities.isApplicable(
+                .discardSavedState, to: instance)
+            menuItem.title = VMInstance.stopActionMenuTitle(
+                discardingSavedState: discardsSavedState)
             return isAvailable
                 || viewModel.capabilities.isAvailable(.discardSavedState, on: instance)
         case #selector(toggleGuestAgentDisk(_:)):
