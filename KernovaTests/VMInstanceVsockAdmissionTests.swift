@@ -357,10 +357,15 @@ struct VMInstanceVsockAdmissionTests {
     }
 
     /// The accept runs on the VM's queue and queues the hand-off; a stop
-    /// running on main in between clears every service, and the hand-off that
-    /// lands after it must not put them back — `VMInstance` outlives the
-    /// session, so nothing else would ever clear them.
-    @Test("A hand-off queued by a released session installs nothing and closes its channel")
+    /// running on main in between tears the session down, and the hand-off
+    /// that lands after it must not populate the *successor* session's
+    /// services — this is what the `liveSessionID == sessionID` guards in
+    /// `VMInstance`'s `makeControlListenerHost`/`makeLogListenerHost`/
+    /// `makeDropListenerHost`/the clipboard host actually protect. Asserting
+    /// against a torn-down instance's nil `sessionContext` would pass whether
+    /// or not those guards ran, since a nil context installs nothing either
+    /// way.
+    @Test("A hand-off queued by a released session installs nothing on its successor")
     func releasedSessionHandOffIsRefused() async throws {
         for listener in framedListeners {
             let (instance, sessionID) = makeInstanceWithLiveSession()
@@ -377,12 +382,17 @@ struct VMInstanceVsockAdmissionTests {
             // main. Resting at a phase that names no session is what releases
             // the identity the hand-off is checked against.
             instance.tearDownSession(restingAt: .stopped)
+            // A successor session opens before the hand-off is drained, so the
+            // assertion below reads a live context the guard must still keep
+            // the old hand-off out of.
+            instance.enter(.running(sessionID: UUID()))
+            instance.beginSessionContext()
 
             await drainMainQueue()
 
             #expect(
                 !listener.isInstalled(instance),
-                "\(listener.port): a stopped instance was repopulated")
+                "\(listener.port): the successor session was repopulated")
             await expectEOF(on: guest)
         }
     }

@@ -111,7 +111,9 @@ struct VMCommandCoreTests {
         in harness: Harness, name: String = "Core VM", phase: VMLifecyclePhase = .stopped,
         guestOS: VMGuestOS = .linux
     ) -> VMInstance {
-        register(name: name, phase: phase, guestOS: guestOS, in: harness.library, harness.storage)
+        RegisteredVMInstanceFixture.register(
+            name: name, phase: phase, guestOS: guestOS, library: harness.library,
+            storage: harness.storage, preferences: preferences)
     }
 
     @discardableResult
@@ -119,27 +121,9 @@ struct VMCommandCoreTests {
         in harness: SuspendingHarness, name: String = "Core VM",
         phase: VMLifecyclePhase = .stopped
     ) -> VMInstance {
-        register(name: name, phase: phase, guestOS: .linux, in: harness.library, harness.storage)
-    }
-
-    private func register(
-        name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, in library: VMLibrary,
-        _ storage: MockVMStorageService
-    ) -> VMInstance {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-        config.networkEnabled = false
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
-        storage.bundles[bundleURL] = config
-        // Wired the way every real construction site is, so the per-instance
-        // hooks a verb answers — the power-off that starts an Ephemeral revert,
-        // above all — are actually connected.
-        library.wirePersistence(for: instance)
-        library.instances.append(instance)
-        return instance
+        RegisteredVMInstanceFixture.register(
+            name: name, phase: phase, guestOS: .linux, library: harness.library,
+            storage: harness.storage, preferences: preferences)
     }
 
     private func commandError(_ body: () async throws -> Void) async -> CommandError? {

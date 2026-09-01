@@ -122,7 +122,7 @@ struct USBDeviceServiceTests {
 
         instance.tearDownSession(restingAt: .stopped)
 
-        #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(context.liveRemovableMedia.isEmpty)
     }
 
     @Test(
