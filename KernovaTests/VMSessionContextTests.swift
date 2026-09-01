@@ -76,7 +76,7 @@ struct VMSessionContextTests {
         context.agentExpectedButMissing = true
         context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
-        context.livePolicyApplication = Task<Void, Never> {}
+        context.vsock.livePolicyApplication = Task<Void, Never> {}
 
         context.tearDown()
 
@@ -96,7 +96,7 @@ struct VMSessionContextTests {
         #expect(context.networkAttachmentPending == false)
         #expect(context.session == nil)
         #expect(context.agentPostStartTask == nil)
-        #expect(context.livePolicyApplication == nil)
+        #expect(context.vsock.livePolicyApplication == nil)
         // The instance-owned sinks the session published into are cleared too:
         // a descriptor handed to a cleared sink is closed, which its peer sees
         // as EOF.

@@ -45,6 +45,12 @@ struct VMInstanceLiveVsockPolicyTests {
         return (instance, sessionID)
     }
 
+    /// This instance's live session coordinator, which the live-policy pass and
+    /// the accept path both run through.
+    private func coordinator(of instance: VMInstance) throws -> VsockFeatureCoordinator {
+        try #require(instance.sessionContext?.vsock)
+    }
+
     /// The framed listener production builds for `descriptor`, off the live
     /// session's coordinator — the channel port's host, ahead of any data one.
     private func framedHost(
@@ -81,11 +87,12 @@ struct VMInstanceLiveVsockPolicyTests {
     // MARK: - Log port
 
     @Test("Enabling log forwarding live installs the log listener")
-    func enablingLogInstallsItsListener() async {
+    func enablingLogInstallsItsListener() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession()
         let installer = MockVsockListenerInstall()
 
-        await instance.applyLiveLogPolicy(enabled: true, on: installer, sessionID: sessionID)
+        try await coordinator(of: instance)
+            .applyLive(.log, enabled: true, on: installer, sessionID: sessionID)
 
         #expect(installer.attached == [[KernovaVsockPort.log]])
         #expect(installer.detached.isEmpty)
@@ -102,7 +109,8 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(instance.vsockLogService != nil)
 
         let installer = MockVsockListenerInstall()
-        await instance.applyLiveLogPolicy(enabled: false, on: installer, sessionID: sessionID)
+        try await coordinator(of: instance)
+            .applyLive(.log, enabled: false, on: installer, sessionID: sessionID)
 
         #expect(installer.detached == [[KernovaVsockPort.log]])
         #expect(installer.attached.isEmpty)
@@ -112,11 +120,12 @@ struct VMInstanceLiveVsockPolicyTests {
     // MARK: - Clipboard ports
 
     @Test("Enabling clipboard sharing live installs the channel and data ports in one hop")
-    func enablingClipboardInstallsBothPorts() async {
+    func enablingClipboardInstallsBothPorts() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession()
         let installer = MockVsockListenerInstall()
 
-        await instance.applyLiveClipboardPolicy(enabled: true, on: installer, sessionID: sessionID)
+        try await coordinator(of: instance)
+            .applyLive(.clipboard, enabled: true, on: installer, sessionID: sessionID)
 
         #expect(
             installer.attached == [[KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData]])
@@ -139,7 +148,8 @@ struct VMInstanceLiveVsockPolicyTests {
         instance.clipboardDataSink.set(RecordingAcceptor())
 
         let installer = MockVsockListenerInstall()
-        await instance.applyLiveClipboardPolicy(enabled: false, on: installer, sessionID: sessionID)
+        try await coordinator(of: instance)
+            .applyLive(.clipboard, enabled: false, on: installer, sessionID: sessionID)
 
         #expect(
             installer.detached == [[KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData]])
@@ -151,11 +161,12 @@ struct VMInstanceLiveVsockPolicyTests {
     // MARK: - Drop ports
 
     @Test("Enabling drag and drop live installs the channel and data ports in one hop")
-    func enablingDropInstallsBothPorts() async {
+    func enablingDropInstallsBothPorts() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession()
         let installer = MockVsockListenerInstall()
 
-        await instance.applyLiveDropPolicy(enabled: true, on: installer, sessionID: sessionID)
+        try await coordinator(of: instance)
+            .applyLive(.drop, enabled: true, on: installer, sessionID: sessionID)
 
         #expect(installer.attached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
         #expect(installer.detached.isEmpty)
@@ -175,7 +186,8 @@ struct VMInstanceLiveVsockPolicyTests {
         instance.dropDataSink.set(RecordingAcceptor())
 
         let installer = MockVsockListenerInstall()
-        await instance.applyLiveDropPolicy(enabled: false, on: installer, sessionID: sessionID)
+        try await coordinator(of: instance)
+            .applyLive(.drop, enabled: false, on: installer, sessionID: sessionID)
 
         #expect(installer.detached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
         #expect(installer.attached.isEmpty)

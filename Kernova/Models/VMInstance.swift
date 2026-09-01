@@ -1302,85 +1302,8 @@ final class VMInstance {
             session.hasVirtioSocketDevice
         else { return }
 
-        let logChanged =
-            oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled
-        let clipboardChanged =
-            oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
-        let dropChanged = oldConfig.dropFilesEnabled != newConfig.dropFilesEnabled
-        guard logChanged || clipboardChanged || dropChanged else { return }
-
-        let logEnabled = newConfig.agentLogForwardingEnabled
-        let clipboardEnabled = newConfig.clipboardSharingEnabled
-        let clipboardApplies = clipboardChanged && newConfig.guestOS == .macOS
-        let dropEnabled = newConfig.dropFilesEnabled
-        let snapshot = agentPolicySnapshot(for: newConfig)
-
-        let sessionID = session.id
-
-        // The context is what each step below is re-checked against, and it is
-        // captured weakly so a chain still draining cannot hold a torn-down
-        // session's `VZVirtualMachine` and services alive behind it.
-        context.livePolicyApplication = Task {
-            [weak context, previous = context.livePolicyApplication] in
-            await previous?.value
-            /// Whether the context this edit belongs to is still the live one.
-            ///
-            /// Every hop hands main back, so this is re-asked before each step:
-            /// a teardown landing in between has already queued its unbind, and
-            /// a *successor* session must have neither listeners installed
-            /// behind it nor its own services torn down by an edit that belongs
-            /// to a session already gone.
-            @MainActor func belongsToTheLiveSession() -> Bool {
-                guard let context, self.sessionContext === context else { return false }
-                return context.session === session
-            }
-            guard belongsToTheLiveSession() else { return }
-
-            // A listener the guest is about to be told about goes up first: the
-            // policy frame wakes the guest's parked reconnect loop at once
-            // (`VsockGuestClient.resume()`), and a redial that beats the
-            // listener is refused and costs the guest a full retry interval.
-            if logChanged && logEnabled {
-                await self.applyLiveLogPolicy(enabled: true, on: session, sessionID: sessionID)
-            }
-            guard belongsToTheLiveSession() else { return }
-            if clipboardApplies && clipboardEnabled {
-                await self.applyLiveClipboardPolicy(enabled: true, on: session, sessionID: sessionID)
-            }
-
-            guard belongsToTheLiveSession() else { return }
-            if dropChanged && dropEnabled {
-                await self.applyLiveDropPolicy(enabled: true, on: session, sessionID: sessionID)
-            }
-
-            guard belongsToTheLiveSession() else { return }
-            // The control service is nil in the window between accepting a
-            // connection and the guest's Hello — the next Hello-driven send
-            // catches that up.
-            self.vsockControlService?.sendPolicyUpdate(snapshot)
-
-            // A listener being withdrawn comes down after, so the frame pauses
-            // the guest's loop first: tearing it down while the guest still
-            // thinks the feature is on makes the guest see EOF and pound the
-            // host with reconnects until the policy arrives.
-            if logChanged && !logEnabled {
-                guard belongsToTheLiveSession() else { return }
-                await self.applyLiveLogPolicy(enabled: false, on: session, sessionID: sessionID)
-            }
-            if clipboardApplies && !clipboardEnabled {
-                guard belongsToTheLiveSession() else { return }
-                await self.applyLiveClipboardPolicy(enabled: false, on: session, sessionID: sessionID)
-            }
-            if dropChanged && !dropEnabled {
-                guard belongsToTheLiveSession() else { return }
-                await self.applyLiveDropPolicy(enabled: false, on: session, sessionID: sessionID)
-            }
-            guard belongsToTheLiveSession() else { return }
-
-            Self.logger.notice(
-                "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
-            )
-        }
+        context.vsock.applyLivePolicy(
+            oldConfig: oldConfig, newConfig: newConfig, on: session)
     }
 
     /// Starts or stops the host-side serial relay live.
@@ -1396,52 +1319,5 @@ final class VMInstance {
         Self.logger.notice(
             "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
         )
-    }
-
-    /// Installs or withdraws the guest log listener on a running VM.
-    func applyLiveLogPolicy(
-        enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
-    ) async {
-        await applyLive(
-            VsockFeatureDescriptor.log, enabled: enabled, on: installer, sessionID: sessionID)
-    }
-
-    /// Installs or withdraws the clipboard channel and its per-transfer data
-    /// port together.
-    func applyLiveClipboardPolicy(
-        enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
-    ) async {
-        await applyLive(
-            VsockFeatureDescriptor.clipboard, enabled: enabled, on: installer,
-            sessionID: sessionID)
-    }
-
-    /// Installs or withdraws the drop channel and its per-item data port
-    /// together.
-    func applyLiveDropPolicy(
-        enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
-    ) async {
-        await applyLive(
-            VsockFeatureDescriptor.drop, enabled: enabled, on: installer, sessionID: sessionID)
-    }
-
-    /// Installs or withdraws one feature channel's ports on a running VM.
-    ///
-    /// A channel and its data port move in one hop: a data port outliving the
-    /// channel port that admits transfers onto it would accept a transfer no
-    /// service is left to serve. The install is an idempotent reinstall —
-    /// `attach` rebinds a port before releasing the host it displaces, so no
-    /// accept can land on a dead delegate.
-    private func applyLive(
-        _ descriptor: VsockFeatureDescriptor, enabled: Bool,
-        on installer: any VsockListenerInstalling, sessionID: UUID
-    ) async {
-        guard let vsock = sessionContext?.vsock else { return }
-        if enabled {
-            await installer.attach(vsock.makeHosts(for: descriptor, sessionID: sessionID))
-        } else {
-            vsock.settle(descriptor)
-            await installer.detach(ports: descriptor.ports)
-        }
     }
 }

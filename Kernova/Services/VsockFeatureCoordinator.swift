@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import os
 
 /// One vsock feature channel, described once: the ports it binds, what gates
 /// them, which slot on the coordinator holds its service, and what a channel
@@ -259,8 +260,8 @@ extension VsockFeatureDescriptor {
     }
 }
 
-/// One session's vsock feature channels: the listeners it installs and the
-/// services behind them.
+/// One session's vsock feature channels: the listeners it installs, the
+/// services behind them, and the live-policy edits that move both.
 ///
 /// Created with a ``VMSessionContext`` and released with it, so the service
 /// slots below cannot outlive the `VZVirtualMachine` whose socket device the
@@ -270,6 +271,9 @@ extension VsockFeatureDescriptor {
 @MainActor
 @Observable
 final class VsockFeatureCoordinator {
+    private static let logger = Logger(
+        subsystem: "app.kernova", category: "VsockFeatureCoordinator")
+
     /// The VM this session belongs to, whose configuration the descriptors read
     /// and whose reporters and publishers the services are wired to.
     ///
@@ -419,5 +423,104 @@ final class VsockFeatureCoordinator {
     func stopAll() {
         for descriptor in VsockFeatureDescriptor.all { settle(descriptor) }
         admissionGate.clear()
+    }
+
+    // MARK: - Live Policy
+
+    /// The live-policy application in flight, chained so a second toggle
+    /// arriving before the first finishes runs after it rather than
+    /// interleaving with it.
+    ///
+    /// Per session, so an edit made to one never queues behind a previous
+    /// session's chain — nor lands on a successor's listeners, which the
+    /// chain's own per-step liveness check refuses.
+    @ObservationIgnored var livePolicyApplication: Task<Void, Never>?
+
+    /// Reacts to a configuration edit on a running VM: moves the listeners the
+    /// edit changed and pushes the guest agent a fresh `PolicyUpdate`.
+    ///
+    /// The ordering around that frame is the protocol invariant. A listener the
+    /// guest is about to be told about goes up *before* it, because the frame
+    /// wakes the guest's parked reconnect loop at once
+    /// (`VsockGuestClient.resume()`) and a redial that beats its listener is
+    /// refused and costs the guest a full retry interval. One being withdrawn
+    /// comes down *after* it, because tearing a listener down while the guest
+    /// still thinks the feature is on makes it see EOF and pound the host with
+    /// reconnects until the policy arrives.
+    func applyLivePolicy(
+        oldConfig: VMConfiguration, newConfig: VMConfiguration, on session: VMSession
+    ) {
+        let changed = VsockFeatureDescriptor.all.filter {
+            $0.isEnabled(oldConfig) != $0.isEnabled(newConfig)
+        }
+        // Gated on what changed, not on what applies: a clipboard edit a Linux
+        // guest cannot take live still owes its agent the policy frame below.
+        guard !changed.isEmpty, let instance else { return }
+        let applying = changed.filter { $0.appliesLive(newConfig) }
+        let installing = applying.filter { $0.isEnabled(newConfig) }
+        let withdrawing = applying.filter { !$0.isEnabled(newConfig) }
+        let snapshot = instance.agentPolicySnapshot(for: newConfig)
+        let label = instance.name
+        let sessionID = session.id
+
+        // Captured weakly so a chain still draining cannot hold a torn-down
+        // session's services — and the `VZVirtualMachine` behind them — alive.
+        livePolicyApplication = Task { [weak self, previous = livePolicyApplication] in
+            await previous?.value
+            for descriptor in installing {
+                guard let live = self, live.isLive(session) else { return }
+                await live.applyLive(
+                    descriptor, enabled: true, on: session, sessionID: sessionID)
+            }
+
+            guard let live = self, live.isLive(session) else { return }
+            // The control service is nil in the window between accepting a
+            // connection and the guest's Hello — the next Hello-driven send
+            // catches that up.
+            live.control?.sendPolicyUpdate(snapshot)
+
+            for descriptor in withdrawing {
+                guard let live = self, live.isLive(session) else { return }
+                await live.applyLive(
+                    descriptor, enabled: false, on: session, sessionID: sessionID)
+            }
+
+            guard let live = self, live.isLive(session) else { return }
+            Self.logger.notice(
+                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
+            )
+        }
+    }
+
+    /// Whether this coordinator still belongs to the live session, and that
+    /// session is still `session`.
+    ///
+    /// Every hop hands main back, so the chain re-asks this before each step: a
+    /// teardown landing in between has already queued its unbind, and a
+    /// *successor* session must have neither listeners installed behind it nor
+    /// its own services torn down by an edit belonging to a session already
+    /// gone.
+    private func isLive(_ session: VMSession) -> Bool {
+        guard let context = instance?.sessionContext, context.vsock === self else { return false }
+        return context.session === session
+    }
+
+    /// Installs or withdraws one channel's ports on a running VM.
+    ///
+    /// A channel and its data port move in one hop: a data port outliving the
+    /// channel port that admits transfers onto it would accept a transfer no
+    /// service is left to serve. The install is an idempotent reinstall —
+    /// `attach` rebinds a port before releasing the host it displaces, so no
+    /// accept can land on a dead delegate.
+    func applyLive(
+        _ descriptor: VsockFeatureDescriptor, enabled: Bool,
+        on installer: any VsockListenerInstalling, sessionID: UUID
+    ) async {
+        if enabled {
+            await installer.attach(makeHosts(for: descriptor, sessionID: sessionID))
+        } else {
+            settle(descriptor)
+            await installer.detach(ports: descriptor.ports)
+        }
     }
 }

@@ -160,8 +160,9 @@ The vsock stack (macOS guests only):
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockFeatureCoordinator` — the per-session owner of the four channels, one per
   `VMSessionContext`. A static `VsockFeatureDescriptor` table says what each channel binds, gates,
-  builds and releases; the accept ritual and the teardown loop are each written once against it,
-  and the service slots live here. The gate and both data sinks are the
+  builds and releases; the accept ritual, the teardown loop and the live-policy pass — including
+  the install-before-frame / withdraw-after-frame ordering rule — are each written once against
+  it, and the service slots live here. The gate and both data sinks are the
   VM's and handed in, because the accept path reads them without touching the main actor.
 - `VsockFeatureService` — the settle contract each feature service keeps: `start()`, an idempotent
   and terminal owner `stop()` that calls nobody back, and an `onChannelLost` hook fired once, on
