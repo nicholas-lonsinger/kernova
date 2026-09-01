@@ -2,18 +2,18 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppDelegate.terminationOutcome` — what the termination gate
+/// Unit tests for `AppTerminationController.terminationOutcome` — what the termination gate
 /// replies to a quit request (#805).
-@Suite("AppDelegate termination outcome", .admissionGated)
-struct AppDelegateTerminationOutcomeTests {
+@Suite("AppTerminationController outcome", .admissionGated)
+struct AppTerminationOutcomeTests {
     private func outcome(
         shouldTerminateAgent: Bool = true,
         isSavePassRunning: Bool = false,
         hasSaveInFlight: Bool = false,
         hasRevertInFlight: Bool = false,
         hasInstancesToSave: Bool = false
-    ) -> AppDelegate.TerminationOutcome {
-        AppDelegate.terminationOutcome(
+    ) -> AppTerminationController.TerminationOutcome {
+        AppTerminationController.terminationOutcome(
             shouldTerminateAgent: shouldTerminateAgent,
             isSavePassRunning: isSavePassRunning,
             hasSaveInFlight: hasSaveInFlight,
@@ -97,15 +97,15 @@ struct AppDelegateTerminationOutcomeTests {
     }
 }
 
-/// Unit tests for `AppDelegate.terminationSaveStep` — what the termination save
+/// Unit tests for `AppTerminationController.terminationSaveStep` — what the termination save
 /// pass does with one VM it has selected (#807).
-@Suite("AppDelegate termination save step", .admissionGated)
-struct AppDelegateTerminationSaveStepTests {
+@Suite("AppTerminationController save step", .admissionGated)
+struct AppTerminationSaveStepTests {
     private func step(
         hasLiveSession: Bool = true,
         hasUnsettledOperation: Bool = false
-    ) -> AppDelegate.TerminationSaveStep {
-        AppDelegate.terminationSaveStep(
+    ) -> AppTerminationController.TerminationSaveStep {
+        AppTerminationController.terminationSaveStep(
             hasLiveSession: hasLiveSession,
             hasUnsettledOperation: hasUnsettledOperation)
     }

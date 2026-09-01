@@ -717,6 +717,12 @@ final class AppResidencyController {
     }
 }
 
+// MARK: - SoftQuitHosting
+
+/// Where a downgraded quit lands: ``closeGUIForSoftQuit()`` is the whole
+/// conformance.
+extension AppResidencyController: SoftQuitHosting {}
+
 /// Observes every instance's ``VMInstance/isKeepingAppAlive`` so the process can
 /// settle when the last one flips inactive.
 @MainActor

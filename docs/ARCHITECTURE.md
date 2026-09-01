@@ -19,13 +19,19 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 ### App Layer
 
 - `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator`,
-  `AppWindowRegistry`, `MainMenuController` and `AppResidencyController`, and owns the launch
-  classification and the quit gate. It conforms to `WindowResidencyHosting` by forwarding to the
-  residency controller, and answers for the test host, which has none.
+  `AppWindowRegistry`, `MainMenuController`, `AppResidencyController` and
+  `AppTerminationController`, and owns the launch classification. It conforms to
+  `WindowResidencyHosting` by forwarding to the residency controller, and answers for the test host,
+  which has none.
 - `AppResidencyController` — the one owner of what the process *is* when no window is on screen:
   the activation policy, the menu-bar status item, the GUI summon, and the idle quit an automation
   launch settles into. Built only for the resident app — under XCTest the same binary is a plain
   foreground test host, which holds none and idle-quits on its own.
+- `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
+  rather than downgrade to a GUI close, the save pass that suspends every live guest before the
+  process exits, and the relaunch a TCC revocation needs. It reaches the GUI close through
+  `SoftQuitHosting`, conformed to by `AppResidencyController`; holding none is what makes every quit
+  in the test host a real one.
 - `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
   menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
   to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches
@@ -379,6 +385,7 @@ AppDelegate
     │                 └── USBDeviceService
     ├── creates → MainMenuController
     ├── creates → AppResidencyController (activation policy, status item, summon, idle quit)
+    ├── creates → AppTerminationController (quit gate, save pass, relaunch)
     └── creates → AppWindowRegistry
                       ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
                       ├── manages → ClipboardWindowController (per VM), SettingsWindowController
@@ -470,9 +477,9 @@ context) and one release point (`VMSessionContext.tearDown`).
 
 ## Helper Targets
 
-- **KernovaRelaunchHelper** — a watchdog embedded in `Contents/MacOS/`, spawned by `AppDelegate`
-  during a quit that followed a TCC revocation. It watches the app's PID and relaunches through
-  `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
+- **KernovaRelaunchHelper** — a watchdog embedded in `Contents/MacOS/`, spawned by
+  `AppTerminationController` during a quit that followed a TCC revocation. It watches the app's PID
+  and relaunches through `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding four long-lived vsock connections to the host (control, log forwarding,
