@@ -375,11 +375,9 @@ extension VMCommandCore {
         // same VM and the second confirm names a VM the first already removed.
         let instance = try resolve(selector)
         // The sheet leaves the menu key equivalents live, so a Start or Resume
-        // can land between opening it and confirming — and a cold resume holds
-        // `.paused` with no live VM while it builds its configuration, which
-        // `canDelete` alone still reads as deletable. Trashing the bundle then
-        // pulls the disk image out from under a guest that is running or about
-        // to.
+        // can land between opening it and confirming, which is what this
+        // re-check catches — trashing the bundle then would pull the disk
+        // image out from under a guest that is running or about to be.
         guard instance.canDelete else { throw invalidState(instance) }
         guard !lifecycle.hasActiveOperation(for: instance.id) else {
             throw CommandError.busy(

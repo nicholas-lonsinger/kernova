@@ -49,13 +49,10 @@ Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvancedOptio
   clipboard publisher — and it projects the context's state read-only for its callers.
 - `VMLifecyclePhase` — where a VM is in its lifecycle, and the one value its `VMStatus`, its failure
   message and every liveness predicate are read off. A live phase carries the identity of the
-  session it describes, and moves only through `settle(_:for:)`, `attachSession(from:)` and
-  `tearDownSession(restingAt:)` — so it cannot outlive the `VZVirtualMachine` it names.
-- `VMSessionContext` — everything scoped to one `VZVirtualMachine`'s lifetime: the `VMSession`, the
-  serial and SPICE pipes with their writer and relay, `clipboardService`, the passthrough
-  coordinator, the vsock services, the agent watchdog and its flags, `liveRemovableMedia`, the
-  network attachment coordinator, and the runtime security scopes. Each bring-up opens one before
-  building its configuration; `tearDown()` releases the whole of it in one ordered pass.
+  session it describes.
+- `VMSessionContext` — everything scoped to one `VZVirtualMachine`'s lifetime, so its state is
+  created and released as a unit rather than as loose fields on `VMInstance`, which holds exactly
+  one optional of this type for a session's duration.
 - `VMSession` — one running VM's isolation domain: an actor whose executor is the private serial
   queue its `VZVirtualMachine` was created with, and the only type that calls into that VM or any
   of its device objects. It retains the VM's `VsockListenerHost`s, each for as long as its port is
@@ -248,8 +245,8 @@ session down without that hook, so a suspended session survives to revert at its
   `surfaceDisplay` hook, an unawaited failure through `onFailure` — and `events()` vends an
   `AsyncStream<VMLibraryEvent>` fed by one diffing observation plus the clone/import copy failures
   no model field survives to hold, for callers that cannot observe the model. Whether a given VM
-  admits a given command is derived in one place, `VMCapabilityCatalog`, which the core's own verb
-  guards and every AppKit surface's enablement both read. Clone and import
+  admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's
+  enablement reads it, and the core's rename and clone guards route through it. Clone and import
   register a preparing "phantom" `VMInstance` **synchronously, before any
   `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
   imports and clones cannot claim the same bundle URL.
