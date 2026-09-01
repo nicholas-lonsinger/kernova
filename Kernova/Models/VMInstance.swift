@@ -131,6 +131,11 @@ final class VMInstance {
     /// on-disk manifest in step; every surface reads it.
     var snapshotManifest = VMSnapshotManifest()
 
+    /// Where this VM's display currently lives.
+    ///
+    /// ``VMDisplayPlacementController`` owns every transition; the model writes
+    /// this only in ``tearDownSession(restingAt:)``, to the sole mode a
+    /// sessionless VM can rest in.
     var displayMode: VMDisplayMode = .inline
 
     var detailPaneMode: DetailPaneMode = .display
@@ -809,9 +814,8 @@ final class VMInstance {
         sessionContext?.tearDown()
         sessionContext = nil
         self.phase = phase
-        // An open display window resets this itself when it auto-closes;
-        // `.hidden` (headless) has no window to do so — reset here so it
-        // can't leak into the next session.
+        // A VM with no session has no display to place, and `.hidden`
+        // (headless) has no window whose close would say so.
         displayMode = .inline
         onSessionTornDown?()
     }

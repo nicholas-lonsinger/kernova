@@ -18,9 +18,14 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 
 ### App Layer
 
-- `AppDelegate` — the entry point. Creates `VMLibraryViewModel` and `VMLifecycleCoordinator`, owns
-  the application menu, and tracks window controllers keyed by VM UUID, so one VM can have a detail
-  pane, a display window, and a clipboard window open at once.
+- `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator` and
+  `VMDisplayPlacementController`, owns the application menu, and tracks clipboard window controllers
+  keyed by VM UUID, so one VM can have a detail pane, a display window, and a clipboard window open
+  at once.
+- `VMDisplayPlacementController` — the one owner of where each VM's display lives: the display-window
+  registry, and the sole writer of `VMInstance.displayMode` and `VMConfiguration.displayPreference`
+  for every transition. It reaches the app through `VMDisplayPlacementHosting`, conformed to by
+  `AppDelegate`.
 - `HostAgentStatusItemController` — the menu-bar status item, created and torn down by `AppDelegate`
   as *Continue running in Status Bar* flips. Kernova is a resident `.accessory` app whose VMs keep
   running with no window open, so this is the only affordance while headless; under XCTest
@@ -29,8 +34,9 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   `SidebarViewController` source list and `DetailContainerViewController`, plus an `NSToolbar`.
 - `VMToolbarManager` — the toolbar items shared between the library window and the pop-out display
   window; window-specific items stay with their own controller.
-- `VMDisplayWindowController`, `ClipboardWindowController` — per VM, created and tracked by
-  `AppDelegate`. `SettingsWindowController` is an app-level singleton.
+- `VMDisplayWindowController` — per VM, created by `VMDisplayPlacementController`, to which it
+  reports the transitions AppKit performs. `ClipboardWindowController` is per VM under `AppDelegate`;
+  `SettingsWindowController` is an app-level singleton.
 - `DisplayBootGeometryProviding` — the App→ViewModel seam for on-screen geometry, conformed to by
   `AppDelegate` and read by `VMLibraryViewModel.start` before the VZ configuration is built.
 
@@ -360,7 +366,8 @@ AppDelegate
     │                 ├── IPSWService
     │                 └── USBDeviceService
     ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
-    ├── manages → VMDisplayWindowController (per VM)
+    ├── creates → VMDisplayPlacementController
+    │                 └── manages → VMDisplayWindowController (per VM)
     └── manages → ClipboardWindowController (per VM)
 
 AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ VMLibrary (state, persistence)
