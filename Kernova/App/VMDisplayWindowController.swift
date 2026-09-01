@@ -28,8 +28,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     /// it. Fires on every observation tick while that holds.
     var onRequestDismissal: (() -> Void)?
     private var lastDisplayID: CGDirectDisplayID?
-    /// Whether a close is in flight, so a fullscreen exit that is part of it is
-    /// not reported as a placement transition.
+    /// Whether a close is in flight, so the fullscreen transitions AppKit runs
+    /// as part of closing the window are not reported as placement changes —
+    /// only the view can tell those from a user-initiated enter or exit.
     private var isClosing = false
     private let toolbarManager: VMToolbarManager
     private let enterFullscreen: Bool
@@ -170,12 +171,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
+        guard !isClosing else { return }
         onEnteredFullscreen?()
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
-        // AppKit exits fullscreen as part of closing the window, and that exit
-        // is not a placement transition — only the view can tell the two apart.
         guard !isClosing else { return }
         onExitedFullscreen?()
     }

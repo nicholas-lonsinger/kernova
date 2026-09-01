@@ -212,8 +212,10 @@ final class VMDisplayPlacementController {
         requestClose(of: vmID, reason: .appDismissal)
     }
 
-    /// Dismisses every open display window; the registry is snapshotted because
-    /// closing mutates it.
+    /// Dismisses every open display window.
+    ///
+    /// The keys are snapshotted so the loop stands independent of each close's
+    /// deferred phase, which removes the registry entry a runloop turn later.
     func closeAllForAppDismissal() {
         for vmID in Array(windows.keys) { dismiss(vmID) }
     }
