@@ -59,9 +59,9 @@ final class VMInstance {
     ///
     /// The read-only projections below (``liveRemovableMedia``, etc.) are the
     /// read surface; the methods in "Runtime Removable Media" below are the
-    /// write surface for the fields they cover. A write that arrives after the
-    /// session it targeted has ended is dropped and logged rather than
-    /// resurrecting a torn-down context.
+    /// write surface for the fields they cover. A write that arrives with no
+    /// session open is dropped and logged rather than resurrecting a
+    /// torn-down context.
     private(set) var sessionContext: VMSessionContext?
 
     /// The live VM's isolation domain — the only type that calls into the

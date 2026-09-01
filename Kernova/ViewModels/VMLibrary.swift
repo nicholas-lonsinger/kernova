@@ -1011,8 +1011,8 @@ final class VMLibrary {
                 )
                 return
             } catch USBDeviceError.deviceNotFound {
-                // The coordinator's detach is skipped when the framework call
-                // throws, so clear stale tracking explicitly here.
+                // The coordinator's `forgetAttachedMedia` is skipped when the
+                // framework call throws, so clear stale tracking explicitly here.
                 Self.logger.notice(
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
