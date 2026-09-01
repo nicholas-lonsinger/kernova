@@ -1683,13 +1683,16 @@ struct VMLifecycleCoordinatorTests {
     @Test("attachUSBDevice forwards to USB device service")
     func attachUSBDeviceForwards() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
+        instance.enter(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachUSBDevice(
             diskImagePath: "/tmp/test.dmg",
             readOnly: true,
-            to: instance
+            to: instance,
+            for: sessionID
         )
 
         #expect(usbService.attachCallCount == 1)
@@ -1704,16 +1707,19 @@ struct VMLifecycleCoordinatorTests {
     @Test("detachUSBDevice forwards to USB device service")
     func detachUSBDeviceForwards() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
+        instance.enter(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachUSBDevice(
             diskImagePath: "/tmp/test.dmg",
             readOnly: false,
-            to: instance
+            to: instance,
+            for: sessionID
         )
 
-        try await coordinator.detachUSBDevice(info, from: instance)
+        try await coordinator.detachUSBDevice(info, from: instance, for: sessionID)
 
         #expect(usbService.detachCallCount == 1)
         #expect(instance.liveRemovableMedia.isEmpty)
@@ -1723,13 +1729,16 @@ struct VMLifecycleCoordinatorTests {
     func attachUSBDevicePropagatesError() async {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
         usbService.attachError = USBDeviceError.noVirtualMachine
+        let sessionID = UUID()
         let instance = makeInstance()
+        instance.enter(.running(sessionID: sessionID))
 
         await #expect(throws: USBDeviceError.self) {
             try await coordinator.attachUSBDevice(
                 diskImagePath: "/tmp/test.dmg",
                 readOnly: false,
-                to: instance
+                to: instance,
+                for: sessionID
             )
         }
     }
@@ -1737,30 +1746,83 @@ struct VMLifecycleCoordinatorTests {
     @Test("detachUSBDevice propagates error from USB device service")
     func detachUSBDevicePropagatesError() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
+        instance.enter(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachUSBDevice(
             diskImagePath: "/tmp/test.dmg",
             readOnly: false,
-            to: instance
+            to: instance,
+            for: sessionID
         )
 
         usbService.detachError = USBDeviceError.deviceNotFound
 
         await #expect(throws: USBDeviceError.self) {
-            try await coordinator.detachUSBDevice(info, from: instance)
+            try await coordinator.detachUSBDevice(info, from: instance, for: sessionID)
         }
 
         // Device should still be tracked since detach failed
         #expect(instance.liveRemovableMedia.count == 1)
     }
 
+    @Test("attachUSBDevice and detachUSBDevice never reach the service for a superseded session")
+    func usbDevicePassThroughDropsASupersededSession() async throws {
+        let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let sessionID = UUID()
+        let instance = makeInstance()
+        instance.beginSessionContext()
+        instance.enter(.running(sessionID: sessionID))
+
+        let info = try await coordinator.attachUSBDevice(
+            diskImagePath: "/tmp/test.dmg",
+            readOnly: true,
+            to: instance,
+            for: sessionID
+        )
+        // Force stop and restart: the pass acting for `sessionID` is overtaken.
+        instance.tearDownSession(restingAt: .stopped)
+        instance.beginSessionContext()
+        instance.enter(.running(sessionID: UUID()))
+        let attachesBefore = usbService.attachCallCount
+
+        // `noVirtualMachine` specifically: it is the case `VMLibrary`'s
+        // abandon-the-reconcile arms catch. `USBDeviceError` is not
+        // `Equatable`, so the arm is what states the expectation.
+        var attachBailed = false
+        do {
+            _ = try await coordinator.attachUSBDevice(
+                diskImagePath: "/tmp/test.dmg",
+                readOnly: true,
+                to: instance,
+                for: sessionID
+            )
+        } catch USBDeviceError.noVirtualMachine {
+            attachBailed = true
+        }
+        var detachBailed = false
+        do {
+            try await coordinator.detachUSBDevice(info, from: instance, for: sessionID)
+        } catch USBDeviceError.noVirtualMachine {
+            detachBailed = true
+        }
+
+        #expect(attachBailed)
+        #expect(detachBailed)
+        #expect(usbService.attachCallCount == attachesBefore)
+        #expect(usbService.detachCallCount == 0)
+        #expect(instance.liveRemovableMedia.isEmpty)
+    }
+
     @Test("attachUSBDevice attaches the resolved URL but tracks the stored path")
     func attachUSBDeviceTracksStoredPathWithResolvedURL() async throws {
         let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
+        instance.enter(.running(sessionID: sessionID))
 
         // A bookmark that tracked a moved file: the resolved location is
         // what must reach the service, while the tracked identity stays the
@@ -1770,7 +1832,8 @@ struct VMLifecycleCoordinatorTests {
             diskImagePath: "/old/location/media.iso",
             readOnly: true,
             resolvedURL: URL(fileURLWithPath: "/new/location/media.iso"),
-            to: instance
+            to: instance,
+            for: sessionID
         )
 
         #expect(usbService.lastAttachedPath == "/new/location/media.iso")

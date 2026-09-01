@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import KernovaTestSupport
+
 @testable import Kernova
 
 @Suite("VMLibrary Tests", .serialized, .admissionGated)
@@ -914,10 +916,12 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         instance.configuration = old
@@ -940,10 +944,12 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -969,10 +975,12 @@ struct VMLibraryTests {
         let mock = MockUSBDeviceService()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         instance.configuration = old
@@ -1031,6 +1039,26 @@ struct VMLibraryTests {
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
+    @Test("applyLivePolicy is a no-op for a cold-paused VM, which has no session to attach to")
+    func liveRemovableNoopWhenColdPaused() async throws {
+        let mock = MockUSBDeviceService()
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.suspended)
+        library.instances.append(instance)
+
+        let old = instance.configuration
+        let new = configWithRemovable(old, path: "/tmp/install.iso")
+
+        library.applyLivePolicy(for: instance, old: old, new: new)
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(mock.attachCallCount == 0)
+        #expect(mock.detachCallCount == 0)
+        #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(!failures.showError)
+    }
+
     @Test("Live attach failure surfaces error")
     func liveRemovableAttachFailureSurfacesError() async throws {
         let mock = MockUSBDeviceService()
@@ -1063,10 +1091,12 @@ struct VMLibraryTests {
         mock.detachError = USBDeviceError.deviceNotFound
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1092,10 +1122,12 @@ struct VMLibraryTests {
         mock.detachError = TransientError()
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1120,10 +1152,12 @@ struct VMLibraryTests {
         mock.detachError = USBDeviceError.noVirtualMachine
         let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
         let instance = makeInstance()
-        instance.enter(.running(sessionID: UUID()))
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let oldID = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true))
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
         instance.configuration = old
@@ -1187,6 +1221,70 @@ struct VMLibraryTests {
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/A.iso")
         #expect(!failures.showError)
+    }
+
+    @Test("A pass overtaken by a force stop and restart records nothing on the successor")
+    func liveRemovableOvertakenPassLeavesTheSuccessorAlone() async throws {
+        let mock = SuspendingMockUSBDeviceService()
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        instance.beginSessionContext()
+        library.instances.append(instance)
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        instance.configuration = configA
+        library.applyLivePolicy(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+
+        // Force Stop, then Start: the suspended attach now answers for a
+        // session two transitions old.
+        instance.tearDownSession(restingAt: .stopped)
+        instance.beginSessionContext()
+        instance.enter(.running(sessionID: UUID()))
+
+        mock.resumeSuspended()
+        try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.detachCallCount == 0)
+        #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(!failures.showError)
+        #expect(instance.configuration == configA)
+    }
+
+    @Test("An overtaken pass's failure neither alerts nor rolls the config back")
+    func liveRemovableOvertakenPassFailureIsDropped() async throws {
+        let mock = SuspendingMockUSBDeviceService()
+        let (library, _, _, _) = makeLibrary(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        instance.beginSessionContext()
+        library.instances.append(instance)
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        instance.configuration = configA
+        library.applyLivePolicy(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+
+        // The force stop is what makes the attach fail, so the alert would name
+        // an error the user caused and the rollback would describe the
+        // successor's — here empty — live media.
+        mock.attachError = USBDeviceError.diskImageNotFound("/tmp/A.iso")
+        instance.tearDownSession(restingAt: .stopped)
+        instance.beginSessionContext()
+        instance.enter(.running(sessionID: UUID()))
+
+        mock.resumeSuspended()
+        try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(!failures.showError)
+        #expect(failures.errorMessage == nil)
+        #expect(instance.configuration == configA)
     }
 
     @Test("Rapid-fire media swaps coalesce — one Task drains to the latest target")

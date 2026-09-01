@@ -1,4 +1,6 @@
 import Foundation
+import KernovaTestSupport
+
 @testable import Kernova
 
 /// A mock USB device service whose `attach` method suspends until explicitly resumed.
@@ -14,6 +16,24 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
     var detachCallCount = 0
     var lastAttachedPath: String?
     var lastAttachedReadOnly: Bool?
+
+    /// Thrown by `attach` after it resumes, so a test can fail an operation
+    /// that was overtaken while suspended.
+    var attachError: (any Error)?
+
+    // MARK: - Completion Signal
+
+    /// Fired as each operation returns, so a test can await a resumed
+    /// operation's completion rather than poll for its effects.
+    let operationCompleted = AsyncGate()
+
+    /// How many attaches and detaches have returned to their caller.
+    private(set) var completedOperationCount = 0
+
+    private func noteCompletion() {
+        completedOperationCount += 1
+        operationCompleted.notify()
+    }
 
     // MARK: - Suspension Mechanism
 
@@ -68,7 +88,12 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
         lastAttachedPath = diskImagePath
         lastAttachedReadOnly = readOnly
         await suspendIfNeeded()
+        if let attachError {
+            noteCompletion()
+            throw attachError
+        }
         let id = desiredUUID ?? UUID()
+        noteCompletion()
         return USBDeviceInfo(id: id, path: diskImagePath, readOnly: readOnly)
     }
 
@@ -77,5 +102,6 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
         from instance: VMInstance
     ) async throws {
         detachCallCount += 1
+        noteCompletion()
     }
 }

@@ -173,42 +173,73 @@ struct VMSessionContextTests {
 
     @Test("recordAttachedMedia appends, and a second call appends rather than replaces")
     func recordAttachedMediaAppends() {
-        let instance = makeInstance()
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
         let first = USBDeviceInfo(path: "/tmp/a.iso", readOnly: true)
         let second = USBDeviceInfo(path: "/tmp/b.iso", readOnly: false)
 
-        instance.recordAttachedMedia(first)
-        instance.recordAttachedMedia(second)
+        instance.recordAttachedMedia(first, for: sessionID)
+        instance.recordAttachedMedia(second, for: sessionID)
 
         #expect(instance.liveRemovableMedia == [first, second])
     }
 
     @Test("forgetAttachedMedia removes only the matching entry")
     func forgetAttachedMediaRemovesOnlyTheMatch() {
-        let instance = makeInstance()
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
         let kept = USBDeviceInfo(path: "/tmp/keep.iso", readOnly: true)
         let removed = USBDeviceInfo(path: "/tmp/remove.iso", readOnly: false)
-        instance.recordAttachedMedia(kept)
-        instance.recordAttachedMedia(removed)
+        instance.recordAttachedMedia(kept, for: sessionID)
+        instance.recordAttachedMedia(removed, for: sessionID)
 
-        instance.forgetAttachedMedia(id: removed.id)
+        instance.forgetAttachedMedia(deviceID: removed.id, for: sessionID)
 
         #expect(instance.liveRemovableMedia == [kept])
     }
 
     @Test("recordAttachedMedia and forgetAttachedMedia are no-ops, logged, with no session open")
     func mediaWritesAreNoOpsWithNoSessionOpen() {
-        let instance = makeInstance()
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
         instance.tearDownSession(restingAt: .stopped)
         #expect(instance.sessionContext == nil)
 
-        instance.recordAttachedMedia(USBDeviceInfo(path: "/tmp/late.iso", readOnly: true))
-        instance.forgetAttachedMedia(id: UUID())
+        instance.recordAttachedMedia(USBDeviceInfo(path: "/tmp/late.iso", readOnly: true), for: sessionID)
+        instance.forgetAttachedMedia(deviceID: UUID(), for: sessionID)
 
         #expect(instance.liveRemovableMedia.isEmpty)
+    }
+
+    @Test("A media write for a superseded session leaves the successor's tracking alone")
+    func mediaWritesForASupersededSessionAreDropped() {
+        let sessionA = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionA))
+        instance.beginSessionContext()
+        let carried = USBDeviceInfo(path: "/tmp/carried.iso", readOnly: true)
+        instance.recordAttachedMedia(carried, for: sessionA)
+
+        // Force stop, then a restart whose cold boot re-registers the same item.
+        instance.tearDownSession(restingAt: .stopped)
+        instance.beginSessionContext()
+        let coldBooted = USBDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
+        instance.adoptBuildResult(
+            ConfigurationBuilder.BuildResult(
+                configuration: VZVirtualMachineConfiguration(),
+                serialInputPipe: Pipe(),
+                serialOutputPipe: Pipe(),
+                clipboardInputPipe: Pipe(),
+                clipboardOutputPipe: Pipe(),
+                coldRemovableMedia: [coldBooted]))
+        instance.enter(.running(sessionID: UUID()))
+
+        instance.recordAttachedMedia(carried, for: sessionA)
+        instance.forgetAttachedMedia(deviceID: carried.id, for: sessionA)
+
+        #expect(instance.liveRemovableMedia == [coldBooted])
     }
 
     // MARK: - Observation propagation
@@ -220,7 +251,8 @@ struct VMSessionContextTests {
 
     @Test("A context field change wakes an observer reading through the projection")
     func contextFieldChangeWakesTheObserver() {
-        let instance = makeInstance()
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
         let context = instance.beginSessionContext()
 
         #expect(
@@ -241,7 +273,8 @@ struct VMSessionContextTests {
             })
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {
-                instance.recordAttachedMedia(USBDeviceInfo(path: "/tmp/b.iso", readOnly: true))
+                instance.recordAttachedMedia(
+                    USBDeviceInfo(path: "/tmp/b.iso", readOnly: true), for: sessionID)
             })
     }
 

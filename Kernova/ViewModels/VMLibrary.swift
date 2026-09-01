@@ -906,9 +906,10 @@ final class VMLibrary {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
 
         let mediaChanged = VMConfiguration.removableMediaChanged(old: old, new: new)
-        // Only dispatch when running/paused — stopped VMs persist the new media list
-        // and pick it up on next start.
-        guard mediaChanged, instance.status == .running || instance.status == .paused else { return }
+        // Only dispatch when there is a session to attach to — every other VM,
+        // a cold-paused one included, persists the new media list and picks it
+        // up on next start.
+        guard mediaChanged, instance.canAttachUSBDevices else { return }
 
         let id = instance.instanceID
         pendingRemovableMediaTarget[id] = new.removableMedia ?? []
@@ -923,14 +924,15 @@ final class VMLibrary {
     ///
     /// Writes that arrive during a pass are picked up by the next iteration, so rapid
     /// edits always converge to the final user-selected state.
+    ///
+    /// Each pass captures the session it acts for and carries that token all
+    /// the way down, so a stop — or a stop and a restart — mid-pass abandons
+    /// the pass rather than driving whatever is live by then.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
         defer { reconcilingRemovableMediaInstances.remove(id) }
         while let target = pendingRemovableMediaTarget.removeValue(forKey: id) {
-            // A VM that stopped mid-pass picks up the latest config on next start;
-            // hitting XHCI on a torn-down VM would surface a spurious
-            // `noVirtualMachine` error to the user.
-            guard instance.status == .running || instance.status == .paused else { break }
-            await applyLiveRemovableMediaChange(for: instance, target: target)
+            guard let sessionID = instance.attachableSessionID else { break }
+            await applyLiveRemovableMediaChange(for: instance, target: target, actingFor: sessionID)
         }
     }
 
@@ -945,9 +947,13 @@ final class VMLibrary {
     /// attached rather than describing a state VZ refused. `deviceNotFound` (which
     /// also covers a guest-side eject) and `noVirtualMachine` are handled as
     /// confirmed-gone / silent bail.
+    ///
+    /// Every framework call, bookkeeping write and failure handler here acts for
+    /// `sessionID` and drops once that session is no longer live.
     private func applyLiveRemovableMediaChange(
         for instance: VMInstance,
-        target: [RemovableMediaItem]
+        target: [RemovableMediaItem],
+        actingFor sessionID: UUID
     ) async {
         let tracked = instance.liveRemovableMedia
         // Tolerate duplicate ids: a hand-edited or corrupted config.json could ship
@@ -1004,7 +1010,7 @@ final class VMLibrary {
         // a swap reuses an id with a different attachment.
         for device in toDetach {
             do {
-                try await lifecycle.detachUSBDevice(device, from: instance)
+                try await lifecycle.detachUSBDevice(device, from: instance, for: sessionID)
             } catch USBDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
@@ -1016,13 +1022,12 @@ final class VMLibrary {
                 Self.logger.notice(
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
-                instance.forgetAttachedMedia(id: device.id)
+                instance.forgetAttachedMedia(deviceID: device.id, for: sessionID)
             } catch {
                 Self.logger.error(
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                reconcileConfigToLiveState(for: instance, lookup: rollbackLookup)
-                presentError(error)
+                failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
                 return
             }
         }
@@ -1038,10 +1043,11 @@ final class VMLibrary {
                     readOnly: item.readOnly,
                     desiredUUID: item.id,
                     resolvedURL: scope?.url,
-                    to: instance
+                    to: instance,
+                    for: sessionID
                 )
                 if let scope {
-                    instance.retainMediaScope(scope, for: item.id)
+                    instance.retainMediaScope(scope, deviceID: item.id, for: sessionID)
                 }
                 Self.logger.notice(
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
@@ -1055,11 +1061,30 @@ final class VMLibrary {
                 Self.logger.error(
                     "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                reconcileConfigToLiveState(for: instance, lookup: rollbackLookup)
-                presentError(error)
+                failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
                 return
             }
         }
+    }
+
+    /// Rolls the config back to the live state and surfaces `error` — unless the
+    /// pass acting for `sessionID` has been overtaken, whose successor's live
+    /// media the rollback would describe and whose user force-stopped the VM the
+    /// error is about.
+    private func failReconcile(
+        for instance: VMInstance,
+        actingFor sessionID: UUID,
+        lookup: [UUID: RemovableMediaItem],
+        error: any Error
+    ) {
+        guard instance.liveSessionID == sessionID else {
+            Self.logger.notice(
+                "Dropping removable-media reconcile failure for '\(instance.name, privacy: .public)': session \(sessionID, privacy: .public) is no longer live"
+            )
+            return
+        }
+        reconcileConfigToLiveState(for: instance, lookup: lookup)
+        presentError(error)
     }
 
     /// Rolls `instance.configuration.removableMedia` back to whatever is
