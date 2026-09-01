@@ -380,17 +380,19 @@ final class VsockControlService: VsockFeatureService {
         // host sleep: the VM is auto-paused for it, and an `EngineClock` counts
         // the time the system spends asleep.
         if isGuestSuspended?() ?? false {
-            apply(liveness.record(at: clock.now))
+            // Not routed through `apply`: the guest did not resume responding,
+            // the host stopped judging it, so the stage lifts without the
+            // recovery notice.
+            if case .recovered = liveness.hold(at: clock.now) { isUnresponsive = false }
             return
         }
         apply(liveness.evaluate(at: clock.now))
     }
 
-    /// Reacts to one watchdog verdict, wherever it was reached from.
+    /// Reacts to one watchdog verdict.
     ///
-    /// Every write to `isUnresponsive` is here: the monitor emits each stage
-    /// crossing once, so an `@Observable` notification tracks the transition
-    /// rather than the tick.
+    /// The monitor emits each stage crossing once, so an `@Observable`
+    /// notification tracks the transition rather than the tick.
     private func apply(_ verdict: ControlLivenessMonitor.Verdict) {
         switch verdict {
         case .noSignal, .unchanged:

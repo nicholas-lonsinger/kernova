@@ -48,14 +48,33 @@ public final class ControlLivenessMonitor: @unchecked Sendable {
         lock.withLock { unresponsive }
     }
 
-    /// Records a liveness signal at `instant` — an inbound frame, or a hold
-    /// that defers the deadline while the peer cannot answer.
+    /// Records an inbound frame as a liveness signal at `instant`, arming the
+    /// deadline if this is the first.
     ///
-    /// The only way out of the unresponsive stage: returns ``Verdict/recovered``
-    /// on the call that leaves it and ``Verdict/unchanged`` on every other.
+    /// With ``hold(at:)``, the only way out of the unresponsive stage: returns
+    /// ``Verdict/recovered`` on the call that leaves it and
+    /// ``Verdict/unchanged`` on every other.
     @discardableResult
     public func record(at instant: EngineInstant) -> Verdict {
         lock.withLock {
+            lastSignal = instant
+            guard unresponsive else { return .unchanged }
+            unresponsive = false
+            return .recovered
+        }
+    }
+
+    /// Defers the deadline to `instant` while the peer is unable to answer —
+    /// the host holding a live-paused guest's clock.
+    ///
+    /// A peer that has never been heard from has no deadline to defer, so this
+    /// records nothing and answers ``Verdict/noSignal``: a hold must never
+    /// stand in for the first signal, or a pause would arm the watchdog against
+    /// a channel that never spoke. Otherwise it behaves as ``record(at:)``.
+    @discardableResult
+    public func hold(at instant: EngineInstant) -> Verdict {
+        lock.withLock {
+            guard lastSignal != nil else { return .noSignal }
             lastSignal = instant
             guard unresponsive else { return .unchanged }
             unresponsive = false

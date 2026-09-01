@@ -82,10 +82,54 @@ struct ControlLivenessMonitorTests {
         clock.advance(seconds: 11)
         #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))
 
-        // A deadline held forward — the host's suspension hold — puts the
-        // recorded signal ahead of this evaluation point again.
-        let heldBack = EngineInstant(nanoseconds: clock.now.nanoseconds - 10_000_000_000)
-        #expect(monitor.evaluate(at: heldBack) == .recovered)
+        // `evaluate` is total over the monitor's own state, so an evaluation
+        // point inside the window lifts the stage. Both peers evaluate at
+        // `clock.now` against a monotonic instant and leave the stage through
+        // `record`/`hold` instead, so this arm answers for the type rather than
+        // for a path either peer takes.
+        let insideTheWindow = EngineInstant(nanoseconds: clock.now.nanoseconds - 10_000_000_000)
+        #expect(monitor.evaluate(at: insideTheWindow) == .recovered)
+        #expect(!monitor.isUnresponsive)
+    }
+
+    @Test("A hold never stands in for the first signal")
+    func holdBeforeAnySignalRecordsNothing() {
+        let (monitor, clock) = makeMonitor()
+
+        // A guest live-paused before it ever spoke: every tick holds, and none
+        // of them may arm a deadline the peer would then be judged against.
+        for _ in 0..<5 {
+            clock.advance(seconds: 30)
+            #expect(monitor.hold(at: clock.now) == .noSignal)
+        }
+
+        // Resumed, and still judged as never having spoken.
+        clock.advance(seconds: 30)
+        #expect(monitor.evaluate(at: clock.now) == .noSignal)
+    }
+
+    @Test("A hold defers the deadline of a peer that has spoken")
+    func holdDefersTheDeadline() {
+        let (monitor, clock) = makeMonitor()
+        monitor.record(at: clock.now)
+
+        // Held every 9 s across three terminate windows.
+        for _ in 0..<7 {
+            clock.advance(seconds: 9)
+            #expect(monitor.hold(at: clock.now) == .unchanged)
+        }
+
+        #expect(monitor.evaluate(at: clock.now) == .unchanged)
+    }
+
+    @Test("A hold lifts the unresponsive stage of a peer it starts judging again")
+    func holdRecovers() {
+        let (monitor, clock) = makeMonitor()
+        monitor.record(at: clock.now)
+        clock.advance(seconds: 11)
+        #expect(monitor.evaluate(at: clock.now) == .becameUnresponsive(silentFor: 11))
+
+        #expect(monitor.hold(at: clock.now) == .recovered)
         #expect(!monitor.isUnresponsive)
     }
 

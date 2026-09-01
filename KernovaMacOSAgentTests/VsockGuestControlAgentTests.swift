@@ -46,7 +46,7 @@ struct VsockGuestControlAgentTests {
     /// The watchdog can't tear the channel down mid-test at these values. Tests
     /// that *exercise* the watchdog pass explicit short windows to opt back in.
     ///
-    /// The watchdog measures elapsed time since `lastInboundFrame`, which
+    /// The watchdog measures elapsed time since the last inbound frame, which
     /// keeps advancing while a contended CI MainActor stalls the test. With a
     /// short default, any non-watchdog test that paused past the window saw the
     /// channel closed out from under it — surfacing as an EOF / `.closed` flake.

@@ -54,7 +54,7 @@ struct VsockControlServiceTests {
     ///
     /// A live guest sends heartbeats continuously, so liveness tests emit a
     /// sustained stream rather than a fixed batch: status changes are driven by
-    /// a liveness tick observing a fresh `lastInboundFrame`, and that clock is
+    /// a liveness tick observing a fresh signal, and the watchdog's clock is
     /// refreshed *only* by inbound frames. If the stream stopped before the
     /// test's final wait resolved, a tick starved past `unresponsiveAfter`
     /// would latch `.unresponsive` with no further inbound frames to recover
@@ -78,7 +78,7 @@ struct VsockControlServiceTests {
     /// that *exercise* the watchdog (silence/recovery/terminate) pass explicit
     /// short windows to opt back in.
     ///
-    /// The watchdog measures elapsed time since `lastInboundFrame`, which
+    /// The watchdog measures elapsed time since the last inbound frame, which
     /// keeps advancing while a contended CI MainActor stalls the test: a
     /// sub-second window makes every test's runtime an implicit deadline, so a
     /// test that pauses past it (waiting on a frame, a `waitUntil`, or scheduler
@@ -126,8 +126,8 @@ struct VsockControlServiceTests {
     /// `terminateAfter`, latching the Hello instead of observing `isConnected`.
     ///
     /// Those tests cannot wait on `isConnected`: it is a transient the watchdog
-    /// reverts. The watchdog measures elapsed time since `lastInboundFrame`,
-    /// so a MainActor stall longer than the window leaves the next liveness tick
+    /// reverts. The watchdog measures elapsed time since the last inbound
+    /// frame, so a stall longer than the window leaves the next liveness tick
     /// already past its deadline — and if that tick runs before the waiter's
     /// continuation, the service settles `isConnected` back to `false` before
     /// the waiter ever sees it. Nothing changes it again, so the waiter blocks
@@ -414,7 +414,7 @@ struct VsockControlServiceTests {
         // runners doesn't race the watchdog tick. The narrow 40 ms / 120 ms
         // pairing this test originally used was flaky on GitHub Actions:
         // when the test's `Task.sleep` resumed late (because MainActor was
-        // busy with the heartbeat + liveness tasks), `now - lastInboundFrame`
+        // busy with the heartbeat + liveness tasks), the measured silence
         // could exceed `unresponsiveAfter` between sleep wake and assertion,
         // flipping status to .unresponsive briefly even though the test had
         // just sent a heartbeat. The watchdog's terminate stage stays disabled
@@ -555,8 +555,8 @@ struct VsockControlServiceTests {
         try await connectLatched(guest: guest, hello: helloObserved)
 
         // Send nothing further: the watchdog terminates the connection. The
-        // service has to settle rather than re-fire every tick against a frozen
-        // `lastInboundFrame`.
+        // service has to settle rather than re-fire every tick against a peer
+        // that has gone quiet for good.
         try await waitForChange { !service.isConnected }
 
         // Every periodic task runs to completion — no watchdog tick and no
@@ -659,7 +659,7 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         // Suspended before the Hello, not after it: the watchdog starts judging
-        // the guest the instant `lastInboundFrame` is set, so any gap between
+        // the guest the instant its first frame lands, so any gap between
         // connect and the flip is a window where a stalled runner terminates
         // the channel for the very pause under test. Armed up front there is no
         // such window — every tick that can read the clock reads it suspended —
@@ -673,6 +673,44 @@ struct VsockControlServiceTests {
         try await Task.sleep(for: .milliseconds(800))
         #expect(service.isConnected)
         #expect(service.agentStatus == .current(version: "0.9.0"))
+    }
+
+    @Test("A pause arms no deadline for a guest that has never spoken")
+    func suspensionBeforeAnyFrameNeverExpires() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let suspension = SuspensionFlag()
+        let lost = ChannelLostRecorder()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            heartbeatInterval: 0.05,
+            unresponsiveAfter: 0.1,
+            terminateAfter: 0.2,
+            isGuestSuspended: { suspension.isSuspended },
+            onChannelLost: { lost.record() }
+        )
+        // Suspended from the first tick, and the guest answers nothing: the
+        // hold must not stand in for the Hello that never arrived, or resuming
+        // hands the watchdog a deadline it can expire.
+        suspension.isSuspended = true
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+
+        // RATIONALE: negative assertion ("prove the watchdog never fired") — a
+        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // Three terminate windows paused, then three more running.
+        try await Task.sleep(for: .milliseconds(600))
+        suspension.isSuspended = false
+        try await Task.sleep(for: .milliseconds(600))
+
+        #expect(lost.count == 0)
+        #expect(service.agentStatus == .waiting)
     }
 
     @Test("Suspension defers the liveness deadline rather than disabling it")
