@@ -13,7 +13,9 @@ import os
 /// pulled only when the window's preview displays them or a paste consumes them.
 @MainActor
 @Observable
-final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccepting {
+final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
+    VsockDataConnectionAccepting
+{
     // MARK: - Observable state
 
     /// Bidirectional clipboard buffer.
@@ -117,6 +119,7 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
     /// as `request.stale`, so a promise left on the pasteboard would advertise
     /// flavors that silently serve nothing. VM stop deliberately does *not*
     /// retract — a stopped session's materialized reps stay servable.
+    @ObservationIgnored
     var retractStaleHostWrite: (@MainActor () -> Bool)?
 
     /// Whether the host pasteboard still holds this VM's most recent write.
@@ -124,7 +127,13 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
     /// Wired by `VMInstance`; `start()` reclaims earlier sessions' staging roots
     /// only when this reports `false` — while the pasteboard holds the write,
     /// an earlier session's staged files may still be backing its vended URLs.
+    @ObservationIgnored
     var hostPasteboardHoldsOurWrite: (@MainActor () -> Bool)?
+
+    /// Notified once when the channel dies on its own, never on an
+    /// owner-requested `stop()`.
+    @ObservationIgnored
+    var onChannelLost: (@MainActor () -> Void)?
 
     #if DEBUG
     /// Test seam: awaited inside `materialize` in the window between a pull
@@ -222,16 +231,21 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
         endpoint.acceptDataConnection(fd: fd)
     }
 
+    /// Tears the service down at the owner's request.
+    ///
+    /// The owner is not called back — it already knows.
     func stop() {
-        settle()
+        settle(reason: .ownerRequested)
     }
 
     /// Tears the service down once its channel is over, whether the owner asked
     /// or the channel simply ended.
     ///
     /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
-    /// construction, and the first one through does the work.
-    private func settle() {
+    /// construction, and the first one through does the work. `isConnected` is
+    /// the latch, so `onChannelLost` fires at most once and never after an owner
+    /// teardown has already settled.
+    private func settle(reason: VsockSettleReason) {
         endpoint.stop()
         // A garbage-collection pass, not a one-shot: it runs on every settle,
         // not just the first, because a drop the buffer no longer shows keeps
@@ -249,6 +263,11 @@ final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccept
         Self.logger.notice(
             "Vsock clipboard service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
+        // Last, so the owner observes fully-settled state from inside the
+        // callback.
+        if case .channelLost = reason {
+            onChannelLost?()
+        }
     }
 
     // MARK: - Transfer progress
@@ -647,7 +666,7 @@ extension VsockClipboardService: ClipboardEndpointDelegate {
     /// left standing would absorb the copy instead of letting the next
     /// connection forward it.
     func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
-        settle()
+        settle(reason: .channelLost)
     }
 }
 

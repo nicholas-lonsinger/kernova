@@ -158,6 +158,10 @@ The vsock stack (macOS guests only):
   handshake, and each names the guest capability it additionally requires. The two data listeners
   forward through a `VsockDataConnectionSink` apiece. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
+- `VsockFeatureService` — the settle contract each feature service keeps: `start()`, an idempotent
+  and terminal owner `stop()` that calls nobody back, and an `onChannelLost` hook fired once, on
+  fully-settled state, when the channel ends on its own. The owner wires the hook per service and
+  decides there whether a settled service is dropped or kept.
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, the observed `agentVersion`, and `PolicyUpdate` pushes carrying an
   `AgentPolicySnapshot`. Built per accepted channel by `VMInstance.makeControlService(for:)`, and

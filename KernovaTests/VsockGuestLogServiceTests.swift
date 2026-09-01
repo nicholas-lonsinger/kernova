@@ -170,6 +170,57 @@ struct VsockGuestLogServiceTests {
         #expect(receivedLevels == levels)
     }
 
+    @Test("A wrong-port payload notifies the owner that the channel is gone")
+    func wrongPortPayloadNotifiesOwner() async throws {
+        let emitter = RecordingEmitter()
+        let (sender, receiver) = try makePair()
+        sender.start()
+        receiver.start()
+        defer { sender.close() }
+
+        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
+        let lost = LogChannelLostRecorder()
+        service.onChannelLost = { lost.record() }
+        service.start()
+        defer { service.stop() }
+
+        // The channel really is gone: the service closed it on the violation,
+        // so the owner is owed the same notice a peer disconnect earns.
+        var hello = Frame()
+        hello.protocolVersion = 1
+        hello.hello = Kernova_V1_Hello.with { $0.serviceVersion = 1 }
+        try sender.send(hello)
+
+        try await lost.changed.wait { lost.count == 1 }
+        #expect(emitter.snapshot().isEmpty)
+    }
+
+    @Test("An owner stop() is terminal: a record still in flight is never emitted")
+    func stopIsTerminalForRecordsInFlight() async throws {
+        let emitter = RecordingEmitter()
+        let (sender, receiver) = try makePair()
+        sender.start()
+        receiver.start()
+        defer { sender.close() }
+
+        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
+        service.start()
+        // Queued on the socket before the teardown, and never picked up: the
+        // consume task is `@MainActor` like this body, so nothing between here
+        // and `stop()` can hand it a turn.
+        try sender.send(makeLogFrame(level: .notice, message: "in flight"))
+        service.stop()
+
+        // Terminal, like the control service: a reconnect is served by a fresh
+        // instance, so `start()` does not resume the closed channel.
+        service.start()
+
+        // RATIONALE: negative assertion ("prove nothing was consumed") — a fixed
+        // observation window, per docs/TESTING.md "Async waits in tests".
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(emitter.snapshot().isEmpty)
+    }
+
     @Test("Service stops cleanly when remote end closes")
     func serviceStopsOnRemoteClose() async throws {
         let emitter = RecordingEmitter()
@@ -192,6 +243,23 @@ struct VsockGuestLogServiceTests {
         service.stop()
 
         #expect(emitter.snapshot().count == 1)
+    }
+}
+
+// MARK: - Channel-lost recorder
+
+/// Counts `onChannelLost` invocations. Main-bound because the callback is
+/// `@MainActor` in production, not by convenience (docs/TESTING.md).
+@MainActor
+private final class LogChannelLostRecorder {
+    private(set) var count = 0
+
+    /// Fires on every `record`; await it instead of polling `count`.
+    let changed = AsyncGate()
+
+    func record() {
+        count += 1
+        changed.notify()
     }
 }
 

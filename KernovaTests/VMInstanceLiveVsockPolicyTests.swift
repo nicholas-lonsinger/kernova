@@ -171,6 +171,45 @@ struct VMInstanceLiveVsockPolicyTests {
         try expectSinkCleared(instance.dropDataSink)
     }
 
+    // MARK: - The channel dying under a service
+
+    /// The keep-versus-nil half of the settle contract, pinned per service: the
+    /// notification is uniform, the owner's reaction is not.
+    @Test("A log channel dying under its service clears the instance's reference")
+    func logChannelDeathClearsTheReference() async throws {
+        let (instance, sessionID) = makeInstanceWithLiveSession()
+        var guests: [VsockChannel] = []
+        defer { guests.forEach { $0.close() } }
+        try await connectGuest(
+            to: instance.makeLogListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+        #expect(instance.vsockLogService != nil)
+
+        // The guest agent quits mid-session. Nothing reads a settled log
+        // service, so holding a dead channel until the next accept is pure
+        // retention.
+        guests.forEach { $0.close() }
+
+        try await waitForChange { instance.vsockLogService == nil }
+    }
+
+    /// The clipboard is the opposite call: a settled service's materialized
+    /// representations stay servable and the clipboard window reads its buffer
+    /// through `ClipboardServicing`, so the reference outlives the channel.
+    @Test("A clipboard channel dying under its service keeps the instance's reference")
+    func clipboardChannelDeathKeepsTheReference() async throws {
+        let (instance, sessionID) = makeInstanceWithLiveSession()
+        var guests: [VsockChannel] = []
+        defer { guests.forEach { $0.close() } }
+        try await connectGuest(
+            to: instance.makeClipboardListenerHost(sessionID: sessionID), keptOpenBy: &guests)
+        #expect(instance.clipboardService != nil)
+
+        guests.forEach { $0.close() }
+
+        try await waitForChange { instance.clipboardService?.isConnected == false }
+        #expect(instance.clipboardService != nil)
+    }
+
     // MARK: - Hand-offs crossing a toggle-off
 
     /// The accept runs on the VM's queue and only queues its hand-off, so a

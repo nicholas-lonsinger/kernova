@@ -79,17 +79,7 @@ struct ObservedAgentInfo: Equatable, Sendable {
 /// a reconnect is served by a fresh instance.
 @MainActor
 @Observable
-final class VsockControlService {
-    /// Why the service settled, which decides whether the owner hears about it.
-    enum StopReason {
-        /// The channel died underneath us — the peer closed it, or the liveness
-        /// watchdog terminated it for silence.
-        case channelLost
-        /// The owner asked for the teardown: a session teardown, or a fresh
-        /// connection replacing this one.
-        case ownerRequested
-    }
-
+final class VsockControlService: VsockFeatureService {
     // MARK: - Observable state
 
     /// `true` once the guest agent has sent its `Hello`; reset when the
@@ -145,10 +135,6 @@ final class VsockControlService {
     /// Read at every liveness tick and before every outbound heartbeat, so it
     /// tracks pause/resume without the owner having to push transitions in.
     private let isGuestSuspended: (@MainActor () -> Bool)?
-
-    /// Notified once when the channel dies on its own, never on an
-    /// owner-requested `stop()`.
-    private let onChannelLost: (@MainActor () -> Void)?
 
     /// Where the feature listeners' accept path reads this handshake's state.
     ///
@@ -206,6 +192,12 @@ final class VsockControlService {
     /// Whether the guest can receive files dropped onto the VM display.
     var guestSupportsDropFiles: Bool { guestSupportsDropFilesStorage }
 
+    // MARK: - Settle contract
+
+    /// Notified once when the channel dies on its own, never on an
+    /// owner-requested `stop()`.
+    @ObservationIgnored var onChannelLost: (@MainActor () -> Void)?
+
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
 
     // MARK: - Init
@@ -221,7 +213,6 @@ final class VsockControlService {
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
         onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
-        onChannelLost: (@MainActor () -> Void)? = nil,
         admissionGate: VsockAdmissionGate? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`:
@@ -244,7 +235,6 @@ final class VsockControlService {
         self.policyProvider = policyProvider
         self.onAgentInfoObserved = onAgentInfoObserved
         self.isGuestSuspended = isGuestSuspended
-        self.onChannelLost = onChannelLost
         self.admissionGate = admissionGate
     }
 
@@ -313,7 +303,7 @@ final class VsockControlService {
     /// task runs this method to completion and then unwinds at its own next
     /// cancellation check. The `hasStopped` latch makes `onChannelLost` fire at
     /// most once, and never after an owner teardown has already settled.
-    private func stop(reason: StopReason) {
+    private func stop(reason: VsockSettleReason) {
         guard !hasStopped else { return }
         hasStopped = true
         consumeTask?.cancel()

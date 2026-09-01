@@ -105,7 +105,7 @@ struct VsockControlServiceTests {
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
         onChannelLost: (@MainActor () -> Void)? = nil
     ) -> VsockControlService {
-        VsockControlService(
+        let service = VsockControlService(
             channel: channel,
             label: "test",
             bundledAgentVersion: bundledAgentVersion,
@@ -115,9 +115,10 @@ struct VsockControlServiceTests {
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             policyProvider: policyProvider,
             onAgentInfoObserved: onAgentInfoObserved,
-            isGuestSuspended: isGuestSuspended,
-            onChannelLost: onChannelLost
+            isGuestSuspended: isGuestSuspended
         )
+        service.onChannelLost = onChannelLost
+        return service
     }
 
     /// Completes the handshake for a test that arms a sub-second
