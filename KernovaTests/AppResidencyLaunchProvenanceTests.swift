@@ -2,16 +2,16 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppDelegate.launchProvenance` and
-/// `AppDelegate.automationIdleOutcome` — what decides that a launch nobody
+/// Unit tests for `AppResidencyController.launchProvenance` and
+/// `AppResidencyController.automationIdleOutcome` — what decides that a launch nobody
 /// performed stays headless, and what decides whether the resulting process
 /// keeps running.
-@Suite("AppDelegate launch provenance", .admissionGated)
-struct AppDelegateLaunchProvenanceTests {
+@Suite("AppResidencyController launch provenance", .admissionGated)
+struct AppResidencyLaunchProvenanceTests {
     /// The signals an App Intents cold launch presents: no open Apple Event, no
     /// untitled open, no document, and `isDefaultLaunch` false.
-    private func automationSignals() -> AppDelegate.LaunchProvenance {
-        AppDelegate.launchProvenance(
+    private func automationSignals() -> AppResidencyController.LaunchProvenance {
+        AppResidencyController.launchProvenance(
             openedUntitledFile: false,
             openedDocuments: false,
             hasOpenAppleEvent: false,
@@ -32,7 +32,7 @@ struct AppDelegateLaunchProvenanceTests {
             for documents in [true, false] {
                 for isDefault in [true, false] {
                     #expect(
-                        AppDelegate.launchProvenance(
+                        AppResidencyController.launchProvenance(
                             openedUntitledFile: untitled,
                             openedDocuments: documents,
                             hasOpenAppleEvent: true,
@@ -46,19 +46,19 @@ struct AppDelegateLaunchProvenanceTests {
     @Test("Any single sign of a person asking resolves to a user launch")
     func anyInteractiveSignalIsUser() {
         #expect(
-            AppDelegate.launchProvenance(
+            AppResidencyController.launchProvenance(
                 openedUntitledFile: true, openedDocuments: false, hasOpenAppleEvent: false,
                 isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
         #expect(
-            AppDelegate.launchProvenance(
+            AppResidencyController.launchProvenance(
                 openedUntitledFile: false, openedDocuments: true, hasOpenAppleEvent: false,
                 isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
         #expect(
-            AppDelegate.launchProvenance(
+            AppResidencyController.launchProvenance(
                 openedUntitledFile: false, openedDocuments: false, hasOpenAppleEvent: true,
                 isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
         #expect(
-            AppDelegate.launchProvenance(
+            AppResidencyController.launchProvenance(
                 openedUntitledFile: false, openedDocuments: false, hasOpenAppleEvent: false,
                 isLoginItemLaunch: false, isDefaultLaunch: true) == .user)
     }
@@ -70,7 +70,7 @@ struct AppDelegateLaunchProvenanceTests {
             for documents in [true, false] {
                 for openEvent in [true, false] {
                     for isDefault in [true, false] {
-                        let provenance = AppDelegate.launchProvenance(
+                        let provenance = AppResidencyController.launchProvenance(
                             openedUntitledFile: untitled,
                             openedDocuments: documents,
                             hasOpenAppleEvent: openEvent,
@@ -89,7 +89,7 @@ struct AppDelegateLaunchProvenanceTests {
         // Both `open <app>` and `open -g -j <app>` measured identically:
         // `kAEOpenApplication`, an untitled open, and a default launch.
         #expect(
-            AppDelegate.launchProvenance(
+            AppResidencyController.launchProvenance(
                 openedUntitledFile: true, openedDocuments: false, hasOpenAppleEvent: true,
                 isLoginItemLaunch: false, isDefaultLaunch: true) == .user)
     }
@@ -97,7 +97,7 @@ struct AppDelegateLaunchProvenanceTests {
     @Test("A document launch presents even though it is not a default launch")
     func documentLaunchIsUser() {
         #expect(
-            AppDelegate.launchProvenance(
+            AppResidencyController.launchProvenance(
                 openedUntitledFile: false, openedDocuments: true, hasOpenAppleEvent: true,
                 isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
     }
@@ -113,8 +113,8 @@ struct AppDelegateLaunchProvenanceTests {
         hasUninterruptibleWork: Bool = false,
         hasLiveGuest: Bool = false,
         hasIntentInFlight: Bool = false
-    ) -> AppDelegate.AutomationIdleOutcome {
-        AppDelegate.automationIdleOutcome(
+    ) -> AppResidencyController.AutomationIdleOutcome {
+        AppResidencyController.automationIdleOutcome(
             isAutomationLaunch: isAutomationLaunch,
             hasPresentedInterface: hasPresentedInterface,
             hasVisibleUserWindow: hasVisibleUserWindow,

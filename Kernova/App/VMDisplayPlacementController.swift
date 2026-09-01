@@ -1,18 +1,12 @@
 import Cocoa
 import os
 
-/// The application-level seams a ``VMDisplayPlacementController`` needs but
-/// cannot own: the activation policy, the library window, and the idle
-/// reconcile.
+/// The window seams a ``VMDisplayPlacementController`` needs but cannot own.
 @MainActor
 protocol VMDisplayPlacementHosting: AnyObject {
-    /// The screen a display window entering fullscreen should be positioned on.
-    func preferredScreenForFullscreen(of instance: VMInstance) -> NSScreen?
-    /// Re-asserts whatever the app must be before a window goes on screen.
-    func prepareToPresentWindow()
-    func showLibraryWindow(bringToFront: Bool)
-    func syncActivationPolicy()
-    func reconcileIdleTermination()
+    /// The screen the library window is on, or nil when it has none.
+    var libraryScreen: NSScreen? { get }
+    func showLibrary(bringToFront: Bool)
 }
 
 /// The one owner of where each VM's display lives.
@@ -87,6 +81,9 @@ final class VMDisplayPlacementController {
 
     private let viewModel: VMLibraryViewModel
     weak var host: (any VMDisplayPlacementHosting)?
+    /// The residency decisions a display window's placement needs but cannot
+    /// make.
+    weak var residency: (any WindowResidencyHosting)?
     private var windows: [UUID: VMDisplayWindowController] = [:]
     /// The reason recorded for a programmatic close, from the moment it is
     /// requested until the close has been fully handled.
@@ -241,7 +238,7 @@ final class VMDisplayPlacementController {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
-        host?.prepareToPresentWindow()
+        residency?.prepareToPresentWindow()
 
         let controller = VMDisplayWindowController(
             instance: instance,
@@ -271,7 +268,7 @@ final class VMDisplayPlacementController {
         // For fullscreen: position on the remembered display so toggleFullScreen
         // picks the correct screen.
         if enterFullscreen {
-            if let screen = host?.preferredScreenForFullscreen(of: instance),
+            if let screen = preferredScreenForFullscreen(of: instance),
                 let window = controller.window
             {
                 let frame = screen.frame
@@ -285,6 +282,29 @@ final class VMDisplayPlacementController {
 
         apply(Self.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
         controller.showWindow(nil)
+    }
+
+    /// The best screen for entering fullscreen: the display the VM was last
+    /// fullscreen on, else the library window's display, else the primary.
+    ///
+    /// Reads `lastFullscreenDisplayID`, which ``handleClose(of:context:)`` is the
+    /// only writer of.
+    func preferredScreenForFullscreen(of instance: VMInstance) -> NSScreen? {
+        if let savedID = instance.configuration.lastFullscreenDisplayID {
+            if let target = NSScreen.screens.first(where: { $0.displayID == savedID }) {
+                Self.logger.debug(
+                    "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': using saved display \(savedID, privacy: .public)"
+                )
+                return target
+            }
+            Self.logger.debug(
+                "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back"
+            )
+        }
+        if let libraryScreen = host?.libraryScreen {
+            return libraryScreen
+        }
+        return NSScreen.screens.first
     }
 
     // MARK: - Transition Handling
@@ -335,16 +355,16 @@ final class VMDisplayPlacementController {
             case .none:
                 break
             case .idleReconcile:
-                self.host?.reconcileIdleTermination()
+                self.residency?.reconcileIdleTermination()
             case .restoreLibrary:
                 self.viewModel.selectedID = vmID
                 switch Self.libraryRestore(
                     wasKeyWindow: context.wasKeyWindow, appWasActive: context.appWasActive)
                 {
                 case .focusLibrary:
-                    self.host?.showLibraryWindow(bringToFront: true)
+                    self.host?.showLibrary(bringToFront: true)
                 case .showInBackground:
-                    self.host?.showLibraryWindow(bringToFront: false)
+                    self.host?.showLibrary(bringToFront: false)
                 case .none:
                     break
                 }
@@ -354,7 +374,7 @@ final class VMDisplayPlacementController {
                 // observer's independent `Task` isn't guaranteed to run after the
                 // restore above, which would flip the Dock icon to `.accessory`
                 // and back.
-                self.host?.syncActivationPolicy()
+                self.residency?.syncActivationPolicy()
             }
         }
     }
