@@ -99,14 +99,15 @@ struct VMLifecyclePhaseTests {
             VMLifecyclePhase.restoringSavedState(sessionID: nil).naming(id)
                 == .restoringSavedState(sessionID: id))
 
-        // Every other phase is left alone rather than silently gaining an
-        // identity it cannot carry.
-        for phase in VMLifecyclePhaseFixtures.all where !phase.admitsSessionIdentity {
-            #expect(phase.naming(id) == phase, "\(phase)")
+        // Every other phase names no session to promote into.
+        let promotableKinds: Set<VMLifecyclePhaseKind> = [.starting, .installing, .restoringSavedState]
+        for phase in VMLifecyclePhaseFixtures.all {
+            if promotableKinds.contains(phase.kind) {
+                #expect(phase.naming(id)?.sessionID == id, "\(phase)")
+            } else {
+                #expect(phase.naming(id) == nil, "\(phase)")
+            }
         }
-        #expect(!VMLifecyclePhase.stopped.admitsSessionIdentity)
-        #expect(!VMLifecyclePhase.suspended.admitsSessionIdentity)
-        #expect(!VMLifecyclePhase.running(sessionID: id).admitsSessionIdentity)
     }
 
     // MARK: - Transition Predicates
@@ -189,13 +190,9 @@ struct VMLifecyclePhaseTests {
 
     @Test("canStart covers the at-rest phases a boot can begin from")
     func canStart() {
-        for phase in [
-            VMLifecyclePhase.stopped, .failed(message: "Boot failed."), .initialBoot,
-        ] {
-            #expect(phase.canStart, "\(phase)")
-        }
-        for phase in VMLifecyclePhaseFixtures.all where !phase.canEditSettings {
-            #expect(!phase.canStart, "\(phase)")
+        let startableKinds: Set<VMLifecyclePhaseKind> = [.stopped, .failed, .initialBoot]
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(phase.canStart == startableKinds.contains(phase.kind), "\(phase)")
         }
         // A suspended VM resumes rather than starting.
         #expect(!VMLifecyclePhase.suspended.canStart)
@@ -273,13 +270,6 @@ struct VMLifecyclePhaseTests {
             .installing(sessionID: Self.session),
         ] {
             #expect(!phase.hasActiveDisplay, "\(phase)")
-        }
-    }
-
-    @Test("canEditSettings is exactly the set canStart admits")
-    func canEditSettingsMatchesCanStart() {
-        for phase in VMLifecyclePhaseFixtures.all {
-            #expect(phase.canEditSettings == phase.canStart, "\(phase)")
         }
     }
 }
