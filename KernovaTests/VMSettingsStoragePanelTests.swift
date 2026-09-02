@@ -86,6 +86,44 @@ struct VMSettingsStoragePanelTests {
         try await waitUntil { !self.showsMissingBadge(in: vc) }
     }
 
+    // MARK: - Section lock hints
+
+    @Test("Each section's lock hint names the states that section is editable in")
+    func sectionLockHintsNameTheirOwnCondition() throws {
+        let hintText = VMSettingsStoragePanelViewController.removableMediaLockHintText
+        // Removable media is hot-pluggable, so the shared "Editable when
+        // stopped" would be a claim the user disproves the moment a guest boots.
+        #expect(hintText != groupedFormLockHintText)
+
+        // A stopped VM edits both lists, so neither hint shows.
+        let (stopped, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(visibleLockHints(in: stopped.view).isEmpty)
+
+        // Running pins the disks and still takes a hot-plug: the disk hint
+        // shows alone.
+        let (running, _, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .running(sessionID: UUID()))
+        #expect(visibleLockHints(in: running.view) == [groupedFormLockHintText])
+
+        // A suspended VM's saved state pins both, so both sections say so.
+        let (suspended, _, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .suspended)
+        #expect(
+            Set(visibleLockHints(in: suspended.view)) == [groupedFormLockHintText, hintText])
+    }
+
+    /// The tooltip of every lock hint currently on screen.
+    private func visibleLockHints(in view: NSView) -> [String] {
+        allSubviews(NSStackView.self, in: view) {
+            !$0.isHidden && $0.toolTip != nil
+                && [
+                    groupedFormLockHintText,
+                    VMSettingsStoragePanelViewController.removableMediaLockHintText,
+                ].contains($0.toolTip ?? "")
+        }
+        .compactMap(\.toolTip)
+    }
+
     // MARK: - Per-row delete confirmation prompt
 
     @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")

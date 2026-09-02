@@ -104,6 +104,15 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         viewModel.capabilities.isAvailable(.editStorageDisks, on: instance)
     }
 
+    /// What the Removable Media header says while its rows are locked.
+    ///
+    /// Its own wording rather than the shared "Editable when stopped": a
+    /// running guest takes a hot-plug, so the shared claim is one the user can
+    /// disprove in a second. What is left out is a VM mid-save, mid-capture,
+    /// mid-restore, or paused to disk — each pins the device set its saved
+    /// state or its capture will be read back into.
+    static let removableMediaLockHintText = "Editable when stopped or running"
+
     /// Whether this VM's removable-media list takes an edit right now.
     ///
     /// Wider than ``canEditStorageDisks``: the media are hot-pluggable, so a
@@ -267,6 +276,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         return makeGroupedFormSection([
             removableLockRegistry.makeHeader(
                 "Removable Media",
+                lockable: true,
+                lockHintText: Self.removableMediaLockHintText,
                 paragraphs: [
                     firstParagraph,
                     .body(

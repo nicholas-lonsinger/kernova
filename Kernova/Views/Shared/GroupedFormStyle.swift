@@ -379,15 +379,19 @@ func makeGroupedFormValueLabel(_ text: String) -> NSTextField {
 /// What a section header says about rows only a stopped VM can change.
 let groupedFormLockHintText = "Editable when stopped"
 
-/// A section-header hint marking the rows below as locked while the VM runs.
+/// A section-header hint naming the states in which the rows below take an
+/// edit.
+///
+/// `text` states the condition for *this* section: the default suits everything
+/// a live `VZVirtualMachine` pins, and a section a running guest still takes an
+/// edit on passes its own wording rather than a claim the user can disprove.
 @MainActor
-func makeGroupedFormLockHint() -> NSView {
-    let icon = NSImageView(
-        image: .systemSymbol("lock.fill", accessibilityDescription: groupedFormLockHintText))
+func makeGroupedFormLockHint(text: String = groupedFormLockHintText) -> NSView {
+    let icon = NSImageView(image: .systemSymbol("lock.fill", accessibilityDescription: text))
     icon.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
     icon.contentTintColor = .secondaryLabelColor
 
-    let label = NSTextField(labelWithString: groupedFormLockHintText)
+    let label = NSTextField(labelWithString: text)
     label.font = .preferredFont(forTextStyle: .caption1)
     label.textColor = .secondaryLabelColor
     label.isSelectable = false
@@ -396,7 +400,7 @@ func makeGroupedFormLockHint() -> NSView {
     hint.orientation = .horizontal
     hint.alignment = .centerY
     hint.spacing = Spacing.tight
-    hint.toolTip = groupedFormLockHintText
+    hint.toolTip = text
     hint.setContentHuggingPriority(.required, for: .horizontal)
     hint.setContentCompressionResistancePriority(.required, for: .horizontal)
     return hint
