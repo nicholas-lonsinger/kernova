@@ -274,4 +274,148 @@ struct VMNetworkSlotRegistryTests {
         #expect(registry.refuseSlotConflict(on: instance, movingFrom: old, to: new) == false)
         #expect(failures.showError == false)
     }
+
+    // MARK: - Network Recreation
+
+    /// A running VM whose coordinator mirrors a live attachment on `kind` —
+    /// what ``VMInstance/mayHoldAttachment(on:)`` reads as a holder.
+    private func makeHolder(named name: String, on kind: VmnetNetworkKind) -> VMInstance {
+        let instance = makeInstance(name: name)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = kind == .hostOnly ? .hostOnly : .shared
+        instance.enter(.running(sessionID: UUID()))
+        attachNetworkCoordinator(
+            to: instance,
+            device: MockNetworkDeviceControl(plan: kind == .hostOnly ? .hostOnly : .sharedVmnet),
+            isVMNetworkingEntitled: kind == .shared)
+        return instance
+    }
+
+    /// A running Host Only VM whose device refuses every attach, so activating
+    /// its coordinator burns the ladder out and publishes the suspicion.
+    ///
+    /// `vmnet.materializeFails` is set here so the materialization ladder ends
+    /// rather than re-driving a device that will never accept the plan.
+    private func makeHostOnlyReporter(
+        named name: String, vmnet: MockVmnetNetworkProvider
+    ) -> (VMInstance, MockNetworkDeviceControl, NetworkAttachmentCoordinator) {
+        let instance = makeInstance(name: name)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .hostOnly
+        instance.enter(.running(sessionID: UUID()))
+        let device = MockNetworkDeviceControl()
+        device.refusedPlans = [.hostOnly]
+        vmnet.materializeFails = true
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device, vmnetNetworks: vmnet)
+        return (instance, device, coordinator)
+    }
+
+    @Test("A sibling holding the network refuses the recreate a suspicion asks for")
+    func aHolderRefusesTheDefectRecreate() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let holder = makeHolder(named: "Holder", on: .hostOnly)
+        let (reporter, _, coordinator) = makeHostOnlyReporter(named: "Reporter", vmnet: vmnet)
+        roster.instances = [holder, reporter]
+        coordinator.activate()
+        #expect(reporter.suspectsDefectiveNetwork(on: .hostOnly))
+
+        registry.rebuildNetworksIfIdle()
+
+        // One VM's local failure must not pull the network out from under a
+        // healthy sibling.
+        #expect(vmnet.invalidatedKinds.isEmpty)
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        coordinator.stop()
+    }
+
+    @Test("The same suspicion recreates the network once the holder is gone")
+    func theRefusedDefectRecreateLandsOnceTheHolderGoes() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let holder = makeHolder(named: "Holder", on: .hostOnly)
+        let (reporter, _, coordinator) = makeHostOnlyReporter(named: "Reporter", vmnet: vmnet)
+        roster.instances = [holder, reporter]
+        coordinator.activate()
+        registry.rebuildNetworksIfIdle()
+        #expect(vmnet.invalidatedKinds.isEmpty)
+
+        // Nothing was queued: the claim still stands on the reporter, so the
+        // next pass re-derives it.
+        holder.tearDownSession(restingAt: .stopped)
+        registry.rebuildNetworksIfIdle()
+
+        #expect(vmnet.invalidatedKinds == [.hostOnly])
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        coordinator.stop()
+    }
+
+    @Test("A suspicion with nobody on the network recreates it and reattaches the reporter")
+    func anUnheldDefectRecreatesAndNudges() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let (reporter, device, coordinator) = makeHostOnlyReporter(named: "Reporter", vmnet: vmnet)
+        roster.instances = [reporter]
+        coordinator.activate()
+
+        // The recreated network comes up healthy. The reporter's retry ladder
+        // is spent, so the arbiter's nudge is its only wake-up.
+        vmnet.materializeFails = false
+        device.refusedPlans = []
+        registry.rebuildNetworksIfIdle()
+        #expect(vmnet.invalidatedKinds == [.hostOnly])
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+
+        #expect(device.appliedPlans == [.hostOnly])
+        #expect(!reporter.suspectsDefectiveNetwork(on: .hostOnly))
+    }
+
+    @Test("A pending declaration set recreates the network and nudges a detached session")
+    func aPendingDeclarationRecreatesAndNudges() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let (reporter, device, coordinator) = makeHostOnlyReporter(named: "Detached", vmnet: vmnet)
+        roster.instances = [reporter]
+        coordinator.activate()
+        vmnet.scriptedPendingKinds = [.hostOnly]
+        vmnet.materializeFails = false
+        device.refusedPlans = []
+
+        registry.rebuildNetworksIfIdle()
+
+        // The nudge is not reserved for the defect path: a VM sitting detached
+        // on a network that was just dropped needs it either way.
+        #expect(vmnet.invalidatedKinds == [.hostOnly])
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        #expect(device.appliedPlans == [.hostOnly])
+    }
+
+    @Test("Nothing to install and nobody suspicious leaves the network alone")
+    func anIdleNetworkWithNoReasonIsLeftAlone() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = [makeInstance(name: "Stopped")]
+
+        registry.rebuildNetworksIfIdle()
+
+        #expect(vmnet.invalidatedKinds.isEmpty)
+    }
+
+    @Test("Reports re-entering the arbitration pass settle on one recreate")
+    func theArbitrationPassTerminatesUnderReentrantReports() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let (reporter, _, coordinator) = makeHostOnlyReporter(named: "Reporter", vmnet: vmnet)
+        roster.instances = [reporter]
+        // The production wiring: going pending and reporting a defect both
+        // re-enter the same pass, and the pass nudges back into the session.
+        reporter.onNetworkArbitrationNeeded = { registry.rebuildNetworksIfIdle() }
+
+        coordinator.activate()
+
+        #expect(vmnet.invalidatedKinds == [.hostOnly])
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        coordinator.stop()
+    }
 }

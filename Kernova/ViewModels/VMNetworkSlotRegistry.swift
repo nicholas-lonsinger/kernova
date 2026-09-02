@@ -15,7 +15,7 @@ final class VMNetworkSlotRegistry {
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VMNetworkSlotRegistry")
 
-    private let vmnetNetworks: any VmnetNetworkProviding
+    private let vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating
 
     /// Whether this build's reservation machinery is live — a process-wide
     /// constant, snapshotted at init.
@@ -37,7 +37,10 @@ final class VMNetworkSlotRegistry {
         return roster.instances
     }
 
-    init(vmnetNetworks: any VmnetNetworkProviding, isVMNetworkingEntitled: Bool) {
+    init(
+        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
+        isVMNetworkingEntitled: Bool
+    ) {
         self.vmnetNetworks = vmnetNetworks
         self.isVMNetworkingEntitled = isVMNetworkingEntitled
     }
@@ -329,14 +332,16 @@ final class VMNetworkSlotRegistry {
 
     // MARK: - Network Recreation
 
-    /// Recreates every app-managed network whose DHCP reservations or
-    /// forwarding rules are no longer the ones that should install, once no VM
-    /// could be attached to it.
+    /// Recreates every app-managed network that has a reason to be recreated,
+    /// once no VM could be attached to it.
     ///
-    /// Both are fixed at creation, so a change reaches guests only through a
-    /// recreate — and only while no session holds an attachment on the network.
-    /// The recreate keeps the network's addressing, so no guest's address
-    /// moves.
+    /// Two reasons, both re-derived on every pass: the network's DHCP
+    /// reservations or forwarding rules are no longer the ones that should
+    /// install (both are fixed at creation, so a change reaches guests only
+    /// through a recreate), or a session's attachment recovery reports the
+    /// network defective. The recreate keeps the network's addressing, so no
+    /// guest's address moves.
+    ///
     /// `tornDown` is the instance whose session just ended, excluded from the
     /// idle scan: `tearDownSession` fires its hook before the caller settles
     /// the status, so a VM released from a transitioning one (`.saving` on a
@@ -346,15 +351,28 @@ final class VMNetworkSlotRegistry {
         for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind, ignoring: tornDown) }
     }
 
+    /// Recreates the app-managed network of `kind` when something asks for it
+    /// and nothing holds it — the only place ``VmnetNetworkRecreating`` is
+    /// called, because a recreate pulls the network out from under every VM
+    /// sharing it and this is the only type that can see them all.
     private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind, ignoring tornDown: VMInstance?) {
-        guard vmnetNetworks.networkConfigurationIsPending(for: kind) else { return }
-        let attached = instances.contains {
-            $0 !== tornDown && $0.mayHoldAttachment(on: kind)
+        let others = instances.filter { $0 !== tornDown }
+        let reason: String
+        if vmnetNetworks.networkConfigurationIsPending(for: kind) {
+            reason = "to install its pending changes"
+        } else if others.contains(where: { $0.suspectsDefectiveNetwork(on: kind) }) {
+            reason = "after a session reported it defective"
+        } else {
+            return
         }
-        guard !attached else { return }
+        // The single precondition for dropping shared state: nobody is on it.
+        guard !others.contains(where: { $0.mayHoldAttachment(on: kind) }) else { return }
         Self.logger.notice(
-            "Recreating the \(kind.rawValue, privacy: .public) network to install its pending changes"
-        )
+            "Recreating the \(kind.rawValue, privacy: .public) network \(reason, privacy: .public)")
         vmnetNetworks.invalidateNetwork(for: kind)
+        // The network a detached session was waiting on just went away, on both
+        // reasons alike — its retry ladder is spent, so this nudge is the only
+        // wake-up it gets. A no-op for every VM not detached on this kind.
+        for instance in others { instance.vmnetNetworkWasInvalidated(kind) }
     }
 }

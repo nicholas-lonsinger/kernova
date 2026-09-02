@@ -2928,6 +2928,29 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 
+    @Test("A session's defect report reaches the registry through the library's wiring")
+    func aDefectReportReachesTheRegistry() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let viewModel = await makeSharedNetworkLibrary(named: ["Reporting VM"], vmnet: vmnet)
+        let instance = try #require(viewModel.instances.first)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .hostOnly
+        instance.enter(.running(sessionID: UUID()))
+        let device = MockNetworkDeviceControl()
+        device.refusedPlans = [.hostOnly]
+        vmnet.materializeFails = true
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device, vmnetNetworks: vmnet)
+
+        coordinator.activate()
+
+        // The coordinator drops nothing itself: the network goes only because
+        // the report reached the library, which found nobody holding it.
+        #expect(vmnet.invalidatedKinds == [.hostOnly])
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        coordinator.stop()
+    }
+
     @Test("Deleting a VM leaves the rules of one sharing its address declared")
     func deleteKeepsADuplicateMACsForwardingRules() async {
         let vmnet = MockVmnetNetworkProvider()

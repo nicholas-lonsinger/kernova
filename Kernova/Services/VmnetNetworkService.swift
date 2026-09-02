@@ -313,10 +313,6 @@ protocol VmnetNetworkProviding: Sendable {
     /// Materializes the network of `kind` off the caller's actor. `true` on
     /// success (or when already materialized); failures are logged here.
     func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool
-    /// Drops (and releases) the materialized network of `kind`, so the next
-    /// materialization creates it anew — pinned to the persisted addressing,
-    /// so recovery cannot drift the subnet.
-    func invalidateNetwork(for kind: VmnetNetworkKind)
     /// Ensures `mac` holds a DHCP reservation slot on the network of `kind`.
     /// Cheap and non-blocking — safe from the main actor; the reservation is
     /// installed at the network's next materialization.
@@ -348,14 +344,28 @@ protocol VmnetNetworkProviding: Sendable {
     /// Rules are fixed at network creation, so a change reaches guests at the
     /// network's next materialization.
     func setPortForwardingRules(_ rules: [PortForwardingRule], for mac: String, kind: VmnetNetworkKind)
+    /// The kind whose materialized network `network` is, `nil` for a network
+    /// this service does not hold.
+    func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind?
+}
+
+/// Recreating an app-managed network — split off ``VmnetNetworkProviding`` so
+/// only the library's arbiter can express the call.
+///
+/// Dropping a network pulls it out from under every VM sharing it, so the one
+/// type that can see every VM is the one that decides. A consumer holding a
+/// plain ``VmnetNetworkProviding`` — attachment construction, one session's
+/// attachment recovery — cannot name these members at all.
+protocol VmnetNetworkRecreating: Sendable {
+    /// Drops (and releases) the materialized network of `kind`, so the next
+    /// materialization creates it anew — pinned to the persisted addressing,
+    /// so recovery cannot drift the subnet.
+    func invalidateNetwork(for kind: VmnetNetworkKind)
     /// Whether the materialized network of `kind` carries a different set of
     /// DHCP reservations or forwarding rules than the ones that would install
     /// right now — so recreating it would change what guests get. `false`
     /// while no network of `kind` is materialized.
     func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool
-    /// The kind whose materialized network `network` is, `nil` for a network
-    /// this service does not hold.
-    func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind?
 }
 
 /// Owns the app's managed vmnet networks — the Host Only network and the
@@ -908,7 +918,7 @@ final class VmnetNetworkService: @unchecked Sendable {
     #endif
 }
 
-extension VmnetNetworkService: VmnetNetworkProviding {
+extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
         VZVmnetNetworkDeviceAttachment(network: try network(for: kind).network)
     }

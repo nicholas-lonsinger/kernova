@@ -78,12 +78,15 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     }
 }
 
-/// Scripted stand-in for `VmnetNetworkProviding`, so attachment-building tests
-/// name a Host Only attachment without materializing a vmnet network.
+/// Scripted stand-in for `VmnetNetworkProviding` and `VmnetNetworkRecreating`,
+/// so attachment-building tests name a Host Only attachment without
+/// materializing a vmnet network.
 ///
 /// `scriptedAttachment` is a NAT attachment purely as a stand-in object —
 /// callers only compare its identity.
-final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable {
+final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreating,
+    @unchecked Sendable
+{
     var scriptedAttachment: VZNetworkDeviceAttachment = VZNATNetworkDeviceAttachment()
     /// The kinds counting as materialized — held per kind, since one pass of the
     /// idle rebuild queries every kind and a shared flag would let the first

@@ -160,7 +160,7 @@ final class VMLibrary: VMInstanceRoster {
         lifecycle: VMLifecycleCoordinator,
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
-        vmnetNetworks: any VmnetNetworkProviding,
+        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
         isVMNetworkingEntitled: Bool
     ) {
         self.storageService = storageService
@@ -685,6 +685,13 @@ final class VMLibrary: VMInstanceRoster {
         // to release it.
         instance.onSessionTornDown = { [weak self, weak instance] in
             self?.networkSlots.rebuildNetworksIfIdle(ignoring: instance)
+        }
+        // A session reporting its network defective, or releasing the attachment
+        // it held on one, asks for the same pass: the registry is the only place
+        // an app-managed network is torn down, because it is the only one that
+        // can see every VM sharing it.
+        instance.onNetworkArbitrationNeeded = { [weak self] in
+            self?.networkSlots.rebuildNetworksIfIdle()
         }
         // An Ephemeral Mode VM goes back to its baseline on every power-off.
         instance.onPoweredOff = { [weak self, weak instance] in

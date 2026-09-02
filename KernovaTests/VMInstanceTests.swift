@@ -645,36 +645,6 @@ struct VMInstanceTests {
 
     // MARK: - Network Attachment Recovery
 
-    /// Wires a mock-backed coordinator onto `instance`, reading its live
-    /// configuration the way the production wiring does.
-    private func attachNetworkCoordinator(
-        to instance: VMInstance,
-        device: MockNetworkDeviceControl,
-        provider: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
-        linkObserver: MockNetworkLinkObserver = MockNetworkLinkObserver()
-    ) -> NetworkAttachmentCoordinator {
-        let coordinator = NetworkAttachmentCoordinator(
-            vmName: instance.name,
-            device: device,
-            interfaces: provider,
-            linkObserver: linkObserver,
-            // Pinned rather than read from the test host's signature, so the
-            // plans these tests assert on don't vary with how it was signed.
-            isVMNetworkingEntitled: false,
-            retryDelays: [],
-            isEligible: { [weak instance] in
-                guard let instance else { return false }
-                return instance.status == .running || instance.status == .paused
-            },
-            choice: { [weak instance] in instance?.configuration.networkChoice },
-            onPendingChange: { [weak instance] in
-                instance?.sessionContext?.networkAttachmentPending = $0
-            })
-        let context = instance.sessionContext ?? instance.beginSessionContext()
-        context.networkAttachmentCoordinator = coordinator
-        return coordinator
-    }
-
     @Test("A running VM awaiting network reattach shows the warning tint and says why")
     func networkPendingShowsWarningTintAndToolTip() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
@@ -781,6 +751,53 @@ struct VMInstanceTests {
 
         #expect(instance.mayHoldAttachment(on: .shared) == holdsShared)
         #expect(instance.mayHoldAttachment(on: .hostOnly) == (plan == .hostOnly))
+    }
+
+    @Test("suspectsDefectiveNetwork answers from the coordinator, and claims nothing without one")
+    func suspectsDefectiveNetworkReadsTheCoordinator() async {
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .hostOnly
+        // Only a live coordinator can claim a network defective.
+        #expect(!instance.suspectsDefectiveNetwork(on: .hostOnly))
+
+        let device = MockNetworkDeviceControl()
+        device.refusedPlans = [.hostOnly]
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.materializeFails = true
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device, vmnetNetworks: vmnet)
+        coordinator.activate()
+
+        #expect(instance.suspectsDefectiveNetwork(on: .hostOnly))
+        #expect(!instance.suspectsDefectiveNetwork(on: .shared))
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        coordinator.stop()
+    }
+
+    @Test("onNetworkArbitrationNeeded fires on going pending and on a defect report")
+    func networkArbitrationHookFiresOnBothTriggers() async {
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .hostOnly
+        var arbitrations = 0
+        instance.onNetworkArbitrationNeeded = { arbitrations += 1 }
+        let device = MockNetworkDeviceControl()
+        device.refusedPlans = [.hostOnly]
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.materializeFails = true
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device, vmnetNetworks: vmnet)
+
+        coordinator.activate()
+
+        // Going pending released whatever attachment this VM held, and the
+        // ladder burning out reports the network suspect: two reasons for the
+        // library to re-run its pass.
+        #expect(instance.networkAttachmentPending)
+        #expect(arbitrations == 2)
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        coordinator.stop()
     }
 
     @Test("tearDownSession stops network recovery and clears the pending flag")
@@ -1195,18 +1212,10 @@ struct VMInstanceTests {
     @Test("networkAttachmentDisconnected forwards to the recovery coordinator")
     func networkDisconnectedEventForwardsToCoordinator() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
         let device = MockNetworkDeviceControl(plan: .nat)
-        let coordinator = NetworkAttachmentCoordinator(
-            vmName: "Test VM",
-            device: device,
-            interfaces: MockBridgedInterfaceProvider(available: [], primary: nil),
-            linkObserver: MockNetworkLinkObserver(),
-            vmnetNetworks: MockVmnetNetworkProvider(),
-            isVMNetworkingEntitled: false,
-            retryDelays: [],
-            choice: { NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil) },
-            onPendingChange: { _ in })
-        instance.beginSessionContext().networkAttachmentCoordinator = coordinator
+        let coordinator = attachNetworkCoordinator(to: instance, device: device)
         coordinator.activate()
         #expect(device.appliedPlans.isEmpty)
 

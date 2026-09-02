@@ -358,7 +358,7 @@ final class VMLibraryViewModel {
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
         preferences: AppPreferences = .shared,
-        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared,
+        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating = VmnetNetworkService.shared,
         isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking
     ) {
         self.storageService = storageService
