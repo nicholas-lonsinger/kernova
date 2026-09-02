@@ -355,18 +355,37 @@ final class NetworkAttachmentCoordinator {
     private var vmnetMaterializationGeneration = 0
     /// Whether this pending episode already reported the network defective —
     /// once per episode bounds the recreate churn of a persistently failing
-    /// attachment, a still-defective recreate included.
+    /// attachment, a still-defective recreate included. Reset by a fresh
+    /// episode, and by the chosen mode resolving onto a different network,
+    /// whose own defect this session has yet to report.
     private var didReportNetworkDefect = false
+
+    /// The kind ``ladderExhausted()`` last reported, before checking that the
+    /// session still resolves onto it.
+    private var reportedDefectiveVmnetKind: VmnetNetworkKind?
+
+    /// The network the chosen mode resolved to at the last reconcile, so a
+    /// change of network can retire what was claimed about the previous one.
+    private var resolvedVmnetKind: VmnetNetworkKind?
 
     /// The app-managed network this session believes is defective, `nil` when
     /// it suspects none — the outstanding claim
     /// `VMInstance.suspectsDefectiveNetwork(on:)` publishes for the library's
     /// arbiter to read.
     ///
-    /// Live only while the suspicion still stands: attaching withdraws it, and
-    /// so does the recreate that answers it. Nothing queues it, so an arbiter
-    /// that refuses the recreate today re-derives the claim on its next pass.
-    private(set) var suspectedDefectiveVmnetKind: VmnetNetworkKind?
+    /// Derived rather than stored, so it stands only while the session is
+    /// still on the network it reported: a live switch to another mode leaves
+    /// the claim behind with no attach to withdraw it, and a mode that
+    /// resolves to nothing at all never reaches `setPending(false)`.
+    /// Attaching withdraws it, and so does the recreate that answers it.
+    /// Nothing queues it, so an arbiter that refuses the recreate today
+    /// re-derives the claim on its next pass.
+    var suspectedDefectiveVmnetKind: VmnetNetworkKind? {
+        guard let reportedDefectiveVmnetKind,
+            choice().flatMap(resolvePlan(for:))?.vmnetKind == reportedDefectiveVmnetKind
+        else { return nil }
+        return reportedDefectiveVmnetKind
+    }
 
     init(
         vmName: String,
@@ -420,7 +439,7 @@ final class NetworkAttachmentCoordinator {
         vmnetMaterializationKind = nil
         // A torn-down session claims nothing: its suspicion must not outlive it
         // and drive a recreate on behalf of a VM that is gone.
-        suspectedDefectiveVmnetKind = nil
+        reportedDefectiveVmnetKind = nil
     }
 
     /// VZ's attachment-disconnect callback: the framework has nil'd the
@@ -480,6 +499,7 @@ final class NetworkAttachmentCoordinator {
         }
 
         let desired = resolvePlan(for: choice)
+        noteResolvedVmnetKind(desired?.vmnetKind)
         if let desired {
             if device.currentPlan != desired {
                 lastAttachAttemptAt = clock.now
@@ -516,6 +536,19 @@ final class NetworkAttachmentCoordinator {
             scheduleRetry()
             if let kind = desired?.vmnetKind { ensureVmnetMaterialization(of: kind) }
         }
+    }
+
+    /// Retires what this session claimed about the network it was on when the
+    /// chosen mode resolves onto a different one — a live mode switch, or a
+    /// bridge going away so the mode resolves to nothing at all. Neither
+    /// reaches `setPending(false)`, so without this the claim would outlive
+    /// the network it was made about and the report budget would stay spent
+    /// against a mode this session has never reported on.
+    private func noteResolvedVmnetKind(_ kind: VmnetNetworkKind?) {
+        guard kind != resolvedVmnetKind else { return }
+        resolvedVmnetKind = kind
+        didReportNetworkDefect = false
+        reportedDefectiveVmnetKind = nil
     }
 
     /// Drives the app's vmnet network toward materialized while a session in
@@ -625,7 +658,7 @@ final class NetworkAttachmentCoordinator {
             !didReportNetworkDefect
         else { return }
         didReportNetworkDefect = true
-        suspectedDefectiveVmnetKind = kind
+        reportedDefectiveVmnetKind = kind
         Self.logger.warning(
             "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(kind.rawValue, privacy: .public) network — reporting it as suspect"
         )
@@ -645,14 +678,18 @@ final class NetworkAttachmentCoordinator {
     /// suspected defect alike — because a session sitting detached on a network
     /// that was just dropped has no other wake-up signal: its retry ladder is
     /// spent and a detached device fires no disconnects.
+    /// Ineligible sessions drop it like every other trigger: `reconcile`
+    /// refuses to run during a save or a restore, so materializing here would
+    /// spin a task whose reconcile is discarded, and the activation at the next
+    /// `.running` re-enters anyway.
     func vmnetNetworkWasInvalidated(_ kind: VmnetNetworkKind) {
-        guard isActive, isPending,
+        guard isActive, isEligible(), isPending,
             choice().flatMap(resolvePlan(for:))?.vmnetKind == kind
         else { return }
         // The recreate answers the claim, so it is withdrawn. `didReportNetworkDefect`
         // deliberately stays set: a recreate that comes up just as defective
         // must not report again and start a recreate loop.
-        suspectedDefectiveVmnetKind = nil
+        reportedDefectiveVmnetKind = nil
         // Cancel first: the in-flight task's own ladder may already be spent,
         // and the single-flight guard would otherwise swallow this nudge.
         vmnetMaterializationTask?.cancel()
@@ -670,7 +707,7 @@ final class NetworkAttachmentCoordinator {
             didReportNetworkDefect = false
             // An attached session suspects nothing — the claim is withdrawn
             // even if the arbiter never got to act on it.
-            suspectedDefectiveVmnetKind = nil
+            reportedDefectiveVmnetKind = nil
         }
         Self.logger.notice(
             "Network attachment for '\(self.vmName, privacy: .public)' is \(pending ? "pending reattach" : "attached", privacy: .public)"

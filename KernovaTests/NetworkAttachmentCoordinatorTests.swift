@@ -377,6 +377,78 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.stop()
     }
 
+    @Test("A live switch to a mode on no app-managed network withdraws the claim")
+    func aSwitchOffTheSuspectNetworkWithdrawsTheClaim() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            retryDelays: [])
+        h.device.refusedPlans = [.hostOnly]
+        h.vmnet.materializeFails = true
+
+        h.coordinator.activate()
+        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+
+        // Bridged with no usable interface resolves to nothing, so the session
+        // never attaches and `setPending(false)` never runs — the claim has to
+        // retire on the resolved network changing, or the arbiter would keep
+        // recreating a network this VM left.
+        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0")
+        h.coordinator.configurationChanged()
+
+        #expect(h.coordinator.isPending)
+        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
+        #expect(h.defectReports.count == 1)
+        h.coordinator.stop()
+    }
+
+    @Test("A live switch to the other vmnet mode restores the report budget")
+    func aSwitchBetweenVmnetModesRestoresTheReportBudget() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            entitled: true,
+            retryDelays: [])
+        h.device.refusedPlans = [.hostOnly, .sharedVmnet]
+        h.vmnet.materializeFails = true
+
+        h.coordinator.activate()
+        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+
+        // One report per episode bounds churn on one network, not on every
+        // network the session may move onto.
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+
+        #expect(h.coordinator.suspectedDefectiveVmnetKind == .shared)
+        #expect(h.defectReports.count == 2)
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        h.coordinator.stop()
+    }
+
+    @Test("An ineligible session drops the arbiter's nudge")
+    func recreateNudgeIsDroppedWhileIneligible() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            retryDelays: [])
+        h.device.refusedPlans = [.hostOnly]
+        h.vmnet.materializeFails = true
+
+        h.coordinator.activate()
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+
+        // A save-suspend: still active, but the reconcile a materialization
+        // would trigger is dropped on eligibility, so the task would spin for
+        // nothing. Activation at the next `.running` re-enters.
+        h.eligibility.isEligible = false
+        h.vmnet.materializeFails = false
+        h.coordinator.vmnetNetworkWasInvalidated(.hostOnly)
+
+        #expect(h.coordinator.vmnetMaterializationTaskForTesting == nil)
+        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
+        h.coordinator.stop()
+    }
+
     @Test("A stopped session withdraws its suspicion")
     func stopWithdrawsTheSuspicion() async {
         let h = makeHarness(
