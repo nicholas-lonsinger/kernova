@@ -1882,8 +1882,8 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .running)
     }
 
-    @Test("start keeps the generic error when the main disk attach fails")
-    func startMainDiskAttachFailureStaysGeneric() async {
+    @Test("start keeps the generic error when the VM's only disk fails to attach")
+    func startSoleDiskAttachFailureStaysGeneric() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
@@ -1897,9 +1897,32 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(instance)
 
-        // Removing the boot disk can't fix the VM, so no removal offer.
+        // Removing the VM's only disk leaves nothing to start, so no removal offer.
         #expect(presenter.startFailedAttachments.isEmpty)
         #expect(presenter.showError == true)
+    }
+
+    @Test("start offers removal when Disk.asif fails to attach and the VM has a sibling disk")
+    func startOffersRemovalOnMainDiskAttachFailureWithASibling() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
+        let extra = StorageDisk(
+            path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
+            isInternal: true, kind: .virtio)
+        instance.configuration.storageDisks = [mainDisk, extra]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: mainDisk.id, path: mainDisk.path, label: mainDisk.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.count == 1)
+        #expect(presenter.startFailedAttachments.first?.kind == .storageDisk)
+        #expect(presenter.startFailedAttachments.first?.id == mainDisk.id)
+        #expect(presenter.errors.isEmpty)
     }
 
     @Test("start offers removal when an external storage disk attach fails")
@@ -5368,26 +5391,24 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.isGuestAgentInstaller(RemovableMediaItem(path: "/tmp/other.iso", readOnly: true)))
     }
 
-    @Test("isMainDisk identifies the synthesized main disk, not additional internal disks")
-    func isMainDiskIdentifiesMain() {
+    @Test("isSoleStorageDisk is true for a VM's only disk and false for either of two")
+    func isSoleStorageDiskFollowsTheCount() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
+        // A nil list resolves to the synthesized main disk alone.
         let main = instance.effectiveStorageDisks[0]
+        #expect(viewModel.isSoleStorageDisk(main, of: instance))
+
         let extra = StorageDisk(
             path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
             isInternal: true, kind: .virtio)
-        #expect(viewModel.isMainDisk(main, of: instance))
-        #expect(!viewModel.isMainDisk(extra, of: instance))
+        instance.configuration.storageDisks = [main, extra]
+        #expect(!viewModel.isSoleStorageDisk(main, of: instance))
+        #expect(!viewModel.isSoleStorageDisk(extra, of: instance))
 
-        // Cloned VMs regenerate every disk id, so identity must be matched by
-        // bundle-relative path, not id: a main disk with a fresh UUID but the
-        // canonical "Disk.asif" path is still the main disk.
-        let mainWithFreshID = StorageDisk(
-            id: UUID(), path: main.path, readOnly: false, label: "Main Disk",
-            isInternal: true, kind: .virtio)
-        #expect(mainWithFreshID.id != main.id)
-        #expect(viewModel.isMainDisk(mainWithFreshID, of: instance))
+        instance.configuration.storageDisks = [extra]
+        #expect(viewModel.isSoleStorageDisk(extra, of: instance))
     }
 
     // MARK: - Reconcile Rollback

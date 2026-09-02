@@ -651,9 +651,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         /// Rename / Read Only / Remove gating, read from the capability the
         /// verb behind each of them refuses on.
         let editable: Bool
-        /// The VM's startup disk, which stays with the VM — so no row offers a
-        /// removal the verb refuses.
-        let isMainDisk: Bool
+        /// The VM's only storage disk, which the removal verb refuses — so its
+        /// row offers no Remove….
+        let isSoleStorageDisk: Bool
     }
 
     private func attachmentInfo(_ ref: AttachmentRef) -> AttachmentInfo? {
@@ -665,13 +665,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
                 notes: disk.notes, editable: canEditStorageDisks,
-                isMainDisk: viewModel.isMainDisk(disk, of: instance))
+                isSoleStorageDisk: viewModel.isSoleStorageDisk(disk, of: instance))
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: item.id, label: item.label, path: item.path, isInternal: false,
                 readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
-                editable: canEditRemovableMedia, isMainDisk: false)
+                editable: canEditRemovableMedia, isSoleStorageDisk: false)
         }
     }
 
@@ -733,9 +733,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             eject.isEnabled = info.editable
             menu.addItem(eject)
         }
-        // No Remove… on the main disk: the VM starts from it, so the verb
-        // refuses, and an item that could only raise that refusal is noise.
-        if !info.isMainDisk {
+        // No Remove… on a VM's only disk: the verb refuses, and an item that
+        // could only raise that refusal is noise.
+        if !info.isSoleStorageDisk {
             let remove = attachmentMenuItem("Remove…", #selector(menuAttachmentRemove(_:)), ref)
             remove.isEnabled = info.editable
             menu.addItem(remove)

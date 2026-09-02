@@ -106,10 +106,11 @@ extension VMCommandCore {
     /// Drops a storage disk's entry, and with `trashFile` the file behind it.
     ///
     /// A file another VM still references is never trashed, however `trashFile`
-    /// is set — only the entry goes. The VM's own `Disk.asif` is refused
-    /// outright: it is the disk the guest boots from, an empty list
-    /// re-synthesizes its row, and the same exclusion already keeps it out of
-    /// the start-failure removal offer.
+    /// is set — only the entry goes. A VM's only disk is refused outright,
+    /// whichever file backs it: a VM keeps at least one storage disk, an empty
+    /// list re-synthesizes `Disk.asif`, and the same exclusion already keeps it
+    /// out of the start-failure removal offer. Any disk with a sibling goes,
+    /// `Disk.asif` included.
     func removeStorageDisk(
         _ selector: VMSelector, disk id: UUID, trashFile: Bool, confirmed: Bool
     ) async throws {
@@ -118,15 +119,7 @@ extension VMCommandCore {
         guard let disk = storageDisk(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editStorageDisk)
         }
-        guard !isMainDisk(disk, of: instance) else {
-            Self.logger.debug(
-                "Refusing to remove the main disk of '\(instance.name, privacy: .public)'")
-            throw CommandError.operationFailed(
-                verb: .editStorageDisk,
-                message:
-                    "\u{201C}\(disk.label)\u{201D} is the disk \u{201C}\(instance.name)\u{201D} starts from. It goes with the VM."
-            )
-        }
+        try refuseSoleStorageDiskRemoval(of: disk, on: instance)
         // `shared` is read only where a file is trashed, and only an external
         // disk can be shared — a bundle-relative path is per-VM by
         // construction. Every other removal is entry-only, and stays free of
@@ -143,13 +136,16 @@ extension VMCommandCore {
             // the far side of it: a Start that landed in the gap must refuse
             // rather than detach a disk out from under a guest that is running
             // or about to be, and a disk detached or re-pointed in the gap is
-            // no longer the one this call resolved sharing for.
+            // no longer the one this call resolved sharing for. The sole-disk
+            // rule is re-read for the same reason: the other disk removed in
+            // the gap leaves this one the last, and it must not empty the list.
             try require(.editStorageDisks, on: instance)
             guard let current = storageDisk(id: id, on: instance),
                 current.path == disk.path, current.bookmark == disk.bookmark
             else {
                 throw staleAttachment(id, on: instance, verb: .editStorageDisk)
             }
+            try refuseSoleStorageDiskRemoval(of: current, on: instance)
         }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
@@ -173,6 +169,17 @@ extension VMCommandCore {
                 : URL(fileURLWithPath: disk.path),
             bookmark: disk.isInternal ? nil : disk.bookmark,
             label: disk.label, vmName: instance.name, verb: .editStorageDisk)
+    }
+
+    private func refuseSoleStorageDiskRemoval(of disk: StorageDisk, on instance: VMInstance) throws {
+        guard isSoleStorageDisk(disk, of: instance) else { return }
+        Self.logger.debug(
+            "Refusing to remove the only disk of '\(instance.name, privacy: .public)'")
+        throw CommandError.operationFailed(
+            verb: .editStorageDisk,
+            message:
+                "\u{201C}\(disk.label)\u{201D} is the only disk \u{201C}\(instance.name)\u{201D} has. A virtual machine keeps at least one storage disk."
+        )
     }
 
     /// Replaces a storage disk's user-facing label; an empty label is ignored.

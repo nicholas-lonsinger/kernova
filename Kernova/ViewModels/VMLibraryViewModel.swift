@@ -122,8 +122,8 @@ final class VMLibraryViewModel {
         commands.bundledDisks(for: instance)
     }
 
-    func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
-        commands.isMainDisk(disk, of: instance)
+    func isSoleStorageDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
+        commands.isSoleStorageDisk(disk, of: instance)
     }
 
     func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {

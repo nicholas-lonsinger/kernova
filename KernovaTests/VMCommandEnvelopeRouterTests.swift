@@ -496,7 +496,8 @@ struct VMCommandEnvelopeRouterTests {
             .appendingPathComponent("\(UUID().uuidString)-external.img")
             .path(percentEncoded: false)
         let disk = StorageDisk(path: path, label: "External", isInternal: false)
-        instance.configuration.storageDisks = [disk]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
 
         let refused = try await harness.transport.send(
             .editStorageDisk(
@@ -506,13 +507,13 @@ struct VMCommandEnvelopeRouterTests {
             return
         }
         #expect(prompt.kind == .removeAttachment)
-        #expect(instance.configuration.storageDisks?.count == 1)
+        #expect(instance.configuration.storageDisks?.count == 2)
 
         let confirmed = try await harness.transport.send(
             .editStorageDisk(
                 .id(instance.id), .remove(disk: disk.id, trashFile: true, confirmed: true)))
         #expect(confirmed.result == .ok)
-        #expect(instance.configuration.storageDisks == nil)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
     }
 
     // MARK: - Events

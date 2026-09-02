@@ -139,8 +139,8 @@ protocol VMCommanding: AnyObject {
     /// Drops a storage disk's entry, and with `trashFile` the file behind it.
     ///
     /// A file another VM still references is never trashed, however `trashFile`
-    /// is set. The VM's main disk is refused: it is the disk the guest boots
-    /// from, and it goes with the VM.
+    /// is set. A VM's only storage disk is refused, whichever file backs it: a
+    /// VM keeps at least one. Any disk with a sibling goes, `Disk.asif` included.
     func removeStorageDisk(
         _ selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool
     ) async throws

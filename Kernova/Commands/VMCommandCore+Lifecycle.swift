@@ -162,9 +162,10 @@ extension VMCommandCore {
     /// attachment the user can remove to get the VM running, or `nil` when the
     /// generic error is the right surface.
     ///
-    /// Two exclusions where removal is the wrong advice: the disk the guest boots
-    /// from, and file-lock contention — the file is fine and the lock holder is a VM
-    /// still tearing down, so the fix is to wait and retry.
+    /// Two exclusions where removal is the wrong advice: a VM's only disk, since
+    /// removing it leaves nothing to start (and an empty list would re-synthesize
+    /// `Disk.asif`), and file-lock contention — the file is fine and the lock
+    /// holder is a VM still tearing down, so the fix is to wait and retry.
     private func startFailedAttachment(
         from error: Error, on instance: VMInstance
     ) -> StartFailedAttachment? {
@@ -174,7 +175,7 @@ extension VMCommandCore {
         switch builderError {
         case .storageDiskAttachFailed(let id, _, let label, _):
             guard let disk = storageDisk(id: id, on: instance),
-                !isMainDisk(disk, of: instance)
+                !isSoleStorageDisk(disk, of: instance)
             else { return nil }
             return StartFailedAttachment(
                 kind: .storageDisk, id: id, label: label,
@@ -610,12 +611,10 @@ extension VMCommandCore {
         instance.effectiveStorageDisks.first { $0.id == id }
     }
 
-    /// `true` when `disk` is the VM's primary (boot) `Disk.asif`.
-    ///
-    /// Matches by bundle-relative path, so it stays correct on cloned VMs (whose
-    /// disk ids are regenerated).
-    func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
-        ConfigurationBuilder.isMainBundleDisk(
-            disk, layout: VMBundleLayout(bundleURL: instance.bundleURL))
+    /// `true` when `disk` is the only storage disk the VM has — the one a
+    /// removal refuses, whichever file backs it.
+    func isSoleStorageDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
+        let disks = instance.effectiveStorageDisks
+        return disks.count == 1 && disks[0].id == disk.id
     }
 }

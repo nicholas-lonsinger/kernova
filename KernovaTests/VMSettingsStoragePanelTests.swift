@@ -199,8 +199,8 @@ struct VMSettingsStoragePanelTests {
         #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
     }
 
-    @Test("The main disk row offers no Remove\u{2026}, and an additional disk does")
-    func attachmentMenuOmitsRemoveOnTheMainDisk() {
+    @Test("Every row of a two-disk VM offers Remove\u{2026}, Disk.asif included")
+    func attachmentMenuOffersRemoveOnEveryDiskWithASibling() {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux)
         let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
@@ -219,9 +219,30 @@ struct VMSettingsStoragePanelTests {
         let mainTitles = rows.first?.contextMenu?()?.items.map(\.title) ?? []
         let extraTitles = rows.dropFirst().first?.contextMenu?()?.items.map(\.title) ?? []
 
-        #expect(!mainTitles.contains("Remove\u{2026}"))
+        #expect(mainTitles.contains("Remove\u{2026}"))
         #expect(mainTitles.contains("Rename"))
         #expect(extraTitles.contains("Remove\u{2026}"))
+    }
+
+    @Test("A VM's only disk offers no Remove\u{2026}")
+    func attachmentMenuOmitsRemoveOnTheSoleDisk() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        instance.configuration.storageDisks = [
+            StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        ]
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.storage)
+
+        let rows = allSubviews(AttachmentRowView.self, in: vc.view)
+        #expect(rows.count == 1)
+        let titles = rows.first?.contextMenu?()?.items.map(\.title) ?? []
+
+        #expect(!titles.contains("Remove\u{2026}"))
+        #expect(titles.contains("Rename"))
     }
 
     @Test("Edit Notes on the context menu begins inline editing on the row")
