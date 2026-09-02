@@ -99,6 +99,10 @@ struct StorageDisk: Codable, Sendable, Equatable {
 
     /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
     /// list is empty or absent.
+    ///
+    /// Without stable identity, a lookup-by-id for this disk would miss the
+    /// row the user just clicked — silently no-op'ing the entry removal while
+    /// still trashing the underlying file.
     static func mainDisk(layout: VMBundleLayout) -> StorageDisk {
         let stableMainDiskID = stableID(seed: layout.bundleURL.path)
         return StorageDisk(
@@ -112,10 +116,6 @@ struct StorageDisk: Codable, Sendable, Equatable {
     }
 
     /// A UUID fixed by `seed`.
-    ///
-    /// Without stable identity, a lookup-by-id for the synthesized main disk
-    /// would miss the row the user just clicked — silently no-op'ing the entry
-    /// removal while still trashing the underlying file.
     static func stableID(seed: String) -> UUID {
         let digest = SHA256.hash(data: Data(seed.utf8))
         let bytes = Array(digest.prefix(16))

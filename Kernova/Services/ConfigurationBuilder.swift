@@ -307,8 +307,7 @@ struct ConfigurationBuilder: Sendable {
 
     /// Builds the ordered `storageDevices` array from `config.storageDisks`.
     ///
-    /// Position [0] boots first on EFI guests. When the list is `nil` or empty,
-    /// a single main-disk entry at the bundle's `Disk.asif` is synthesized.
+    /// Position [0] boots first on EFI guests.
     private func configureStorageDisks(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,

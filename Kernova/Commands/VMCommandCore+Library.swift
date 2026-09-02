@@ -596,9 +596,6 @@ extension VMCommandCore {
 
     /// The VM's in-bundle (internal) disks, shown read-only in the delete
     /// sheet's "Removed with the VM" section.
-    ///
-    /// Falls back to the synthesized main disk when `storageDisks` is `nil`, so a
-    /// freshly created VM still shows its `Disk.asif`.
     func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
         instance.effectiveStorageDisks.filter(\.isInternal)
     }
