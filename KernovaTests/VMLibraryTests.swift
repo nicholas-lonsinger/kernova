@@ -54,7 +54,10 @@ struct VMLibraryTests {
     }
 
     /// Helper to mark an instance as preparing with a no-op task.
-    private func markPreparing(_ instance: VMInstance, operation: VMInstance.PreparingOperation = .cloning) {
+    private func markPreparing(
+        _ instance: VMInstance,
+        operation: VMInstance.PreparingOperation = .cloning(sourceID: UUID())
+    ) {
         instance.preparingState = VMInstance.PreparingState(operation: operation, task: Task {})
     }
 

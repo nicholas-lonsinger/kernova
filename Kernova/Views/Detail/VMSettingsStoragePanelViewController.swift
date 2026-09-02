@@ -81,6 +81,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     func refresh() {
         lockRegistry.apply(isReadOnly: !canEditStorageDisks)
         removableLockRegistry.apply(isReadOnly: !canEditRemovableMedia)
+        updateStorageLockHintText()
         refreshStorageList()
         refreshRemovableList()
         startInstanceSideEffects()
@@ -102,6 +103,27 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// control here refuses on exactly this.
     private var canEditStorageDisks: Bool {
         viewModel.capabilities.isAvailable(.editStorageDisks, on: instance)
+    }
+
+    /// What the Storage Disks header says while its rows are locked by a clone
+    /// of this VM still copying its files out of the bundle — the shared
+    /// "Editable when stopped" is false in that case for a VM that is stopped.
+    private static let cloneLockHintText = "Editable when the clone finishes"
+
+    /// The Storage Disks section's lock-hint label, captured via the
+    /// registry's `lockHintSink` so its text can follow the clone-in-flight
+    /// state rather than only its visibility.
+    private var storageLockHintLabel: NSTextField?
+    private var storageLockHintView: NSView?
+
+    /// Swaps the Storage Disks lock hint's wording between the shared
+    /// "Editable when stopped" and the clone-specific text.
+    private func updateStorageLockHintText() {
+        let text =
+            viewModel.hasCloneInFlight(from: instance)
+            ? Self.cloneLockHintText : groupedFormLockHintText
+        storageLockHintLabel?.stringValue = text
+        storageLockHintView?.toolTip = text
     }
 
     /// What the Removable Media header says while its rows are locked.
@@ -251,7 +273,12 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 ),
             ]
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Storage Disks", lockable: true, paragraphs: paragraphs), card,
+            lockRegistry.makeHeader(
+                "Storage Disks", lockable: true, paragraphs: paragraphs,
+                lockHintSink: { [weak self] hint in
+                    self?.storageLockHintView = hint
+                    self?.storageLockHintLabel = hint.subviews.compactMap { $0 as? NSTextField }.first
+                }), card,
         ])
     }
 

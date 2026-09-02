@@ -442,7 +442,7 @@ struct VMToolbarManagerTests {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 

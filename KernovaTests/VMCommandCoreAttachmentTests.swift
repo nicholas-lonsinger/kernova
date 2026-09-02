@@ -815,7 +815,7 @@ struct VMCommandCoreAttachmentTests {
         instance.configuration.storageDisks = [disk]
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
 
         let storageRefusal = await commandError {
             try harness.core.setStorageDiskReadOnly(
@@ -829,6 +829,46 @@ struct VMCommandCoreAttachmentTests {
         #expect(storageRefusal?.isBusy == true)
         #expect(removableRefusal?.isBusy == true)
         #expect(instance.configuration.storageDisks?[0].readOnly == false)
+    }
+
+    @Test("A storage edit on a VM being cloned is refused as busy, naming the clone")
+    func cloneInFlightRefusesStorageEditButNotRemovableMedia() async throws {
+        let harness = makeHarness()
+        let source = makeInstance(in: harness, name: "Source")
+        let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        source.configuration.storageDisks = [disk]
+        let phantom = makeInstance(in: harness, name: "Source Copy")
+        let task = Task {}
+        defer { task.cancel() }
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: source.id), task: task)
+
+        let removeError = try #require(
+            await commandError {
+                try await harness.core.removeStorageDisk(
+                    .id(source.id), disk: disk.id, trashFile: false, confirmed: true)
+            })
+        guard case .busy(let vm, let operation) = removeError else {
+            Issue.record("expected a busy refusal, got \(removeError)")
+            return
+        }
+        #expect(vm.id == source.id)
+        #expect(operation == "being cloned")
+        #expect(
+            removeError.message.contains(
+                "is busy being cloned. Wait for it to finish, then try again."))
+
+        let attachError = await commandError {
+            try harness.core.attachStorageDisks(
+                .id(source.id), paths: [PickedFile(path: "/tmp/x.img", bookmark: nil)])
+        }
+        #expect(attachError?.isBusy == true)
+        #expect(source.configuration.storageDisks?.count == 1)
+
+        // Removable media isn't copied by a clone, so it takes an edit unblocked.
+        try harness.core.attachRemovableMedia(
+            .id(source.id), paths: [PickedFile(path: "/tmp/y.iso", bookmark: nil)])
+        #expect(source.configuration.removableMedia?.count == 1)
     }
 
     @Test("An edit naming an attachment that is no longer there is refused, not silently dropped")

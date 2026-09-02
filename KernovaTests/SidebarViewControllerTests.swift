@@ -92,7 +92,7 @@ struct SidebarViewControllerTests {
         #expect(coldPaused.statusDisplayNSColor == .systemOrange)
 
         let preparing = makeInstance(phase: .stopped)
-        preparing.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        preparing.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
         #expect(preparing.statusDisplayNSColor == .systemOrange)
     }
 
@@ -326,7 +326,7 @@ struct SidebarViewControllerTests {
         let copying = makeInstance(name: "Copying", phase: .stopped)
         let task = Task {}
         defer { task.cancel() }
-        copying.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        copying.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         viewModel.instances.append(contentsOf: [instance, copying])
         let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
@@ -509,7 +509,7 @@ struct SidebarViewControllerTests {
     func contextMenuPreparing() {
         let viewModel = makeViewModel()
         let instance = makeInstance()
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 

@@ -81,9 +81,9 @@ final class VMInstance {
 
     // MARK: - Preparing State (Create/Clone/Import)
 
-    enum PreparingOperation: Sendable {
+    enum PreparingOperation: Sendable, Equatable {
         case creating
-        case cloning
+        case cloning(sourceID: UUID)
         case importing
 
         var displayLabel: String {

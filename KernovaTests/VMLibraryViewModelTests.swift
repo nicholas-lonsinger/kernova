@@ -3819,7 +3819,7 @@ struct VMLibraryViewModelTests {
         }
 
         instance.enter(.stopped)
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
         #expect(viewModel.isBusy(instance))
     }
 
@@ -4594,7 +4594,7 @@ struct VMLibraryViewModelTests {
     func registerPhantomPreservesSelectionOfPreparingInstance() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let preparing = makeInstance(name: "Already Preparing")
-        markPreparing(preparing, operation: .cloning)
+        markPreparing(preparing, operation: .cloning(sourceID: UUID()))
         viewModel.instances.append(preparing)
         viewModel.selectedID = preparing.id
 
@@ -4613,7 +4613,10 @@ struct VMLibraryViewModelTests {
     // MARK: - Clone
 
     /// Helper to mark an instance as preparing with a no-op task.
-    private func markPreparing(_ instance: VMInstance, operation: VMInstance.PreparingOperation = .cloning) {
+    private func markPreparing(
+        _ instance: VMInstance,
+        operation: VMInstance.PreparingOperation = .cloning(sourceID: UUID())
+    ) {
         instance.preparingState = VMInstance.PreparingState(operation: operation, task: Task {})
     }
 
@@ -4631,7 +4634,7 @@ struct VMLibraryViewModelTests {
         let phantom = viewModel.instances.first { $0.id != instance.id }
         #expect(phantom != nil)
         #expect(phantom?.isPreparing == true)
-        #expect(phantom?.preparingState?.operation == .cloning)
+        #expect(phantom?.preparingState?.operation == .cloning(sourceID: instance.id))
         #expect(phantom?.name == "Original Copy")
         #expect(viewModel.selectedID == phantom?.id)
     }
@@ -4748,7 +4751,7 @@ struct VMLibraryViewModelTests {
     func cloneVMProceedsWhileAnotherCloneIsPreparing() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let existing = makeInstance(name: "Cloning")
-        markPreparing(existing, operation: .cloning)
+        markPreparing(existing, operation: .cloning(sourceID: UUID()))
         let instance = makeInstance(name: "Source")
         instance.enter(.stopped)
         viewModel.instances = [existing, instance]

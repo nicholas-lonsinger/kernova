@@ -123,6 +123,19 @@ final class VMLibrary: VMInstanceRoster {
             || lifecycle.hasUnsettledOperation(for: instance.id)
     }
 
+    /// `true` from the moment a clone of `instance` has its phantom row
+    /// registered until the copy publishes or fails — a cancelled row keeps
+    /// its `preparingState` until the uninterruptible copy settles, so the
+    /// lock outlives the cancel by exactly the copy.
+    func hasCloneInFlight(from instance: VMInstance) -> Bool {
+        instances.contains {
+            if case .cloning(let sourceID)? = $0.preparingState?.operation {
+                return sourceID == instance.id
+            }
+            return false
+        }
+    }
+
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.
