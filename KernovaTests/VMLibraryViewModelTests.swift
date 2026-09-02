@@ -356,6 +356,46 @@ struct VMLibraryViewModelTests {
         #expect(attachments[1].sharedWithVMNames == ["Sharer"])
     }
 
+    @Test("externalAttachments lists a Linux VM's kernel and initrd")
+    func externalAttachmentsIncludeKernelAndInitrd() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let target = makeInstance(name: "Linux")
+        target.configuration.kernelPath = "/Users/me/vmlinuz"
+        target.configuration.initrdPath = "/Users/me/initrd.img"
+        viewModel.instances = [target]
+
+        let attachments = viewModel.externalAttachments(for: target)
+        #expect(attachments.map(\.kind) == [.kernel, .initrd])
+        #expect(attachments.map(\.label) == ["Kernel", "Initial RAM Disk"])
+        #expect(attachments.allSatisfy { !$0.isShared })
+    }
+
+    @Test("A kernel a sibling VM also boots from is reported as shared")
+    func externalAttachmentsMarkSharedKernel() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let kernelPath = "/Users/me/vmlinuz"
+        let target = makeInstance(name: "Original")
+        target.configuration.kernelPath = kernelPath
+        let clone = makeInstance(name: "Clone")
+        clone.configuration.kernelPath = kernelPath
+        viewModel.instances = [target, clone]
+
+        let attachments = viewModel.externalAttachments(for: target)
+        #expect(attachments.count == 1)
+        #expect(attachments.first?.kind == .kernel)
+        #expect(attachments.first?.sharedWithVMNames == ["Clone"])
+    }
+
+    @Test("externalAttachments never offers a shared directory")
+    func externalAttachmentsExcludeSharedDirectories() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let target = makeInstance(name: "Sharer")
+        target.configuration.sharedDirectories = [SharedDirectory(path: "/Users/me/Projects")]
+        viewModel.instances = [target]
+
+        #expect(viewModel.externalAttachments(for: target).isEmpty)
+    }
+
     @Test("externalAttachmentsResolvingExistence flags isMissing per backing-file existence")
     func externalAttachmentsResolvingExistenceFlagsMissing() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()

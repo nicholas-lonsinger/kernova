@@ -410,19 +410,20 @@ final class VMLifecycleCoordinator {
                     guard let localURL = context.localIPSWURL else {
                         throw IPSWError.noDownloadURL
                     }
-                    localIPSWScope = context.localIPSWBookmark.flatMap {
-                        ScopedAccess(bookmark: $0)
-                    }
+                    let reference = instance.configuration.externalFileReferences
+                        .first { $0.kind == .localIPSW }
+                    let opened = reference.flatMap { ScopedAccess.open($0) }
+                    localIPSWScope = opened?.scope
                     // Prefer the bookmark's resolved URL — it tracks the file if
                     // it moved since the wizard pick.
                     ipswURL = localIPSWScope?.url ?? localURL
                     // The context survives relaunches until the install succeeds,
-                    // so its bookmark can go stale between retries.
-                    if let scope = localIPSWScope, scope.isStale,
-                        let fresh = SecurityScopedBookmark.make(for: scope.url)
-                    {
+                    // so its stored path and bookmark can both drift between
+                    // retries.
+                    if let reference, let healed = opened?.healedTo {
                         instance.performConfigurationMutation {
-                            $0.installContext?.localIPSWBookmark = fresh
+                            $0.healExternalReference(
+                                reference, movedTo: healed.path, bookmark: healed.bookmark)
                         }
                     }
 

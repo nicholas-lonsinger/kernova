@@ -523,7 +523,7 @@ struct ConfigurationBuilder: Sendable {
     /// It reaches the guest as `blockDeviceIdentifier`, so a fresh UUID per
     /// launch would vary the disk's guest-side name from one boot to the next.
     private static func stableGuestAgentDiskID(forBundleAt bundleURL: URL) -> UUID {
-        StorageDisk.stableID(seed: bundleURL.path + "\u{0}guest-agent")
+        StableID.uuid(seed: bundleURL.path + "\u{0}guest-agent")
     }
 
     private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration)

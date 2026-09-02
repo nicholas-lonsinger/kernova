@@ -625,6 +625,10 @@ extension ExternalAttachment {
         switch kind {
         case .storageDisk: return "externaldrive"
         case .removableMedia: return "opticaldisc"
+        case .kernel: return "cpu"
+        case .initrd: return "archivebox"
+        case .sharedDirectory: return "folder"
+        case .localIPSW: return "doc"
         }
     }
 }

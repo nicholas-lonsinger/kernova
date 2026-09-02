@@ -494,7 +494,7 @@ extension VMCommandCore {
         for attachment in toDelete {
             await deleteExternalAttachment(
                 at: URL(fileURLWithPath: attachment.path),
-                bookmark: bookmark(for: attachment, in: instance.configuration),
+                bookmark: attachment.reference.bookmark,
                 label: attachment.label,
                 vmName: vmName,
                 permanently: permanently)
@@ -600,7 +600,9 @@ extension VMCommandCore {
         instance.effectiveStorageDisks.filter(\.isInternal)
     }
 
-    /// The external (non-bundle) files referenced by `instance`.
+    /// The external (non-bundle) files referenced by `instance` that the delete
+    /// sheet offers to trash — the kinds
+    /// ``ExternalFileReference/Kind/isOfferedOnVMDelete`` admits.
     ///
     /// Each is annotated with the names of other VMs sharing the same path. The
     /// bundled Guest Agent installer DMG is excluded: its path points *inside the
@@ -610,32 +612,14 @@ extension VMCommandCore {
     /// `false`; use ``externalAttachmentsResolvingExistence(for:)`` when it matters.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
         let agentPath = Self.guestAgentInstallerPath
-        var attachments: [ExternalAttachment] = []
-        for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
-            attachments.append(
+        return instance.configuration.externalFileReferences
+            .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
+            .map { reference in
                 ExternalAttachment(
-                    id: disk.id,
-                    kind: .storageDisk,
-                    label: disk.label,
-                    path: disk.path,
-                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance),
-                    isMissing: false
-                )
-            )
-        }
-        for item in instance.configuration.removableMedia ?? [] where item.path != agentPath {
-            attachments.append(
-                ExternalAttachment(
-                    id: item.id,
-                    kind: .removableMedia,
-                    label: item.label,
-                    path: item.path,
-                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance),
-                    isMissing: false
-                )
-            )
-        }
-        return attachments
+                    reference: reference,
+                    sharedWithVMNames: sharingVMNames(forPath: reference.path, excluding: instance),
+                    isMissing: false)
+            }
     }
 
     /// ``externalAttachments(for:)`` with each attachment's
@@ -651,7 +635,7 @@ extension VMCommandCore {
         let attachments = externalAttachments(for: instance)
         guard !attachments.isEmpty else { return attachments }
         let paths = attachments.map(\.path)
-        let bookmarks = externalAttachmentRefs(for: instance.configuration)
+        let bookmarks = attachments.map(\.reference).bookmarksByPath
         let missingByPath = await Task.detached(priority: .userInitiated) {
             var result: [String: Bool] = [:]
             for path in paths where result[path] == nil {
@@ -662,46 +646,25 @@ extension VMCommandCore {
         }.value
         return attachments.map { attachment in
             ExternalAttachment(
-                id: attachment.id,
-                kind: attachment.kind,
-                label: attachment.label,
-                path: attachment.path,
+                reference: attachment.reference,
                 sharedWithVMNames: attachment.sharedWithVMNames,
                 isMissing: missingByPath[attachment.path] ?? false
             )
         }
     }
 
-    /// The persisted security bookmark backing an external attachment
-    /// (``ExternalAttachment`` itself is a bookmark-free projection).
-    private func bookmark(
-        for attachment: ExternalAttachment, in config: VMConfiguration
-    ) -> Data? {
-        switch attachment.kind {
-        case .storageDisk:
-            (config.storageDisks ?? []).first { $0.id == attachment.id }?.bookmark
-        case .removableMedia:
-            (config.removableMedia ?? []).first { $0.id == attachment.id }?.bookmark
-        }
-    }
-
     /// Names of other VMs in the library that reference `path` as an external
-    /// storage disk or removable medium.
+    /// file.
     ///
-    /// Only *external* (non-bundle) storage disks count — bundle-relative paths are
-    /// per-VM by construction. `instance` is excluded so the file isn't reported as
-    /// shared with itself.
+    /// Only external paths count — a bundle-relative one is per-VM by
+    /// construction and never reaches the projection. `instance` is excluded so
+    /// the file isn't reported as shared with itself.
     func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
         library.instances.compactMap { other -> String? in
             guard other.id != instance.id else { return nil }
-            let externalDiskPaths = (other.configuration.storageDisks ?? [])
-                .filter { !$0.isInternal }
-                .map(\.path)
-            let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
-            if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
-                return other.name
-            }
-            return nil
+            let sharesPath = other.configuration.externalFileReferences
+                .contains { $0.path == path }
+            return sharesPath ? other.name : nil
         }
     }
 

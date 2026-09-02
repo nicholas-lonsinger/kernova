@@ -172,7 +172,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     /// Seeds the file monitor with the current instance's attachment paths.
     private func startInstanceSideEffects() {
-        let refs = externalAttachmentRefs(for: instance.configuration)
+        let refs = instance.configuration.externalFileReferences
+            .filter(\.kind.hasStorageSettingsRow).bookmarksByPath
         Task { await fileMonitor.setPaths(refs) }
     }
 

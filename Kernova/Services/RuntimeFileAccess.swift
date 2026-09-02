@@ -60,95 +60,34 @@ extension VMInstance {
     ///
     /// Called by ``beginSessionContext(bootedIntoRecovery:)`` at the top of each
     /// boot attempt with the freshly opened context's `fileAccess`, before the
-    /// configuration builder resolves any paths. The walk must stay in lockstep
-    /// with `ConfigurationBuilder`'s — a new external-path field on
-    /// `VMConfiguration` needs an entry in both, or its scope never opens and
-    /// the builder reports a spurious not-found under the sandbox.
+    /// configuration builder resolves any paths. The walk is
+    /// ``VMConfiguration/externalFileReferences``, and
+    /// ``ExternalFileReference/Kind/opensRuntimeScope`` decides which kinds a
+    /// boot takes a scope on.
     func openRuntimeFileAccess(into fileAccess: RuntimeFileAccess) {
         var scopes: [ScopedAccess] = []
-        var heals: [(inout VMConfiguration) -> Void] = []
+        var heals: [(reference: ExternalFileReference, path: String, bookmark: Data)] = []
 
-        /// Opens one bookmark, queueing a heal through `apply` when the resolved
-        /// reality (staleness, or a moved file) diverges from the stored fields.
-        func open(
-            _ bookmark: Data?,
-            storedPath: String,
-            apply: @escaping (inout VMConfiguration, String, Data) -> Void
-        ) -> ScopedAccess? {
-            guard let bookmark, let scope = ScopedAccess(bookmark: bookmark) else { return nil }
-            let resolvedPath = scope.url.path(percentEncoded: false)
-            // Canonical-form comparison: APFS may hand back a decomposed
-            // (NFD) form of a name the panel stored precomposed (NFC); that
-            // is not a move and must not re-heal on every boot.
-            let moved =
-                resolvedPath.precomposedStringWithCanonicalMapping
-                != storedPath.precomposedStringWithCanonicalMapping
-            if scope.isStale || moved {
-                // Re-creating while the scope is active is Apple's documented
-                // stale-bookmark pattern.
-                if let fresh = SecurityScopedBookmark.make(for: scope.url) {
-                    heals.append { config in apply(&config, resolvedPath, fresh) }
-                }
+        for reference in configuration.externalFileReferences
+        where reference.kind.opensRuntimeScope {
+            guard let opened = ScopedAccess.open(reference) else { continue }
+            if let healed = opened.healedTo {
+                heals.append((reference, healed.path, healed.bookmark))
             }
-            return scope
-        }
-
-        let config = configuration
-
-        if let kernelPath = config.kernelPath,
-            let scope = open(
-                config.kernelBookmark, storedPath: kernelPath,
-                apply: { c, path, bookmark in
-                    c.kernelPath = path
-                    c.kernelBookmark = bookmark
-                })
-        {
-            scopes.append(scope)
-        }
-        if let initrdPath = config.initrdPath,
-            let scope = open(
-                config.initrdBookmark, storedPath: initrdPath,
-                apply: { c, path, bookmark in
-                    c.initrdPath = path
-                    c.initrdBookmark = bookmark
-                })
-        {
-            scopes.append(scope)
-        }
-        for disk in config.storageDisks ?? [] where !disk.isInternal {
-            let scope = open(disk.bookmark, storedPath: disk.path) { c, path, bookmark in
-                guard let index = c.storageDisks?.firstIndex(where: { $0.id == disk.id }) else {
-                    return
-                }
-                c.storageDisks?[index].path = path
-                c.storageDisks?[index].bookmark = bookmark
+            switch reference.kind {
+            case .removableMedia:
+                fileAccess.addHotAttach(id: reference.id, opened.scope)
+            case .kernel, .initrd, .storageDisk, .sharedDirectory, .localIPSW:
+                scopes.append(opened.scope)
             }
-            if let scope { scopes.append(scope) }
-        }
-        for item in config.removableMedia ?? [] {
-            let scope = open(item.bookmark, storedPath: item.path) { c, path, bookmark in
-                guard let index = c.removableMedia?.firstIndex(where: { $0.id == item.id }) else {
-                    return
-                }
-                c.removableMedia?[index].path = path
-                c.removableMedia?[index].bookmark = bookmark
-            }
-            if let scope { fileAccess.addHotAttach(id: item.id, scope) }
-        }
-        for directory in config.sharedDirectories ?? [] {
-            let scope = open(directory.bookmark, storedPath: directory.path) { c, path, bookmark in
-                guard
-                    let index = c.sharedDirectories?.firstIndex(where: { $0.id == directory.id })
-                else { return }
-                c.sharedDirectories?[index].path = path
-                c.sharedDirectories?[index].bookmark = bookmark
-            }
-            if let scope { scopes.append(scope) }
         }
 
         if !heals.isEmpty {
             performConfigurationMutation { config in
-                for heal in heals { heal(&config) }
+                for heal in heals {
+                    config.healExternalReference(
+                        heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
+                }
             }
         }
         fileAccess.adoptConfigScopes(scopes)
