@@ -87,7 +87,13 @@ extension VMCommandCore {
         library.prepareBundle(
             phantom, operation: .creating,
             copyWork: {
-                _ = try await Self.runBoundedCopy { try storage.createVMBundle(for: configuration) }
+                // Off the bounded `copyQueue`, which exists to serialize the
+                // multi-gigabyte `copyItem` calls clone and import make: this
+                // write is a `createDirectory` and one small atomic
+                // `config.json`, and queueing it behind two in-flight imports
+                // would hold the new VM at "Creating…" for their copies.
+                try await Task.detached { _ = try storage.createVMBundle(for: configuration) }
+                    .value
                 try await diskImages.createDiskImage(
                     at: phantom.diskImageURL, sizeInGB: diskSizeInGB)
             },
@@ -412,7 +418,7 @@ extension VMCommandCore {
         )
     }
 
-    /// The refusal a clone or import cancel raises.
+    /// The refusal a create, clone or import cancel raises.
     static func cancelPreparingPrompt(
         _ operation: VMInstance.PreparingOperation, on instance: VMInstance
     ) -> ConfirmationPrompt {
