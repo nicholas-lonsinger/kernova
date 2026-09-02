@@ -111,16 +111,21 @@ extension Sequence<ExternalFileReference> {
     ///
     /// Blocking and sandbox-touching — never call this on the main actor. The
     /// memo carries the cost: a clone copies its origin's bookmark bytes
-    /// verbatim, so a library full of clones resolves once.
-    func resolvedTargets() -> [Data: String] {
-        var targets: [Data: String] = [:]
+    /// verbatim, so a library full of clones resolves once. Failures are
+    /// memoized too, so a dead blob is neither re-resolved nor re-logged per
+    /// reference carrying it.
+    ///
+    /// `resolve` turns one blob into a path; real resolution needs a
+    /// panel-minted grant, so that is where a test substitutes its own.
+    func resolvedTargets(
+        resolving resolve: (Data) -> String? = { SecurityScopedBookmark.resolvedTargetPath($0) }
+    ) -> [Data: String] {
+        var attempts: [Data: String?] = [:]
         for reference in self {
-            guard let bookmark = reference.bookmark, targets[bookmark] == nil,
-                let target = SecurityScopedBookmark.resolvedTargetPath(bookmark)
-            else { continue }
-            targets[bookmark] = target
+            guard let bookmark = reference.bookmark, attempts[bookmark] == nil else { continue }
+            attempts[bookmark] = resolve(bookmark)
         }
-        return targets
+        return attempts.compactMapValues { $0 }
     }
 
     /// Every canonical path these references stand for — the union of each
@@ -144,10 +149,13 @@ extension ExternalFileReference {
     /// One file's identity: its stored path, plus its bookmark's resolved
     /// target when the two differ.
     ///
-    /// The union is what makes the comparison conservative in both healing
-    /// directions — a VM whose path healed to the file's new home still matches
-    /// a sibling still holding the old one, and a reference whose bookmark is
-    /// absent or dead still matches on the path it stored.
+    /// The union widens the match past either path alone: a VM that healed to
+    /// the file's new home still meets a sibling holding the old path *and* a
+    /// live bookmark, because the sibling contributes both. A bookmark that is
+    /// absent or dead contributes nothing, so that reference is matchable on
+    /// its stored path alone — two references whose stored paths have diverged
+    /// with no usable bookmark between them never meet. Closing that takes a
+    /// bookmark, not a wider comparison.
     static func fileIdentities(forPath path: String, resolvedTarget: String?) -> Set<String> {
         var identities: Set<String> = [canonicalPath(path)]
         if let resolvedTarget { identities.insert(canonicalPath(resolvedTarget)) }

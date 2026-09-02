@@ -283,6 +283,30 @@ struct ExternalFileReferenceTests {
                 == ["/Users/me/Projects"])
     }
 
+    @Test("Each distinct bookmark blob is resolved once, successes and failures alike")
+    func resolvedTargetsResolveEachBlobOnce() {
+        let live = Data([0xC1])
+        let dead = Data([0xC2])
+        let references = [
+            makeReference(path: "/Volumes/External/a.img", bookmark: live),
+            makeReference(path: "/Volumes/External/b.img", bookmark: live),
+            makeReference(path: "/Volumes/External/c.img", bookmark: dead),
+            makeReference(path: "/Volumes/External/d.img", bookmark: dead),
+            makeReference(path: "/Volumes/External/e.img"),
+        ]
+
+        var attempted: [Data] = []
+        let targets = references.resolvedTargets { blob in
+            attempted.append(blob)
+            return blob == live ? "/Volumes/External/moved.img" : nil
+        }
+
+        // A dead blob is memoized like a live one — otherwise every reference
+        // carrying it pays the resolution again and re-logs the failure.
+        #expect(attempted == [live, dead])
+        #expect(targets == [live: "/Volumes/External/moved.img"])
+    }
+
     @Test("Identities across references are unioned")
     func identitiesUnionEveryReference() {
         let references = [

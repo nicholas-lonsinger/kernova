@@ -556,6 +556,60 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.removableMedia?[0].label == "New")
     }
 
+    @Test("A Start landing while sharing resolves refuses the disk removal")
+    func removeStorageDiskRefusesAStartDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let path = externalPath("external.img")
+        let disk = StorageDisk(path: path, label: "External", isInternal: false)
+        instance.configuration.storageDisks = [disk]
+        // The removal's sheet leaves the menu key equivalents live, so a Start
+        // can land in the suspension the sharing resolve opens — this is that
+        // keystroke, landing there deterministically.
+        harness.core.afterSharingResolveForTesting = {
+            instance.enter(.starting(sessionID: UUID()))
+        }
+
+        let refusal = await commandError {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+        }
+
+        guard case .invalidState = try #require(refusal) else {
+            Issue.record("expected an invalid-state refusal")
+            return
+        }
+        // Neither the entry nor the file moved: the disk is still the VM's.
+        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id])
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("A Start landing while sharing resolves refuses the removable-media removal")
+    func removeRemovableMediaRefusesAStartDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let path = externalPath("media.iso")
+        let item = RemovableMediaItem(path: path, readOnly: true)
+        instance.configuration.removableMedia = [item]
+        // Removable media is hot-pluggable, so the state that refuses is a VM
+        // still coming up: no live session to attach to yet.
+        harness.core.afterSharingResolveForTesting = {
+            instance.enter(.starting(sessionID: UUID()))
+        }
+
+        let refusal = await commandError {
+            try await harness.core.removeRemovableMedia(
+                .id(instance.id), item: item.id, trashFile: true, confirmed: true)
+        }
+
+        guard case .invalidState = try #require(refusal) else {
+            Issue.record("expected an invalid-state refusal")
+            return
+        }
+        #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
     @Test("A suspended VM refuses both lists — its saved state pins the device set")
     func suspendedVMRefusesBothLists() async throws {
         let harness = makeHarness()
