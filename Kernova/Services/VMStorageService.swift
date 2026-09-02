@@ -68,15 +68,16 @@ struct VMStorageService: Sendable {
         }
     }
 
-    /// The staged path one create, clone or import builds its bundle at.
+    /// A fresh staged path for one create, clone or import to build its bundle at.
     ///
-    /// Keyed by the configuration's UUID, which is unique across every write that
-    /// can be in flight at once. The directory does not exist: import's
-    /// `copyItem` reproduces the source bundle wholesale and refuses a
-    /// destination that is already there.
-    func stagedBundleURL(for configuration: VMConfiguration) throws -> URL {
+    /// Named for a UUID minted here rather than the configuration's: an import
+    /// keeps the source bundle's id, so a configuration id would give a retried
+    /// import the same path as the interrupted attempt whose tree the launch
+    /// reclaim is still deleting. A per-write name cannot collide with anything.
+    /// The directory does not exist, which import's `copyItem` requires.
+    func makeStagedBundleURL() throws -> URL {
         try stagingDirectory.appendingPathComponent(
-            "\(configuration.id.uuidString).\(Self.bundleExtension)",
+            "\(UUID().uuidString).\(Self.bundleExtension)",
             isDirectory: true
         )
     }
@@ -98,14 +99,18 @@ struct VMStorageService: Sendable {
             "Published VM bundle \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
-    /// Discards every staged bundle an earlier run left behind.
+    /// Discards every staged bundle an earlier run left behind, returning the
+    /// task its removals run on.
     ///
     /// An interrupted write leaves a tree whose payload is incomplete and whose
     /// source still exists, so it is removed outright rather than trashed. The
-    /// enumeration is synchronous — one `readdir`, and it has to finish before
-    /// this run stages anything — while the removals run detached, because a
-    /// staged tree can be multi-gigabyte and this runs at launch.
-    func reclaimStagedBundles() {
+    /// enumeration is synchronous — one `readdir` — while the removals run
+    /// detached, because a staged tree can be multi-gigabyte and this runs at
+    /// launch. Nothing has to await the returned task: every staged name is
+    /// minted per write, so a removal still in flight can never name a path this
+    /// run is about to use.
+    @discardableResult
+    func reclaimStagedBundles() -> Task<Void, Never> {
         let entries: [URL]
         do {
             entries = try FileManager.default.contentsOfDirectory(
@@ -114,11 +119,10 @@ struct VMStorageService: Sendable {
             Self.logger.warning(
                 "Could not enumerate staged VM bundles: \(error.localizedDescription, privacy: .public)"
             )
-            return
+            return Task {}
         }
-        guard !entries.isEmpty else { return }
 
-        Task.detached {
+        return Task.detached {
             for entry in entries {
                 do {
                     try FileManager.default.removeItem(at: entry)

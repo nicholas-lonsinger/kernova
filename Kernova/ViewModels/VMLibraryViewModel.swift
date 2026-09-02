@@ -75,6 +75,8 @@ final class VMLibraryViewModel {
 
     func reconcileWithDisk() { library.reconcileWithDisk() }
 
+    func cancelAndCleanupPreparing() { library.cancelAndCleanupPreparing() }
+
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         library.moveVM(fromOffsets: source, toOffset: destination)
     }

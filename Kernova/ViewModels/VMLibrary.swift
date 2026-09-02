@@ -41,6 +41,14 @@ final class VMLibrary: VMInstanceRoster {
     /// MAC-address uniqueness both are keyed on.
     @ObservationIgnored let networkSlots: VMNetworkSlotRegistry
 
+    /// Where each preparing write's tree currently sits, keyed by instance id —
+    /// the staged path until publication renames it to the VM's own bundle URL.
+    ///
+    /// Deliberately not on ``VMInstance``: it changes twice per write, and an
+    /// observed property would re-render every row's observers for a path no
+    /// surface shows. ``cancelAndCleanupPreparing()`` is the only reader.
+    @ObservationIgnored private var writeLocations: [UUID: URL] = [:]
+
     // MARK: - Adapter Hooks
 
     /// Receives every failure the library needs a user to see.
@@ -178,8 +186,9 @@ final class VMLibrary: VMInstanceRoster {
     /// The watcher starts only after the read applies — its callback re-reads
     /// every bundle on the main actor, which must not race the initial load.
     ///
-    /// The staging reclaim runs first so its enumeration precedes anything this
-    /// run can stage — everything it finds is an earlier run's leftovers.
+    /// Launch is also where an interrupted run's staged bundles are reclaimed.
+    /// Nothing waits on those removals: a staged name is minted per write, so one
+    /// still in flight can never name a path this run is about to use.
     func startLibrary() async {
         storageService.reclaimStagedBundles()
         await loadVMs()
@@ -416,17 +425,21 @@ final class VMLibrary: VMInstanceRoster {
         let storage = storageService
         let finalURL = phantom.bundleURL
         let task = Task { [weak self] in
-            defer { phantom.preparingState = nil }
-            // Where the tree this write produced currently is — the staged path
-            // until publication renames it to `finalURL`, and `nil` before there
-            // is a tree at all. The cleanup arms address it rather than
-            // `phantom.bundleURL`: trashing the staged path after publication
-            // would leak the real bundle, and trashing `finalURL` before it can
-            // hit an unrelated bundle holding that name.
+            defer {
+                phantom.preparingState = nil
+                self?.writeLocations[phantom.id] = nil
+            }
+            // Every cleanup arm addresses `written` rather than `phantom.bundleURL`:
+            // trashing the staged path after publication would leak the real
+            // bundle, and trashing `finalURL` before it can hit an unrelated
+            // bundle holding that name. The library gets the same value through
+            // ``writeLocations`` — this task keeps its own copy because the
+            // deallocated arms below still have to clean up.
             var written: URL?
             do {
-                let staged = try storage.stagedBundleURL(for: phantom.configuration)
+                let staged = try storage.makeStagedBundleURL()
                 written = staged
+                self?.writeLocations[phantom.id] = staged
                 try await copyWork(staged)
                 guard let self else {
                     if Task.isCancelled {
@@ -456,6 +469,7 @@ final class VMLibrary: VMInstanceRoster {
                 try await Task.detached { try storage.publishBundle(from: staged, to: finalURL) }
                     .value
                 written = finalURL
+                self.writeLocations[phantom.id] = finalURL
                 if Task.isCancelled {
                     self.cleanupPhantomInstance(phantom, bundleAt: finalURL)
                     return
@@ -536,6 +550,39 @@ final class VMLibrary: VMInstanceRoster {
         evict(phantom)
         persistOrder()
         phantom.preparingState = nil
+        writeLocations[phantom.id] = nil
+    }
+
+    /// Cancels every preparing write and removes the row and whatever tree it has
+    /// written so far, for a quit that cannot wait for the copies to settle.
+    ///
+    /// The library is the only owner that knows where each write currently is —
+    /// the staged path until publication, the VM's own bundle after — so the
+    /// termination sweep asks here rather than guessing at a URL. Best effort:
+    /// `FileManager.copyItem` isn't interruptible, so a copy already in flight
+    /// keeps writing into the staged tree until it finishes or fails, and the
+    /// next launch's reclaim discards whatever it left.
+    ///
+    /// The trash is synchronous, unlike ``trashPartialBundle(at:fileSystem:)`` —
+    /// the process ends immediately after, so a detached task would never run.
+    func cancelAndCleanupPreparing() {
+        for phantom in instances where phantom.isPreparing {
+            guard let state = phantom.preparingState else { continue }
+            Self.logger.notice(
+                "Terminating: cancelling \(state.operation.displayNoun, privacy: .public) for '\(phantom.name, privacy: .public)'"
+            )
+            state.task.cancel()
+            if let written = writeLocations[phantom.id] {
+                do {
+                    try fileSystem.trashItem(at: written)
+                } catch {
+                    Self.logger.warning(
+                        "Failed to clean up the partial bundle for '\(phantom.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+            dropPhantomRow(phantom)
+        }
     }
 
     /// Drops `instance` from the library, moving the selection off it and

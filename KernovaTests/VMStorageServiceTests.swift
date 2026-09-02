@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import KernovaTestSupport
 @testable import Kernova
 
 /// Serialized because ``VMStorageService/reclaimStagedBundles()`` sweeps the whole
@@ -182,9 +181,7 @@ struct VMStorageServiceTests {
 
     @Test("A staged bundle sits hidden inside the VMs directory and does not exist yet")
     func stagedBundleURLIsHiddenAndAbsent() throws {
-        let config = VMConfiguration(name: "Staging Path", guestOS: .linux, bootMode: .efi)
-
-        let staged = try service.stagedBundleURL(for: config)
+        let staged = try service.makeStagedBundleURL()
         let staging = try service.stagingDirectory
 
         #expect(staged.deletingLastPathComponent() == staging)
@@ -193,11 +190,19 @@ struct VMStorageServiceTests {
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
     }
 
+    @Test("Each staged path is minted fresh, so no two writes can name the same tree")
+    func stagedBundleURLsAreUniquePerWrite() throws {
+        // An import keeps the source bundle's configuration id, so a retry after
+        // an interrupted attempt would otherwise stage where the launch reclaim
+        // is still deleting.
+        #expect(try service.makeStagedBundleURL() != (try service.makeStagedBundleURL()))
+    }
+
     @Test("Listing bundles never admits a config-bearing bundle that is still staged")
     func listIgnoresStagedBundles() throws {
         let config = VMConfiguration(name: "Interrupted Write", guestOS: .linux, bootMode: .efi)
 
-        let staged = try service.stagedBundleURL(for: config)
+        let staged = try service.makeStagedBundleURL()
         try service.createVMBundle(config, at: staged)
         defer { try? FileManager.default.removeItem(at: staged) }
 
@@ -210,7 +215,7 @@ struct VMStorageServiceTests {
     func publishMakesBundleListable() throws {
         let config = VMConfiguration(name: "Published", guestOS: .linux, bootMode: .efi)
 
-        let staged = try service.stagedBundleURL(for: config)
+        let staged = try service.makeStagedBundleURL()
         try service.createVMBundle(config, at: staged)
         let finalURL = try service.bundleURL(for: config)
         defer {
@@ -231,7 +236,7 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(name: "Collision", guestOS: .linux, bootMode: .efi)
 
         let finalURL = try makeBundle(config)
-        let staged = try service.stagedBundleURL(for: config)
+        let staged = try service.makeStagedBundleURL()
         try service.createVMBundle(config, at: staged)
         defer {
             try? FileManager.default.removeItem(at: staged)
@@ -249,7 +254,7 @@ struct VMStorageServiceTests {
     @Test("Reclaiming discards staged bundles and leaves published ones alone")
     func reclaimDiscardsOnlyStagedBundles() async throws {
         let staleConfig = VMConfiguration(name: "Abandoned", guestOS: .linux, bootMode: .efi)
-        let staged = try service.stagedBundleURL(for: staleConfig)
+        let staged = try service.makeStagedBundleURL()
         try service.createVMBundle(staleConfig, at: staged)
 
         let survivor = try makeBundle(
@@ -259,14 +264,9 @@ struct VMStorageServiceTests {
             try? FileManager.default.removeItem(at: survivor)
         }
 
-        service.reclaimStagedBundles()
+        await service.reclaimStagedBundles().value
 
-        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
-        // tests") — the removals run on a detached task the caller does not
-        // hold, so the file's disappearance is the only signal there is.
-        try await waitUntil {
-            !FileManager.default.fileExists(atPath: staged.path(percentEncoded: false))
-        }
+        #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: survivor.path(percentEncoded: false)))
     }
 }

@@ -5,13 +5,14 @@ protocol VMStorageProviding: Sendable {
     var vmsDirectory: URL { get throws }
     var stagingDirectory: URL { get throws }
     func bundleURL(for configuration: VMConfiguration) throws -> URL
-    func stagedBundleURL(for configuration: VMConfiguration) throws -> URL
+    func makeStagedBundleURL() throws -> URL
     func listVMBundles() throws -> [URL]
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration
     func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws
     func createVMBundle(_ configuration: VMConfiguration, at bundleURL: URL) throws
     func publishBundle(from stagedURL: URL, to bundleURL: URL) throws
-    func reclaimStagedBundles()
+    @discardableResult
+    func reclaimStagedBundles() -> Task<Void, Never>
     func deleteVMBundle(at bundleURL: URL) throws
     func permanentlyDeleteVMBundle(at bundleURL: URL) throws
     func cloneVMBundle(

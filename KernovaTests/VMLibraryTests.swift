@@ -86,17 +86,13 @@ struct VMLibraryTests {
         #expect(library.hasLoadedLibrary == false)
     }
 
-    @Test("startLibrary reclaims an interrupted run's staged bundles before the first read")
-    func startLibraryReclaimsStagedBundlesBeforeTheRead() async {
+    @Test("startLibrary reclaims what an interrupted run left staged")
+    func startLibraryReclaimsStagedBundles() async {
         let (library, storage, _, _) = makeLibrary()
 
         await library.startLibrary()
 
-        // Ordering is the point: the reclaim's enumeration has to precede
-        // anything this run stages, so it runs before the library read.
         #expect(storage.reclaimStagedBundlesCallCount == 1)
-        #expect(storage.listVMBundlesCallCountAtReclaim == 0)
-        #expect(storage.listVMBundlesCallCount >= 1)
         #expect(library.hasLoadedLibrary == true)
     }
 

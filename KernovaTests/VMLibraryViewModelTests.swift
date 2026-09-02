@@ -2942,12 +2942,11 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Fail VM")
 
         try viewModel.createVM(from: wizard)
-        let phantom = try #require(viewModel.instances.first)
-        let staged = try storage.stagedBundleURL(for: phantom.configuration)
         await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.isEmpty)
         // The failed write never left staging, so that is what is trashed.
+        let staged = try #require(storage.stagedBundleURLs.last)
         try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [staged] }
         #expect(presenter.showError == true)
         // Nothing was written, so nothing is started.
@@ -2964,13 +2963,12 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Disk Fail VM")
 
         try viewModel.createVM(from: wizard)
-        let phantom = try #require(viewModel.instances.first)
-        let staged = try storage.stagedBundleURL(for: phantom.configuration)
         await viewModel.awaitPreparingForTesting()
 
         // The half-written bundle goes with the row, and it never left staging,
         // so nothing the watcher can enumerate held a disk-less VM.
         #expect(viewModel.instances.isEmpty)
+        let staged = try #require(storage.stagedBundleURLs.last)
         try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [staged] }
         #expect(virtService.startCallCount == 0)
         guard case .operationFailed(let verb, _, _, _) = reported else {
@@ -3013,7 +3011,6 @@ struct VMLibraryViewModelTests {
 
         try viewModel.createVM(from: wizard)
         let phantom = try #require(viewModel.instances.first)
-        let staged = try storage.stagedBundleURL(for: phantom.configuration)
         viewModel.cancelPreparing(phantom)
 
         // The write is uninterruptible, so the row stays — reading
@@ -3026,6 +3023,7 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.isEmpty)
         // Cancelled before publication, so the staged tree is the whole of it.
+        let staged = try #require(storage.stagedBundleURLs.last)
         try await fileSystem.recorded.wait {
             self.fileSystem.trashedURLs == [staged]
         }
@@ -3040,8 +3038,8 @@ struct VMLibraryViewModelTests {
 
         try viewModel.createVM(from: wizard)
         let phantom = try #require(viewModel.instances.first)
-        let staged = try storage.stagedBundleURL(for: phantom.configuration)
         try await diskService.parked.wait { diskService.isParked }
+        let staged = try #require(storage.stagedBundleURLs.last)
 
         // The configuration is written and the disk image is not — exactly the
         // state an abnormal exit used to leave adoptable. It is all under the
@@ -3060,6 +3058,31 @@ struct VMLibraryViewModelTests {
         #expect(try storage.listVMBundles().contains(phantom.bundleURL))
     }
 
+    @Test("A quit mid-write trashes the staged tree, not the row's empty bundle URL")
+    func cancelAndCleanupPreparingTrashesTheStagedTree() async throws {
+        let diskService = MockDiskImageService()
+        diskService.holdCreateDiskImage()
+        let (viewModel, storage, _, _, _) = makeViewModel(diskImageService: diskService)
+        let wizard = makeCreationWizard(name: "Quit Mid-write VM", startAfterCreate: false)
+
+        try viewModel.createVM(from: wizard)
+        let phantom = try #require(viewModel.instances.first)
+        let task = try #require(phantom.preparingState?.task)
+        try await diskService.parked.wait { diskService.isParked }
+        let staged = try #require(storage.stagedBundleURLs.last)
+
+        viewModel.cancelAndCleanupPreparing()
+
+        // Synchronous, because the process ends right after — and aimed at the
+        // staged tree, since `phantom.bundleURL` holds nothing until publication.
+        #expect(viewModel.instances.isEmpty)
+        #expect(fileSystem.trashedURLs == [staged])
+        #expect(phantom.preparingState == nil)
+
+        diskService.resumeCreateDiskImage()
+        await task.value
+    }
+
     @Test("createVM leaves nothing at the bundle URL when publication fails")
     func createVMPublishFailureLeavesNothingBehind() async throws {
         let storage = MockVMStorageService()
@@ -3070,13 +3093,13 @@ struct VMLibraryViewModelTests {
 
         try viewModel.createVM(from: wizard)
         let phantom = try #require(viewModel.instances.first)
-        let staged = try storage.stagedBundleURL(for: phantom.configuration)
         await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.isEmpty)
         #expect(storage.bundles[phantom.bundleURL] == nil)
         #expect(!FileManager.default.fileExists(atPath: phantom.bundleURL.path(percentEncoded: false)))
         #expect(presenter.showError == true)
+        let staged = try #require(storage.stagedBundleURLs.last)
         try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [staged] }
     }
 
@@ -4542,7 +4565,6 @@ struct VMLibraryViewModelTests {
 
         viewModel.cloneVM(instance)
         let phantom = try #require(viewModel.instances.first { $0.id != instance.id })
-        let staged = try storage.stagedBundleURL(for: phantom.configuration)
         await viewModel.awaitPreparingForTesting()
 
         // Every byte the clone wrote went to staging, so a publication that never
@@ -4552,6 +4574,7 @@ struct VMLibraryViewModelTests {
         #expect(
             !FileManager.default.fileExists(atPath: phantom.bundleURL.path(percentEncoded: false)))
         #expect(presenter.showError == true)
+        let staged = try #require(storage.stagedBundleURLs.last)
         try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [staged] }
     }
 

@@ -505,7 +505,7 @@ struct SidebarViewControllerTests {
         #expect(deleteImmediately?.isAlternate == false)
     }
 
-    @Test("Context menu for a preparing VM offers only Cancel and Show in Finder")
+    @Test("Context menu for a preparing VM offers only its Cancel")
     func contextMenuPreparing() {
         let viewModel = makeViewModel()
         let instance = makeInstance()
@@ -517,7 +517,9 @@ struct SidebarViewControllerTests {
         let menuTitles = titles(of: menu)
 
         #expect(menuTitles.contains("Cancel Clone"))
-        #expect(menuTitles.contains("Show in Finder"))
+        // The row's bundle URL holds nothing until the write is published, so a
+        // reveal would open Finder on a path that does not exist.
+        #expect(!menuTitles.contains("Show in Finder"))
         #expect(!menuTitles.contains("Start"))
         #expect(!menuTitles.contains("Rename"))
     }

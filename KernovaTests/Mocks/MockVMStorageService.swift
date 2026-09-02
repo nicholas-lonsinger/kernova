@@ -40,9 +40,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var publishBundleCallCount = 0
     var reclaimStagedBundlesCallCount = 0
 
-    /// `listVMBundlesCallCount` as it stood when `reclaimStagedBundles()` last ran,
-    /// so a test can prove the reclaim preceded the library read.
-    var listVMBundlesCallCountAtReclaim: Int?
+    /// Every staged path handed out, in order — the only way a test can name one,
+    /// since each is minted fresh rather than derived from a configuration.
+    var stagedBundleURLs: [URL] = []
 
     /// The `filesToCopy` argument from the most recent `cloneVMBundle` call.
     var lastCloneFilesToCopy: [String]?
@@ -85,11 +85,13 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         )
     }
 
-    func stagedBundleURL(for configuration: VMConfiguration) throws -> URL {
-        try stagingDirectory.appendingPathComponent(
-            "\(configuration.id.uuidString).\(VMStorageService.bundleExtension)",
+    func makeStagedBundleURL() throws -> URL {
+        let url = try stagingDirectory.appendingPathComponent(
+            "\(UUID().uuidString).\(VMStorageService.bundleExtension)",
             isDirectory: true
         )
+        stagedBundleURLs.append(url)
+        return url
     }
 
     func listVMBundles() throws -> [URL] {
@@ -158,9 +160,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         }
     }
 
-    func reclaimStagedBundles() {
+    @discardableResult
+    func reclaimStagedBundles() -> Task<Void, Never> {
         reclaimStagedBundlesCallCount += 1
-        listVMBundlesCallCountAtReclaim = listVMBundlesCallCount
+        return Task {}
     }
 
     func deleteVMBundle(at bundleURL: URL) throws {
