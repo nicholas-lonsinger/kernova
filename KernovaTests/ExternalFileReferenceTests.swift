@@ -18,8 +18,8 @@ struct ExternalFileReferenceTests {
     /// carrying a distinct sentinel bookmark.
     ///
     /// Not a shape a real VM takes — a Linux kernel boot alongside a macOS
-    /// install context — which is the point: the projection is exercised
-    /// against every field in one pass.
+    /// install context — which is the point: one pass exercises every field,
+    /// and ``fixtureCoversEveryKind()`` holds this to every kind.
     private func makeFullyPopulatedConfig() -> VMConfiguration {
         var config = VMConfiguration(name: "Externals", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = "/Users/me/vmlinuz"
@@ -46,9 +46,18 @@ struct ExternalFileReferenceTests {
         return config
     }
 
-    // MARK: - Structural drift guard
+    // MARK: - Fixture completeness
 
-    @Test("Every bookmark a configuration stores is reachable through the projection")
+    @Test("The fixture populates every reference kind")
+    func fixtureCoversEveryKind() {
+        let projected = Set(makeFullyPopulatedConfig().externalFileReferences.map(\.kind))
+        // What makes the rest of this suite exhaustive: the shape, heal and
+        // bookmark assertions all run off this one fixture, so a new `Kind`
+        // fails here until the fixture grows an entry feeding it.
+        #expect(projected == Set(ExternalFileReference.Kind.allCases))
+    }
+
+    @Test("Every bookmark the fixture stores is reachable through the projection")
     func projectionCoversEveryStoredBookmark() {
         let config = makeFullyPopulatedConfig()
         let stored = Set(Self.storedBookmarks(in: config))
@@ -59,16 +68,20 @@ struct ExternalFileReferenceTests {
     }
 
     /// Every non-nil bookmark `Data` reachable from `value`, found by property
-    /// name (`bookmark`, or a `…Bookmark` suffix) rather than by a hand-written
-    /// list of fields — so a new bookmark-carrying field on any nested model
-    /// shows up here whether or not the projection was widened for it.
+    /// name (`bookmark`, or any label containing `Bookmark`) rather than by a
+    /// hand-written list of fields.
+    ///
+    /// Scope: this catches a bookmark-carrying field the fixture *populates*
+    /// and the projection drops. A field the fixture leaves nil reflects as an
+    /// empty optional and is invisible here — ``fixtureCoversEveryKind()`` is
+    /// what forces the fixture to grow.
     private static func storedBookmarks(in value: Any, label: String? = nil) -> [Data] {
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .optional {
             guard let wrapped = mirror.children.first?.value else { return [] }
             return storedBookmarks(in: wrapped, label: label)
         }
-        if let label, label == "bookmark" || label.hasSuffix("Bookmark"),
+        if let label, label.localizedCaseInsensitiveContains("bookmark"),
             let bookmark = value as? Data
         {
             return [bookmark]

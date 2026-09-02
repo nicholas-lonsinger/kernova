@@ -48,9 +48,10 @@ extension ExternalFileReference.Kind {
 
     /// Whether the delete sheet offers to trash this kind alongside the VM.
     ///
-    /// Shared directories are excluded deliberately: they are the user's own
-    /// working folders rather than artifacts of the VM, so offering to trash
-    /// one is a foot-gun.
+    /// Two kinds are excluded deliberately, both because the file belongs to
+    /// the user rather than to the VM: a shared directory is a working folder
+    /// the guest happens to mount, and a local IPSW is a reusable installer the
+    /// user may still set up other VMs from.
     var isOfferedOnVMDelete: Bool {
         switch self {
         case .kernel, .initrd, .storageDisk, .removableMedia: true
