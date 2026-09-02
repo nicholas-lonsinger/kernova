@@ -101,8 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         lifecycle.host = self
         termination.residency = lifecycle.softQuit
         windows.residency = lifecycle
-        windows.displayPlacement.residency = lifecycle
-        windows.displayPlacement.host = windows
         mainMenu.host = self
         viewModel.onSurfaceLibrary = { [weak lifecycle] in
             lifecycle?.presentSummonedInterface()

@@ -2,8 +2,7 @@ import Cocoa
 import os
 
 /// The application-level seam a ``MainMenuController`` needs but cannot own:
-/// which VM a command acts on, and the object its explicitly-targeted items fire
-/// at.
+/// which VM a command acts on.
 @MainActor
 protocol MainMenuHosting: AnyObject {
     /// The VM a menu command acts on: the one the sending item names, else the
@@ -44,9 +43,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// menu's tail by macOS convention, so everything past this separator is the
     /// whole section.
     private var appMenuQuitSectionStart: NSMenuItem?
-    /// The model the quit section was last built from, so a rebuild that would
-    /// produce identical items is skipped.
-    private var appMenuQuitModel: [AppMenuQuitItem] = []
 
     /// The Virtual Machine menu, retained so its opening can refresh the revert
     /// submenu that decides one of its items' enablement.
@@ -107,6 +103,29 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         /// Whether Option joins Command: `false` = ⌘Q, `true` = ⌥⌘Q.
         let usesOptionModifier: Bool
         let action: Action
+
+        /// The selector the built item carries. Both dispatch nil-target:
+        /// `terminate:` so the responder chain resolves it to `NSApp` and the
+        /// `applicationShouldTerminate` gate, `quitCompletely:` so it resolves
+        /// to the app delegate at the chain's tail.
+        @MainActor var selector: Selector {
+            switch action {
+            case .terminateThroughGate: #selector(NSApplication.terminate(_:))
+            case .quitCompletely: #selector(AppDelegate.quitCompletely(_:))
+            }
+        }
+
+        var keyEquivalentModifierMask: NSEvent.ModifierFlags {
+            usesOptionModifier ? [.command, .option] : [.command]
+        }
+
+        /// Whether `item` is what this model builds — the whole of it, so an
+        /// item AppKit injected or altered never passes for a modeled one.
+        @MainActor func matches(_ item: NSMenuItem) -> Bool {
+            item.title == title && item.action == selector
+                && item.keyEquivalent == keyEquivalent
+                && item.keyEquivalentModifierMask == keyEquivalentModifierMask
+        }
     }
 
     /// Decides the app menu's quit-section items, so every state presents an
@@ -156,9 +175,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     /// Rebuilds the revert submenu from the selected VM's snapshots.
     ///
-    /// The unchanged-model guard is load-bearing for the same reason it is in
-    /// ``rebuildAppMenuQuitItems()``: this also runs while AppKit matches key
-    /// equivalents, and tearing items down mid-match is what must not happen.
+    /// The unchanged-model guard is load-bearing, not an optimization: this also
+    /// runs while AppKit matches key equivalents, and tearing items down
+    /// mid-match is what must not happen. The model alone answers for the
+    /// submenu because every item in it is one this rebuild wrote — AppKit
+    /// injects nothing into a submenu it does not own.
     private func rebuildRevertSnapshotMenu(_ menu: NSMenu) {
         // No host means the app is tearing down, and the submenu goes with it.
         guard let host else { return }
@@ -171,8 +192,10 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             } ?? false)
         guard model != revertSnapshotMenuModel else { return }
         revertSnapshotMenuModel = model
+        // nil target: the responder chain resolves the action to the app
+        // delegate, like every other command in this menu bar.
         SnapshotRevertMenu.rebuild(
-            menu, for: instance, isEnabled: model.isEnabled, target: host,
+            menu, for: instance, isEnabled: model.isEnabled, target: nil,
             action: #selector(AppDelegate.revertToSnapshot(_:)))
     }
 
@@ -180,17 +203,23 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// current mode, clearing whatever occupies the section first so the result
     /// is the model and nothing else.
     ///
-    /// The unchanged-model guard is load-bearing, not an optimization: AppKit also
-    /// calls `menuNeedsUpdate(_:)` while *matching key equivalents*, so this runs
-    /// on every ⌘-keystroke — and tearing the items down mid-match is exactly the
-    /// mutation that must not happen.
+    /// The rebuild is skipped only when the *installed* items already are the
+    /// model, item for item — never on an unchanged model alone. AppKit injects
+    /// its own "Quit and Keep Windows" alternate beside a `terminate:` item at
+    /// times of its choosing, so a section that matched a moment ago can hold an
+    /// item the model never named; comparing what is installed is what takes
+    /// ⌥⌘Q back from that alternate.
+    ///
+    /// Skipping a matching section is load-bearing, not an optimization: AppKit
+    /// also calls `menuNeedsUpdate(_:)` while *matching key equivalents*, so this
+    /// runs on every ⌘-keystroke — and tearing the items down mid-match is
+    /// exactly the mutation that must not happen.
     private func rebuildAppMenuQuitItems() {
         guard let appMenu, let sectionStart = appMenuQuitSectionStart else { return }
         // The preference is read live here, not captured, so a Settings flip is
         // reflected on the next open.
         let model = Self.appMenuQuitItems(
             downgradesQuitToGUIClose: hasSoftQuit && viewModel.keepInMenuBarOnQuit)
-        guard model != appMenuQuitModel else { return }
 
         let sectionStartIndex = appMenu.index(of: sectionStart)
         guard sectionStartIndex >= 0 else {
@@ -198,35 +227,29 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             assertionFailure("App menu quit-section separator is not in the app menu")
             return
         }
-        // Recorded only once the rebuild is committed to running, so the cache
-        // names what is installed and a bailed-out rebuild is retried.
-        appMenuQuitModel = model
+        // The quit section is the app menu's tail, so everything past the
+        // separator is what the model has to account for.
+        let installed = appMenu.items.suffix(from: sectionStartIndex + 1)
+        if installed.count == model.count,
+            zip(model, installed).allSatisfy({ $0.matches($1) })
+        {
+            return
+        }
+
         while appMenu.numberOfItems > sectionStartIndex + 1 {
             appMenu.removeItem(at: appMenu.numberOfItems - 1)
         }
-
-        let items = model.map { model in
-            let item: NSMenuItem
-            switch model.action {
-            case .terminateThroughGate:
-                // nil target → the responder chain resolves it to NSApp, funneling
-                // through `applicationShouldTerminate`'s gate.
-                item = NSMenuItem(
-                    title: model.title,
-                    action: #selector(NSApplication.terminate(_:)),
-                    keyEquivalent: model.keyEquivalent)
-            case .quitCompletely:
-                item = NSMenuItem(
-                    title: model.title,
-                    action: #selector(AppDelegate.quitCompletely(_:)),
-                    keyEquivalent: model.keyEquivalent)
-                item.target = host
-            }
-            item.keyEquivalentModifierMask =
-                model.usesOptionModifier ? [.command, .option] : [.command]
-            return item
+        for quitItem in model {
+            // nil target throughout: `terminate:` resolves to NSApp, funneling
+            // through `applicationShouldTerminate`'s gate, and
+            // `quitCompletely:` to the app delegate at the responder chain's
+            // tail.
+            let item = NSMenuItem(
+                title: quitItem.title, action: quitItem.selector,
+                keyEquivalent: quitItem.keyEquivalent)
+            item.keyEquivalentModifierMask = quitItem.keyEquivalentModifierMask
+            appMenu.addItem(item)
         }
-        for item in items { appMenu.addItem(item) }
     }
 
     // MARK: - Menu Validation

@@ -23,7 +23,7 @@ struct MainMenuRebuildTests {
     }
 
     private func makeFixture(instance: VMInstance?, keepInMenuBar: Bool = false) -> Fixture {
-        let viewModel = makeMenuViewModel(preferences: preferences)
+        let viewModel = makeLibraryViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         let controller = MainMenuController(
             viewModel: viewModel, preferences: preferences, hasSoftQuit: true,
@@ -110,6 +110,32 @@ struct MainMenuRebuildTests {
         #expect(!appMenu.items.contains { $0 === intruder })
         #expect(appMenu.items.first === bystander)
         #expect(quitItems(in: appMenu, count: model.count).map(\.title) == model.map(\.title))
+    }
+
+    @Test("An item injected into the quit section is swept even with the model unchanged")
+    func injectedItemIsSweptWithoutAModelChange() throws {
+        let fixture = makeFixture(instance: nil, keepInMenuBar: true)
+        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
+        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        // What AppKit attaches beside a `terminate:` item, arriving after the
+        // section was built and without anything the model would notice.
+        let intruder = NSMenuItem(
+            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        intruder.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(intruder)
+
+        fixture.controller.menuNeedsUpdate(appMenu)
+
+        let items = quitItems(in: appMenu, count: model.count)
+        #expect(!appMenu.items.contains { $0 === intruder })
+        #expect(items.map(\.title) == model.map(\.title))
+        // ⌥⌘Q is the true quit's again, not the alternate's.
+        let claimants = appMenu.items.filter {
+            $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
+        }
+        #expect(claimants.count == 1)
+        #expect(claimants.first?.action == #selector(AppDelegate.quitCompletely(_:)))
     }
 
     @Test("Only the full-quit item claims ⌥⌘Q after a toggle")

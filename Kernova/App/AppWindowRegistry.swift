@@ -14,8 +14,12 @@ final class AppWindowRegistry {
     /// The one owner of where each VM's display lives, held here so the display
     /// windows count toward presence alongside the rest.
     let displayPlacement: VMDisplayPlacementController
-    /// The residency decisions this registry needs but cannot make.
-    weak var residency: (any WindowResidencyHosting)?
+    /// The residency decisions this registry needs but cannot make — and, by
+    /// the same token, the ones the display windows it holds need, so setting
+    /// it here is what settles the question for every window in the registry.
+    weak var residency: (any WindowResidencyHosting)? {
+        didSet { displayPlacement.residency = residency }
+    }
 
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
@@ -26,6 +30,7 @@ final class AppWindowRegistry {
     init(viewModel: VMLibraryViewModel, displayPlacement: VMDisplayPlacementController) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
+        displayPlacement.host = self
     }
 
     // MARK: - Library

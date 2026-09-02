@@ -4,7 +4,7 @@ import Testing
 
 /// Unit tests for `MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose:)` —
 /// the pure helper that decides the app menu's quit section so every mode
-/// presents an *honest* command (#624).
+/// presents an *honest* command.
 @Suite("MainMenuController.appMenuQuitItems", .admissionGated)
 struct MainMenuQuitItemsTests {
     /// The single-item presentation every process whose ⌘Q really quits gets:

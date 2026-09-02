@@ -3,8 +3,9 @@ import Testing
 
 @testable import Kernova
 
-/// Shared fixtures for the ``MainMenuController`` suites — the validation one
-/// and the rebuild one.
+/// Shared fixtures for the app-level suites: the ``MainMenuController`` ones and
+/// every suite that needs a mocked ``VMLibraryViewModel`` to build an app
+/// component over.
 ///
 /// Each suite passes its own `suiteName` for preferences: a defaults domain
 /// shared across suites running in parallel is a flake source.
@@ -25,7 +26,7 @@ final class StubMenuHost: MainMenuHosting {
 }
 
 @MainActor
-func makeMenuViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
+func makeLibraryViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: MockVMStorageService(),
         diskImageService: MockDiskImageService(),

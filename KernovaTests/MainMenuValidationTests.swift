@@ -25,7 +25,7 @@ struct MainMenuValidationTests {
     private func makeFixture(
         instance: VMInstance?, hasBundledGuestAgentDisk: Bool = true
     ) -> Fixture {
-        let viewModel = makeMenuViewModel(preferences: preferences)
+        let viewModel = makeLibraryViewModel(preferences: preferences)
         let controller = MainMenuController(
             viewModel: viewModel, preferences: preferences, hasSoftQuit: true,
             hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)

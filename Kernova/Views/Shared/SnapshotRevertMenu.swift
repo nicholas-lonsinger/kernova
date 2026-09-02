@@ -28,9 +28,11 @@ enum SnapshotRevertMenu {
     /// Each item's title carries the trailing ellipsis of a command that opens a
     /// confirmation, over the capture date in secondary type. `isEnabled` is the
     /// caller's revert gate — the same one the settings pane's Revert buttons
-    /// take, so a revert is never offered where it would only error.
+    /// take, so a revert is never offered where it would only error. A `nil`
+    /// `target` leaves the items nil-target, dispatching `action` down the
+    /// responder chain.
     static func rebuild(
-        _ menu: NSMenu, for instance: VMInstance?, isEnabled: Bool, target: AnyObject,
+        _ menu: NSMenu, for instance: VMInstance?, isEnabled: Bool, target: AnyObject?,
         action: Selector
     ) {
         menu.removeAllItems()

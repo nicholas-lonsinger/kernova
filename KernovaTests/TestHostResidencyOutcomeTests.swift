@@ -4,7 +4,7 @@ import Testing
 
 /// Unit tests for `TestHostResidencyController.idleOutcome` — the one decision
 /// behind both the test host's window reconcile and its answer to AppKit's
-/// last-window rule (#1026).
+/// last-window rule.
 @Suite("TestHostResidencyController idle outcome", .admissionGated)
 struct TestHostResidencyOutcomeTests {
     private func outcome(
