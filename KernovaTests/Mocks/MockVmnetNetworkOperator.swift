@@ -35,7 +35,7 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 
     private(set) var createdKinds: [VmnetNetworkKind] = []
     private(set) var pinnedAddressings: [VmnetNetworkAddressing?] = []
-    private(set) var installedReservations: [[(mac: String, address: String)]] = []
+    private(set) var installedReservations: [[VmnetReservation]] = []
     /// The forwarding rules each create was handed, in call order.
     private(set) var installedForwardingRules: [RecordedForwardingRules] = []
     private(set) var releasedNetworks: [OpaquePointer] = []
@@ -52,7 +52,7 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     func createNetwork(
         _ kind: VmnetNetworkKind,
         addressing: VmnetNetworkAddressing?,
-        reservations: [(mac: String, address: String)],
+        reservations: [VmnetReservation],
         forwardingRules: [(rule: PortForwardingRule, internalAddress: String)]
     ) throws -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing) {
         createdKinds.append(kind)

@@ -746,6 +746,31 @@ struct VmnetNetworkServiceTests {
         #expect(!service.networkConfigurationIsPending(for: .shared))
     }
 
+    @Test("One MAC holding two slots installs both and never reads as pending")
+    func duplicateMACInTwoSlotsInstallsBothAndNeverPends() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        // `reserveAddressIfNeeded` refuses a MAC that already holds a slot, so
+        // a hand-edited store is the only way one MAC holds two.
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:01"], at: location)
+
+        let handle = try service.network(for: .shared)
+
+        // Both slots install, the published network matches what would install
+        // now — so nothing pends and nothing recreates — and the MAC answers
+        // with the first slot it holds.
+        #expect(
+            operations.installedReservations.last?.map(\.address) == [
+                "192.168.77.2", "192.168.77.3",
+            ])
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+        let cached = try service.network(for: .shared)
+        #expect(cached.network == handle.network)
+        #expect(operations.createdKinds.count == 1)
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == "192.168.77.2")
+    }
+
     @Test("System-adjusted pinned addressing leaves every reservation pending until rematerialization")
     func adjustedPinnedAddressingLeavesReservationsPending() throws {
         let location = makeStoreLocation()
