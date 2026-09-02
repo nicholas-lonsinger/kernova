@@ -87,8 +87,11 @@ struct VMCommandEnvelopeTests {
             .cancelPreparing(selector, confirmed: true),
         ]
         // Every case of the vocabulary is represented, so a verb added without a
-        // round trip fails here rather than shipping unencodable.
-        #expect(Set(verbs.map(\.verb)).count == VMVerb.allCases.count)
+        // round trip fails here rather than shipping unencodable. `create` takes
+        // the configuration the wizard assembles, including the security
+        // bookmarks only an in-process pick can mint, so the wire vocabulary
+        // does not offer it; every other verb round-trips.
+        #expect(Set(verbs.map(\.verb)) == Set(VMVerb.allCases).subtracting([.create]))
 
         for verb in verbs {
             let request = VMCommandRequest(verb: verb)

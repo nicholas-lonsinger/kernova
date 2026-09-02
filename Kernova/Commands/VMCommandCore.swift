@@ -23,6 +23,7 @@ final class VMCommandCore: VMCommanding {
     let lifecycle: VMLifecycleCoordinator
     let storageService: any VMStorageProviding
     let snapshotStore: any VMSnapshotStoring
+    let diskImageService: any DiskImageProviding
     let fileSystem: any FileSystemOperating
     let preferences: AppPreferences
 
@@ -82,6 +83,7 @@ final class VMCommandCore: VMCommanding {
         lifecycle: VMLifecycleCoordinator,
         storageService: any VMStorageProviding,
         snapshotStore: any VMSnapshotStoring,
+        diskImageService: any DiskImageProviding,
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences
     ) {
@@ -89,6 +91,7 @@ final class VMCommandCore: VMCommanding {
         self.lifecycle = lifecycle
         self.storageService = storageService
         self.snapshotStore = snapshotStore
+        self.diskImageService = diskImageService
         self.fileSystem = fileSystem
         self.preferences = preferences
         self.capabilities = VMCapabilityCatalog(library: library)
@@ -134,12 +137,12 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    /// The wire status a VM copying into place through a clone or import
-    /// reports in place of its real ``VMStatus``.
+    /// The wire status a VM being written into place by a create, clone or
+    /// import reports in place of its real ``VMStatus``.
     nonisolated static let preparingWireStatus = "preparing"
 
     /// `instance`'s status as it crosses the wire — ``preparingWireStatus``
-    /// while a clone or import is still copying its bundle, its real
+    /// while a create, clone or import is still writing its bundle, its real
     /// ``VMStatus`` otherwise.
     func wireStatus(_ instance: VMInstance) -> String {
         instance.isPreparing ? Self.preparingWireStatus : instance.status.rawValue
@@ -217,7 +220,7 @@ final class VMCommandCore: VMCommanding {
             allowed: allowedVerbs(for: instance))
     }
 
-    /// Refuses while a clone or import is still writing into the VM's bundle.
+    /// Refuses while a create, clone or import is still writing the VM's bundle.
     func refuseIfPreparing(_ instance: VMInstance) throws {
         guard let state = instance.preparingState else { return }
         throw preparingBusyError(instance, state: state)
@@ -392,7 +395,7 @@ final class VMCommandCore: VMCommanding {
         onFailure?(failure, instance)
     }
 
-    /// Reports a clone or import copy that failed after registering its
+    /// Reports a create, clone or import that failed after registering its
     /// preparing row.
     ///
     /// `phantom` is evicted by the time this runs, so the diffing observation

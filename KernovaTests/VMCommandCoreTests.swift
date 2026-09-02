@@ -52,6 +52,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             storageService: storage,
             snapshotStore: snapshots,
+            diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -98,6 +99,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             storageService: storage,
             snapshotStore: snapshots,
+            diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -594,7 +596,8 @@ struct VMCommandCoreTests {
         )
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
-            snapshotStore: snapshots, fileSystem: fileSystem, preferences: preferences)
+            snapshotStore: snapshots, diskImageService: MockDiskImageService(),
+            fileSystem: fileSystem, preferences: preferences)
 
         var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
         config.installContext = MacOSInstallContext(

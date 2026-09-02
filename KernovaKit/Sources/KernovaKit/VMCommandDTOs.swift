@@ -11,8 +11,8 @@ public struct VMSummary: Codable, Sendable, Hashable {
     /// The VM's display name, which is not unique.
     public let name: String
     /// The VM's runtime status, as its stable wire name. A VM whose bundle is
-    /// still being copied by a clone or import reports `preparing`, which is
-    /// not a ``VMStatus`` value.
+    /// still being written by a create, clone or import reports `preparing`,
+    /// which is not a ``VMStatus`` value.
     public let status: String
 
     /// Names one VM.
@@ -30,8 +30,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// The VM's display name.
     public let name: String
     /// The VM's runtime status, as its stable wire name. A VM whose bundle is
-    /// still being copied by a clone or import reports `preparing`, which is
-    /// not a ``VMStatus`` value.
+    /// still being written by a create, clone or import reports `preparing`,
+    /// which is not a ``VMStatus`` value.
     public let status: String
     /// Which guest the VM runs, as its stable wire name.
     public let guestOS: String
@@ -148,7 +148,7 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case deleteSnapshot
     /// Returning a VM to a snapshot.
     case revertToSnapshot
-    /// Stopping a clone or import that is still copying.
+    /// Stopping a create, clone or import that is still writing.
     case cancelPreparing
     /// Interrupting a running guest setup — a macOS install, or a Linux
     /// installer image being fetched or verified.

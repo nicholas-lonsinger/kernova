@@ -2,8 +2,8 @@ import Foundation
 import KernovaKit
 import Virtualization
 
-/// The library verbs — clone, rename, delete, import, and the cancel that
-/// undoes a clone or import still copying.
+/// The library verbs — create, clone, rename, delete, import, and the cancel
+/// that undoes any of them still writing a bundle.
 extension VMCommandCore {
     // MARK: - Bounded Copies
 
@@ -55,6 +55,71 @@ extension VMCommandCore {
                     "\u{201C}\(instance.name)\u{201D} could not be renamed — the change was not saved."
             )
         }
+    }
+
+    // MARK: - Create
+
+    @discardableResult
+    func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary {
+        let bundleURL: URL
+        do {
+            bundleURL = try storageService.bundleURL(for: configuration)
+        } catch {
+            Self.logger.error(
+                "Failed to derive bundle URL for new VM '\(configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw CommandError.operationFailed(verb: .create, message: error.localizedDescription)
+        }
+
+        let phantom = VMInstance(
+            configuration: configuration, bundleURL: bundleURL,
+            phase: VMLibrary.initialPhase(
+                for: configuration, layout: VMBundleLayout(bundleURL: bundleURL)),
+            preferences: preferences)
+
+        let storage = storageService
+        let diskImages = diskImageService
+        let diskSizeInGB = configuration.diskSizeInGB
+        let name = configuration.name
+        // The failure arm trashes `phantom.bundleURL`, which is safe because the
+        // bundle is named for this configuration's freshly minted UUID: it can
+        // never name a bundle some other create wrote.
+        library.prepareBundle(
+            phantom, operation: .creating,
+            copyWork: {
+                // Off the bounded `copyQueue`, which exists to serialize the
+                // multi-gigabyte `copyItem` calls clone and import make: this
+                // write is a `createDirectory` and one small atomic
+                // `config.json`, and queueing it behind two in-flight imports
+                // would hold the new VM at "Creating…" for their copies.
+                try await Task.detached { _ = try storage.createVMBundle(for: configuration) }
+                    .value
+                try await diskImages.createDiskImage(
+                    at: phantom.diskImageURL, sizeInGB: diskSizeInGB)
+            },
+            onSuccess: { [weak self] in
+                Self.logger.notice(
+                    "Created VM '\(name, privacy: .public)' (status: \(phantom.status.displayName, privacy: .public))"
+                )
+                guard startAfterCreate, let self else { return }
+                Self.logger.notice("Auto-starting new VM '\(name, privacy: .public)'")
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.start(phantom)
+                    } catch let failure as CommandError {
+                        self.report(failure, on: phantom)
+                    } catch {
+                        self.report(
+                            .operationFailed(verb: .start, message: error.localizedDescription),
+                            on: phantom)
+                    }
+                }
+            },
+            onFailure: { [weak self] error in
+                self?.reportPreparingFailure(error, verb: .create, phantom: phantom)
+            })
+        return summary(phantom)
     }
 
     // MARK: - Clone
@@ -353,7 +418,7 @@ extension VMCommandCore {
         )
     }
 
-    /// The refusal a clone or import cancel raises.
+    /// The refusal a create, clone or import cancel raises.
     static func cancelPreparingPrompt(
         _ operation: VMInstance.PreparingOperation, on instance: VMInstance
     ) -> ConfirmationPrompt {

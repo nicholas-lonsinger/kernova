@@ -45,6 +45,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case deleteSnapshot
     case renameSnapshot
     case setSnapshotNotes
+    case create
     case clone
     case rename
     case delete
@@ -74,6 +75,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .deleteSnapshot: "Delete Snapshot"
         case .renameSnapshot: "Rename Snapshot"
         case .setSnapshotNotes: "Edit Snapshot Note"
+        case .create: "Create"
         case .clone: "Clone"
         case .rename: "Rename"
         case .delete: "Delete"
@@ -91,7 +93,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .list, .info, .ipAddress, .snapshots: true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .clone, .rename, .delete, .importVM, .cancelPreparing:
+            .create, .clone, .rename, .delete, .importVM, .cancelPreparing:
             false
         }
     }

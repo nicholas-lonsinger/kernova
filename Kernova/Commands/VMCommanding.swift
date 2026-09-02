@@ -93,6 +93,14 @@ protocol VMCommanding: AnyObject {
 
     // MARK: - Library
 
+    /// Writes a new VM's bundle and disk image, answering the row the write
+    /// fills.
+    ///
+    /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
+    /// write starts nothing.
+    @discardableResult
+    func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary
+
     /// Copies the VM's bundle into a new one, answering the row the copy fills.
     @discardableResult
     func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary
@@ -112,7 +120,7 @@ protocol VMCommanding: AnyObject {
     @discardableResult
     func importVM(from url: URL) throws -> VMSummary
 
-    /// Cancels an in-flight clone or import and removes its row.
+    /// Cancels an in-flight create, clone or import and removes its row.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
 
     // MARK: - Observation

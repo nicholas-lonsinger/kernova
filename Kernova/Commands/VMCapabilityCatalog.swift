@@ -76,9 +76,9 @@ enum VMCapability: CaseIterable, Hashable {
         }
     }
 
-    /// Whether this capability survives a clone or import still copying into the
-    /// VM's bundle: the reads, the cancel that stops the copy, and the Finder
-    /// reveal of a bundle that already exists on disk.
+    /// Whether this capability survives a create, clone or import still writing
+    /// the VM's bundle: the reads, the cancel that stops the write, and the
+    /// Finder reveal of a bundle that already exists on disk.
     ///
     /// Exhaustive rather than `default`, so a new capability has to choose a
     /// side.
@@ -190,7 +190,7 @@ struct VMCapabilityCatalog {
     ///
     /// The level every `isEnabled` and every menu- or toolbar-validation reads.
     /// Two things are layered over applicability: one uniform rule for a bundle
-    /// a clone or import is still writing into (``VMCapability/survivesPreparing``),
+    /// a create, clone or import is still writing (``VMCapability/survivesPreparing``),
     /// and the settle check for the commands an unsettled operation would
     /// reject (``VMCapability/waitsForSettle``).
     func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {

@@ -301,6 +301,7 @@ final class VMLibraryViewModel {
             lifecycle: lifecycle,
             storageService: storageService,
             snapshotStore: snapshotStore,
+            diskImageService: diskImageService,
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -323,58 +324,18 @@ final class VMLibraryViewModel {
 
     // MARK: - Create
 
-    /// Creates a VM bundle and disk image from a wizard model, optionally
-    /// auto-starting it.
+    /// Registers the row a wizard's VM will fill and spawns the bundle write,
+    /// optionally auto-starting the VM once it lands.
     ///
-    /// The error is returned rather than presented so the wizard host can show it on
-    /// the wizard's own sheet and keep it open for a retry.
-    @discardableResult
-    func createVM(from wizard: VMCreationViewModel) async -> Result<Void, Error> {
-        do {
-            var config = wizard.buildConfiguration()
-
-            // Persist the setup intent so the next Start can drive the pipeline
-            // without the wizard: a macOS install, or the download of a Linux
-            // installer image the user picked from the catalog.
-            switch config.guestOS {
-            case .macOS:
-                config.installContext = wizard.buildInstallContext()
-            case .linux:
-                config.linuxInstallContext = wizard.buildLinuxInstallContext()
-            }
-
-            let bundleURL = try storageService.createVMBundle(for: config)
-            let layout = VMBundleLayout(bundleURL: bundleURL)
-            let initialPhase = VMLibrary.initialPhase(for: config, layout: layout)
-            let instance = VMInstance(
-                configuration: config, bundleURL: bundleURL, phase: initialPhase,
-                preferences: preferences)
-            library.wirePersistence(for: instance)
-
-            try await diskImageService.createDiskImage(
-                at: instance.diskImageURL,
-                sizeInGB: config.diskSizeInGB
-            )
-
-            instances.append(instance)
-            library.persistOrder()
-            selectedID = instance.id
-
-            Self.logger.notice(
-                "Created VM '\(config.name, privacy: .public)' (status: \(initialPhase.status.displayName, privacy: .public))"
-            )
-
-            if wizard.startAfterCreate {
-                Self.logger.notice(
-                    "Auto-starting VM '\(config.name, privacy: .public)' from wizard"
-                )
-                await start(instance)
-            }
-            return .success(())
-        } catch {
-            Self.logger.error("Failed to create VM: \(error.localizedDescription, privacy: .public)")
-            return .failure(error)
-        }
+    /// The pre-write refusal is thrown rather than presented so the wizard host
+    /// can show it on the wizard's own sheet and keep it open for a retry — two
+    /// sheets on one window contend, and the sheet is still up at this point. A
+    /// failure of the write itself arrives after the sheet is gone, and reaches
+    /// the user through ``VMCommandCore/onFailure``.
+    func createVM(from wizard: VMCreationViewModel) throws {
+        try commands.create(
+            configuration: wizard.buildConfiguration(),
+            startAfterCreate: wizard.startAfterCreate)
     }
 
     // MARK: - Lifecycle
@@ -662,7 +623,7 @@ final class VMLibraryViewModel {
     }
 
     #if DEBUG
-    /// Test-only seam awaiting every in-flight preparing (clone/import) copy task.
+    /// Test-only seam awaiting every in-flight preparing (create/clone/import) task.
     func awaitPreparingForTesting() async {
         for task in instances.compactMap({ $0.preparingState?.task }) {
             await task.value
@@ -705,12 +666,12 @@ final class VMLibraryViewModel {
 
     // MARK: - Cancel Preparing
 
-    /// Opens the cancel-clone/import confirmation.
+    /// Opens the cancel-create/clone/import confirmation.
     func requestCancelPreparing(_ instance: VMInstance) {
         presenter?.presentCancelPreparing(for: instance)
     }
 
-    /// Cancels an in-flight clone or import from that confirmation's confirm.
+    /// Cancels an in-flight create, clone or import from that confirmation's confirm.
     func cancelPreparing(_ instance: VMInstance) {
         do {
             try commands.cancelPreparing(.id(instance.id), confirmed: true)

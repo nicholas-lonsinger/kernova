@@ -79,22 +79,25 @@ final class VMInstance {
     /// gate for offering `.cancelGuestSetup`.
     var setupTask: Task<Void, Never>?
 
-    // MARK: - Preparing State (Clone/Import)
+    // MARK: - Preparing State (Create/Clone/Import)
 
     enum PreparingOperation: Sendable {
+        case creating
         case cloning
         case importing
 
         var displayLabel: String {
             switch self {
+            case .creating: "Creating\u{2026}"
             case .cloning: "Cloning\u{2026}"
             case .importing: "Importing\u{2026}"
             }
         }
 
-        /// The user-facing noun for this operation ("Clone" / "Import").
+        /// The user-facing noun for this operation ("Creation" / "Clone" / "Import").
         var displayNoun: String {
             switch self {
+            case .creating: "Creation"
             case .cloning: "Clone"
             case .importing: "Import"
             }
@@ -105,7 +108,7 @@ final class VMInstance {
         var cancelAlertTitle: String { "Cancel \(displayNoun)?" }
     }
 
-    /// Tracks an in-flight clone or import operation.
+    /// Tracks an in-flight create, clone, or import operation.
     struct PreparingState {
         let operation: PreparingOperation
         var task: Task<Void, Never>
@@ -119,7 +122,7 @@ final class VMInstance {
         var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : operation.displayLabel }
     }
 
-    /// Non-nil when this instance is a phantom row awaiting a clone or import to finish.
+    /// Non-nil when this instance is a phantom row awaiting a create, clone, or import to finish.
     var preparingState: PreparingState?
 
     var isPreparing: Bool { preparingState != nil }

@@ -13,8 +13,8 @@ protocol VMCreationWizardViewControllerDelegate: AnyObject {
     ///
     /// - Parameters:
     ///   - vc: The wizard reporting the event.
-    ///   - creationVM: The fully-populated wizard model the host should hand to
-    ///     `VMLibraryViewModel.createVM(from:)`.
+    ///   - creationVM: The fully-populated wizard model the host turns into the
+    ///     create verb's configuration.
     func wizardDidRequestCreate(
         _ vc: VMCreationWizardViewController,
         creationVM: VMCreationViewModel
@@ -308,12 +308,6 @@ final class VMCreationWizardViewController: NSViewController {
 
     @objc private func createTapped() {
         commitPendingEdits()
-        // VM creation takes seconds. Disable navigation immediately so a second
-        // click can't spawn a duplicate create and Cancel can't tear the sheet
-        // down mid-creation; the host dismisses it when createVM completes.
-        createButton.isEnabled = false
-        backButton.isEnabled = false
-        cancelButton.isEnabled = false
         delegate?.wizardDidRequestCreate(self, creationVM: creationVM)
     }
 
@@ -329,18 +323,13 @@ final class VMCreationWizardViewController: NSViewController {
 
     // MARK: - Failure recovery
 
-    /// Re-enables navigation after a failed create and presents the error as a
-    /// sheet on the wizard's own window so the user can read it and retry.
+    /// Presents a refused create as a sheet on the wizard's own window, so the
+    /// user can read it and retry from the step they are still on.
     ///
     /// The error is shown here rather than via the host's main-window alert
     /// because the wizard sheet is still attached to that window: an alert atop
     /// the wizard is well-defined, two sheets on the same window contend.
     func presentCreationFailure(message: String?) {
-        cancelButton.isEnabled = true
-        backButton.isEnabled = true
-        // Restore Create/Next enabled state from the model.
-        apply()
-
         guard let window = view.window else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning
