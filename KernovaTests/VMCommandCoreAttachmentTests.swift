@@ -880,6 +880,30 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.removableMedia == nil)
     }
 
+    @Test("An agent handshake during a live snapshot leaves the installer mounted for a later eject")
+    func autoEjectWaitsOutAnUnattachableSession() throws {
+        let installerPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let instance = makeInstance(
+            in: harness, phase: .capturingLive(sessionID: sessionID), guestOS: .macOS)
+        instance.beginSessionContext()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: installerPath, readOnly: true)
+        ]
+
+        instance.onAgentBecameCurrent?()
+
+        #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
+        #expect(harness.core.isGuestAgentInstallerMounted(on: instance))
+        #expect(harness.usbDevices.detachCallCount == 0)
+
+        instance.enter(.running(sessionID: sessionID))
+        try harness.core.unmountGuestAgentDisk(.id(instance.id))
+        #expect(instance.configuration.removableMedia == nil)
+    }
+
     @Test("A VM with no live session to look inside refuses the guest agent disk")
     func guestAgentDiskNeedsALiveMacOSGuest() async throws {
         let harness = makeHarness()

@@ -480,9 +480,14 @@ extension VMCommandCore {
         let path = url.path(percentEncoded: false)
         Self.logger.notice(
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        library.updateConfiguration(of: instance) { config in
+        let accepted = library.updateConfiguration(of: instance) { config in
             let pruned = (config.removableMedia ?? []).filter { $0.path != path }
             config.removableMedia = pruned.isEmpty ? nil : pruned
+        }
+        if !accepted {
+            Self.logger.notice(
+                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
+            )
         }
     }
 

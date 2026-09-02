@@ -52,15 +52,34 @@ final class VMRemovableMediaReconciler {
         self.lifecycle = lifecycle
     }
 
+    /// Refuses a configuration edit that changes `removableMedia` while the VM
+    /// has a session no pass can drive: a persisted list the live device set
+    /// does not match would be pinned into the in-flight save or snapshot and
+    /// never re-driven.
+    ///
+    /// - Returns: `true` when the caller must abort.
+    func refuseUnattachableEdit(
+        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
+    ) -> Bool {
+        guard VMConfiguration.removableMediaChanged(old: old, new: new),
+            instance.liveSessionID != nil, instance.attachableSessionID == nil
+        else { return false }
+        Self.logger.notice(
+            "Refusing removable-media edit for '\(instance.name, privacy: .public)': session is live but not attachable in \(instance.status.rawValue, privacy: .public)"
+        )
+        return true
+    }
+
     /// Queues the runtime XHCI list-diff a `removableMedia` change asks for.
     ///
     /// No-ops when the list is unchanged, or when the VM has no session to
     /// attach to.
     func apply(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         let mediaChanged = VMConfiguration.removableMediaChanged(old: old, new: new)
-        // Only dispatch when there is a session to attach to — every other VM,
+        // Only dispatch when there is a session to attach to. A sessionless VM,
         // a cold-paused one included, persists the new media list and picks it
-        // up on next start.
+        // up on next start; a VM whose session is live but unattachable never
+        // reaches here, `updateConfiguration` having refused the edit.
         guard mediaChanged, let sessionID = instance.attachableSessionID else { return }
 
         let id = instance.instanceID

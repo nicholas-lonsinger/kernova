@@ -698,9 +698,10 @@ final class VMLibrary: VMInstanceRoster {
     /// Applies the mutation, persists the result, and dispatches the live policy /
     /// removable-media reconcile. No-ops when the mutation produces the same value.
     ///
-    /// A mutation moving the VM onto a MAC address another VM holds is refused
+    /// A mutation moving the VM onto a MAC address another VM holds, or changing
+    /// `removableMedia` while the VM's live session is not attachable, is refused
     /// whole — no field it also sets is applied — so this is the one place every
-    /// writer of an address passes through.
+    /// writer of an address or a media list passes through.
     ///
     /// - Returns: Whether the new configuration reached disk. A no-op mutation
     ///   returns `true`; a failed write leaves the new value in memory, so a
@@ -717,6 +718,9 @@ final class VMLibrary: VMInstanceRoster {
         mutate(&new)
         guard new != old else { return true }
         guard !networkSlots.refuseSlotConflict(on: instance, movingFrom: old, to: new) else {
+            return false
+        }
+        guard !removableMedia.refuseUnattachableEdit(on: instance, movingFrom: old, to: new) else {
             return false
         }
         instance.configuration = new
