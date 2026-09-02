@@ -766,9 +766,7 @@ final class VMLifecycleCoordinator {
         instance.performConfigurationMutation { config in
             // Position [0] is what EFI boots first, which is the whole reason
             // the installer is on the list at all.
-            config.storageDisks =
-                [installer]
-                + (config.storageDisks ?? [ConfigurationBuilder.defaultMainDisk(layout: layout)])
+            config.setStorageDisks([installer] + config.effectiveStorageDisks(layout: layout))
             config.linuxInstallContext = nil
             config.installedImage = installedImage
         }

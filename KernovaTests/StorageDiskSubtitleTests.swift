@@ -109,7 +109,7 @@ struct StorageDiskSubtitleTests {
     func mainDiskUsesSameLiveMeasurement() throws {
         let instance = try makeInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        let main = VMCommandCore.defaultStorageDisks(for: instance)[0]
+        let main = instance.effectiveStorageDisks[0]
         try writeDiskFile(
             at: instance.bundleURL.appendingPathComponent(main.path),
             totalBytes: 16384, capacitySectors: 195_312_500)  // 100 GB

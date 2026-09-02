@@ -236,9 +236,23 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// Ordered list of disks attached on `vzConfig.storageDevices`; position [0]
     /// boots first on EFI guests.
     ///
-    /// `nil` means "use defaults" — the builder synthesizes a single main-disk
-    /// entry on first load.
+    /// `nil` or empty both mean "use defaults" — see
+    /// ``effectiveStorageDisks(layout:)``, the one place that synthesizes the
+    /// main-disk entry a VM with no configured disks boots from.
     var storageDisks: [StorageDisk]?
+
+    /// The disks this VM actually attaches: the configured list when non-empty,
+    /// otherwise the synthesized main disk at the bundle's `Disk.asif`.
+    func effectiveStorageDisks(layout: VMBundleLayout) -> [StorageDisk] {
+        if let configured = storageDisks, !configured.isEmpty { return configured }
+        return [StorageDisk.mainDisk(layout: layout)]
+    }
+
+    /// Assigns `disks`, storing `nil` for an empty list so `config.json` never
+    /// carries an empty array.
+    mutating func setStorageDisks(_ disks: [StorageDisk]) {
+        storageDisks = disks.isEmpty ? nil : disks
+    }
 
     // MARK: - Removable Media
 

@@ -267,17 +267,16 @@ extension VMCommandCore {
                             )
                         }
                     )
-                    phantom.configuration.storageDisks = phantom.configuration.storageDisks?
+                    let remapped: [StorageDisk] =
+                        phantom.configuration.storageDisks?
                         .filter { !skippedDiskIDs.contains($0.id) }
                         .map { disk in
                             guard let newPath = remappedPaths[disk.id] else { return disk }
                             var updated = disk
                             updated.path = newPath
                             return updated
-                        }
-                    if phantom.configuration.storageDisks?.isEmpty == true {
-                        phantom.configuration.storageDisks = nil
-                    }
+                        } ?? []
+                    phantom.configuration.setStorageDisks(remapped)
                     try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
                 }
             },
@@ -601,8 +600,7 @@ extension VMCommandCore {
     /// Falls back to the synthesized main disk when `storageDisks` is `nil`, so a
     /// freshly created VM still shows its `Disk.asif`.
     func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
-        (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
-            .filter(\.isInternal)
+        instance.effectiveStorageDisks.filter(\.isInternal)
     }
 
     /// The external (non-bundle) files referenced by `instance`.

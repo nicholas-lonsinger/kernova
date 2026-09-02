@@ -467,7 +467,7 @@ struct VMSettingsOverviewTests {
         let (vc, instance, _) = makeController()
         let storage = try card(.storage, in: vc)
         #expect(findLabel(withText: "Boot disk", in: storage) != nil)
-        #expect(findLabel(withText: instance.displayedStorageDisks[0].label, in: storage) != nil)
+        #expect(findLabel(withText: instance.effectiveStorageDisks[0].label, in: storage) != nil)
         #expect(findLabel(withText: "No other disks · No media", in: storage) != nil)
         // Cores, memory and the disk figure belong to the header's facts line.
         #expect(findLabel(withText: "CPU cores", in: try card(.system, in: vc)) == nil)

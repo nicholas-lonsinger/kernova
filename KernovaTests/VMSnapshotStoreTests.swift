@@ -95,6 +95,17 @@ struct VMSnapshotStoreTests {
         #expect(paths == ["Disk.asif"])
     }
 
+    @Test("A VM with an empty configured disks list still captures its main disk")
+    func capturedPathsFallBackToTheMainDiskForEmptyList() throws {
+        var fixture = try makeFixture(includeAuxiliaryStorage: false)
+        defer { cleanUp(fixture) }
+        fixture.configuration.storageDisks = []
+
+        let paths = VMSnapshotStore.capturedRelativePaths(
+            for: fixture.configuration, layout: fixture.layout)
+        #expect(paths == ["Disk.asif"])
+    }
+
     // MARK: - Manifest
 
     @Test("A bundle with no manifest reads as empty")

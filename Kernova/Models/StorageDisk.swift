@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Bus class for a `StorageDisk` entry.
@@ -94,6 +95,37 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// uniqued; explicit user renames are left exactly as typed.
     static func uniqueLabel(base: String, existingLabels: [String]) -> String {
         UniqueName.firstAvailable(prefix: base, existing: existingLabels)
+    }
+
+    /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
+    /// list is empty or absent.
+    static func mainDisk(layout: VMBundleLayout) -> StorageDisk {
+        let stableMainDiskID = stableID(seed: layout.bundleURL.path)
+        return StorageDisk(
+            id: stableMainDiskID,
+            path: layout.diskImageURL.lastPathComponent,
+            readOnly: false,
+            label: "Main Disk",
+            isInternal: true,
+            kind: .virtio
+        )
+    }
+
+    /// A UUID fixed by `seed`.
+    ///
+    /// Without stable identity, a lookup-by-id for the synthesized main disk
+    /// would miss the row the user just clicked — silently no-op'ing the entry
+    /// removal while still trashing the underlying file.
+    static func stableID(seed: String) -> UUID {
+        let digest = SHA256.hash(data: Data(seed.utf8))
+        let bytes = Array(digest.prefix(16))
+        return UUID(
+            uuid: (
+                bytes[0], bytes[1], bytes[2], bytes[3],
+                bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11],
+                bytes[12], bytes[13], bytes[14], bytes[15]
+            ))
     }
 
     /// Display string used in the UI subtitle.

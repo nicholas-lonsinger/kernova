@@ -1337,6 +1337,19 @@ struct VMCommandCoreTests {
         #expect(harness.storage.permanentlyDeleteVMBundleCallCount == 1)
     }
 
+    // MARK: - Storage Disk Lookup
+
+    @Test("storageDisk(id:on:) resolves the synthesized main disk over an empty configured list")
+    func storageDiskLookupResolvesSynthesizedMainDiskForEmptyList() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        instance.configuration.storageDisks = []
+
+        let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
+
+        #expect(harness.core.storageDisk(id: mainDisk.id, on: instance) == mainDisk)
+    }
+
     // MARK: - Events
 
     @Test("The event stream reports what changed, and nothing a listing already answers")

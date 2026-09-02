@@ -880,10 +880,11 @@ final class VMLibraryViewModel {
     func removeStorageDisk(
         _ disk: StorageDisk, from instance: VMInstance, trashFile: Bool
     ) -> Task<Void, Never>? {
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         updateConfiguration(of: instance) { config in
-            var disks = config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
+            var disks = config.effectiveStorageDisks(layout: layout)
             disks.removeAll { $0.id == disk.id }
-            config.storageDisks = disks.isEmpty ? nil : disks
+            config.setStorageDisks(disks)
         }
 
         guard trashFile else { return nil }
@@ -937,11 +938,12 @@ final class VMLibraryViewModel {
     func renameStorageDisk(_ disk: StorageDisk, newLabel: String, on instance: VMInstance) {
         let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         updateConfiguration(of: instance) { config in
-            var disks = config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
+            var disks = config.effectiveStorageDisks(layout: layout)
             guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
             disks[index].label = trimmed
-            config.storageDisks = disks
+            config.setStorageDisks(disks)
         }
     }
 
@@ -971,11 +973,12 @@ final class VMLibraryViewModel {
     func setStorageDiskNotes(_ disk: StorageDisk, notes: String, on instance: VMInstance) {
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != disk.notes else { return }
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         updateConfiguration(of: instance) { config in
-            var disks = config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
+            var disks = config.effectiveStorageDisks(layout: layout)
             guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
             disks[index].notes = trimmed
-            config.storageDisks = disks
+            config.setStorageDisks(disks)
         }
     }
 
@@ -1084,8 +1087,7 @@ final class VMLibraryViewModel {
                 // and pick the same "… 2" suffix.
                 var createdLabel = "\(sizeInGB) GB Disk"
                 updateConfiguration(of: instance) { config in
-                    var disks =
-                        config.storageDisks ?? VMCommandCore.defaultStorageDisks(for: instance)
+                    var disks = config.effectiveStorageDisks(layout: layout)
                     let label = StorageDisk.uniqueLabel(
                         base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
                     createdLabel = label
@@ -1099,7 +1101,7 @@ final class VMLibraryViewModel {
                             kind: .virtio
                         )
                     )
-                    config.storageDisks = disks
+                    config.setStorageDisks(disks)
                 }
 
                 Self.logger.notice(

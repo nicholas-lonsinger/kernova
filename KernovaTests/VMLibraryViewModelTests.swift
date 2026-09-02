@@ -607,7 +607,22 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        let mainDisk = VMCommandCore.defaultStorageDisks(for: instance)[0]
+        let mainDisk = instance.effectiveStorageDisks[0]
+
+        viewModel.setStorageDiskNotes(mainDisk, notes: "the startup disk", on: instance)
+
+        #expect(instance.configuration.storageDisks?.count == 1)
+        #expect(instance.configuration.storageDisks?[0].notes == "the startup disk")
+        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].notes == "the startup disk")
+    }
+
+    @Test("setStorageDiskNotes on an empty storageDisks list persists the materialized list")
+    func setStorageDiskNotesMaterializesDefaultDisksForEmptyList() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        instance.configuration.storageDisks = []
+        let mainDisk = instance.effectiveStorageDisks[0]
 
         viewModel.setStorageDiskNotes(mainDisk, notes: "the startup disk", on: instance)
 
@@ -891,6 +906,19 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.configuration.storageDisks = nil
+        viewModel.instances.append(instance)
+
+        let bundled = viewModel.bundledDisks(for: instance)
+
+        #expect(bundled.count == 1)
+        #expect(bundled[0].isInternal)
+    }
+
+    @Test("bundledDisks falls back to the synthesized main disk when config is empty")
+    func bundledDisksFallsBackToMainDiskForEmptyList() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.storageDisks = []
         viewModel.instances.append(instance)
 
         let bundled = viewModel.bundledDisks(for: instance)
@@ -2074,7 +2102,7 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         viewModel.instances.append(instance)
         // The synthesized main disk is what a nil storageDisks list resolves to.
-        let mainDisk = ConfigurationBuilder.defaultMainDisk(
+        let mainDisk = StorageDisk.mainDisk(
             layout: VMBundleLayout(bundleURL: instance.bundleURL))
         virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
             id: mainDisk.id, path: mainDisk.path, label: mainDisk.label,
@@ -2097,7 +2125,7 @@ struct VMLibraryViewModelTests {
             id: UUID(), path: "/tmp/gone.img", readOnly: false, label: "External",
             isInternal: false, kind: .virtio)
         instance.configuration.storageDisks = [
-            ConfigurationBuilder.defaultMainDisk(layout: layout), external,
+            StorageDisk.mainDisk(layout: layout), external,
         ]
         viewModel.instances.append(instance)
         virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
@@ -5698,7 +5726,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
-        let main = VMCommandCore.defaultStorageDisks(for: instance)[0]
+        let main = instance.effectiveStorageDisks[0]
         let extra = StorageDisk(
             path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
             isInternal: true, kind: .virtio)
@@ -6041,7 +6069,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        let synthetic = ConfigurationBuilder.defaultMainDisk(layout: layout)
+        let synthetic = StorageDisk.mainDisk(layout: layout)
 
         viewModel.removeStorageDisk(synthetic, from: instance, trashFile: false)
 

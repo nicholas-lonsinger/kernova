@@ -376,7 +376,7 @@ struct ConfigurationBuilderTests {
         let diskID = UUID()
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.storageDisks = [
-            ConfigurationBuilder.defaultMainDisk(layout: VMBundleLayout(bundleURL: bundleURL)),
+            StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: bundleURL)),
             StorageDisk(
                 id: diskID, path: diskPath, readOnly: true, label: "Bad Disk",
                 isInternal: false, kind: .virtio),
@@ -1397,28 +1397,6 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - Synthetic Main-Disk Identity
-
-    @Test("defaultMainDisk produces a stable UUID for the same bundle URL")
-    func defaultMainDiskUUIDIsStableAcrossCalls() {
-        let bundleURL = URL(fileURLWithPath: "/tmp/kernova-test-stable.kernova")
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        let first = ConfigurationBuilder.defaultMainDisk(layout: layout)
-        let second = ConfigurationBuilder.defaultMainDisk(layout: layout)
-        #expect(first.id == second.id)
-    }
-
-    @Test("defaultMainDisk produces distinct UUIDs for distinct bundle URLs")
-    func defaultMainDiskUUIDsDifferAcrossBundles() {
-        let aLayout = VMBundleLayout(
-            bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-a.kernova"))
-        let bLayout = VMBundleLayout(
-            bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-b.kernova"))
-        #expect(
-            ConfigurationBuilder.defaultMainDisk(layout: aLayout).id
-                != ConfigurationBuilder.defaultMainDisk(layout: bLayout).id)
-    }
-
     // MARK: - Symlink Resolution for External Storage Disks
 
     @Test("External storage disk via symlink attaches to symlink target, not symlink path")
@@ -1607,7 +1585,7 @@ struct ConfigurationBuilderTests {
         let again = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
         let other = ConfigurationBuilder.guestAgentDisk(
             installerPath: "/tmp/a.dmg", bundleURL: otherBundleURL)
-        let mainDisk = ConfigurationBuilder.defaultMainDisk(layout: VMBundleLayout(bundleURL: bundleURL))
+        let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: bundleURL))
 
         #expect(disk.id == again.id)
         #expect(disk.id != other.id)

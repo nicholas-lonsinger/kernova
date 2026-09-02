@@ -628,6 +628,62 @@ struct VMConfigurationTests {
         #expect(StorageDisk.uniqueLabel(base: "Disk", existingLabels: ["disk"]) == "Disk")
     }
 
+    @Test("effectiveStorageDisks synthesizes the main disk when storageDisks is nil")
+    func effectiveStorageDisksSynthesizesMainDiskForNil() {
+        let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/effective-nil.kernova"))
+
+        let disks = config.effectiveStorageDisks(layout: layout)
+
+        #expect(disks.count == 1)
+        #expect(disks[0].path == layout.diskImageURL.lastPathComponent)
+        #expect(disks[0].isInternal)
+        #expect(disks[0].kind == .virtio)
+    }
+
+    @Test("effectiveStorageDisks synthesizes the main disk when storageDisks is empty")
+    func effectiveStorageDisksSynthesizesMainDiskForEmpty() {
+        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = []
+        let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/effective-empty.kernova"))
+
+        #expect(config.effectiveStorageDisks(layout: layout) == [StorageDisk.mainDisk(layout: layout)])
+    }
+
+    @Test("effectiveStorageDisks returns a non-empty configured list verbatim")
+    func effectiveStorageDisksReturnsConfiguredListVerbatim() {
+        let disks = [
+            StorageDisk(path: "Disk.asif", label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(path: "/tmp/data.asif", label: "Data"),
+        ]
+        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = disks
+        let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/effective-configured.kernova"))
+
+        #expect(config.effectiveStorageDisks(layout: layout) == disks)
+    }
+
+    @Test("setStorageDisks stores nil for an empty list")
+    func setStorageDisksStoresNilForEmpty() {
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi,
+            storageDisks: [StorageDisk(path: "/tmp/data.asif", label: "Data")])
+
+        config.setStorageDisks([])
+
+        #expect(config.storageDisks == nil)
+    }
+
+    @Test("setStorageDisks stores a non-empty list as given")
+    func setStorageDisksStoresNonEmptyList() {
+        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        let disk = StorageDisk(path: "/tmp/data.asif", label: "Data")
+
+        config.setStorageDisks([disk])
+
+        #expect(config.storageDisks == [disk])
+    }
+
     // MARK: - installContext Tests
 
     @Test("installContext round-trips through JSON (downloadLatest)")
