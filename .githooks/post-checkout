@@ -50,4 +50,15 @@ if [ "${1:-}" = "0000000000000000000000000000000000000000" ] && [ -x Tools/ghost
     Tools/ghosts.sh --sweep || true
 fi
 
+# ---- 3. write this checkout's Swift language-server config -------------------
+
+# buildServer.json names an absolute build root, so it is written per checkout
+# rather than copied in step 1. The script prints a one-line `make install-lsp`
+# hint and succeeds when xcode-build-server is absent — installing software is
+# never a checkout's job, and a missing optional tool must not fail one.
+if [ "${1:-}" = "0000000000000000000000000000000000000000" ] &&
+    [ -z "${CI:-}" ] && [ ! -e buildServer.json ] && [ -x Tools/lsp-config.sh ]; then
+    Tools/lsp-config.sh || true
+fi
+
 exit 0

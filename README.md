@@ -86,6 +86,14 @@ make install-hooks   # one-time per clone
 
 `install-hooks` points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
 
+Optionally, with [Homebrew](https://brew.sh) installed:
+
+```bash
+make install-lsp     # one-time per checkout
+```
+
+`install-lsp` installs `xcode-build-server` and writes this checkout's `buildServer.json`, which gives editors and Claude Code's Swift language server the project's real compiler flags. Build the checkout once for the flags to resolve.
+
 Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration. Bridged and Host Only networking additionally need the restricted `com.apple.vm.networking` entitlement; a build signed without a provisioning profile omits those modes from the network picker and everything else still works.
 
 `make doctor` checks that your toolchain, signing, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.

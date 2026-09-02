@@ -19,8 +19,11 @@ ifneq ($(strip $(CI)),)
 # flag is load-bearing — docs/BUILD.md "Derived data and build arenas".
 DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
 # Plugin validation is an interactive trust prompt no runner can answer; the
-# index store serves an editor CI does not have; the compilation cache is what
-# the workflow's cache steps save and restore.
+# index store serves an editor CI does not have. The compilation cache is on
+# project-wide in Config/Base.xcconfig; it is repeated here because a package
+# target never reads a project xcconfig, and a command-line setting is the one
+# form that reaches KernovaKit and SwiftProtobuf — the workflow's cache steps
+# save and restore the store all of them fill.
 CI_FLAGS           := -skipPackagePluginValidation \
                       COMPILER_INDEX_STORE_ENABLE=NO \
                       COMPILATION_CACHE_ENABLE_CACHING=YES
@@ -55,7 +58,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts
+.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint install-hooks check-hooks install-lsp doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -89,6 +92,19 @@ check-hooks:
 	@if [ -z "$${CI:-}" ] && ! Tools/hooks-installed.sh >/dev/null; then \
 		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2; \
 	fi
+
+# One-time per checkout: sourcekit-lsp reads compiler flags from a
+# buildServer.json that xcode-build-server writes from Xcode's build log, so
+# editors and Claude Code's Swift language server resolve imports and symbols
+# across the project. The config names an absolute build root — every checkout
+# writes its own, and .githooks/post-checkout writes a new worktree's when the
+# tool is already installed.
+install-lsp: ## Install xcode-build-server and write this checkout's buildServer.json
+	@if ! command -v xcode-build-server >/dev/null 2>&1; then \
+		command -v brew >/dev/null 2>&1 || { echo 'install-lsp: Homebrew is required to install xcode-build-server — see https://brew.sh' >&2; exit 1; }; \
+		brew install xcode-build-server; \
+	fi
+	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 
 build: check-hooks ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
