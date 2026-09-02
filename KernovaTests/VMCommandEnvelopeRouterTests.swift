@@ -548,7 +548,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A clone whose copy fails crosses the wire as a failure event")
     func cloneFailureCrossesTheWireAsAnEvent() async throws {
         let harness = makeHarness()
-        harness.storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
+        harness.storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
         let instance = makeInstance(in: harness, name: "Source")
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 

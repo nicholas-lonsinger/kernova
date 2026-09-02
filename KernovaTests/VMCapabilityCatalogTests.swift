@@ -175,7 +175,7 @@ struct VMCapabilityCatalogTests {
 
     // MARK: - Preparing
 
-    @Test("A bundle still being copied offers only its reads, its cancel, and Show in Finder")
+    @Test("A bundle still being copied offers only its reads and its cancel")
     func preparingLeavesOnlyTheReadsAndItsCancel() {
         let harness = makeHarness()
         let instance = makeInstance(
@@ -188,8 +188,9 @@ struct VMCapabilityCatalogTests {
         let available = Set(
             VMCapability.allCases.filter { harness.catalog.isAvailable($0, on: instance) })
 
-        #expect(
-            available == [.info, .ipAddress, .snapshots, .cancelPreparing, .showInFinder])
+        // Show in Finder is absent: the row's bundle URL holds nothing until the
+        // write is published, so the reveal would open on an empty directory.
+        #expect(available == [.info, .ipAddress, .snapshots, .cancelPreparing])
         // A snapshot exists and the phase is settled, so only `isPreparing`
         // keeps Revert to Snapshot from applying to a bundle still copying.
         #expect(!harness.catalog.isApplicable(.revertToSnapshot, to: instance))

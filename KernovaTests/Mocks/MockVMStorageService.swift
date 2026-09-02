@@ -2,12 +2,12 @@ import Foundation
 @testable import Kernova
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
-/// except `vmsDirectory`, which import/clone tests need as a real, writable directory since
-/// `VMLibraryViewModel.reserveAndImport(from:)` does a raw `FileManager.copyItem` into it rather than
-/// going through this protocol, and `cloneVMBundle`, which creates its returned URL for the same
-/// reason (see below). `baseDirectory` is unique per instance (suffixed with a UUID) so
-/// parallel/`.serialized` tests copying real bundles into it can't collide or leak state into
-/// each other.
+/// except `vmsDirectory`/`stagingDirectory`, which import/clone tests need as real, writable
+/// directories since `VMCommandCore.importVM(from:)` does a raw `FileManager.copyItem` into the
+/// staging area rather than going through this protocol, and `cloneVMBundle`, which creates its
+/// destination directory for the same reason (see below). `baseDirectory` is unique per instance
+/// (suffixed with a UUID) so parallel/`.serialized` tests copying real bundles into it can't
+/// collide or leak state into each other.
 ///
 /// Because `vmsDirectory`/`cloneVMBundle` are real, on-disk paths, and `VMLibraryViewModel.startLibrary()`
 /// starts a real `VMDirectoryWatcher` against `vmsDirectory`, a test that calls it and drives an async
@@ -37,6 +37,12 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var permanentlyDeleteVMBundleCallCount = 0
     var createVMBundleCallCount = 0
     var cloneVMBundleCallCount = 0
+    var publishBundleCallCount = 0
+    var reclaimStagedBundlesCallCount = 0
+
+    /// `listVMBundlesCallCount` as it stood when `reclaimStagedBundles()` last ran,
+    /// so a test can prove the reclaim preceded the library read.
+    var listVMBundlesCallCountAtReclaim: Int?
 
     /// The `filesToCopy` argument from the most recent `cloneVMBundle` call.
     var lastCloneFilesToCopy: [String]?
@@ -45,6 +51,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     var createVMBundleError: (any Error)?
     var cloneVMBundleError: (any Error)?
+    var publishBundleError: (any Error)?
     var saveConfigurationError: (any Error)?
     var deleteVMBundleError: (any Error)?
     var permanentlyDeleteVMBundleError: (any Error)?
@@ -63,8 +70,23 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         }
     }
 
+    var stagingDirectory: URL {
+        get throws {
+            let staging = baseDirectory.appendingPathComponent(".Staging", isDirectory: true)
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+            return staging
+        }
+    }
+
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
         baseDirectory.appendingPathComponent(
+            "\(configuration.id.uuidString).\(VMStorageService.bundleExtension)",
+            isDirectory: true
+        )
+    }
+
+    func stagedBundleURL(for configuration: VMConfiguration) throws -> URL {
+        try stagingDirectory.appendingPathComponent(
             "\(configuration.id.uuidString).\(VMStorageService.bundleExtension)",
             isDirectory: true
         )
@@ -73,7 +95,12 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     func listVMBundles() throws -> [URL] {
         listVMBundlesCallCount += 1
         if let error = listVMBundlesError { throw error }
-        return Array(bundles.keys)
+        // Mirrors the real service's hidden-skipping enumeration, which never
+        // admits a bundle still being written under `.Staging`.
+        let staging = (try? stagingDirectory)?.standardizedFileURL
+        return bundles.keys.filter {
+            $0.deletingLastPathComponent().standardizedFileURL != staging
+        }
     }
 
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
@@ -92,27 +119,48 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         bundles[bundleURL] = configuration
     }
 
-    func createVMBundle(for configuration: VMConfiguration) throws -> URL {
+    func createVMBundle(_ configuration: VMConfiguration, at bundleURL: URL) throws {
         createVMBundleCallCount += 1
         if let error = createVMBundleError { throw error }
-        let url = try bundleURL(for: configuration)
-        bundles[url] = configuration
-        return url
+        bundles[bundleURL] = configuration
     }
 
-    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws
-        -> URL
-    {
+    func cloneVMBundle(
+        from sourceBundleURL: URL, to destinationBundleURL: URL, newConfiguration: VMConfiguration,
+        filesToCopy: [String]
+    ) throws {
         cloneVMBundleCallCount += 1
         lastCloneFilesToCopy = filesToCopy
         if let error = cloneVMBundleError { throw error }
-        let url = try bundleURL(for: newConfiguration)
         // Mirrors the real service actually creating the bundle directory on disk:
         // a macOS clone's `copyWork` writes a regenerated MachineIdentifier file
         // straight into this URL afterward, which needs the directory to exist.
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        bundles[url] = newConfiguration
-        return url
+        try FileManager.default.createDirectory(
+            at: destinationBundleURL, withIntermediateDirectories: true)
+        bundles[destinationBundleURL] = newConfiguration
+    }
+
+    /// Renames the staged tree when one is really on disk — clone and import tests
+    /// write real files — and re-keys the in-memory entry either way, so an
+    /// assertion on `bundles[finalURL]` reads the published bundle.
+    func publishBundle(from stagedURL: URL, to bundleURL: URL) throws {
+        publishBundleCallCount += 1
+        if let error = publishBundleError { throw error }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: stagedURL.path(percentEncoded: false)) {
+            guard !fm.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
+                throw VMStorageError.bundleAlreadyExists(bundleURL)
+            }
+            try fm.moveItem(at: stagedURL, to: bundleURL)
+        }
+        if let staged = bundles.removeValue(forKey: stagedURL) {
+            bundles[bundleURL] = staged
+        }
+    }
+
+    func reclaimStagedBundles() {
+        reclaimStagedBundlesCallCount += 1
+        listVMBundlesCallCountAtReclaim = listVMBundlesCallCount
     }
 
     func deleteVMBundle(at bundleURL: URL) throws {

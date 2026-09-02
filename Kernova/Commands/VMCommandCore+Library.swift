@@ -81,21 +81,18 @@ extension VMCommandCore {
         let diskImages = diskImageService
         let diskSizeInGB = configuration.diskSizeInGB
         let name = configuration.name
-        // The failure arm trashes `phantom.bundleURL`, which is safe because the
-        // bundle is named for this configuration's freshly minted UUID: it can
-        // never name a bundle some other create wrote.
         library.prepareBundle(
             phantom, operation: .creating,
-            copyWork: {
+            copyWork: { staged in
                 // Off the bounded `copyQueue`, which exists to serialize the
                 // multi-gigabyte `copyItem` calls clone and import make: this
                 // write is a `createDirectory` and one small atomic
                 // `config.json`, and queueing it behind two in-flight imports
                 // would hold the new VM at "Creating…" for their copies.
-                try await Task.detached { _ = try storage.createVMBundle(for: configuration) }
+                try await Task.detached { try storage.createVMBundle(configuration, at: staged) }
                     .value
                 try await diskImages.createDiskImage(
-                    at: phantom.diskImageURL, sizeInGB: diskSizeInGB)
+                    at: VMBundleLayout(bundleURL: staged).diskImageURL, sizeInGB: diskSizeInGB)
             },
             onSuccess: { [weak self] in
                 Self.logger.notice(
@@ -217,22 +214,26 @@ extension VMCommandCore {
         let bundleFilesToCopy = filesToCopy
         library.prepareBundle(
             phantom, operation: .cloning,
-            copyWork: {
+            // Everything the clone writes lands in `staged`, the disk remap
+            // included: the remap is what makes the cloned configuration name the
+            // files beside it, so it has to precede publication rather than land
+            // on a bundle the library can already read.
+            copyWork: { staged in
                 let log = Self.logger
                 let skippedDiskIDs: Set<UUID> = try await Self.runBoundedCopy {
-                    let resultURL = try storage.cloneVMBundle(
-                        from: sourceBundleURL, newConfiguration: config,
+                    try storage.cloneVMBundle(
+                        from: sourceBundleURL, to: staged, newConfiguration: config,
                         filesToCopy: bundleFilesToCopy)
 
                     if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
-                        let layout = VMBundleLayout(bundleURL: resultURL)
+                        let layout = VMBundleLayout(bundleURL: staged)
                         try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
                     }
 
                     var skipped: Set<UUID> = []
                     if !diskMapping.isEmpty {
                         let sourceLayout = VMBundleLayout(bundleURL: sourceBundleURL)
-                        let destLayout = VMBundleLayout(bundleURL: resultURL)
+                        let destLayout = VMBundleLayout(bundleURL: staged)
                         let fm = FileManager.default
                         try fm.createDirectory(
                             at: destLayout.additionalDisksDirectoryURL,
@@ -277,7 +278,7 @@ extension VMCommandCore {
                             return updated
                         } ?? []
                     phantom.configuration.setStorageDisks(remapped)
-                    try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
+                    try storage.saveConfiguration(phantom.configuration, to: staged)
                 }
             },
             onSuccess: {
@@ -337,14 +338,14 @@ extension VMCommandCore {
             let sanitizedConfig = config
             library.prepareBundle(
                 phantom, operation: .importing,
-                copyWork: {
+                copyWork: { staged in
                     try await Self.runBoundedCopy {
-                        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                        try FileManager.default.copyItem(at: sourceURL, to: staged)
                     }
                     // The copy reproduces the source `config.json` verbatim, so
                     // the cleared flag only reaches disk by writing it back.
                     if arrivedMarkedForAutoStart {
-                        try storage.saveConfiguration(sanitizedConfig, to: destinationURL)
+                        try storage.saveConfiguration(sanitizedConfig, to: staged)
                     }
                 },
                 onSuccess: { [weak self] in
