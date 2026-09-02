@@ -346,7 +346,7 @@ Constraints the file layout does not show:
   rule: `VMSettingsPanel` is a protocol with default hook bodies, and what they share beyond it is
   a context object and the form atoms.
 - **The settings pane holds one surface at a time.** `VMOverviewResolver` answers, without views,
-  everything the configuration cannot — host state, injected services, and three off-main reads —
+  everything the configuration cannot — host state, injected services, and two off-main reads —
   so the overview's cards need no panel to exist to state a figure, and the panel stating the same
   figure reads it there rather than resolving it again. A panel is built on the first drill-in and
   rebuilt when the VM under it moves.

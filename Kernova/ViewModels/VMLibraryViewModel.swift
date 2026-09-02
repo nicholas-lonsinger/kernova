@@ -91,6 +91,10 @@ final class VMLibraryViewModel {
         library.networkSlots.vmNamesSharingMACAddress(with: instance)
     }
 
+    func reservedAddress(for config: VMConfiguration) -> GuestIPAddress {
+        library.networkSlots.reservedAddress(for: config)
+    }
+
     @discardableResult
     func saveConfiguration(for instance: VMInstance) -> Bool {
         library.saveConfiguration(for: instance)

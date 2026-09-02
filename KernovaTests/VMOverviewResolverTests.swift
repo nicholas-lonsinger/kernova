@@ -29,10 +29,11 @@ struct VMOverviewResolverTests {
     ) -> VMOverviewResolver {
         VMOverviewResolver(
             instance: instance,
-            viewModel: viewModel ?? makeSettingsViewModel(preferences: preferences),
+            viewModel: viewModel
+                ?? makeSettingsViewModel(
+                    preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled),
             entitlements: EntitlementService(
                 reader: MockEntitlementReader(granted: entitled ? ["com.apple.vm.networking"] : [])),
-            vmnetNetworks: vmnetNetworks,
             bridgedInterfaces: interfaces,
             micPermissionStatus: { micPermission })
     }
@@ -115,8 +116,28 @@ struct VMOverviewResolverTests {
 
     // MARK: - Address
 
-    @Test("A reserved address resolves to itself; a pending one materializes the network")
-    func addressResolvesOrMaterializes() async {
+    @Test("The address is the registry's answer, and displaying it claims nothing")
+    func addressComesFromTheRegistryWithoutClaimingASlot() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
+        let instance = makeInstance {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
+        let resolver = makeResolver(instance: instance, vmnetNetworks: vmnet)
+
+        resolver.refresh()
+
+        #expect(resolver.resolved.ipAddress == .reserved("192.168.64.9"))
+        // The declaration path is the store's only writer: this instance is not
+        // in the library, so showing it takes no slot and materializes nothing.
+        #expect(vmnet.reservedMACs.isEmpty)
+        #expect(vmnet.materializeCount == 0)
+    }
+
+    @Test("A slot on a network with no addressing yet reads as pending, and states nothing")
+    func addressPendsUntilTheNetworkHasAddressing() {
         let vmnet = MockVmnetNetworkProvider()
         let instance = makeInstance {
             $0.networkEnabled = true
@@ -126,14 +147,9 @@ struct VMOverviewResolverTests {
         let resolver = makeResolver(instance: instance, vmnetNetworks: vmnet)
 
         resolver.refresh()
+
         #expect(resolver.resolved.ipAddress == .pending)
         #expect(resolver.resolved.ipAddress.displayText == nil)
-
-        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        await resolver.ipMaterializeTaskForTesting?.value
-
-        #expect(resolver.resolved.ipAddress == .reserved("192.168.64.9"))
-        #expect(vmnet.materializeCount == 1)
     }
 
     @Test("Bridged hands addressing to the network; an unentitled build has none to state")
@@ -312,36 +328,6 @@ struct VMOverviewResolverTests {
         // Everything left is measured, so the footprint stands without waiting
         // for the re-read.
         #expect(resolver.resolved.snapshotTotalBytes != nil)
-    }
-
-    @Test("A materialization superseded by a VM switch paints nothing when it lands")
-    func supersededMaterializationStaysQuiet() async throws {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let pending = makeInstance {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let vmnet = MockVmnetNetworkProvider()
-        let resolver = makeResolver(instance: pending, viewModel: viewModel, vmnetNetworks: vmnet)
-        resolver.refresh()
-        let superseded = try #require(resolver.ipMaterializeTaskForTesting)
-
-        // The user moves to a VM with no networking, which cancels the read and
-        // takes the single-flight token with it.
-        resolver.bind(instance: makeInstance { $0.networkEnabled = false }, viewModel: viewModel)
-        resolver.refresh()
-        #expect(resolver.ipMaterializeTaskForTesting == nil)
-        var reported: [VMSettingsCategory] = []
-        resolver.onCategoryResolved = { reported.append($0) }
-
-        // vmnet's materialization does not honor cancellation, so the task still
-        // resumes — and must neither re-resolve nor report for the VM it left.
-        // (The incoming VM's own boot-disk read reports `.storage` meanwhile.)
-        await superseded.value
-
-        #expect(!reported.contains(.network))
-        #expect(resolver.resolved.ipAddress == .unavailable)
     }
 
     @Test("Binding to another VM drops what described the outgoing one")

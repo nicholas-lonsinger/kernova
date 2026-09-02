@@ -64,17 +64,7 @@ enum NetworkModeChoice: Equatable {
     }
 }
 
-/// What the guest's IPv4 address resolves to for the mode it is on.
-enum VMOverviewIPAddress: Equatable, Sendable {
-    /// Nothing assigns the guest an address the app can state — the row is
-    /// absent rather than empty.
-    case unavailable
-    /// Bridged: the guest asks the network, so there is nothing deterministic.
-    case externallyAssigned
-    /// A reservation exists but the network's addressing is not known yet.
-    case pending
-    case reserved(String)
-
+extension GuestIPAddress {
     /// The address as a surface states it, `nil` where there is nothing to say.
     var displayText: String? {
         switch self {
@@ -92,10 +82,9 @@ enum VMOverviewIPAddress: Equatable, Sendable {
 /// panels that would otherwise have to exist to answer for them, and the panel
 /// showing the same figure reads it here rather than resolving it a second time.
 ///
-/// Three reads land asynchronously — the boot disk's capacity, the snapshots'
-/// footprint, and the vmnet materialization behind a pending address. Each is
-/// keyed to the VM it was issued for and reported through ``onCategoryResolved``
-/// so one card, or one row, repaints.
+/// Two reads land asynchronously — the boot disk's capacity and the snapshots'
+/// footprint. Each is keyed to the VM it was issued for and reported through
+/// ``onCategoryResolved`` so one card, or one row, repaints.
 @MainActor
 final class VMOverviewResolver {
     /// How many macOS guests macOS itself will run at the same time.
@@ -116,7 +105,6 @@ final class VMOverviewResolver {
     var onCategoryResolved: ((VMSettingsCategory) -> Void)?
 
     private let entitlements: EntitlementService
-    private let vmnetNetworks: any VmnetNetworkProviding
     private let bridgedInterfaces: any BridgedInterfaceProviding
     private let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
 
@@ -142,8 +130,6 @@ final class VMOverviewResolver {
     private var snapshotSizeIDs: [UUID]?
     private var snapshotSizeTask: Task<Void, Never>?
 
-    private var ipMaterializeTask: Task<Void, Never>?
-
     private struct BootDiskKey: Equatable {
         let instanceID: UUID
         let path: String
@@ -154,14 +140,12 @@ final class VMOverviewResolver {
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
         entitlements: EntitlementService,
-        vmnetNetworks: any VmnetNetworkProviding,
         bridgedInterfaces: any BridgedInterfaceProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.entitlements = entitlements
-        self.vmnetNetworks = vmnetNetworks
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.micPermission = micPermissionStatus()
@@ -182,8 +166,6 @@ final class VMOverviewResolver {
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
         snapshotSizeIDs = nil
-        ipMaterializeTask?.cancel()
-        ipMaterializeTask = nil
         titledNetworkChoice = nil
         resolved = VMOverviewResolved()
     }
@@ -256,7 +238,7 @@ final class VMOverviewResolver {
                 entitled: entitlements.hasVMNetworking,
                 interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [])
         }
-        resolved.ipAddress = resolveIPAddress(config)
+        resolved.ipAddress = viewModel.reservedAddress(for: config)
         // Rules ride the app-managed shared network, and reach the guest at the
         // address its MAC reserves: an unentitled build attaches system NAT,
         // which forwards nothing, the other modes carry no forwarding at all,
@@ -265,55 +247,6 @@ final class VMOverviewResolver {
             config.networkEnabled && config.networkMode == .shared
             && entitlements.hasVMNetworking && config.macAddress != nil
         resolved.portForwardingRuleCount = forwards ? config.portForwardingRules.count : nil
-    }
-
-    /// Names the address the app reserved for the guest, kicking a
-    /// materialization when the network's addressing is not known yet — the
-    /// reservation is meant to be shown even while the VM is stopped.
-    private func resolveIPAddress(_ config: VMConfiguration) -> VMOverviewIPAddress {
-        guard config.networkEnabled else { return .unavailable }
-        let mode = config.networkMode
-        switch mode {
-        case .bridged:
-            return .externallyAssigned
-        case .shared, .hostOnly:
-            // Without the entitlement (or a MAC to key on) there is no
-            // reservation machinery behind the row.
-            guard entitlements.hasVMNetworking, let mac = config.macAddress,
-                let kind = VmnetNetworkKind(mode: mode)
-            else { return .unavailable }
-            vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)
-            if let address = vmnetNetworks.reservedAddress(for: mac, kind: kind) {
-                return .reserved(address)
-            }
-            materializeForIPAddress(kind)
-            return .pending
-        }
-    }
-
-    /// Materializes `kind`'s network off-main so a pending address can fill in.
-    /// Single-flight — every pass over a still-pending address lands here, and
-    /// one materialization serves them all.
-    private func materializeForIPAddress(_ kind: VmnetNetworkKind) {
-        guard ipMaterializeTask == nil else { return }
-        let networks = vmnetNetworks
-        ipMaterializeTask = Task { [weak self] in
-            let materialized = await networks.materializeNetwork(for: kind)
-            // A materialization does not honor cancellation, so a task
-            // superseded by ``bind(instance:viewModel:)`` still resumes here:
-            // without this it would paint for a VM the pane has left and clear
-            // the token its successor holds, letting a duplicate start.
-            guard !Task.isCancelled, let self else { return }
-            // Re-resolve before clearing the single-flight token: a slot the
-            // materialized network can't serve (subnet capacity, pending
-            // reservation) leaves the address underivable, and re-arming from
-            // that resolve would spin materialize→resolve forever.
-            if materialized {
-                self.resolved.ipAddress = self.resolveIPAddress(self.instance.configuration)
-                self.onCategoryResolved?(.network)
-            }
-            self.ipMaterializeTask = nil
-        }
     }
 
     /// Reads the boot disk's capacity off the main thread. The key tags the
@@ -385,9 +318,6 @@ final class VMOverviewResolver {
     /// The in-flight size read, so a test awaits it instead of polling the
     /// total it fills in.
     var snapshotSizeTaskForTesting: Task<Void, Never>? { snapshotSizeTask }
-
-    /// The in-flight address materialization, for event-driven test waits.
-    var ipMaterializeTaskForTesting: Task<Void, Never>? { ipMaterializeTask }
 
     /// The in-flight boot-disk capacity read, for event-driven test waits.
     var bootDiskTaskForTesting: Task<Void, Never>? { bootDiskTask }
