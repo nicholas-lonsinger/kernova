@@ -1568,6 +1568,82 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
+    // MARK: - Removable media on a live-but-unattachable session
+
+    /// A registered VM holding one removable-media entry, in `phase` with a
+    /// session context — the shape a save or live snapshot leaves behind.
+    private func appendVMWithMedia(
+        to viewModel: VMLibraryViewModel, in phase: VMLifecyclePhase
+    ) -> VMInstance {
+        let instance = makeInstance(name: "Media VM")
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: "/tmp/media.iso", readOnly: true)
+        ]
+        instance.enter(phase)
+        if instance.liveSessionID != nil {
+            instance.beginSessionContext()
+        }
+        viewModel.instances.append(instance)
+        return instance
+    }
+
+    @Test("a media edit is refused whole while the VM is saving, changing nothing")
+    func mediaEditIsRefusedWhileSaving() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = appendVMWithMedia(to: viewModel, in: .saving(sessionID: UUID()))
+
+        let accepted = viewModel.updateConfiguration(of: instance) { $0.removableMedia = nil }
+
+        #expect(accepted == false)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(storage.saveConfigurationCallCount == 0)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("a media edit is refused whole while the VM is capturing a live snapshot")
+    func mediaEditIsRefusedWhileCapturingLive() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = appendVMWithMedia(to: viewModel, in: .capturingLive(sessionID: UUID()))
+
+        let accepted = viewModel.updateConfiguration(of: instance) {
+            $0.removableMedia = nil
+            $0.memorySizeInGB = 6
+        }
+
+        #expect(accepted == false)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(instance.configuration.memorySizeInGB != 6)
+        #expect(storage.saveConfigurationCallCount == 0)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("an edit leaving the media list alone is accepted while capturing a live snapshot")
+    func nonMediaEditIsAcceptedWhileCapturingLive() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = appendVMWithMedia(to: viewModel, in: .capturingLive(sessionID: UUID()))
+
+        let accepted = viewModel.updateConfiguration(of: instance) { $0.memorySizeInGB = 6 }
+
+        #expect(accepted)
+        #expect(instance.configuration.memorySizeInGB == 6)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("a VM with no session takes a media edit — it persists for the next start")
+    func mediaEditIsAcceptedWithoutASession() {
+        for phase in [VMLifecyclePhase.stopped, .suspended] {
+            let (viewModel, storage, _, _, _) = makeViewModel()
+            let instance = appendVMWithMedia(to: viewModel, in: phase)
+
+            let accepted = viewModel.updateConfiguration(of: instance) { $0.removableMedia = nil }
+
+            #expect(accepted, "\(phase)")
+            #expect(instance.configuration.removableMedia == nil, "\(phase)")
+            #expect(storage.saveConfigurationCallCount == 1, "\(phase)")
+        }
+    }
+
     // MARK: - Duplicate MAC Address Admission
 
     /// Two on-disk bundles carrying `mac`, in a storage mock — the hand-copied

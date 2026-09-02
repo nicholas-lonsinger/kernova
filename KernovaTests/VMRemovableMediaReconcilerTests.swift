@@ -74,6 +74,35 @@ struct VMRemovableMediaReconcilerTests {
         return c
     }
 
+    @Test("refuseUnattachableEdit refuses a media change only on a live session no pass can drive")
+    func refuseUnattachableEditTracksThePhase() {
+        let reconciler = makeReconciler()
+        let sessionID = UUID()
+        let unattachable: [VMLifecyclePhase] = [
+            .saving(sessionID: sessionID), .capturingLive(sessionID: sessionID),
+        ]
+        let admitting: [VMLifecyclePhase] = [
+            .running(sessionID: sessionID), .livePaused(sessionID: sessionID), .stopped, .suspended,
+        ]
+
+        for phase in unattachable + admitting {
+            let instance = makeInstance()
+            instance.enter(phase)
+            let old = instance.configuration
+            let mediaChange = configWithRemovable(old, path: "/tmp/A.iso")
+            var otherChange = old
+            otherChange.memorySizeInGB = 6
+
+            let refusesMedia = reconciler.refuseUnattachableEdit(
+                on: instance, movingFrom: old, to: mediaChange)
+            let refusesOther = reconciler.refuseUnattachableEdit(
+                on: instance, movingFrom: old, to: otherChange)
+
+            #expect(refusesMedia == unattachable.contains(phase), "\(phase)")
+            #expect(refusesOther == false, "\(phase)")
+        }
+    }
+
     @Test("apply attaches a new removable item when added to the list")
     func liveRemovableAddAttaches() async throws {
         let mock = MockUSBDeviceService()
