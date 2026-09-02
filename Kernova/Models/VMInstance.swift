@@ -386,6 +386,36 @@ final class VMInstance {
     /// running; cleared on stop/teardown.
     var liveRemovableMedia: [USBDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
 
+    /// Whether the live session has a removable-media edit queued that the
+    /// reconciler has not yet driven onto the XHCI controller.
+    ///
+    /// Read through ``sessionContext``, so an observed wait on it wakes both
+    /// when the pass drains and when the session is torn down — the two ways
+    /// the debt is settled.
+    var hasRemovableMediaReconcileOwed: Bool {
+        sessionContext?.removableMediaReconcileOwed ?? false
+    }
+
+    /// Records that the session `sessionID` names owes a removable-media
+    /// reconcile pass.
+    ///
+    /// Dropped and logged when that session is no longer the live one — see
+    /// ``recordAttachedMedia(_:for:)``.
+    func markRemovableMediaReconcileOwed(for sessionID: UUID) {
+        guard let context = mediaWriteTarget(for: sessionID, "reconcile-owed mark") else { return }
+        context.removableMediaReconcileOwed = true
+    }
+
+    /// Records that the reconcile pass for the session `sessionID` names has
+    /// drained every queued edit.
+    ///
+    /// Dropped and logged when that session is no longer the live one — see
+    /// ``recordAttachedMedia(_:for:)``.
+    func clearRemovableMediaReconcileOwed(for sessionID: UUID) {
+        guard let context = mediaWriteTarget(for: sessionID, "reconcile-owed clear") else { return }
+        context.removableMediaReconcileOwed = false
+    }
+
     /// Records a device that was just attached, live, on the session
     /// `sessionID` names.
     ///
@@ -434,14 +464,18 @@ final class VMInstance {
 
     /// The context a removable-media write issued against `sessionID` belongs
     /// to, or `nil` — logged — when that session has been released.
+    ///
+    /// `deviceID` names the device the write concerns, when it concerns one;
+    /// it only shapes the log line.
     private func mediaWriteTarget(
         for sessionID: UUID,
-        deviceID: UUID,
+        deviceID: UUID? = nil,
         _ what: StaticString
     ) -> VMSessionContext? {
         guard let sessionContext, liveSessionID == sessionID else {
+            let device = deviceID.map { " device \($0)" } ?? ""
             Self.logger.notice(
-                "Dropping \(what, privacy: .public) for '\(self.name, privacy: .public)' device \(deviceID, privacy: .public): session \(sessionID, privacy: .public) is no longer live"
+                "Dropping \(what, privacy: .public) for '\(self.name, privacy: .public)'\(device, privacy: .public): session \(sessionID, privacy: .public) is no longer live"
             )
             return nil
         }

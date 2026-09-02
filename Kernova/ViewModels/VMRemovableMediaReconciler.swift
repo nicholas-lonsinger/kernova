@@ -38,10 +38,11 @@ final class VMRemovableMediaReconciler {
     ///
     /// The binding is what a queued entry needs and a per-pass capture cannot
     /// give it: an entry outlives the session that queued it whenever the drain
-    /// is behind — a stop, an edit made while stopped (which returns before
-    /// replacing the entry, having no session to act on), and a restart all
-    /// leave it queued — and draining it under the successor's token would
-    /// drive the new session's controller to a list its user never asked for.
+    /// is behind — a stop or force stop, an edit made while stopped (which
+    /// returns before replacing the entry, having no session to act on), and a
+    /// restart all leave it queued — and draining it under the successor's
+    /// token would drive the new session's controller to a list its user never
+    /// asked for.
     private struct PendingRemovableMediaChange {
         let sessionID: UUID
         let target: [RemovableMediaItem]
@@ -65,6 +66,11 @@ final class VMRemovableMediaReconciler {
         let id = instance.instanceID
         pendingRemovableMediaTarget[id] = PendingRemovableMediaChange(
             sessionID: sessionID, target: new.removableMedia ?? [])
+        // Marked before the Task hop, on every enqueue: a lifecycle operation
+        // issued in the same turn must already see the debt, and an edit for a
+        // successor session queued behind a running pass owes it on that
+        // successor's context, which the running pass drains and clears.
+        instance.markRemovableMediaReconcileOwed(for: sessionID)
         guard !reconcilingRemovableMediaInstances.contains(id) else { return }
         reconcilingRemovableMediaInstances.insert(id)
         Task { [weak self] in
@@ -81,16 +87,23 @@ final class VMRemovableMediaReconciler {
     /// so a stop — or a stop and a restart — mid-pass abandons the pass rather
     /// than driving whatever is live by then.
     ///
-    /// Attachability is read before the dequeue, so an entry the VM cannot be
-    /// acted on for (a save in flight on the same session) is left in the queue
-    /// rather than consumed. Nothing re-drives the drain, so that entry waits
-    /// there until the next configuration edit dispatches a pass.
+    /// An entry whose session is no longer the attachable one is dropped, not
+    /// left queued: `VMLifecycleCoordinator` waits out the debt `apply` marks
+    /// before running any serialized operation, so a live session cannot be
+    /// moved out of attachability while a pass is owed — only torn down, which
+    /// makes the entry stale. The debt is cleared on whichever session is live
+    /// once the queue is empty; a session torn down mid-pass dropped its own
+    /// flag with its context.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
-        defer { reconcilingRemovableMediaInstances.remove(id) }
+        defer {
+            reconcilingRemovableMediaInstances.remove(id)
+            if let live = instance.attachableSessionID {
+                instance.clearRemovableMediaReconcileOwed(for: live)
+            }
+        }
         while let pending = pendingRemovableMediaTarget[id] {
-            guard let sessionID = instance.attachableSessionID else { break }
             pendingRemovableMediaTarget.removeValue(forKey: id)
-            guard pending.sessionID == sessionID else {
+            guard let sessionID = instance.attachableSessionID, pending.sessionID == sessionID else {
                 Self.logger.notice(
                     "Dropping queued removable-media target for '\(instance.name, privacy: .public)': session \(pending.sessionID, privacy: .public) is no longer live"
                 )
