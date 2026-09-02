@@ -243,9 +243,14 @@ struct VMCommandCoreTests {
     func theReservedAddressAnswersEveryHeadlessRead() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Addressed")
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-        instance.configuration.macAddress = "aa:bb:cc:dd:ee:01"
+        // Through the declaration path, which is what claims the slot the
+        // address derives from — no surface reserves one by reading.
+        harness.library.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "aa:bb:cc:dd:ee:01"
+        }
+        #expect(harness.vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
 
         // Nothing derives an address until the network's addressing is known,
         // and no headless read invents one meanwhile.

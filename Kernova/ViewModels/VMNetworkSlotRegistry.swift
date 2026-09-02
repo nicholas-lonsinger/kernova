@@ -203,6 +203,13 @@ final class VMNetworkSlotRegistry {
             _ = await networks.materializeNetwork(for: kind)
             guard let self else { return }
             self.addressingLearns[kind] = nil
+            // A materialization reports success for two states that install no
+            // reservations — the subnet was re-grabbed between the probe and the
+            // recreate, or the attempt limit was spent — and both leave the
+            // network idle with its declarations pending. Recreating here is what
+            // keeps the address from waiting on an unrelated event; a no-op
+            // wherever the network already carries what it should.
+            self.rebuildNetworksIfIdle()
             self.addressingGeneration &+= 1
         }
     }

@@ -389,12 +389,10 @@ protocol VmnetNetworkRecreating: Sendable {
 /// addressing plus reservation slots — is persisted to
 /// `Application Support/Kernova/networks.json`, and the addressing is pinned
 /// onto the recreated network in later launches, keeping guest addressing
-/// stable. A kind whose addressing the store does not carry yet is
-/// materialized once to establish it; every later launch reads it from the
-/// store, and a launch that uses neither kind materializes nothing. A
-/// materialized network is held until the app exits: the subnet reservation
-/// lives as long as the ref, and every concurrent VM in the mode shares the
-/// one network.
+/// stable. A materialization is what establishes a kind's addressing, and the
+/// store keeps it from then on. A materialized network is held until the app
+/// exits: the subnet reservation lives as long as the ref, and every concurrent
+/// VM in the mode shares the one network.
 ///
 /// Reservations and forwarding rules are both fixed at network creation
 /// (vmnet.h: modifying reservations is not allowed while a network is active,

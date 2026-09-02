@@ -185,6 +185,24 @@ struct VMNetworkSlotRegistryTests {
         #expect(vmnet.materializeCount == 0)
     }
 
+    @Test("A learn landing on a network that installed nothing recreates it there and then")
+    func aLearnRecreatesANetworkLeftPending() async {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
+        // The materialized network carries none of what it should — the state a
+        // re-grabbed subnet, or a spent attempt limit, leaves behind.
+        vmnet.scriptedPendingKinds = [.shared]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = []
+
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        #expect(vmnet.invalidatedKinds.isEmpty)
+        await registry.addressingLearnTaskForTesting(.shared)?.value
+
+        // Without this the address waits on an unrelated event to arrive.
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
     @Test("A learned addressing, and an invalidation, each tell a reader to ask again")
     func readersAreToldWhenTheAnswerCanMove() async {
         let vmnet = MockVmnetNetworkProvider()
