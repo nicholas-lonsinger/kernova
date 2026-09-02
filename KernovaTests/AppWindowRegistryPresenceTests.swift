@@ -32,22 +32,10 @@ struct AppWindowRegistryPresenceTests {
     }
 
     private func makeRegistry() -> AppWindowRegistry {
-        let viewModel = makeViewModel()
+        let viewModel = makeLibraryViewModel(preferences: preferences)
         return AppWindowRegistry(
             viewModel: viewModel,
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
-    }
-
-    private func makeViewModel() -> VMLibraryViewModel {
-        VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
     }
 
     /// A VM the clipboard window opens for: sharing on, and a live session, which

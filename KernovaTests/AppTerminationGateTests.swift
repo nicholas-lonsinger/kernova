@@ -37,15 +37,7 @@ struct AppTerminationGateTests {
     }
 
     private func makeController() -> (AppTerminationController, VMLibraryViewModel) {
-        let viewModel = VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
+        let viewModel = makeLibraryViewModel(preferences: preferences)
         return (AppTerminationController(viewModel: viewModel), viewModel)
     }
 

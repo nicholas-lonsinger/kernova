@@ -23,7 +23,7 @@ struct MainMenuRebuildTests {
     }
 
     private func makeFixture(instance: VMInstance?, keepInMenuBar: Bool = false) -> Fixture {
-        let viewModel = makeMenuViewModel(preferences: preferences)
+        let viewModel = makeLibraryViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         let controller = MainMenuController(
             viewModel: viewModel, preferences: preferences, hasSoftQuit: true,
@@ -110,6 +110,57 @@ struct MainMenuRebuildTests {
         #expect(!appMenu.items.contains { $0 === intruder })
         #expect(appMenu.items.first === bystander)
         #expect(quitItems(in: appMenu, count: model.count).map(\.title) == model.map(\.title))
+    }
+
+    @Test("An item injected into the quit section is swept even with the model unchanged")
+    func injectedItemIsSweptWithoutAModelChange() throws {
+        let fixture = makeFixture(instance: nil, keepInMenuBar: true)
+        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
+        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let before = quitItems(in: appMenu, count: model.count)
+        // What AppKit attaches beside a `terminate:` item, arriving after the
+        // section was built and without anything the model would notice. It goes
+        // between the modeled items, where AppKit puts it.
+        let intruder = NSMenuItem(
+            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        intruder.keyEquivalentModifierMask = [.command, .option]
+        appMenu.insertItem(intruder, at: appMenu.items.count - 1)
+
+        fixture.controller.menuNeedsUpdate(appMenu)
+
+        let after = quitItems(in: appMenu, count: model.count)
+        #expect(!appMenu.items.contains { $0 === intruder })
+        #expect(after.map(\.title) == model.map(\.title))
+        // Only the intruder was removed: the modeled items are the very ones the
+        // section already held, never torn down and rebuilt.
+        #expect(before.count == model.count)
+        #expect(zip(before, after).allSatisfy { $0 === $1 })
+        // ⌥⌘Q is the true quit's again, not the alternate's.
+        let claimants = appMenu.items.filter {
+            $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
+        }
+        #expect(claimants.count == 1)
+        #expect(claimants.first?.action == #selector(AppDelegate.quitCompletely(_:)))
+    }
+
+    @Test("A split quit section that already is the model is left untouched")
+    func matchingSplitSectionIsNotMutated() throws {
+        let fixture = makeFixture(instance: nil, keepInMenuBar: true)
+        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
+        let model = MainMenuController.appMenuQuitItems(downgradesQuitToGUIClose: true)
+        let before = quitItems(in: appMenu, count: model.count)
+        let itemCountBefore = appMenu.items.count
+
+        // Every ⌘-keystroke reaches this, so a matching section has to survive
+        // repeated updates without a single mutation.
+        fixture.controller.menuNeedsUpdate(appMenu)
+        fixture.controller.menuNeedsUpdate(appMenu)
+
+        let after = quitItems(in: appMenu, count: model.count)
+        #expect(before.count == model.count)
+        #expect(appMenu.items.count == itemCountBefore)
+        #expect(zip(before, after).allSatisfy { $0 === $1 })
     }
 
     @Test("Only the full-quit item claims ⌥⌘Q after a toggle")

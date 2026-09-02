@@ -37,15 +37,7 @@ struct AppResidencyPresentationTests {
     }
 
     private func makeController() -> (AppResidencyController, StubLaunchHost) {
-        let viewModel = VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
+        let viewModel = makeLibraryViewModel(preferences: preferences)
         let host = StubLaunchHost()
         let controller = AppResidencyController(
             viewModel: viewModel,

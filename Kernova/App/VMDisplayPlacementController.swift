@@ -138,10 +138,6 @@ final class VMDisplayPlacementController {
 
     // MARK: - Registry
 
-    var isEmpty: Bool { windows.isEmpty }
-
-    var count: Int { windows.count }
-
     func window(for vmID: UUID) -> NSWindow? { windows[vmID]?.window }
 
     /// The VM whose display window is `window`, if any.
