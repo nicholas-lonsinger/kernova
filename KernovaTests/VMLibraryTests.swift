@@ -326,36 +326,6 @@ struct VMLibraryTests {
         #expect(library.selectedInstance == nil)
     }
 
-    // MARK: - Eviction
-
-    @Test("evict announces the id, so app-level state keyed on it is released")
-    func evictAnnouncesTheID() {
-        let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
-        library.instances.append(instance)
-        var evicted: [UUID] = []
-        library.onEvicted = { evicted.append($0) }
-
-        library.evict(instance)
-
-        #expect(evicted == [instance.id])
-    }
-
-    @Test("A reconcile-driven eviction announces the id too")
-    func reconcileEvictionAnnouncesTheID() {
-        let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
-        instance.enter(.stopped)
-        library.instances.append(instance)
-        var evicted: [UUID] = []
-        library.onEvicted = { evicted.append($0) }
-
-        // Storage holds no bundles, so the resting VM is no longer on disk.
-        library.reconcileWithDisk()
-
-        #expect(evicted == [instance.id])
-    }
-
     // MARK: - Reconcile With Disk
 
     @Test("reconcileWithDisk adds discovered bundles not in memory")

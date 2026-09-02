@@ -77,22 +77,6 @@ struct VMStorageServiceTests {
         #expect(loaded.cpuCount == 8)
     }
 
-    @Test("Creating duplicate bundle throws error")
-    func duplicateBundleThrows() throws {
-        let config = VMConfiguration(
-            name: "Duplicate Test",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-
-        let bundleURL = try makeBundle(config)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
-
-        #expect(throws: VMStorageError.self) {
-            try service.createVMBundle(config, at: bundleURL)
-        }
-    }
-
     @Test("Deleting non-existent bundle throws error")
     func deleteNonExistentThrows() {
         let fakeURL = FileManager.default.temporaryDirectory

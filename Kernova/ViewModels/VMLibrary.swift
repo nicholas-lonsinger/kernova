@@ -12,8 +12,8 @@ import os
 ///
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
 /// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
-/// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
-/// ``onPoweredOff`` and ``onEvicted`` — leave through their own closures.
+/// whose handling belongs elsewhere — ``onAgentBecameCurrent`` and
+/// ``onPoweredOff`` — leave through their own closures.
 /// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
 /// wires them all.
 @MainActor
@@ -63,10 +63,6 @@ final class VMLibrary: VMInstanceRoster {
 
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
-
-    /// Fires when a VM leaves the library, so app-level state keyed on its id
-    /// is released with it — whichever path evicted it.
-    @ObservationIgnored var onEvicted: ((UUID) -> Void)?
 
     // MARK: - State
 
@@ -585,8 +581,7 @@ final class VMLibrary: VMInstanceRoster {
         }
     }
 
-    /// Drops `instance` from the library, moving the selection off it and
-    /// releasing the app-level state keyed on it.
+    /// Drops `instance` from the library, moving the selection off it.
     ///
     /// `bundleIsGone: false` drops the row but keeps the VM's DHCP reservation
     /// slot, for a bundle still on disk whose configuration could not be read —
@@ -601,7 +596,6 @@ final class VMLibrary: VMInstanceRoster {
         // address, so the next VM created can be handed both.
         networkSlots.releaseSlots(for: instance.configuration, bundleIsGone: bundleIsGone)
         networkSlots.rebuildNetworksIfIdle()
-        onEvicted?(instance.id)
     }
 
     // MARK: - Reorder

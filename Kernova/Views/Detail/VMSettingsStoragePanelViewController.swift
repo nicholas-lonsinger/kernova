@@ -601,7 +601,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             let prompt = VMCommandCore.attachmentDeletePrompt(
                 label: disk.label,
                 isInternal: disk.isInternal,
-                isMainDisk: viewModel.isMainDisk(disk, of: instance),
                 isGuestAgent: false,
                 sharedVMNames: shared)
             presentSheetAlert(
@@ -652,6 +651,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         /// Rename / Read Only / Remove gating, read from the capability the
         /// verb behind each of them refuses on.
         let editable: Bool
+        /// The VM's startup disk, which stays with the VM — so no row offers a
+        /// removal the verb refuses.
+        let isMainDisk: Bool
     }
 
     private func attachmentInfo(_ ref: AttachmentRef) -> AttachmentInfo? {
@@ -662,13 +664,14 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 id: disk.id, label: disk.label, path: disk.path, isInternal: disk.isInternal,
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
-                notes: disk.notes, editable: canEditStorageDisks)
+                notes: disk.notes, editable: canEditStorageDisks,
+                isMainDisk: viewModel.isMainDisk(disk, of: instance))
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: item.id, label: item.label, path: item.path, isInternal: false,
                 readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
-                editable: canEditRemovableMedia)
+                editable: canEditRemovableMedia, isMainDisk: false)
         }
     }
 
@@ -730,9 +733,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             eject.isEnabled = info.editable
             menu.addItem(eject)
         }
-        let remove = attachmentMenuItem("Remove…", #selector(menuAttachmentRemove(_:)), ref)
-        remove.isEnabled = info.editable
-        menu.addItem(remove)
+        // No Remove… on the main disk: the VM starts from it, so the verb
+        // refuses, and an item that could only raise that refusal is noise.
+        if !info.isMainDisk {
+            let remove = attachmentMenuItem("Remove…", #selector(menuAttachmentRemove(_:)), ref)
+            remove.isEnabled = info.editable
+            menu.addItem(remove)
+        }
 
         return menu
     }
@@ -931,7 +938,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             let prompt = VMCommandCore.attachmentDeletePrompt(
                 label: item.label,
                 isInternal: false,
-                isMainDisk: false,
                 isGuestAgent: isAgent,
                 sharedVMNames: shared)
             presentSheetAlert(

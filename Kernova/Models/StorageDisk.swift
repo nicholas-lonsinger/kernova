@@ -99,9 +99,11 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
     /// list is empty or absent.
     ///
-    /// Without stable identity, a lookup-by-id for this disk would miss the
-    /// row the user just clicked — silently no-op'ing the entry removal while
-    /// still trashing the underlying file.
+    /// The id is derived from the bundle path rather than minted per read: a
+    /// rename, note or read-only edit reaches this disk by id, and the same id
+    /// is the device UUID `restoreMachineStateFrom(url:)` matches a saved state
+    /// against. A fresh one each read would miss the row the user clicked, and
+    /// break restore.
     static func mainDisk(layout: VMBundleLayout) -> StorageDisk {
         let stableMainDiskID = StableID.uuid(seed: layout.bundleURL.path)
         return StorageDisk(

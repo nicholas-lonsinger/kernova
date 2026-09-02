@@ -223,6 +223,24 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.storage.saveConfigurationCallCount == 2)
     }
 
+    @Test("An unchanged edit leaves a VM with no configured disk list untouched")
+    func unchangedEditNeverMaterializesTheList() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let main = instance.effectiveStorageDisks[0]
+        harness.storage.saveConfigurationCallCount = 0
+
+        try harness.core.setStorageDiskNotes(.id(instance.id), disk: main.id, notes: main.notes)
+        try harness.core.renameStorageDisk(.id(instance.id), disk: main.id, to: main.label)
+        try harness.core.setStorageDiskReadOnly(
+            .id(instance.id), disk: main.id, readOnly: main.readOnly)
+
+        // Materializing is itself a write, so an edit that changes nothing has
+        // to stop before it.
+        #expect(instance.configuration.storageDisks == nil)
+        #expect(harness.storage.saveConfigurationCallCount == 0)
+    }
+
     @Test("An edit to the synthesized main disk persists the whole materialized list")
     func editingTheMainDiskMaterializesTheList() throws {
         let harness = makeHarness()
@@ -374,21 +392,63 @@ struct VMCommandCoreAttachmentTests {
         #expect(failures.first?.isOperationFailure == true)
     }
 
-    @Test("Removing the synthesized main disk empties the list rather than no-opping")
-    func removeSyntheticMainDiskClearsTheList() async throws {
-        // Regression: a non-deterministic synthesized id would leave the entry
-        // in place — the binding's id and the removal's own re-synthesis would
-        // not match — while still trashing `Disk.asif`, bricking the VM.
+    @Test("The synthesized main disk is refused, so its row can never outlive its file")
+    func removeSyntheticMainDiskIsRefused() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         instance.configuration.storageDisks = nil
         let synthetic = StorageDisk.mainDisk(
             layout: VMBundleLayout(bundleURL: instance.bundleURL))
 
-        try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: synthetic.id, trashFile: false, confirmed: true)
+        let refusal = await commandError {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: synthetic.id, trashFile: true, confirmed: true)
+        }
 
-        #expect((instance.configuration.storageDisks ?? []).isEmpty)
+        #expect(refusal?.isOperationFailure == true)
+        #expect(instance.configuration.storageDisks == nil)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("A materialized main disk is refused on the same rule as the synthesized one")
+    func removeMaterializedMainDiskIsRefused() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
+        let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        instance.configuration.storageDisks = [main, extra]
+
+        let refusal = await commandError {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: main.id, trashFile: true, confirmed: true)
+        }
+
+        #expect(refusal?.isOperationFailure == true)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [main.id, extra.id])
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("A disk detached while sharing resolves is refused, and its file is left alone")
+    func removeStorageDiskRefusesADetachDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let path = externalPath("external.img")
+        let disk = StorageDisk(path: path, label: "External", isInternal: false)
+        let other = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        instance.configuration.storageDisks = [disk, other]
+        // A second surface removing the same row while this one's resolve is in
+        // flight: the id this call decided to trash is no longer attached.
+        harness.core.afterSharingResolveForTesting = {
+            instance.configuration.storageDisks = [other]
+        }
+
+        let refusal = await commandError {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+        }
+
+        #expect(refusal?.isOperationFailure == true)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
     // MARK: - Removable media
@@ -607,6 +667,28 @@ struct VMCommandCoreAttachmentTests {
             return
         }
         #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("A medium ejected while sharing resolves is refused, and its file is left alone")
+    func removeRemovableMediaRefusesADetachDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let path = externalPath("media.iso")
+        let item = RemovableMediaItem(path: path, readOnly: true)
+        instance.configuration.removableMedia = [item]
+        // An Eject from the row's own menu, landing while this removal's
+        // resolve is in flight.
+        harness.core.afterSharingResolveForTesting = {
+            instance.configuration.removableMedia = nil
+        }
+
+        let refusal = await commandError {
+            try await harness.core.removeRemovableMedia(
+                .id(instance.id), item: item.id, trashFile: true, confirmed: true)
+        }
+
+        #expect(refusal?.isOperationFailure == true)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 

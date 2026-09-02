@@ -129,25 +129,16 @@ struct VMSettingsStoragePanelTests {
     @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")
     func deletePromptInternalDisk() {
         let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: "Extra Disk", isInternal: true, isMainDisk: false,
+            label: "Extra Disk", isInternal: true,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
         #expect(prompt.title.contains("Extra Disk"))
     }
 
-    @Test("Main disk delete warns it's the startup disk")
-    func deletePromptMainDisk() {
-        let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: "Main Disk", isInternal: true, isMainDisk: true,
-            isGuestAgent: false, sharedVMNames: [])
-        #expect(prompt.actions == [.moveToTrash])
-        #expect(prompt.message.contains("startup disk"))
-    }
-
     @Test("Private external delete offers both Move-to-Trash and Remove-from-VM")
     func deletePromptPrivateExternal() {
         let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: "Scratch", isInternal: false, isMainDisk: false,
+            label: "Scratch", isInternal: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash, .removeFromVM])
     }
@@ -155,7 +146,7 @@ struct VMSettingsStoragePanelTests {
     @Test("Shared external delete hard-blocks trashing (Remove-from-VM only) and names the VMs")
     func deletePromptSharedExternal() {
         let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: "Installer", isInternal: false, isMainDisk: false,
+            label: "Installer", isInternal: false,
             isGuestAgent: false, sharedVMNames: ["macOS Copy", "Linux"])
         #expect(prompt.actions == [.removeFromVM])
         #expect(prompt.message.contains("macOS Copy"))
@@ -165,7 +156,7 @@ struct VMSettingsStoragePanelTests {
     @Test("Guest Agent delete only detaches and says the installer isn't deleted")
     func deletePromptGuestAgent() {
         let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: "Kernova Guest Agent", isInternal: false, isMainDisk: false,
+            label: "Kernova Guest Agent", isInternal: false,
             isGuestAgent: true, sharedVMNames: [])
         #expect(prompt.actions == [.removeFromVM])
         #expect(prompt.message.contains("isn't deleted"))
@@ -206,6 +197,31 @@ struct VMSettingsStoragePanelTests {
 
         #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == false)
         #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
+    }
+
+    @Test("The main disk row offers no Remove\u{2026}, and an additional disk does")
+    func attachmentMenuOmitsRemoveOnTheMainDisk() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
+        instance.configuration.storageDisks = [
+            main,
+            StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true),
+        ]
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.storage)
+
+        let rows = allSubviews(AttachmentRowView.self, in: vc.view)
+        #expect(rows.count == 2)
+        let mainTitles = rows.first?.contextMenu?()?.items.map(\.title) ?? []
+        let extraTitles = rows.dropFirst().first?.contextMenu?()?.items.map(\.title) ?? []
+
+        #expect(!mainTitles.contains("Remove\u{2026}"))
+        #expect(mainTitles.contains("Rename"))
+        #expect(extraTitles.contains("Remove\u{2026}"))
     }
 
     @Test("Edit Notes on the context menu begins inline editing on the row")

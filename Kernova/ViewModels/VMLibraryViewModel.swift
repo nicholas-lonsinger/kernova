@@ -399,10 +399,6 @@ final class VMLibraryViewModel {
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
         }
-        // A VM out of the library is one no wake pass should resume.
-        library.onEvicted = { [weak sleepWake] id in
-            sleepWake?.forget(id)
-        }
         sleepWake.onFailure = { [weak self] error in
             self?.surfaceError(error.localizedDescription)
         }

@@ -35,12 +35,6 @@ final class VMSleepWakeCoordinator {
         startSleepWatcher()
     }
 
-    /// Drops `instanceID` from the resume set, for a VM that left the library
-    /// between sleep and wake.
-    func forget(_ instanceID: UUID) {
-        sleepPausedInstanceIDs.remove(instanceID)
-    }
-
     /// Pauses all running VMs before system sleep, tracking which were auto-paused so
     /// only those are resumed on wake.
     func pauseAllForSleep() async {
