@@ -289,8 +289,21 @@ extension VMCommandCore {
             throw CommandError.operationFailed(
                 verb: .editRemovableMedia, message: error.localizedDescription)
         }
-        library.updateConfiguration(of: instance) { config in
+        // The write above is a real hop: a suspend or quit landing during it
+        // moves the VM to a phase the entry cannot be attached in, and the
+        // configuration write refuses. The file is the user's and stays.
+        let accepted = library.updateConfiguration(of: instance) { config in
             config.removableMedia = (config.removableMedia ?? []) + [item]
+        }
+        guard accepted else {
+            Self.logger.notice(
+                "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
+            )
+            throw CommandError.operationFailed(
+                verb: .editRemovableMedia,
+                message:
+                    "The disk image was created at \(destinationURL.path(percentEncoded: false)), but \(instance.name) is \(instance.status.rawValue) and could not take it. Attach the file once the VM is running."
+            )
         }
         Self.logger.notice(
             "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"

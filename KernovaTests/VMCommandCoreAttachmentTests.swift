@@ -556,6 +556,35 @@ struct VMCommandCoreAttachmentTests {
         }
     }
 
+    @Test("A VM that starts saving during the disk write keeps the file and reports the refusal")
+    func createRemovableMediaRefusedWhenTheVMBecomesUnattachable() async throws {
+        let diskImages = MockDiskImageService()
+        diskImages.holdCreateDiskImage()
+        let harness = makeHarness(diskImages: diskImages)
+        let sessionID = UUID()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID))
+        instance.beginSessionContext()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).asif")
+
+        let creation = Task { @MainActor in
+            await commandError {
+                try await harness.core.createRemovableMedia(
+                    .id(instance.id), sizeInGB: 16, destinationURL: destination)
+            }
+        }
+        try await diskImages.parked.wait { diskImages.isParked }
+        instance.enter(.saving(sessionID: sessionID))
+        diskImages.resumeCreateDiskImage()
+        let refusal = await creation.value
+
+        #expect(refusal?.isOperationFailure == true)
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(harness.storage.saveConfigurationCallCount == 0)
+        // The file at the user's chosen path is theirs to keep.
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
     @Test("A label or note edit leaves the mount identity alone")
     func removableLabelAndNoteKeepMountIdentity() throws {
         let harness = makeHarness()
