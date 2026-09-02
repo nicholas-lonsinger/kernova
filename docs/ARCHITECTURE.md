@@ -168,7 +168,11 @@ While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by
 realizing the persisted mode, driving the device through `NetworkDeviceControlling` and reconciling
 on VZ's attachment-disconnect callback, on `NetworkLinkObserving` (`HostNetworkLinkObserver`,
 SCDynamicStore), and on `applyLivePolicy` edits. A session with no realizable attachment surfaces
-as `VMInstance.networkAttachmentPending`.
+as `VMInstance.networkAttachmentPending`. Recreating an app-managed network is not its call: a
+session that suspects its network is defective publishes that upward through
+`VMInstance.onNetworkArbitrationNeeded`, and `VMNetworkSlotRegistry` — the one type holding
+`VmnetNetworkRecreating`, and the one that can see every VM sharing the network — decides whether
+to drop it, then nudges each detached session back onto the recreated one.
 
 **VZ is only ever handed symlink-resolved URLs.** VZ resolves no symlinks and rejects a path
 containing one in any component, reporting it as a missing or invalid file while `FileManager`

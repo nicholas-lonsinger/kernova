@@ -252,6 +252,15 @@ final class VMInstance {
     /// `save` tears the session down and rests at `.paused`.
     @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
 
+    /// Fired when something this VM did may let an app-managed network be
+    /// recreated: its attachment recovery reported the network suspect, or the
+    /// VM released the attachment it held on one.
+    ///
+    /// Wired by `VMLibrary.wirePersistence(for:)`, which runs the arbitration
+    /// pass — the recreate itself belongs to the library, the one place that
+    /// can see every VM sharing the network.
+    @ObservationIgnored var onNetworkArbitrationNeeded: (@MainActor () -> Void)?
+
     /// Applies a configuration mutation, routing it through the persistence
     /// pipeline when `onUpdateConfiguration` is wired.
     func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) {
@@ -545,6 +554,22 @@ final class VMInstance {
             VmnetNetworkKind(mode: configuration.networkMode) == kind
         else { return false }
         return phase.isTransitioning || hasLiveVirtualMachine
+    }
+
+    /// Whether this VM's attachment recovery believes the app-managed network
+    /// of `kind` is defective — the companion read to
+    /// ``mayHoldAttachment(on:)``, answering the other reason to recreate one.
+    ///
+    /// Only a live coordinator can claim it, so a VM without one — no session,
+    /// no network device — claims nothing.
+    func suspectsDefectiveNetwork(on kind: VmnetNetworkKind) -> Bool {
+        networkAttachmentCoordinator?.suspectedDefectiveVmnetKind == kind
+    }
+
+    /// The app-managed network of `kind` was dropped; let a session sitting
+    /// detached on it retake the recreated one.
+    func vmnetNetworkWasInvalidated(_ kind: VmnetNetworkKind) {
+        networkAttachmentCoordinator?.vmnetNetworkWasInvalidated(kind)
     }
 
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
@@ -933,8 +958,15 @@ final class VMInstance {
             linkObserver: HostNetworkLinkObserver(),
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
-            onPendingChange: { [weak context] pending in
+            onPendingChange: { [weak self, weak context] pending in
                 context?.networkAttachmentPending = pending
+                // A VM going pending has released whatever attachment it held,
+                // so a recreate another VM's suspicion asked for may now be
+                // safe — this is how a refused report lands later.
+                if pending { self?.onNetworkArbitrationNeeded?() }
+            },
+            onNetworkDefectSuspected: { [weak self] in
+                self?.onNetworkArbitrationNeeded?()
             })
     }
 
