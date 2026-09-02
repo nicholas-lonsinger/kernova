@@ -454,12 +454,21 @@ extension VMCommandCore {
                 Self.deletePrompt(instance, permanently: permanently))
         }
 
-        let toDelete =
-            alsoRemoving.isEmpty
-            ? []
-            : externalAttachments(for: instance).filter {
+        var toDelete: [ExternalAttachment] = []
+        if !alsoRemoving.isEmpty {
+            toDelete = await externalAttachments(for: instance).filter {
                 alsoRemoving.contains($0.id) && !$0.isShared
             }
+            // Resolving the externals suspends, and the sheet's key equivalents
+            // stay live, so both gates run again on the far side of it — a Start
+            // that landed in the gap must still refuse. Nothing between here and
+            // the bundle delete suspends.
+            try require(.delete, on: instance)
+            guard !lifecycle.hasActiveOperation(for: instance.id) else {
+                throw CommandError.busy(
+                    vm: summary(instance), operation: instance.status.displayName.lowercased())
+            }
+        }
         do {
             if permanently {
                 try storageService.permanentlyDeleteVMBundle(at: instance.bundleURL)
@@ -552,71 +561,110 @@ extension VMCommandCore {
         instance.effectiveStorageDisks.filter(\.isInternal)
     }
 
-    /// The external (non-bundle) files referenced by `instance` that the delete
-    /// sheet offers to trash — the kinds
-    /// ``ExternalFileReference/Kind/isOfferedOnVMDelete`` admits.
+    /// The references behind ``externalAttachments(for:)`` — the kinds
+    /// ``ExternalFileReference/Kind/isOfferedOnVMDelete`` admits, less the
+    /// bundled Guest Agent installer DMG.
     ///
-    /// Each is annotated with the names of other VMs sharing the same path. The
-    /// bundled Guest Agent installer DMG is excluded: its path points *inside the
-    /// app bundle*, so trashing it would corrupt the app for every VM.
-    ///
-    /// Existence is **not** resolved — every ``ExternalAttachment/isMissing`` is
-    /// `false`; use ``externalAttachmentsResolvingExistence(for:)`` when it matters.
-    func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
+    /// The DMG's path points *inside the app bundle*, so trashing it would
+    /// corrupt the app for every VM.
+    private func offeredExternalReferences(for instance: VMInstance) -> [ExternalFileReference] {
         let agentPath = Self.guestAgentInstallerPath
         return instance.configuration.externalFileReferences
             .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
-            .map { reference in
-                ExternalAttachment(
-                    reference: reference,
-                    sharedWithVMNames: sharingVMNames(forPath: reference.path, excluding: instance),
-                    isMissing: false)
-            }
     }
 
-    /// ``externalAttachments(for:)`` with each attachment's
-    /// ``ExternalAttachment/isMissing`` resolved against the filesystem.
+    /// The external (non-bundle) files referenced by `instance` that the delete
+    /// sheet offers to trash, each annotated with whether it is still there and
+    /// which other VMs name the same file.
     ///
-    /// The syscalls run detached so a stale or unreachable mount can't freeze the
-    /// main actor. Probes go through each attachment's security bookmark — a raw
-    /// check on an out-of-container path is sandbox-denied and would render every
-    /// row as missing.
-    func externalAttachmentsResolvingExistence(for instance: VMInstance) async
-        -> [ExternalAttachment]
-    {
-        let attachments = externalAttachments(for: instance)
-        guard !attachments.isEmpty else { return attachments }
-        let paths = attachments.map(\.path)
-        let bookmarks = attachments.map(\.reference).bookmarksByPath
-        let missingByPath = await Task.detached(priority: .userInitiated) {
-            var result: [String: Bool] = [:]
-            for path in paths where result[path] == nil {
-                result[path] = !SecurityScopedBookmark.fileExists(
-                    atPath: path, bookmark: bookmarks[path] ?? nil)
+    /// One detached pass answers both: the syscalls block, so a stale or
+    /// unreachable mount must not reach the main actor. Existence probes go
+    /// through each reference's bookmark — a raw check on an out-of-container
+    /// path is sandbox-denied and would render every row as missing — and
+    /// sharing compares the identity sets ``ExternalFileReference`` derives,
+    /// which is what the trash itself acts on.
+    func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
+        let references = offeredExternalReferences(for: instance)
+        guard !references.isEmpty else { return [] }
+        let candidates = sharingCandidates(excluding: instance)
+        return await Task.detached(priority: .userInitiated) { () -> [ExternalAttachment] in
+            let targets = (references + candidates.flatMap(\.references)).resolvedTargets()
+            let others = candidates.identified(resolvedTargets: targets)
+            let bookmarksByPath = references.bookmarksByPath
+            var missingByPath: [String: Bool] = [:]
+            var attachments: [ExternalAttachment] = []
+            for reference in references {
+                let isMissing: Bool
+                if let known = missingByPath[reference.path] {
+                    isMissing = known
+                } else {
+                    isMissing = !SecurityScopedBookmark.fileExists(
+                        atPath: reference.path, bookmark: bookmarksByPath[reference.path] ?? nil)
+                    missingByPath[reference.path] = isMissing
+                }
+                attachments.append(
+                    ExternalAttachment(
+                        reference: reference,
+                        sharedWithVMNames: Self.sharingVMNames(
+                            matching: ExternalFileReference.fileIdentities(
+                                forPath: reference.path,
+                                resolvedTarget: reference.bookmark.flatMap { targets[$0] }),
+                            among: others),
+                        isMissing: isMissing))
             }
-            return result
+            return attachments
         }.value
-        return attachments.map { attachment in
-            ExternalAttachment(
-                reference: attachment.reference,
-                sharedWithVMNames: attachment.sharedWithVMNames,
-                isMissing: missingByPath[attachment.path] ?? false
-            )
-        }
     }
 
-    /// Names of other VMs in the library that reference `path` as an external
-    /// file.
+    /// Names of other VMs in the library naming the same file as
+    /// `(path, bookmark)`.
     ///
     /// Only external paths count — a bundle-relative one is per-VM by
     /// construction and never reaches the projection. `instance` is excluded so
     /// the file isn't reported as shared with itself.
-    func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
-        library.instances.compactMap { other -> String? in
+    ///
+    /// The bookmark resolution runs detached: it blocks, and the caller is a
+    /// main-actor surface.
+    func sharingVMNames(
+        forPath path: String, bookmark: Data?, excluding instance: VMInstance
+    ) async -> [String] {
+        let candidates = sharingCandidates(excluding: instance)
+        guard !candidates.isEmpty else { return [] }
+        return await Task.detached(priority: .userInitiated) { () -> [String] in
+            var targets = candidates.flatMap(\.references).resolvedTargets()
+            if let bookmark, targets[bookmark] == nil,
+                let target = SecurityScopedBookmark.resolvedTargetPath(bookmark)
+            {
+                targets[bookmark] = target
+            }
+            return Self.sharingVMNames(
+                matching: ExternalFileReference.fileIdentities(
+                    forPath: path, resolvedTarget: bookmark.flatMap { targets[$0] }),
+                among: candidates.identified(resolvedTargets: targets))
+        }.value
+    }
+
+    /// The names among `candidates` whose files intersect `identities`, in
+    /// library order.
+    ///
+    /// Two VMs name the same file when their identity sets meet at any path —
+    /// stored or resolved — which is what lets an unhealed sibling still block
+    /// the trash of a file the subject already healed to its new home.
+    nonisolated static func sharingVMNames(
+        matching identities: Set<String>, among candidates: [(name: String, identities: Set<String>)]
+    ) -> [String] {
+        candidates.compactMap { $0.identities.isDisjoint(with: identities) ? nil : $0.name }
+    }
+
+    /// Every library VM but `instance`, snapshotted for the off-main sharing
+    /// comparison.
+    private func sharingCandidates(excluding instance: VMInstance)
+        -> [ExternalFileReference.SharingCandidate]
+    {
+        library.instances.compactMap { other in
             guard other.id != instance.id else { return nil }
-            let sharesPath = other.configuration.externalFileReferences
-                .contains { $0.path == path }
-            return sharesPath ? other.name : nil
+            return ExternalFileReference.SharingCandidate(
+                name: other.name, references: other.configuration.externalFileReferences)
         }
     }
 

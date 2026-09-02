@@ -55,6 +55,13 @@ final class VMCommandCore: VMCommanding {
     /// `displaySizesToWindow`.
     weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
 
+    #if DEBUG
+    /// Runs right after an attachment removal resolves sharing off-main — in
+    /// place of whatever a user does through the still-live menu key
+    /// equivalents while that resolve is in flight.
+    var afterSharingResolveForTesting: (@MainActor () async -> Void)?
+    #endif
+
     // MARK: - Observation
 
     let broadcaster = VMLibraryEventBroadcaster()

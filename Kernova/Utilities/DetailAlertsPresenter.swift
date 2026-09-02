@@ -178,9 +178,9 @@ final class DetailAlertsPresenter: NSObject {
         startDeleteResolution()
     }
 
-    /// Resolves the in-flight delete's external-file existence off-main *before*
-    /// showing, so the synchronous presentation step never blocks the main actor
-    /// on a stale mount.
+    /// Resolves the in-flight delete's external files off-main *before* showing,
+    /// so the synchronous presentation step never blocks the main actor on a
+    /// stale mount.
     private func startDeleteResolution() {
         deleteResolutionTask = Task { @MainActor [weak self] in
             await self?.resolveAndEnqueueDelete()
@@ -191,7 +191,7 @@ final class DetailAlertsPresenter: NSObject {
         // Loop so a retarget to a different VM *during* the resolve re-resolves
         // the new VM's externals instead of caching stale ones.
         while let request = pendingDelete {
-            let externals = await viewModel.externalAttachmentsResolvingExistence(for: request.instance)
+            let externals = await viewModel.externalAttachments(for: request.instance)
             #if DEBUG
             await afterDeleteResolveForTesting?()
             #endif

@@ -582,27 +582,37 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func presentStorageDeleteConfirmation(forDiskID id: UUID) {
-        guard let window = view.window,
-            let disk = currentStorageDisks.first(where: { $0.id == id })
-        else { return }
-        // Internal (bundle-relative) disks are per-VM, so they're never shared;
-        // only resolve sharing for external disks.
-        let shared = disk.isInternal ? [] : viewModel.sharingVMNames(forPath: disk.path, excluding: instance)
-        let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: disk.label,
-            isInternal: disk.isInternal,
-            isMainDisk: viewModel.isMainDisk(disk, of: instance),
-            isGuestAgent: false,
-            sharedVMNames: shared)
         let instance = instance
-        presentSheetAlert(
-            makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
-                Task { [weak self] in
-                    await self?.viewModel.removeStorageDisk(
-                        disk.id, from: instance, trashFile: trashFile)
-                }
-            },
-            in: window)
+        Task { [weak self] in
+            guard let self, let disk = currentStorageDisks.first(where: { $0.id == id })
+            else { return }
+            // Internal (bundle-relative) disks are per-VM, so they're never
+            // shared; only resolve sharing for external disks.
+            var shared: [String] = []
+            if !disk.isInternal {
+                shared = await viewModel.sharingVMNames(
+                    forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
+            }
+            // The resolve suspends, so the panel may have rebuilt or closed
+            // under it — re-read the window and the row before presenting.
+            guard let window = view.window,
+                let disk = currentStorageDisks.first(where: { $0.id == id })
+            else { return }
+            let prompt = VMCommandCore.attachmentDeletePrompt(
+                label: disk.label,
+                isInternal: disk.isInternal,
+                isMainDisk: viewModel.isMainDisk(disk, of: instance),
+                isGuestAgent: false,
+                sharedVMNames: shared)
+            presentSheetAlert(
+                makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
+                    Task { [weak self] in
+                        await self?.viewModel.removeStorageDisk(
+                            disk.id, from: instance, trashFile: trashFile)
+                    }
+                },
+                in: window)
+        }
     }
 
     /// One open-panel URL as the core takes it — path plus the app-scoped
@@ -903,26 +913,36 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func presentRemovableDeleteConfirmation(forItemID id: UUID) {
-        guard let window = view.window,
-            let item = currentRemovableMedia.first(where: { $0.id == id })
-        else { return }
-        let isAgent = viewModel.isGuestAgentInstaller(item)
-        let shared = isAgent ? [] : viewModel.sharingVMNames(forPath: item.path, excluding: instance)
-        let prompt = VMCommandCore.attachmentDeletePrompt(
-            label: item.label,
-            isInternal: false,
-            isMainDisk: false,
-            isGuestAgent: isAgent,
-            sharedVMNames: shared)
         let instance = instance
-        presentSheetAlert(
-            makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
-                Task { [weak self] in
-                    await self?.viewModel.removeRemovableMedia(
-                        item.id, from: instance, trashFile: trashFile)
-                }
-            },
-            in: window)
+        Task { [weak self] in
+            guard let self, let item = currentRemovableMedia.first(where: { $0.id == id })
+            else { return }
+            let isAgent = viewModel.isGuestAgentInstaller(item)
+            var shared: [String] = []
+            if !isAgent {
+                shared = await viewModel.sharingVMNames(
+                    forPath: item.path, bookmark: item.bookmark, excluding: instance)
+            }
+            // The resolve suspends, so the panel may have rebuilt or closed
+            // under it — re-read the window and the row before presenting.
+            guard let window = view.window,
+                let item = currentRemovableMedia.first(where: { $0.id == id })
+            else { return }
+            let prompt = VMCommandCore.attachmentDeletePrompt(
+                label: item.label,
+                isInternal: false,
+                isMainDisk: false,
+                isGuestAgent: isAgent,
+                sharedVMNames: shared)
+            presentSheetAlert(
+                makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
+                    Task { [weak self] in
+                        await self?.viewModel.removeRemovableMedia(
+                            item.id, from: instance, trashFile: trashFile)
+                    }
+                },
+                in: window)
+        }
     }
 
     private func presentRemovableSavePanel(sizeInGB: Int) {

@@ -117,8 +117,19 @@ extension VMCommandCore {
         }
         // Only external disks can be shared: a bundle-relative path is per-VM
         // by construction.
-        let shared =
-            disk.isInternal ? [] : sharingVMNames(forPath: disk.path, excluding: instance)
+        var shared: [String] = []
+        if !disk.isInternal {
+            shared = await sharingVMNames(
+                forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
+            #if DEBUG
+            await afterSharingResolveForTesting?()
+            #endif
+            // The resolve suspends and the panel's sheet leaves the menu key
+            // equivalents live, so the gate runs again on the far side of it: a
+            // Start that landed in the gap must refuse rather than detach a disk
+            // out from under a guest that is running or about to be.
+            try require(.editStorageDisks, on: instance)
+        }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
                 Self.removalConsent(
@@ -273,8 +284,18 @@ extension VMCommandCore {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
         let isAgentInstaller = isGuestAgentInstaller(item)
-        let shared =
-            isAgentInstaller ? [] : sharingVMNames(forPath: item.path, excluding: instance)
+        var shared: [String] = []
+        if !isAgentInstaller {
+            shared = await sharingVMNames(
+                forPath: item.path, bookmark: item.bookmark, excluding: instance)
+            #if DEBUG
+            await afterSharingResolveForTesting?()
+            #endif
+            // Same far-side gate as `removeStorageDisk`. Removable media is
+            // hot-pluggable, so this refuses the states a live session doesn't
+            // cover — a start still bringing the VM up, above all.
+            try require(.editRemovableMedia, on: instance)
+        }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
                 Self.removalConsent(

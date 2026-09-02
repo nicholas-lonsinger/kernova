@@ -71,14 +71,27 @@ enum SecurityScopedBookmark {
         }
     }
 
+    /// The path `data` currently points at, without starting a scope — the
+    /// identity of the file a reference tracks, for comparison alone.
+    ///
+    /// Resolution stays silent and side-effect free: the shared-file check runs
+    /// over every library VM's references on an advisory path, where a UI prompt
+    /// or a network-volume mount would be a surprise.
+    static func resolvedTargetPath(_ data: Data) -> String? {
+        resolve(data, options: [.withSecurityScope, .withoutUI, .withoutMounting])?
+            .url.path(percentEncoded: false)
+    }
+
     /// Resolves bookmark data back to a URL, or `nil` (logged) when the
     /// bookmark no longer resolves (target deleted, volume gone).
-    static func resolve(_ data: Data) -> Resolution? {
+    static func resolve(
+        _ data: Data, options: URL.BookmarkResolutionOptions = [.withSecurityScope]
+    ) -> Resolution? {
         var isStale = false
         do {
             let url = try URL(
                 resolvingBookmarkData: data,
-                options: .withSecurityScope,
+                options: options,
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             )

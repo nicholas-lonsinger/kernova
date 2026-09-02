@@ -48,8 +48,8 @@ struct DetailAlertsPresenterTests {
         )
     }
 
-    /// An attachment-free Linux VM: `externalAttachmentsResolvingExistence`
-    /// returns `[]` without the off-main probe, so resolution finishes fast.
+    /// An attachment-free Linux VM: `externalAttachments` returns `[]` without
+    /// the off-main probe, so resolution finishes fast.
     private func makeInstance(name: String = "Test VM") -> VMInstance {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
@@ -58,8 +58,8 @@ struct DetailAlertsPresenterTests {
     }
 
     /// A VM carrying an external (non-bundle) storage disk so
-    /// `externalAttachmentsResolvingExistence` actually runs its off-main
-    /// `FileManager.fileExists` probe — exercising the real async resolve gap.
+    /// `externalAttachments` actually runs its off-main `FileManager.fileExists`
+    /// probe — exercising the real async resolve gap.
     private func makeInstanceWithExternalDisk(name: String = "Ext VM") -> VMInstance {
         var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         config.storageDisks = [

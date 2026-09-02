@@ -126,18 +126,14 @@ final class VMLibraryViewModel {
         commands.isMainDisk(disk, of: instance)
     }
 
-    func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
-        commands.externalAttachments(for: instance)
+    func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
+        await commands.externalAttachments(for: instance)
     }
 
-    func externalAttachmentsResolvingExistence(for instance: VMInstance) async
-        -> [ExternalAttachment]
-    {
-        await commands.externalAttachmentsResolvingExistence(for: instance)
-    }
-
-    func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
-        commands.sharingVMNames(forPath: path, excluding: instance)
+    func sharingVMNames(
+        forPath path: String, bookmark: Data?, excluding instance: VMInstance
+    ) async -> [String] {
+        await commands.sharingVMNames(forPath: path, bookmark: bookmark, excluding: instance)
     }
 
     func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
