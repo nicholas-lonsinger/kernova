@@ -219,7 +219,7 @@ extension VMCommandCore {
         let diskMapping = internalDiskMapping
         let bundleFilesToCopy = filesToCopy
         library.prepareBundle(
-            phantom, operation: .cloning,
+            phantom, operation: .cloning(sourceID: instance.id),
             // Everything the clone writes lands in `staged`, the disk remap
             // included: the remap is what makes the cloned configuration name the
             // files beside it, so it has to precede publication rather than land

@@ -368,7 +368,7 @@ struct VMInstanceTests {
         let instance = makeInstance(phase: .stopped)
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(instance.isKeepingAppAlive == true)
     }
 
@@ -546,7 +546,7 @@ struct VMInstanceTests {
         let instance = makeInstance(phase: .stopped)
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(instance.isPreparing == true)
         #expect(instance.canDelete == false)
     }
@@ -977,7 +977,7 @@ struct VMInstanceTests {
 
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(!instance.canRename)
     }
 
@@ -994,7 +994,7 @@ struct VMInstanceTests {
     func isPreparingTrueWhenSet() {
         let instance = makeInstance()
         let task = Task {}
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(instance.isPreparing == true)
 
         instance.preparingState = nil
@@ -1008,7 +1008,7 @@ struct VMInstanceTests {
         let task = Task {}
         defer { task.cancel() }
 
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(instance.statusDisplayName == "Cloning\u{2026}")
 
         instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
@@ -1020,7 +1020,7 @@ struct VMInstanceTests {
         let instance = makeInstance()
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
@@ -1029,21 +1029,21 @@ struct VMInstanceTests {
         let instance = makeInstance()
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         #expect(instance.statusToolTip == "Cloning\u{2026}")
     }
 
     @Test("PreparingOperation cancelLabel and cancelAlertTitle")
     func preparingOperationLabels() {
-        #expect(VMInstance.PreparingOperation.cloning.cancelLabel == "Cancel Clone")
-        #expect(VMInstance.PreparingOperation.cloning.cancelAlertTitle == "Cancel Clone?")
+        #expect(VMInstance.PreparingOperation.cloning(sourceID: UUID()).cancelLabel == "Cancel Clone")
+        #expect(VMInstance.PreparingOperation.cloning(sourceID: UUID()).cancelAlertTitle == "Cancel Clone?")
         #expect(VMInstance.PreparingOperation.importing.cancelLabel == "Cancel Import")
         #expect(VMInstance.PreparingOperation.importing.cancelAlertTitle == "Cancel Import?")
     }
 
     @Test("PreparingOperation displayNoun")
     func preparingOperationDisplayNoun() {
-        #expect(VMInstance.PreparingOperation.cloning.displayNoun == "Clone")
+        #expect(VMInstance.PreparingOperation.cloning(sourceID: UUID()).displayNoun == "Clone")
         #expect(VMInstance.PreparingOperation.importing.displayNoun == "Import")
     }
 

@@ -232,6 +232,9 @@ final class VMSettingsViewController: NSViewController {
                 // its own rather than riding the read above, which is free to
                 // stop enumerating every configuration.
                 _ = self.viewModel.macOSVMNamesMarkedForAutoStart
+                // Registers every instance's `preparingState`, so the Storage
+                // lock follows a clone of *this* VM starting and finishing.
+                _ = self.viewModel.capabilities.isAvailable(.editStorageDisks, on: self.instance)
             },
             apply: { [weak self] in self?.apply() }
         )

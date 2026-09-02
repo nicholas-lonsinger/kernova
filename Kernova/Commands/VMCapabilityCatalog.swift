@@ -125,6 +125,30 @@ enum VMCapability: CaseIterable, Hashable {
             false
         }
     }
+
+    /// Whether this capability writes, trashes or overwrites the files an
+    /// in-flight clone of this VM is still copying out of its bundle.
+    ///
+    /// Exhaustive rather than `default`, so a new capability has to choose a
+    /// side. Removable media are referenced by path, never copied, so a live
+    /// edit does not touch anything the clone reads; cloning the same source
+    /// again only reads it too. A start (or a start into Recovery) locks too:
+    /// a booted guest writes `Disk.asif`, `AuxiliaryStorage`,
+    /// `EFIVariableStore` and the additional disks the copy is reading, and a
+    /// revert reached only by starting first (an Ephemeral baseline restore)
+    /// is closed by this rather than needing its own guard.
+    var locksWhileCloned: Bool {
+        switch self {
+        case .start, .startInRecovery, .editStorageDisks, .delete, .revertToSnapshot:
+            true
+        case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
+            .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
+            .editRemovableMedia, .clone, .rename, .cancelPreparing, .showInFinder, .togglePopOut,
+            .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
+            false
+        }
+    }
 }
 
 /// Where every per-VM capability predicate is derived, for the headless verbs
@@ -203,13 +227,18 @@ struct VMCapabilityCatalog {
     /// transient in the way.
     ///
     /// The level every `isEnabled` and every menu- or toolbar-validation reads.
-    /// Two things are layered over applicability: one uniform rule for a bundle
-    /// a create, clone or import is still writing (``VMCapability/survivesPreparing``),
-    /// and the settle check for the commands an unsettled operation would
-    /// reject (``VMCapability/waitsForSettle``).
+    /// Three things are layered over applicability: one uniform rule for a
+    /// bundle a create, clone or import is still writing
+    /// (``VMCapability/survivesPreparing``), the settle check for the commands
+    /// an unsettled operation would reject (``VMCapability/waitsForSettle``),
+    /// and the lock a clone still copying this VM's files out of its bundle
+    /// places on the source (``VMCapability/locksWhileCloned``).
     func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         guard capability.survivesPreparing || !instance.isPreparing else { return false }
         guard isApplicable(capability, to: instance) else { return false }
+        guard !(capability.locksWhileCloned && library.hasCloneInFlight(from: instance)) else {
+            return false
+        }
         return !(capability.waitsForSettle && library.isBusy(instance))
     }
 

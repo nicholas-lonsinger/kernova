@@ -210,6 +210,11 @@ final class VMCommandCore: VMCommanding {
     /// something the user can wait out rather than a status that reads as
     /// eligible.
     private func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
+        if instance.preparingState == nil, options.contains(where: \.locksWhileCloned),
+            library.hasCloneInFlight(from: instance)
+        {
+            return .busy(vm: summary(instance), operation: "being cloned")
+        }
         if instance.preparingState == nil, options.contains(where: \.waitsForSettle),
             library.isBusy(instance)
         {

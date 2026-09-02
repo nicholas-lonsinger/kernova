@@ -183,7 +183,7 @@ struct VMCapabilityCatalogTests {
             snapshots: [VMSnapshot(name: "Clean install")])
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
 
         let available = Set(
             VMCapability.allCases.filter { harness.catalog.isAvailable($0, on: instance) })
@@ -203,13 +203,56 @@ struct VMCapabilityCatalogTests {
         let copying = makeInstance(in: harness, name: "Copying")
         let task = Task {}
         defer { task.cancel() }
-        copying.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        copying.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
 
         // Bundle destinations are reserved atomically and overlapping copies are
         // a supported case, so one VM's copy says nothing about another's.
         #expect(harness.library.hasPreparing)
         #expect(harness.catalog.isAvailable(.clone, on: settled))
         #expect(!harness.catalog.isAvailable(.clone, on: copying))
+    }
+
+    @Test("A VM whose clone is still copying locks start, storage disks, delete and revert, and nothing else")
+    func cloneInFlightLocksSourceButNothingElse() {
+        let harness = makeHarness()
+        let source = makeInstance(
+            in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install")])
+        let other = makeInstance(in: harness, name: "Other")
+        let phantom = makeInstance(in: harness, name: "Source Copy")
+        let task = Task {}
+        defer { task.cancel() }
+
+        let locked: Set<VMCapability> = [.editStorageDisks, .delete, .revertToSnapshot, .start]
+        let unaffected: Set<VMCapability> = [.clone, .rename, .editRemovableMedia]
+
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: source.id), task: task)
+        for capability in locked {
+            #expect(!harness.catalog.isAvailable(capability, on: source), "\(capability)")
+        }
+        for capability in unaffected {
+            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
+        }
+
+        // A clone of a different VM says nothing about this one.
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: other.id), task: task)
+        for capability in locked {
+            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
+        }
+
+        // A cancelled clone still holds the lock until its uninterruptible copy settles.
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: source.id), task: task, isCancelling: true)
+        for capability in locked {
+            #expect(!harness.catalog.isAvailable(capability, on: source), "\(capability)")
+        }
+
+        // The copy finished (or failed) and the phantom row is gone.
+        phantom.preparingState = nil
+        for capability in locked {
+            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
+        }
     }
 
     // MARK: - Settling

@@ -399,7 +399,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let task = Task {}
         defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
 
         #expect(
             harness.core.allowedVerbs(for: instance) == [
@@ -481,7 +481,7 @@ struct VMCommandCoreTests {
     func invalidStateReportsBusyWhilePreparing() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Copying")
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
 
         let error = try #require(await commandError { try await harness.core.pause(.id(instance.id)) })
         guard case .busy(let vm, let operation) = error else {
@@ -900,7 +900,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Copying")
         let copy = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: copy)
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: copy)
 
         let error = try #require(
             commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: false) })
@@ -1198,7 +1198,7 @@ struct VMCommandCoreTests {
     func renameRefusesAPreparingVM() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Copying")
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
 
         #expect(
             commandError { try harness.core.rename(.id(instance.id), to: "After") }?.isBusy == true)
@@ -1215,6 +1215,8 @@ struct VMCommandCoreTests {
 
         #expect(harness.library.instances.count == 2)
         #expect(harness.library.instances.contains { $0.id == summary.id })
+        let phantom = harness.library.instances.first { $0.id == summary.id }
+        #expect(phantom?.preparingState?.operation == .cloning(sourceID: instance.id))
         for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
             await task.value
         }
@@ -1223,6 +1225,30 @@ struct VMCommandCoreTests {
         #expect(
             commandError { _ = try harness.core.clone(.id(instance.id), machineIdentity: .new) }?
                 .isInvalidState == true)
+    }
+
+    @Test("A delete of a VM whose clone is still copying is refused as busy")
+    func deleteRefusesASourceBeingCloned() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        let phantom = makeInstance(in: harness, name: "Source Copy")
+        let task = Task {}
+        defer { task.cancel() }
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: instance.id), task: task)
+
+        let deleteError = try #require(
+            await commandError {
+                try await harness.core.delete(
+                    .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+            })
+        guard case .busy(let vm, let operation) = deleteError else {
+            Issue.record("expected a busy refusal, got \(deleteError)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(operation == "being cloned")
+        #expect(harness.library.instances.contains { $0.id == instance.id })
     }
 
     @Test("delete trashes the bundle and drops the row")
@@ -1466,7 +1492,7 @@ struct VMCommandCoreTests {
     func preparingSettleReportsStatusChanged() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Cloning")
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
 
         var events = harness.core.events().makeAsyncIterator()
         instance.preparingState = nil
@@ -1588,7 +1614,7 @@ struct VMCommandCoreTests {
         #expect(from == "Before")
         #expect(to == "After")
 
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
         let error = try #require(
             commandError { try harness.core.rename(.id(instance.id), to: "Later") })
         #expect(error.isBusy)
