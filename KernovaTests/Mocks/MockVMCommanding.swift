@@ -50,6 +50,7 @@ final class MockVMCommanding: VMCommanding {
         []
     private(set) var setSnapshotNotesCalls: [(selector: VMSelector, snapshot: UUID, notes: String)] =
         []
+    private(set) var createCalls: [(configuration: VMConfiguration, startAfterCreate: Bool)] = []
     private(set) var cloneCalls: [(selector: VMSelector, machineIdentity: CloneMachineIdentity)] = []
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
     private(set) var deleteCalls:
@@ -74,6 +75,7 @@ final class MockVMCommanding: VMCommanding {
     var deleteSnapshotError: (any Error)?
     var renameSnapshotError: (any Error)?
     var setSnapshotNotesError: (any Error)?
+    var createError: (any Error)?
     var cloneError: (any Error)?
     var renameError: (any Error)?
     var deleteError: (any Error)?
@@ -235,6 +237,18 @@ final class MockVMCommanding: VMCommanding {
     }
 
     // MARK: - Library
+
+    func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary {
+        createCalls.append((configuration, startAfterCreate))
+        if let createError { throw createError }
+        // The core registers the new VM's phantom row before answering, so a
+        // caller that reads it back on the same turn finds it.
+        let created = VMSummary(
+            id: configuration.id, name: configuration.name,
+            status: VMCommandCore.preparingWireStatus)
+        library.append(created)
+        return created
+    }
 
     func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary {
         cloneCalls.append((selector, machineIdentity))

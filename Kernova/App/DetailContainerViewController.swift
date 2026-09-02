@@ -347,17 +347,16 @@ extension DetailContainerViewController: VMCreationWizardViewControllerDelegate 
         _ vc: VMCreationWizardViewController,
         creationVM: VMCreationViewModel
     ) {
-        // Keep the sheet up until creation completes: on failure the error is
-        // presented on the wizard's own window, so the global alerts presenter on
-        // this same window can't race the still-open wizard sheet.
-        Task { [weak self] in
-            guard let self else { return }
-            switch await self.viewModel.createVM(from: creationVM) {
-            case .success:
-                self.wizardPresenter.close()
-            case .failure(let error):
-                vc.presentCreationFailure(message: error.localizedDescription)
-            }
+        // The create registers its row and returns, so the only failure that
+        // can reach here is the refusal raised before anything was written —
+        // presented on the wizard's own window, because the global alerts
+        // presenter shares this one with the still-open wizard sheet.
+        do {
+            try viewModel.createVM(from: creationVM)
+            wizardPresenter.close()
+        } catch {
+            vc.presentCreationFailure(
+                message: (error as? CommandError)?.message ?? error.localizedDescription)
         }
     }
 }

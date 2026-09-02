@@ -144,7 +144,7 @@ final class SidebarViewController: NSViewController {
                 track: { [weak self] in
                     guard let self else { return }
                     _ = self.viewModel.instances.map(\.id)
-                    // A phantom clone/import registers before its background copy
+                    // A phantom create/clone/import registers before its background write
                     // starts (`isPreparing` still false) and settles to "real"
                     // later without any id-list change; tracking this too routes
                     // that settle through `reloadInstances()`.

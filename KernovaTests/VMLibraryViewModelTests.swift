@@ -3085,115 +3085,171 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Create VM
 
-    @Test("createVM creates bundle, disk image, and adds instance")
-    func createVMAddsInstance() async {
-        let (viewModel, storage, diskService, _, _) = makeViewModel()
+    /// A wizard filled in for the simplest Linux EFI VM, which every create
+    /// test varies from.
+    private func makeCreationWizard(
+        name: String, startAfterCreate: Bool = true
+    ) -> VMCreationViewModel {
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
-        wizard.vmName = "New Linux VM"
+        wizard.vmName = name
+        wizard.startAfterCreate = startAfterCreate
+        return wizard
+    }
 
-        await viewModel.createVM(from: wizard)
+    @Test("createVM registers a creating phantom row before anything is written")
+    func createVMRegistersPhantomRow() throws {
+        let (viewModel, storage, diskService, _, _) = makeViewModel()
+        let wizard = makeCreationWizard(name: "New Linux VM")
+
+        try viewModel.createVM(from: wizard)
 
         #expect(viewModel.instances.count == 1)
-        #expect(viewModel.instances.first?.name == "New Linux VM")
+        let phantom = try #require(viewModel.instances.first)
+        #expect(phantom.name == "New Linux VM")
+        #expect(phantom.preparingState?.operation == .creating)
+        #expect(phantom.preparingState?.displayLabel == "Creating\u{2026}")
+        #expect(viewModel.selectedID == phantom.id)
+        // The row exists before the bundle does — that is what gates reconcile.
+        #expect(storage.createVMBundleCallCount == 0)
+        #expect(diskService.createDiskImageCallCount == 0)
+    }
+
+    @Test("createVM settles its phantom into a real VM")
+    func createVMSettlesPhantom() async throws {
+        let (viewModel, storage, diskService, _, _) = makeViewModel()
+        let wizard = makeCreationWizard(name: "New Linux VM", startAfterCreate: false)
+
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
+
+        #expect(viewModel.instances.count == 1)
+        let created = try #require(viewModel.instances.first)
+        #expect(created.name == "New Linux VM")
+        #expect(created.isPreparing == false)
         #expect(storage.createVMBundleCallCount == 1)
         #expect(diskService.createDiskImageCallCount == 1)
+        #expect(diskService.lastCreatedSizeInGB == wizard.diskSizeInGB)
     }
 
-    @Test("createVM selects newly created instance")
-    func createVMSelectsInstance() async {
+    @Test("reconcileWithDisk leaves a creating row alone until its write settles")
+    func createVMGatesReconcile() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
-        wizard.vmName = "Selected VM"
+        let wizard = makeCreationWizard(name: "Gated VM", startAfterCreate: false)
 
-        await viewModel.createVM(from: wizard)
-
-        #expect(viewModel.selectedID == viewModel.instances.first?.id)
-    }
-
-    @Test("createVM presents error when bundle creation fails")
-    func createVMBundleError() async {
-        let storage = MockVMStorageService()
-        storage.createVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
-        wizard.vmName = "Fail VM"
-
-        let result = await viewModel.createVM(from: wizard)
-
-        #expect(result.isFailure)
-        #expect(viewModel.instances.isEmpty)
-    }
-
-    @Test("createVM presents error when disk image creation fails")
-    func createVMDiskImageError() async {
-        let diskService = MockDiskImageService()
-        diskService.createDiskImageError = NSError(domain: "test", code: 1)
-        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
-        wizard.vmName = "Disk Fail VM"
-
-        let result = await viewModel.createVM(from: wizard)
-
-        #expect(result.isFailure)
-    }
-
-    @Test("createVM auto-starts the new VM when startAfterCreate is true (default)")
-    func createVMAutoStartsByDefault() async {
-        let (viewModel, _, _, virtService, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
-        wizard.vmName = "Auto Start VM"
-        // startAfterCreate defaults to true
-
-        await viewModel.createVM(from: wizard)
+        try viewModel.createVM(from: wizard)
+        // The bundle is not on disk yet, so an ungated reconcile would read the
+        // row as a VM whose bundle vanished and evict it mid-write.
+        viewModel.reconcileWithDisk()
 
         #expect(viewModel.instances.count == 1)
-        #expect(virtService.startCallCount == 1)
-        #expect(viewModel.instances.first?.status == .running)
-    }
 
-    @Test("createVM does not auto-start when startAfterCreate is false")
-    func createVMSkipsAutoStartWhenDisabled() async {
-        let (viewModel, _, _, virtService, _) = makeViewModel()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
-        wizard.vmName = "Manual Start VM"
-        wizard.startAfterCreate = false
-
-        await viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 1)
-        #expect(virtService.startCallCount == 0)
-        // VM should be in its initial post-creation state, not running
-        #expect(viewModel.instances.first?.status != .running)
     }
 
-    @Test("createVM does not auto-start when bundle creation fails")
-    func createVMNoAutoStartOnBundleError() async {
+    @Test("createVM evicts the row and trashes the bundle when the bundle write fails")
+    func createVMBundleWriteFailure() async throws {
         let storage = MockVMStorageService()
         storage.createVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
         let (viewModel, _, _, virtService, _) = makeViewModel(storageService: storage)
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
-        wizard.vmName = "Fail Start VM"
-        // startAfterCreate is true by default — but creation fails, so start
-        // must not be called.
+        let wizard = makeCreationWizard(name: "Fail VM")
 
-        await viewModel.createVM(from: wizard)
+        try viewModel.createVM(from: wizard)
+        let bundleURL = try #require(viewModel.instances.first).bundleURL
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.isEmpty)
+        try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [bundleURL] }
+        #expect(presenter.showError == true)
+        // Nothing was written, so nothing is started.
         #expect(virtService.startCallCount == 0)
+    }
+
+    @Test("createVM reports a failed disk image as a create failure and cleans up")
+    func createVMDiskImageFailure() async throws {
+        let diskService = MockDiskImageService()
+        diskService.createDiskImageError = NSError(domain: "test", code: 1)
+        let (viewModel, _, _, virtService, _) = makeViewModel(diskImageService: diskService)
+        var reported: CommandError?
+        viewModel.commands.onFailure = { failure, _ in reported = failure }
+        let wizard = makeCreationWizard(name: "Disk Fail VM")
+
+        try viewModel.createVM(from: wizard)
+        let bundleURL = try #require(viewModel.instances.first).bundleURL
+        await viewModel.awaitPreparingForTesting()
+
+        // The half-written bundle goes with the row, so the watcher can't adopt
+        // it as a VM with no disk image.
+        #expect(viewModel.instances.isEmpty)
+        try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [bundleURL] }
+        #expect(virtService.startCallCount == 0)
+        guard case .operationFailed(let verb, _, _, _) = reported else {
+            Issue.record("Expected an operationFailed, got \(String(describing: reported))")
+            return
+        }
+        #expect(verb == .create)
+    }
+
+    @Test("createVM starts the new VM when the wizard asked for it")
+    func createVMAutoStarts() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let wizard = makeCreationWizard(name: "Auto Start VM")
+
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
+        // The start is chained off its own Task, so it can land after the
+        // preparing task the settle awaited.
+        try await waitForChange { viewModel.instances.first?.status == .running }
+
+        #expect(virtService.startCallCount == 1)
+    }
+
+    @Test("createVM does not start the new VM when the wizard didn't ask")
+    func createVMSkipsAutoStart() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let wizard = makeCreationWizard(name: "Manual Start VM", startAfterCreate: false)
+
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(viewModel.instances.first?.status != .running)
+    }
+
+    @Test("Cancelling a create keeps the row until the write settles, then evicts it")
+    func createVMCancelEvictsRowOnSettle() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = makeCreationWizard(name: "Cancelled VM", startAfterCreate: false)
+
+        try viewModel.createVM(from: wizard)
+        let phantom = try #require(viewModel.instances.first)
+        viewModel.cancelPreparing(phantom)
+
+        // The write is uninterruptible, so the row stays — reading
+        // "Cancelling…" — until it settles, keeping reconcile off the bundle.
+        #expect(viewModel.instances.count == 1)
+        #expect(phantom.preparingState?.isCancelling == true)
+        #expect(phantom.preparingState?.displayLabel == "Cancelling\u{2026}")
+
+        await viewModel.awaitPreparingForTesting()
+
+        #expect(viewModel.instances.isEmpty)
+        try await fileSystem.recorded.wait {
+            self.fileSystem.trashedURLs == [phantom.bundleURL]
+        }
+    }
+
+    @Test("The cancel confirmation for a create reads as a creation")
+    func cancelPreparingPromptNamesCreation() {
+        let instance = makeInstance(name: "Half-written VM")
+
+        let prompt = VMCommandCore.cancelPreparingPrompt(.creating, on: instance)
+
+        #expect(prompt.title == "Cancel Creation?")
+        #expect(prompt.confirmTitle == "Cancel Creation")
     }
 
     @Test("createVM forwards requestedFreshDownload from a wizard that confirmed overwrite")
@@ -3215,10 +3271,12 @@ struct VMLibraryViewModelTests {
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "Overwrite VM"
+        wizard.startAfterCreate = false
         wizard.ipswDownloadPath = destination.path(percentEncoded: false)
         wizard.confirmOverwrite()
 
-        await viewModel.createVM(from: wizard)
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
 
         let instance = try #require(viewModel.instances.first)
         let context = try #require(instance.configuration.installContext)
@@ -3242,9 +3300,11 @@ struct VMLibraryViewModelTests {
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "No-overwrite VM"
+        wizard.startAfterCreate = false
         wizard.ipswDownloadPath = destination.path(percentEncoded: false)
 
-        await viewModel.createVM(from: wizard)
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
 
         let instance = try #require(viewModel.instances.first)
         let context = try #require(instance.configuration.installContext)
@@ -3411,7 +3471,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("createVM persists a catalog pick's download context for Linux")
-    func createVMPersistsLinuxDownloadContext() async {
+    func createVMPersistsLinuxDownloadContext() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
@@ -3421,7 +3481,8 @@ struct VMLibraryViewModelTests {
         let entry = makeLinuxCatalogEntry()
         wizard.selectLinuxCatalogEntry(entry)
 
-        await viewModel.createVM(from: wizard)
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
 
         let created = viewModel.instances.first
         #expect(catalogEntry(of: created?.configuration.linuxInstallContext) == entry)
@@ -3431,7 +3492,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("createVM leaves a local-ISO Linux VM with no download context")
-    func createVMLocalISOHasNoLinuxContext() async {
+    func createVMLocalISOHasNoLinuxContext() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
@@ -3440,7 +3501,8 @@ struct VMLibraryViewModelTests {
         wizard.startAfterCreate = false
         wizard.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
 
-        await viewModel.createVM(from: wizard)
+        try viewModel.createVM(from: wizard)
+        await viewModel.awaitPreparingForTesting()
 
         let created = viewModel.instances.first
         #expect(created?.configuration.linuxInstallContext == nil)

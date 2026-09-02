@@ -707,6 +707,9 @@ final class VMCreationViewModel {
 
     // MARK: - Build Configuration
 
+    /// The complete configuration the wizard hands to the create verb — every
+    /// field the new VM is written with, including the setup intent its first
+    /// Start reads back off the bundle.
     func buildConfiguration() -> VMConfiguration {
         let bootMode = effectiveBootMode
 
@@ -743,7 +746,7 @@ final class VMCreationViewModel {
             storageDisks = [installerDisk, mainDisk]
         }
 
-        return VMConfiguration(
+        var configuration = VMConfiguration(
             name: vmName.trimmingCharacters(in: .whitespaces),
             guestOS: selectedOS,
             bootMode: bootMode,
@@ -760,5 +763,17 @@ final class VMCreationViewModel {
             initrdBookmark: selectedBootMode == .linuxKernel ? initrdBookmark : nil,
             storageDisks: storageDisks
         )
+
+        // Persist the setup intent so the next Start can drive the pipeline
+        // without the wizard: a macOS install, or the download of a Linux
+        // installer image the user picked from the catalog.
+        switch selectedOS {
+        case .macOS:
+            configuration.installContext = buildInstallContext()
+        case .linux:
+            configuration.linuxInstallContext = buildLinuxInstallContext()
+        }
+
+        return configuration
     }
 }

@@ -69,6 +69,7 @@ struct VMCommandEnvelopeRouterTests {
             lifecycle: lifecycle,
             storageService: storage,
             snapshotStore: snapshots,
+            diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -363,7 +364,8 @@ struct VMCommandEnvelopeRouterTests {
         )
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
-            snapshotStore: snapshots, fileSystem: fileSystem, preferences: preferences)
+            snapshotStore: snapshots, diskImageService: MockDiskImageService(),
+            fileSystem: fileSystem, preferences: preferences)
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: core))
 
         var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)

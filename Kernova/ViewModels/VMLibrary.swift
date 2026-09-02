@@ -92,7 +92,7 @@ final class VMLibrary {
         let target: [RemovableMediaItem]
     }
 
-    /// `true` when any instance is mid-clone or mid-import.
+    /// `true` when any instance is mid-create, mid-clone, or mid-import.
     // RATIONALE: global and unbounded on purpose. `reconcileWithDisk` skips while
     // this is true, and `cancelPreparingConfirmed` keeps a cancelling row in
     // `instances` for the same reason: any gap lets reconcile resurrect a bundle
@@ -101,8 +101,9 @@ final class VMLibrary {
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
     /// Whether any VM is doing work that terminating would destroy rather than
-    /// suspend — an import mid-copy, a VM mid-save/restore/start/install, or a
-    /// revert writing a snapshot's files back over the bundle.
+    /// suspend — a bundle still being created, cloned or imported, a VM
+    /// mid-save/restore/start/install, or a revert writing a snapshot's files
+    /// back over the bundle.
     ///
     /// Excludes settled `.running` and `.paused` VMs, which termination
     /// save-suspends.
@@ -393,7 +394,7 @@ final class VMLibrary {
         while let registration = revertTasks.values.first { await registration.task.value }
     }
 
-    // MARK: - Preparing Rows (shared by Clone & Import)
+    // MARK: - Preparing Rows (shared by Create, Clone & Import)
 
     /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
     ///
@@ -411,12 +412,16 @@ final class VMLibrary {
         }
     }
 
-    /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the cleanup both clone
-    /// and import need around a preparing row's file copy.
+    /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the cleanup create,
+    /// clone and import all need around a preparing row's bundle write.
     ///
     /// `copyWork` is uninterruptible (a blocking `FileManager` call), so a user cancel cancels this
     /// outer `Task` while the copy keeps writing. This task is the single owner of the settle: on
     /// cancel it removes the "Cancelling…" row and trashes the bundle once the copy is done.
+    ///
+    /// `onSuccess` runs with the row already out of its preparing state, so a
+    /// verb it chains — the start a create auto-starts with — is not refused by
+    /// the preparing gate the row was still holding.
     func prepareBundle(
         _ phantom: VMInstance,
         operation: VMInstance.PreparingOperation,
@@ -446,6 +451,7 @@ final class VMLibrary {
                     self.cleanupPhantomInstance(phantom)
                     return
                 }
+                phantom.preparingState = nil
                 onSuccess()
             } catch {
                 guard let self else {
@@ -458,7 +464,7 @@ final class VMLibrary {
                 self.cleanupPhantomInstance(phantom)
                 if !Task.isCancelled {
                     Self.logger.error(
-                        "Failed to \(operation.displayNoun.lowercased(), privacy: .public) VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                        "\(operation.displayNoun, privacy: .public) failed for VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                     onFailure(error)
                 }

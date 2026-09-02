@@ -100,8 +100,8 @@ struct VMCreationWizardViewControllerTests {
         #expect(delegate.cancelCount == 1)
     }
 
-    @Test("Create disables navigation; presentCreationFailure re-enables it")
-    func failedCreateReenablesNavigation() {
+    @Test("A refused create leaves the wizard usable for a retry")
+    func refusedCreateLeavesWizardUsable() {
         let vm = VMCreationViewModel()
         vm.currentStep = .review
         vm.vmName = "Retry VM"
@@ -110,13 +110,14 @@ struct VMCreationWizardViewControllerTests {
         wizard.delegate = delegate
         wizard.loadViewIfNeeded()
 
-        // Clicking Create disables Cancel/Back/Create to block a duplicate.
+        // The create registers its row and returns on the same turn, so the
+        // sheet is either closed or still showing the step to retry from —
+        // never a disabled shell waiting on a copy.
         findButton(titled: "Create", in: wizard.view)?.performClick(nil)
-        #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == false)
-        #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == false)
+        #expect(delegate.createRequests.count == 1)
 
-        // The host calls this when creation fails; the wizard must become usable
-        // again for a retry. (No window in the test, so no alert is presented.)
+        // The host calls this for the refusal raised before anything was
+        // written. (No window in the test, so no alert is presented.)
         wizard.presentCreationFailure(message: "Disk full")
         #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == true)
         #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == true)

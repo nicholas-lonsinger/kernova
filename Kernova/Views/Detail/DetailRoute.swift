@@ -3,7 +3,7 @@ import Foundation
 /// Which content the detail pane shows for a given VM, derived purely from the
 /// VM's lifecycle phase and related flags.
 enum DetailRoute: Equatable {
-    /// A clone/import is in progress; show a spinner with `label`.
+    /// A create/clone/import is in progress; show a spinner with `label`.
     case preparing(label: String)
     /// Show the settings form. `isReadOnly` is `true` when viewing a running
     /// VM's configuration.

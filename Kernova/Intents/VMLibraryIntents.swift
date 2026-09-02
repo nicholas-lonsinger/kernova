@@ -94,7 +94,7 @@ struct DeleteVMIntent: AppIntent {
 struct CancelPreparingIntent: AppIntent {
     static let title: LocalizedStringResource = "Cancel Virtual Machine Copy"
     static let description = IntentDescription(
-        "Stops a clone or import that is still copying, removing what it has written.",
+        "Stops a create, clone, or import that is still writing, removing what it has written.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
