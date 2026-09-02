@@ -41,6 +41,13 @@ MTL_FAST_MATH = YES
 ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES
 STRING_CATALOG_GENERATE_SYMBOLS = YES
 
+// Xcode's content-addressed compilation cache, stored machine-wide under the
+// DerivedData root. Keys embed the checkout path, so it replays a rebuild of
+// the same checkout (an evicted arena, a branch switched back) and does not
+// carry between worktrees. Project targets only — the Makefile passes the same
+// setting on CI's command line so the package targets get it there too.
+COMPILATION_CACHE_ENABLE_CACHING = YES
+
 GCC_OPTIMIZATION_LEVEL[config=Debug] = 0
 SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone
 GCC_DYNAMIC_NO_PIC[config=Debug] = NO

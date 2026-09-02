@@ -270,6 +270,23 @@ else
     detail "Install with: brew install shellcheck"
 fi
 
+# Swift language-server context: sourcekit-lsp reads compiler flags from a
+# buildServer.json that xcode-build-server writes. Editor-only, so both halves
+# warn. The config is per checkout (it pins an absolute build root), which is
+# why an installed tool still leaves this checkout unconfigured.
+if command -v xcode-build-server >/dev/null 2>&1; then
+    if [ -f buildServer.json ]; then
+        pass "Swift language server configured (buildServer.json + xcode-build-server)"
+        detail 'flags come from Xcode build logs — build this checkout once for the server to resolve symbols'
+    else
+        warn "buildServer.json absent — this checkout has no Swift language-server context"
+        detail "Write it with: make install-lsp"
+    fi
+else
+    warn "xcode-build-server absent — editors and Claude Code get no Swift build context"
+    detail "Install and configure with: make install-lsp"
+fi
+
 # ---- summary ----------------------------------------------------------------
 
 if [ "$fail_count" -eq 0 ]; then
