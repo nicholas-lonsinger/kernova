@@ -20,17 +20,19 @@ struct VMCommandCoreAttachmentTests {
         let storage: MockVMStorageService
         let diskImages: MockDiskImageService
         let fileSystem: MockFileSystem
+        let usbDevices: MockUSBDeviceService
     }
 
     private func makeHarness(diskImages: MockDiskImageService = MockDiskImageService()) -> Harness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
+        let usbDevices = MockUSBDeviceService()
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            usbDeviceService: usbDevices,
             linuxImageResolveService: MockLinuxImageResolveService(),
             downloadService: MockDownloadService(),
             fileSystem: fileSystem
@@ -55,7 +57,7 @@ struct VMCommandCoreAttachmentTests {
         )
         return Harness(
             core: core, library: library, storage: storage, diskImages: diskImages,
-            fileSystem: fileSystem)
+            fileSystem: fileSystem, usbDevices: usbDevices)
     }
 
     @discardableResult
@@ -541,6 +543,27 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("A suspend issued right after an eject lands the detach before the save")
+    func suspendAfterEjectLandsTheDetachFirst() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID))
+        instance.beginSessionContext()
+        let item = RemovableMediaItem(path: externalPath("media.iso"), readOnly: true)
+        instance.configuration.removableMedia = [item]
+        instance.recordAttachedMedia(
+            USBDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
+
+        try harness.core.ejectRemovableMedia(.id(instance.id), item: item.id)
+        try await harness.core.suspend(.id(instance.id))
+
+        // A save that ran first would have torn the session down under the
+        // queued detach, which would then have been dropped as stale.
+        #expect(harness.usbDevices.detachCallCount == 1)
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(instance.phase == .suspended)
     }
 
     @Test("A trashing removal of removable media asks for consent, then trashes the file")

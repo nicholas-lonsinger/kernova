@@ -316,8 +316,10 @@ session down without that hook, so a suspended session survives to revert at its
   `IPSWService`, `USBDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
   `Downloading`), and orchestrates the macOS install and Linux install pipelines, each driven by
   the install context persisted on `VMConfiguration` (`installContext` / `linuxInstallContext`)
-  until it completes. It serializes lifecycle operations per VM; `stop` and `forceStop` deliberately
-  bypass that serialization so a hung operation can always be cancelled.
+  until it completes. It serializes lifecycle operations per VM, and a serialized operation first
+  waits out any removable-media reconcile the instance's live session owes
+  (`VMRemovableMediaReconciler` marks the debt on the session context); `stop` and `forceStop`
+  deliberately bypass both so a hung operation can always be cancelled.
 - `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
   UI-framework dependency. Every image source is backed by an injected service protocol, so the
   wizard can name what a source will install before anything is downloaded.

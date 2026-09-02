@@ -9,8 +9,10 @@ import os
 ///
 /// Each VM can have at most one in-flight lifecycle operation at a time;
 /// concurrent requests for the same VM are rejected with
-/// ``LifecycleError/operationInProgress``. `stop` and `forceStop` bypass that
-/// serialization entirely, so a hung operation can always be interrupted.
+/// ``LifecycleError/operationInProgress``. An operation also waits out any
+/// removable-media reconcile the live session owes before its body runs, so it
+/// acts on the device set the configuration describes. `stop` and `forceStop`
+/// bypass both, so a hung operation can always be interrupted.
 @MainActor
 @Observable
 final class VMLifecycleCoordinator {
@@ -117,6 +119,13 @@ final class VMLifecycleCoordinator {
     /// removal cannot clobber a token written by `stop`/`forceStop` or by a
     /// subsequent operation. The unsettled count is dropped unconditionally,
     /// because it tracks *this* body and nothing else can end it.
+    ///
+    /// The claim is taken before the reconcile wait, so a request arriving
+    /// during the wait is refused like one arriving during the body, and the
+    /// unsettled count already covers the wait for a caller holding on it. The
+    /// wait cannot deadlock: the reconciler's attach and detach are not
+    /// serialized, and a force stop tears the session down, which drops the
+    /// debt with the context.
     private func serialized<T>(
         _ instance: VMInstance,
         action: String,
@@ -142,6 +151,7 @@ final class VMLifecycleCoordinator {
 
         Self.logger.debug(
             "Acquired operation lock for '\(instance.name, privacy: .public)' (action: \(action, privacy: .public))")
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
         return try await body()
     }
 

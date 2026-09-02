@@ -197,6 +197,36 @@ struct VMInstanceTests {
         #expect(tornDown == 2)
     }
 
+    @Test("A removable-media reconcile debt is marked and cleared only for the live session")
+    func reconcileOwedWritesAreSessionGuarded() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        instance.beginSessionContext()
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+
+        instance.markRemovableMediaReconcileOwed(for: UUID())
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+        instance.markRemovableMediaReconcileOwed(for: sessionID)
+        #expect(instance.hasRemovableMediaReconcileOwed)
+
+        instance.clearRemovableMediaReconcileOwed(for: UUID())
+        #expect(instance.hasRemovableMediaReconcileOwed)
+        instance.clearRemovableMediaReconcileOwed(for: sessionID)
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+    }
+
+    @Test("tearDownSession drops an owed removable-media reconcile with the session")
+    func tearDownSessionClearsTheReconcileDebt() {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        instance.beginSessionContext()
+        instance.markRemovableMediaReconcileOwed(for: sessionID)
+
+        instance.tearDownSession(restingAt: .stopped)
+
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+    }
+
     // MARK: - resetToStopped
 
     @Test("resetToStopped sets status to stopped and clears the session")

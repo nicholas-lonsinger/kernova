@@ -22,25 +22,37 @@ struct VMRemovableMediaReconcilerTests {
     private func makeReconciler(
         usbDeviceService: any USBDeviceProviding = MockUSBDeviceService()
     ) -> VMRemovableMediaReconciler {
-        let reconciler = VMRemovableMediaReconciler(
-            lifecycle: VMLifecycleCoordinator(
-                virtualizationService: MockVirtualizationService(),
-                installService: MockMacOSInstallService(),
-                ipswService: MockIPSWService(),
-                usbDeviceService: usbDeviceService,
-                linuxImageResolveService: MockLinuxImageResolveService(),
-                downloadService: MockDownloadService(),
-                fileSystem: fileSystem,
-                downloadsDirectory: nil
-            )
+        makeReconcilerWithLifecycle(usbDeviceService: usbDeviceService).reconciler
+    }
+
+    /// The reconciler with the coordinator it drives attaches through — the
+    /// same one a lifecycle operation issued beside an edit is serialized by.
+    private func makeReconcilerWithLifecycle(
+        usbDeviceService: any USBDeviceProviding = MockUSBDeviceService()
+    ) -> (
+        reconciler: VMRemovableMediaReconciler,
+        lifecycle: VMLifecycleCoordinator,
+        virtualization: MockVirtualizationService
+    ) {
+        let virtualization = MockVirtualizationService()
+        let lifecycle = VMLifecycleCoordinator(
+            virtualizationService: virtualization,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: usbDeviceService,
+            linuxImageResolveService: MockLinuxImageResolveService(),
+            downloadService: MockDownloadService(),
+            fileSystem: fileSystem,
+            downloadsDirectory: nil
         )
+        let reconciler = VMRemovableMediaReconciler(lifecycle: lifecycle)
         reconciler.onSaveConfiguration = { [saved] instance in
             saved.record(instance)
         }
         reconciler.onFailure = { [failures] error in
             failures.record(title: "Error", message: error.localizedDescription)
         }
-        return reconciler
+        return (reconciler, lifecycle, virtualization)
     }
 
     private func makeInstance(name: String = "Test VM") -> VMInstance {
@@ -529,6 +541,126 @@ struct VMRemovableMediaReconcilerTests {
         #expect(mock.lastAttachedPath == "/tmp/C.iso")
         #expect(instance.liveRemovableMedia.first?.path == "/tmp/C.iso")
         #expect(instance.liveRemovableMedia.first?.id == configC.removableMedia?.first?.id)
+    }
+
+    @Test("apply marks the session as owing a reconcile until the queue drains")
+    func applyMarksTheDebtUntilTheQueueDrains() async throws {
+        let mock = SuspendingMockUSBDeviceService()
+        let reconciler = makeReconciler(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        instance.beginSessionContext()
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        instance.configuration = configA
+        reconciler.apply(for: instance, old: baseConfig, new: configA)
+
+        // Owed from the enqueue itself, before the pass has had a turn.
+        #expect(instance.hasRemovableMediaReconcileOwed)
+        await mock.waitUntilSuspended()
+        #expect(instance.hasRemovableMediaReconcileOwed)
+
+        mock.resumeSuspended()
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        #expect(mock.attachCallCount == 1)
+        #expect(instance.liveRemovableMedia.count == 1)
+    }
+
+    @Test("A pass ending while the session is live but unattachable still clears the debt")
+    func debtIsClearedOnALiveButUnattachableSession() async throws {
+        // The context survives a transitional phase, so a flag left on it
+        // would be owed forever once the phase settles back — parking every
+        // later serialized operation on a wait nothing can end.
+        let mock = SuspendingMockUSBDeviceService()
+        let reconciler = makeReconciler(usbDeviceService: mock)
+        let instance = makeInstance()
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
+        instance.beginSessionContext()
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        instance.configuration = configA
+        reconciler.apply(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+
+        instance.enter(.capturingLive(sessionID: sessionID))
+        mock.resumeSuspended()
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+
+        instance.enter(.running(sessionID: sessionID))
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+        #expect(mock.attachCallCount == 1)
+        #expect(!failures.showError)
+    }
+
+    @Test("A save issued right after an edit waits for the pass and then proceeds")
+    func saveIssuedAfterAnEditWaitsForThePass() async throws {
+        // The reported shape: an edit, then Suspend in the same breath. The
+        // save must not tear the session down under the pass its edit queued,
+        // or the saved state carries a device set the configuration no longer
+        // describes.
+        let mock = SuspendingMockUSBDeviceService()
+        let (reconciler, lifecycle, virtualization) = makeReconcilerWithLifecycle(
+            usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        instance.beginSessionContext()
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        instance.configuration = configA
+        reconciler.apply(for: instance, old: baseConfig, new: configA)
+        let save = Task { @MainActor in try await lifecycle.save(instance) }
+
+        await mock.waitUntilSuspended()
+        #expect(virtualization.saveCallCount == 0)
+        #expect(instance.hasLiveSession)
+
+        mock.resumeSuspended()
+        try await save.value
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.completedOperationCount == 1)
+        #expect(virtualization.saveCallCount == 1)
+        #expect(instance.phase == .suspended)
+        #expect(!failures.showError)
+    }
+
+    @Test("An entry whose session is torn down before the drain reaches it is dropped")
+    func entryForATornDownSessionIsDroppedBeforeTheDrain() async throws {
+        let mock = MockUSBDeviceService()
+        let reconciler = makeReconciler(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        instance.beginSessionContext()
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
+
+        // Queued, then the session goes before the pass gets its turn; the
+        // successor starts with nothing owed.
+        instance.configuration = configA
+        reconciler.apply(for: instance, old: baseConfig, new: configA)
+        instance.tearDownSession(restingAt: .stopped)
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+        instance.beginSessionContext()
+        instance.enter(.running(sessionID: UUID()))
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(mock.attachCallCount == 0)
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+
+        // A later edit on the successor drives only its own target.
+        instance.configuration = configB
+        reconciler.apply(for: instance, old: configA, new: configB)
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedPath == "/tmp/B.iso")
+        #expect(!failures.showError)
     }
 
     @Test("A failed attach rolls the config back to the live state and asks for a save")

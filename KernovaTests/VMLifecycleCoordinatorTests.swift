@@ -281,6 +281,92 @@ struct VMLifecycleCoordinatorTests {
         try await task.value
     }
 
+    @Test("a serialized operation waits out an owed removable-media reconcile")
+    func serializedOperationWaitsForAnOwedReconcile() async throws {
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
+        instance.beginSessionContext()
+        instance.markRemovableMediaReconcileOwed(for: sessionID)
+
+        let pause = Task { @MainActor in try await coordinator.pause(instance) }
+        await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
+
+        // The claim is held while the wait runs, and the body has not started.
+        #expect(coordinator.hasActiveOperation(for: instance.id))
+        #expect(virtService.pauseCallCount == 0)
+
+        instance.clearRemovableMediaReconcileOwed(for: sessionID)
+        try await pause.value
+        #expect(virtService.pauseCallCount == 1)
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+    }
+
+    @Test("a second operation arriving during the reconcile wait is refused")
+    func secondOperationDuringTheReconcileWaitIsRefused() async throws {
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
+        instance.beginSessionContext()
+        instance.markRemovableMediaReconcileOwed(for: sessionID)
+
+        let pause = Task { @MainActor in try await coordinator.pause(instance) }
+        await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
+
+        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+            try await coordinator.save(instance)
+        }
+        #expect(virtService.saveCallCount == 0)
+
+        instance.clearRemovableMediaReconcileOwed(for: sessionID)
+        try await pause.value
+        #expect(virtService.pauseCallCount == 1)
+    }
+
+    @Test("stop and forceStop do not wait out an owed reconcile")
+    func stopDoesNotWaitForAnOwedReconcile() async throws {
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        for forced in [false, true] {
+            let instance = makeInstance()
+            let sessionID = UUID()
+            instance.enter(.running(sessionID: sessionID))
+            instance.beginSessionContext()
+            instance.markRemovableMediaReconcileOwed(for: sessionID)
+
+            if forced {
+                try await coordinator.forceStop(instance)
+            } else {
+                try await coordinator.stop(instance)
+            }
+            #expect(instance.status == .stopped)
+        }
+        #expect(virtService.stopCallCount == 1)
+        #expect(virtService.forceStopCallCount == 1)
+    }
+
+    @Test("a session torn down mid-wait releases the waiting operation")
+    func teardownMidWaitReleasesTheWaitingOperation() async throws {
+        // A force stop during the wait drops the debt with the context; the
+        // waiter wakes and the body runs against whatever the VM rests at.
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
+        instance.beginSessionContext()
+        instance.markRemovableMediaReconcileOwed(for: sessionID)
+
+        let pause = Task { @MainActor in try await coordinator.pause(instance) }
+        await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
+        #expect(virtService.pauseCallCount == 0)
+
+        instance.tearDownSession(restingAt: .stopped)
+        _ = try? await pause.value
+        #expect(virtService.pauseCallCount == 1)
+        #expect(!coordinator.hasUnsettledOperation(for: instance.id))
+    }
+
     @Test("a snapshot delete during another operation is rejected, not run")
     func rejectsSnapshotDeleteDuringAnotherOperation() async throws {
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
