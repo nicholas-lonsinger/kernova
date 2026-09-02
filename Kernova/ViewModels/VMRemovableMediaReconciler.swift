@@ -92,12 +92,13 @@ final class VMRemovableMediaReconciler {
     /// before running any serialized operation, so a live session cannot be
     /// moved out of attachability while a pass is owed — only torn down, which
     /// makes the entry stale. The debt is cleared on whichever session is live
-    /// once the queue is empty; a session torn down mid-pass dropped its own
-    /// flag with its context.
+    /// once the queue is empty — attachable or not, so the flag never outlives
+    /// the queue on a context that survives the pass; a session torn down
+    /// mid-pass dropped its own flag with its context.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
         defer {
             reconcilingRemovableMediaInstances.remove(id)
-            if let live = instance.attachableSessionID {
+            if let live = instance.liveSessionID {
                 instance.clearRemovableMediaReconcileOwed(for: live)
             }
         }

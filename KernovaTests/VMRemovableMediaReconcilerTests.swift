@@ -568,6 +568,34 @@ struct VMRemovableMediaReconcilerTests {
         #expect(instance.liveRemovableMedia.count == 1)
     }
 
+    @Test("A pass ending while the session is live but unattachable still clears the debt")
+    func debtIsClearedOnALiveButUnattachableSession() async throws {
+        // The context survives a transitional phase, so a flag left on it
+        // would be owed forever once the phase settles back — parking every
+        // later serialized operation on a wait nothing can end.
+        let mock = SuspendingMockUSBDeviceService()
+        let reconciler = makeReconciler(usbDeviceService: mock)
+        let instance = makeInstance()
+        let sessionID = UUID()
+        instance.enter(.running(sessionID: sessionID))
+        instance.beginSessionContext()
+
+        let baseConfig = instance.configuration
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        instance.configuration = configA
+        reconciler.apply(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+
+        instance.enter(.capturingLive(sessionID: sessionID))
+        mock.resumeSuspended()
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+
+        instance.enter(.running(sessionID: sessionID))
+        #expect(!instance.hasRemovableMediaReconcileOwed)
+        #expect(mock.attachCallCount == 1)
+        #expect(!failures.showError)
+    }
+
     @Test("A save issued right after an edit waits for the pass and then proceeds")
     func saveIssuedAfterAnEditWaitsForThePass() async throws {
         // The reported shape: an edit, then Suspend in the same breath. The
