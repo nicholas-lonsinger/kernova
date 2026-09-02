@@ -132,12 +132,16 @@ enum VMCapability: CaseIterable, Hashable {
     /// Exhaustive rather than `default`, so a new capability has to choose a
     /// side. Removable media are referenced by path, never copied, so a live
     /// edit does not touch anything the clone reads; cloning the same source
-    /// again only reads it too.
+    /// again only reads it too. A start (or a start into Recovery) locks too:
+    /// a booted guest writes `Disk.asif`, `AuxiliaryStorage`,
+    /// `EFIVariableStore` and the additional disks the copy is reading, and a
+    /// revert reached only by starting first (an Ephemeral baseline restore)
+    /// is closed by this rather than needing its own guard.
     var locksWhileCloned: Bool {
         switch self {
-        case .editStorageDisks, .delete, .revertToSnapshot:
+        case .start, .startInRecovery, .editStorageDisks, .delete, .revertToSnapshot:
             true
-        case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
+        case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
             .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editRemovableMedia, .clone, .rename, .cancelPreparing, .showInFinder, .togglePopOut,

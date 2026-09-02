@@ -212,7 +212,7 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isAvailable(.clone, on: copying))
     }
 
-    @Test("A VM whose clone is still copying locks its storage disks, delete and revert, and nothing else")
+    @Test("A VM whose clone is still copying locks start, storage disks, delete and revert, and nothing else")
     func cloneInFlightLocksSourceButNothingElse() {
         let harness = makeHarness()
         let source = makeInstance(
@@ -222,8 +222,8 @@ struct VMCapabilityCatalogTests {
         let task = Task {}
         defer { task.cancel() }
 
-        let locked: Set<VMCapability> = [.editStorageDisks, .delete, .revertToSnapshot]
-        let unaffected: Set<VMCapability> = [.clone, .rename, .start, .editRemovableMedia]
+        let locked: Set<VMCapability> = [.editStorageDisks, .delete, .revertToSnapshot, .start]
+        let unaffected: Set<VMCapability> = [.clone, .rename, .editRemovableMedia]
 
         phantom.preparingState = VMInstance.PreparingState(
             operation: .cloning(sourceID: source.id), task: task)

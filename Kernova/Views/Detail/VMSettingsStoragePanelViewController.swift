@@ -108,7 +108,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// What the Storage Disks header says while its rows are locked by a clone
     /// of this VM still copying its files out of the bundle — the shared
     /// "Editable when stopped" is false in that case for a VM that is stopped.
-    private static let cloneLockHintText = "Editable when the clone finishes"
+    static let cloneLockHintText = "Editable when the clone finishes"
 
     /// The Storage Disks section's lock-hint label, captured via the
     /// registry's `lockHintSink` so its text can follow the clone-in-flight

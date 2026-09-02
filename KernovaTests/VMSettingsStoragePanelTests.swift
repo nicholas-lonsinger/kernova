@@ -119,9 +119,44 @@ struct VMSettingsStoragePanelTests {
                 && [
                     groupedFormLockHintText,
                     VMSettingsStoragePanelViewController.removableMediaLockHintText,
+                    VMSettingsStoragePanelViewController.cloneLockHintText,
                 ].contains($0.toolTip ?? "")
         }
         .compactMap(\.toolTip)
+    }
+
+    /// Stands in for the observation pass that follows a model write —
+    /// ``VMSettingsOverviewTests``'s own `reapply(_:_:)`, not shared because
+    /// each suite's helper closes over its own controller triple shape.
+    private func reapply(_ vc: VMSettingsViewController, _ pair: (VMInstance, VMLibraryViewModel)) {
+        vc.reconfigure(instance: pair.0, viewModel: pair.1, isReadOnly: false)
+    }
+
+    @Test("The Storage Disks hint names an in-flight clone of this VM, and clears once the clone settles")
+    func storageLockHintNamesAnInFlightClone() throws {
+        let cloneHintText = VMSettingsStoragePanelViewController.cloneLockHintText
+        #expect(cloneHintText != groupedFormLockHintText)
+
+        let (vc, instance, viewModel) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(visibleLockHints(in: vc.view).isEmpty)
+
+        // A phantom row cloning this VM locks Storage Disks for a reason the
+        // shared "Editable when stopped" would misstate on a stopped VM.
+        let phantom = makeInstance(guestOS: .linux)
+        let task = Task {}
+        defer { task.cancel() }
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: instance.id), task: task)
+        viewModel.instances.append(phantom)
+        reapply(vc, (instance, viewModel))
+        #expect(visibleLockHints(in: vc.view) == [cloneHintText])
+
+        // The copy settles (or fails) and the phantom row is gone — the hint
+        // reverts to the shared wording rather than staying stuck on the
+        // clone-specific one.
+        phantom.preparingState = nil
+        reapply(vc, (instance, viewModel))
+        #expect(visibleLockHints(in: vc.view).isEmpty)
     }
 
     // MARK: - Per-row delete confirmation prompt
