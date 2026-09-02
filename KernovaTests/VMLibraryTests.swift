@@ -86,6 +86,16 @@ struct VMLibraryTests {
         #expect(library.hasLoadedLibrary == false)
     }
 
+    @Test("startLibrary reclaims what an interrupted run left staged")
+    func startLibraryReclaimsStagedBundles() async {
+        let (library, storage, _, _) = makeLibrary()
+
+        await library.startLibrary()
+
+        #expect(storage.reclaimStagedBundlesCallCount == 1)
+        #expect(library.hasLoadedLibrary == true)
+    }
+
     @Test("hasLoadedLibrary flips once the read applies, even for an empty library")
     func hasLoadedLibraryFlipsOnEmptyLibrary() async {
         let (library, _, _, _) = makeLibrary()

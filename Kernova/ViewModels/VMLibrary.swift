@@ -41,6 +41,14 @@ final class VMLibrary: VMInstanceRoster {
     /// MAC-address uniqueness both are keyed on.
     @ObservationIgnored let networkSlots: VMNetworkSlotRegistry
 
+    /// Where each preparing write's tree currently sits, keyed by instance id —
+    /// the staged path until publication renames it to the VM's own bundle URL.
+    ///
+    /// Deliberately not on ``VMInstance``: it changes twice per write, and an
+    /// observed property would re-render every row's observers for a path no
+    /// surface shows. ``cancelAndCleanupPreparing()`` is the only reader.
+    @ObservationIgnored private var writeLocations: [UUID: URL] = [:]
+
     // MARK: - Adapter Hooks
 
     /// Receives every failure the library needs a user to see.
@@ -177,7 +185,12 @@ final class VMLibrary: VMInstanceRoster {
     /// so a library read there sits between process start and the first window.
     /// The watcher starts only after the read applies — its callback re-reads
     /// every bundle on the main actor, which must not race the initial load.
+    ///
+    /// Launch is also where an interrupted run's staged bundles are reclaimed.
+    /// Nothing waits on those removals: a staged name is minted per write, so one
+    /// still in flight can never name a path this run is about to use.
     func startLibrary() async {
+        storageService.reclaimStagedBundles()
         await loadVMs()
         startDirectoryWatcher()
     }
@@ -388,6 +401,11 @@ final class VMLibrary: VMInstanceRoster {
     /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the cleanup create,
     /// clone and import all need around a preparing row's bundle write.
     ///
+    /// `copyWork` receives the staged bundle URL and must write *only* there. The
+    /// staged tree is hidden from every enumeration that finds VMs, so the row
+    /// becomes a bundle on disk at one instant — the publication rename below —
+    /// and an abnormal exit at any point before it leaves nothing to adopt.
+    ///
     /// `copyWork` is uninterruptible (a blocking `FileManager` call), so a user cancel cancels this
     /// outer `Task` while the copy keeps writing. This task is the single owner of the settle: on
     /// cancel it removes the "Cancelling…" row and trashes the bundle once the copy is done.
@@ -398,43 +416,81 @@ final class VMLibrary: VMInstanceRoster {
     func prepareBundle(
         _ phantom: VMInstance,
         operation: VMInstance.PreparingOperation,
-        copyWork: @escaping () async throws -> Void,
+        copyWork: @escaping (URL) async throws -> Void,
         onSuccess: @escaping () -> Void,
         onFailure: @escaping (Error) -> Void
     ) {
         registerPhantom(phantom)
         let fileSystem = fileSystem
+        let storage = storageService
+        let finalURL = phantom.bundleURL
         let task = Task { [weak self] in
-            defer { phantom.preparingState = nil }
+            defer {
+                phantom.preparingState = nil
+                self?.writeLocations[phantom.id] = nil
+            }
+            // Every cleanup arm addresses `written` rather than `phantom.bundleURL`:
+            // trashing the staged path after publication would leak the real
+            // bundle, and trashing `finalURL` before it can hit an unrelated
+            // bundle holding that name. The library gets the same value through
+            // ``writeLocations`` — this task keeps its own copy because the
+            // deallocated arms below still have to clean up.
+            var written: URL?
             do {
-                try await copyWork()
+                let staged = try storage.makeStagedBundleURL()
+                written = staged
+                self?.writeLocations[phantom.id] = staged
+                try await copyWork(staged)
                 guard let self else {
                     if Task.isCancelled {
-                        Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
+                        Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
                     } else {
-                        Self.logger.warning(
-                            "\(operation.displayNoun, privacy: .public) completed but the library was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
-                        )
+                        do {
+                            try storage.publishBundle(from: staged, to: finalURL)
+                            Self.logger.warning(
+                                "\(operation.displayNoun, privacy: .public) completed but the library was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
+                            )
+                        } catch {
+                            Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
+                            Self.logger.error(
+                                "\(operation.displayNoun, privacy: .public) completed but the library was deallocated and the bundle could not be published — trashed the staged bundle for '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                            )
+                        }
                     }
                     return
                 }
                 if Task.isCancelled {
                     // Cancelled mid-copy: `VMCommandCore.cancelPreparing` left the "Cancelling…" row
                     // in place, so remove it and trash the settled bundle now that the copy is done.
-                    self.cleanupPhantomInstance(phantom)
+                    // Nothing was published, so the staged tree is the whole of it.
+                    self.cleanupPhantomInstance(phantom, bundleAt: staged)
+                    return
+                }
+                try await Task.detached { try storage.publishBundle(from: staged, to: finalURL) }
+                    .value
+                written = finalURL
+                self.writeLocations[phantom.id] = finalURL
+                if Task.isCancelled {
+                    self.cleanupPhantomInstance(phantom, bundleAt: finalURL)
                     return
                 }
                 phantom.preparingState = nil
                 onSuccess()
             } catch {
                 guard let self else {
-                    Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
+                    if let written {
+                        Self.trashPartialBundle(at: written, fileSystem: fileSystem)
+                    }
                     Self.logger.error(
                         "\(operation.displayNoun, privacy: .public) failed and the library was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                     return
                 }
-                self.cleanupPhantomInstance(phantom)
+                if let written {
+                    self.cleanupPhantomInstance(phantom, bundleAt: written)
+                } else {
+                    self.dropPhantomRow(phantom)
+                }
                 if !Task.isCancelled {
                     Self.logger.error(
                         "\(operation.displayNoun, privacy: .public) failed for VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -474,11 +530,59 @@ final class VMLibrary: VMInstanceRoster {
     }
 
     /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
+    ///
+    /// Callable only once the write has settled at ``VMInstance/bundleURL``:
+    /// before publication the tree is at the staged path, which the overload
+    /// taking an explicit URL is for.
     func cleanupPhantomInstance(_ phantom: VMInstance) {
+        cleanupPhantomInstance(phantom, bundleAt: phantom.bundleURL)
+    }
+
+    /// Removes a phantom instance from the library and trashes the tree it wrote,
+    /// wherever that write has reached.
+    func cleanupPhantomInstance(_ phantom: VMInstance, bundleAt url: URL) {
+        dropPhantomRow(phantom)
+        Self.trashPartialBundle(at: url, fileSystem: fileSystem)
+    }
+
+    /// Drops a phantom's row and its preparing state, leaving disk alone.
+    private func dropPhantomRow(_ phantom: VMInstance) {
         evict(phantom)
         persistOrder()
         phantom.preparingState = nil
-        Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
+        writeLocations[phantom.id] = nil
+    }
+
+    /// Cancels every preparing write and removes the row and whatever tree it has
+    /// written so far, for a quit that cannot wait for the copies to settle.
+    ///
+    /// The library is the only owner that knows where each write currently is —
+    /// the staged path until publication, the VM's own bundle after — so the
+    /// termination sweep asks here rather than guessing at a URL. Best effort:
+    /// `FileManager.copyItem` isn't interruptible, so a copy already in flight
+    /// keeps writing into the staged tree until it finishes or fails, and the
+    /// next launch's reclaim discards whatever it left.
+    ///
+    /// The trash is synchronous, unlike ``trashPartialBundle(at:fileSystem:)`` —
+    /// the process ends immediately after, so a detached task would never run.
+    func cancelAndCleanupPreparing() {
+        for phantom in instances where phantom.isPreparing {
+            guard let state = phantom.preparingState else { continue }
+            Self.logger.notice(
+                "Terminating: cancelling \(state.operation.displayNoun, privacy: .public) for '\(phantom.name, privacy: .public)'"
+            )
+            state.task.cancel()
+            if let written = writeLocations[phantom.id] {
+                do {
+                    try fileSystem.trashItem(at: written)
+                } catch {
+                    Self.logger.warning(
+                        "Failed to clean up the partial bundle for '\(phantom.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+            dropPhantomRow(phantom)
+        }
     }
 
     /// Drops `instance` from the library, moving the selection off it and

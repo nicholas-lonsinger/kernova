@@ -1485,7 +1485,7 @@ struct VMCommandCoreTests {
     @Test("A clone whose copy fails reports the failure directly, then the phantom's removal")
     func cloneFailureReportsFailureThenRemoval() async throws {
         let harness = makeHarness()
-        let cloneError = VMStorageError.bundleAlreadyExists(UUID())
+        let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
         harness.storage.cloneVMBundleError = cloneError
         let instance = makeInstance(in: harness, name: "Source")
         var events = harness.core.events().makeAsyncIterator()

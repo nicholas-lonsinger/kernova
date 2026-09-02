@@ -670,7 +670,9 @@ extension SidebarViewController {
             if let operation = instance.preparingState?.operation {
                 menu.addItem(item(operation.cancelLabel, #selector(menuCancelPreparing(_:)), instance))
             }
-            menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
+            if capabilities.isAvailable(.showInFinder, on: instance) {
+                menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
+            }
             return menu
         }
 

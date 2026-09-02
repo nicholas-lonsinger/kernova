@@ -313,14 +313,14 @@ final class AppTerminationController: NSObject {
 
         case .terminateNow:
             cancellableLaunchWork?.cancel()
-            cancelAndCleanupPreparingInstances()
+            viewModel.cancelAndCleanupPreparing()
             return .terminateNow
 
         case .saveThenTerminate:
             // Before the save pass, so it never has to chase a guest the launch
             // pass brings up behind it.
             cancellableLaunchWork?.cancel()
-            cancelAndCleanupPreparingInstances()
+            viewModel.cancelAndCleanupPreparing()
             // macOS quits and relaunches the app when a TCC permission is revoked, and
             // its built-in relaunch times out while VMs are saving. Mark for relaunch
             // so `applicationWillTerminate` launches the helper after saves complete.
@@ -333,7 +333,7 @@ final class AppTerminationController: NSObject {
                 // A drop/odoc delivered during the async save window above can register
                 // a fresh phantom, so sweep again right before the deferred reply or
                 // that bundle is orphaned on disk.
-                self.cancelAndCleanupPreparingInstances()
+                self.viewModel.cancelAndCleanupPreparing()
                 NSApplication.shared.reply(toApplicationShouldTerminate: true)
             }
             return .terminateLater
@@ -523,27 +523,6 @@ final class AppTerminationController: NSObject {
                 )
             }
             return false
-        }
-    }
-
-    /// Cancels every preparing instance's task and trashes its partial bundle.
-    ///
-    /// Best effort, since `FileManager.copyItem` isn't interruptible — the copy
-    /// already in flight keeps writing until it finishes or fails on its own.
-    private func cancelAndCleanupPreparingInstances() {
-        viewModel.instances.removeAll { instance in
-            guard instance.isPreparing else { return false }
-
-            Self.logger.notice("Terminating: cancelling preparing operation for '\(instance.name, privacy: .public)'")
-            instance.preparingState?.task.cancel()
-            do {
-                try FileManager.default.trashItem(at: instance.bundleURL, resultingItemURL: nil)
-            } catch {
-                Self.logger.warning(
-                    "Failed to clean up partial bundle for '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
-                )
-            }
-            return true
         }
     }
 

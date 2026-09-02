@@ -82,20 +82,23 @@ enum VMCapability: CaseIterable, Hashable {
     }
 
     /// Whether this capability survives a create, clone or import still writing
-    /// the VM's bundle: the reads, the cancel that stops the write, and the
-    /// Finder reveal of a bundle that already exists on disk.
+    /// the VM's bundle: the in-memory reads, and the cancel that stops the write.
+    ///
+    /// A preparing row's bundle is built under a hidden staging path and
+    /// published by rename when the write finishes, so nothing that reads
+    /// ``VMInstance/bundleURL`` on disk — `showInFinder` — belongs here.
     ///
     /// Exhaustive rather than `default`, so a new capability has to choose a
     /// side.
     var survivesPreparing: Bool {
         switch self {
-        case .info, .ipAddress, .snapshots, .cancelPreparing, .showInFinder:
+        case .info, .ipAddress, .snapshots, .cancelPreparing:
             true
         case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
             .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .editStorageDisks,
-            .editRemovableMedia, .clone, .rename, .delete, .togglePopOut, .toggleFullscreen,
-            .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
+            .editRemovableMedia, .clone, .rename, .delete, .showInFinder, .togglePopOut,
+            .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
             false
         }
     }
