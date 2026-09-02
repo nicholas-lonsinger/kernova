@@ -272,7 +272,7 @@ final class VMCommandCore: VMCommanding {
             diskSizeInGB: config.diskSizeInGB,
             networkMode: config.networkEnabled ? config.networkMode.rawValue : nil,
             macAddress: config.macAddress,
-            ipAddress: library.reservedAddress(for: config),
+            ipAddress: library.networkSlots.reservedAddress(for: config),
             agentStatus: instance.agentStatus.wireName,
             hasSavedState: instance.hasSaveFile,
             isEphemeral: config.ephemeralModeEnabled,
@@ -282,7 +282,7 @@ final class VMCommandCore: VMCommanding {
     }
 
     func ipAddress(of selector: VMSelector) throws -> String? {
-        library.reservedAddress(for: try resolve(selector).configuration)
+        library.networkSlots.reservedAddress(for: try resolve(selector).configuration)
     }
 
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {

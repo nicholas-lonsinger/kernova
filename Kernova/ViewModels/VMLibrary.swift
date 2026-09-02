@@ -2,18 +2,23 @@ import Foundation
 import os
 
 /// The set of VMs the app knows about, and the bookkeeping that keeps it in
-/// step with the bundles on disk: the library read, the directory watcher, the
-/// sleep/wake pass, configuration persistence, DHCP-reservation and
-/// port-forwarding slots, and sidebar ordering.
+/// step with the bundles on disk: membership and sidebar ordering, the library
+/// read, the directory-watched reconcile, `prepareBundle`/`registerPhantom`/
+/// `evict`, the configuration persistence funnel, and the revert registry.
+///
+/// It also sequences two collaborators it owns — ``networkSlots`` and
+/// ``removableMedia`` — because only the library knows where in a configuration
+/// write each of them belongs.
 ///
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
-/// to be told about leaves through ``onFailure``, and the two `VMInstance`
-/// hooks whose handling belongs to a verb — ``onAgentBecameCurrent`` and
-/// ``onPoweredOff`` — leave through their own closures. ``VMLibraryViewModel``
-/// is the AppKit adapter that owns one of these and wires all three.
+/// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
+/// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
+/// ``onPoweredOff`` and ``onEvicted`` — leave through their own closures.
+/// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
+/// wires them all.
 @MainActor
 @Observable
-final class VMLibrary {
+final class VMLibrary: VMInstanceRoster {
     nonisolated private static let logger = Logger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
@@ -22,15 +27,19 @@ final class VMLibrary {
     private let snapshotStore: any VMSnapshotStoring
     private let lifecycle: VMLifecycleCoordinator
 
-    private let vmnetNetworks: any VmnetNetworkProviding
-
-    /// Whether this build's reservation machinery is live — a process-wide
-    /// constant, snapshotted at init.
-    private let isVMNetworkingEntitled: Bool
-
     private let fileSystem: any FileSystemOperating
 
     private let preferences: AppPreferences
+
+    // MARK: - Collaborators
+
+    /// Drives a running VM's XHCI removable-media list to what its
+    /// configuration asks for, dispatched from ``applyLivePolicy(for:old:new:)``.
+    @ObservationIgnored let removableMedia: VMRemovableMediaReconciler
+
+    /// The DHCP-reservation and port-forwarding slots each VM holds, and the
+    /// MAC-address uniqueness both are keyed on.
+    @ObservationIgnored let networkSlots: VMNetworkSlotRegistry
 
     // MARK: - Adapter Hooks
 
@@ -46,6 +55,10 @@ final class VMLibrary {
 
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
+
+    /// Fires when a VM leaves the library, so app-level state keyed on its id
+    /// is released with it — whichever path evicted it.
+    @ObservationIgnored var onEvicted: ((UUID) -> Void)?
 
     // MARK: - State
 
@@ -64,32 +77,6 @@ final class VMLibrary {
             guard selectedID != oldValue else { return }
             preferences.lastSelectedVMID = selectedID
         }
-    }
-
-    /// VMs with an in-flight removable-media reconciliation Task.
-    ///
-    /// With `pendingRemovableMediaTarget`, coalesces rapid edits into one Task per
-    /// instance: the `await`s inside `applyLiveRemovableMediaChange` leave the actor
-    /// reentrant, so a second Task would read the same tracking and issue duplicate
-    /// detach/attach operations.
-    private var reconcilingRemovableMediaInstances: Set<UUID> = []
-
-    /// Latest desired removable media list per instance, drained by
-    /// `runRemovableMediaReconciliation` until empty.
-    private var pendingRemovableMediaTarget: [UUID: PendingRemovableMediaChange] = [:]
-
-    /// A removable-media target waiting to be applied, bound to the session it
-    /// was queued for.
-    ///
-    /// The binding is what a queued entry needs and a per-pass capture cannot
-    /// give it: an entry outlives the session that queued it whenever the drain
-    /// is behind — a stop, an edit made while stopped (which returns before
-    /// replacing the entry, having no session to act on), and a restart all
-    /// leave it queued — and draining it under the successor's token would
-    /// drive the new session's controller to a list its user never asked for.
-    private struct PendingRemovableMediaChange {
-        let sessionID: UUID
-        let target: [RemovableMediaItem]
     }
 
     /// `true` when any instance is mid-create, mid-clone, or mid-import.
@@ -144,11 +131,6 @@ final class VMLibrary {
 
     private var directoryWatcher: VMDirectoryWatcher?
 
-    // MARK: - Sleep/Wake
-
-    private var sleepWatcher: SystemSleepWatcher?
-    var sleepPausedInstanceIDs: Set<UUID> = []
-
     var selectedInstance: VMInstance? {
         instances.first { $0.id == selectedID }
     }
@@ -169,10 +151,22 @@ final class VMLibrary {
         self.lifecycle = lifecycle
         self.fileSystem = fileSystem
         self.preferences = preferences
-        self.vmnetNetworks = vmnetNetworks
-        self.isVMNetworkingEntitled = isVMNetworkingEntitled
+        self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
+        self.networkSlots = VMNetworkSlotRegistry(
+            vmnetNetworks: vmnetNetworks, isVMNetworkingEntitled: isVMNetworkingEntitled)
 
-        startSleepWatcher()
+        // Assigned after every stored property is set: each closure — and the
+        // roster — references the library, which cannot be named before then.
+        removableMedia.onSaveConfiguration = { [weak self] instance in
+            self?.saveConfiguration(for: instance)
+        }
+        removableMedia.onFailure = { [weak self] error in
+            self?.presentError(error)
+        }
+        networkSlots.roster = self
+        networkSlots.onFailure = { [weak self] title, message in
+            self?.surfaceError(message, title: title)
+        }
     }
 
     /// Fills the library from disk, then starts watching the VMs directory for
@@ -294,7 +288,7 @@ final class VMLibrary {
                 wirePersistence(for: instance)
                 return instance
             } + addedDuringRead
-        logDuplicateMACAddressHolders()
+        networkSlots.logDuplicateMACAddressHolders()
 
         if !scan.failedBundleNames.isEmpty {
             reportedFailedBundles.formUnion(scan.failedBundleNames)
@@ -320,29 +314,8 @@ final class VMLibrary {
                 selectedID = instances.first?.id
             }
         }
-        pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
+        networkSlots.pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
         Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
-    }
-
-    /// Frees every reservation slot no VM in the library claims — the reclaim
-    /// for slots orphaned while the app was not running (a bundle trashed in
-    /// Finder), which no in-session release can catch.
-    ///
-    /// Runs only over a complete library: a bundle whose configuration failed
-    /// to parse is absent from `instances` while its VM still exists, so its
-    /// slot must not be handed to somebody else. Entitlement-gated like the
-    /// rest of the reservation machinery — an unentitled build never reserves,
-    /// so pruning there would empty a store the entitled build owns.
-    private func pruneAddressReservations(scanWasComplete: Bool) {
-        guard isVMNetworkingEntitled, scanWasComplete else { return }
-        let targets = instances.compactMap { reservationTarget(for: $0.configuration) }
-        for kind in VmnetNetworkKind.allCases {
-            let macs = Set(targets.filter { $0.kind == kind }.map(\.mac))
-            vmnetNetworks.retainAddressReservations(macs, kind: kind)
-        }
-        // A reload can run while a network is materialized, so the slots this
-        // just reclaimed only reach guests through a recreate.
-        rebuildNetworksIfIdle()
     }
 
     // MARK: - Revert Registry
@@ -406,7 +379,7 @@ final class VMLibrary {
         instances.append(phantom)
         sortInstances()
         persistOrder()
-        logDuplicateMACAddressHolders()
+        networkSlots.logDuplicateMACAddressHolders()
         if selectedInstance?.isPreparing != true {
             selectedID = phantom.id
         }
@@ -522,11 +495,9 @@ final class VMLibrary {
         }
         // A VM out of the library stops claiming its host ports and its
         // address, so the next VM created can be handed both.
-        withdrawPortForwardingRules(for: instance.configuration)
-        if bundleIsGone, let target = reservationTarget(for: instance.configuration) {
-            releaseAddressReservationIfUnused(target)
-        }
-        rebuildNetworksIfIdle()
+        networkSlots.releaseSlots(for: instance.configuration, bundleIsGone: bundleIsGone)
+        networkSlots.rebuildNetworksIfIdle()
+        onEvicted?(instance.id)
     }
 
     // MARK: - Reorder
@@ -602,7 +573,7 @@ final class VMLibrary {
         // change made while a VM ran waits for the last session on that network
         // to release it.
         instance.onSessionTornDown = { [weak self, weak instance] in
-            self?.rebuildNetworksIfIdle(ignoring: instance)
+            self?.networkSlots.rebuildNetworksIfIdle(ignoring: instance)
         }
         // An Ephemeral Mode VM goes back to its baseline on every power-off.
         instance.onPoweredOff = { [weak self, weak instance] in
@@ -617,228 +588,10 @@ final class VMLibrary {
         // found here belongs to no running revert, and reclaiming it does not
         // wait on the next revert of this VM to come along.
         snapshotStore.sweepRestoreStaging(bundleURL: instance.bundleURL)
-        syncAddressReservation(for: instance.configuration)
-        syncPortForwardingRules(for: instance.configuration)
+        networkSlots.claimSlots(for: instance.configuration)
         // The create/clone/import/load entry point: a VM arriving with a slot
         // on an already-materialized network is pending until it is recreated.
-        rebuildNetworksIfIdle()
-    }
-
-    /// The reservation slot `config` wants: the network its mode maps to and
-    /// the lowercased MAC keying the slot, `nil` for a VM that can join no
-    /// app-managed network (networking off, or Bridged, where external DHCP
-    /// owns addressing).
-    private func reservationTarget(
-        for config: VMConfiguration
-    ) -> (kind: VmnetNetworkKind, mac: String)? {
-        guard config.networkEnabled, let mac = config.macAddress,
-            let kind = VmnetNetworkKind(mode: config.networkMode)
-        else { return nil }
-        return (kind: kind, mac: mac.lowercased())
-    }
-
-    /// Keeps the VM's DHCP reservation slot in step with its configuration:
-    /// any VM that can join an app-managed network holds a slot keyed on its
-    /// persisted MAC, so its address is assigned before the network next
-    /// materializes. Runs at every instance construction and configuration
-    /// change; cheap and idempotent. Entitlement-gated like every other
-    /// consumer of the reservation machinery — an unentitled build never
-    /// materializes a network, so slots taken there would be dead weight.
-    private func syncAddressReservation(for config: VMConfiguration) {
-        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return }
-        vmnetNetworks.reserveAddressIfNeeded(for: target.mac, kind: target.kind)
-    }
-
-    /// Frees `target`'s reservation slot unless a VM still in the library wants
-    /// the same one — a bundle can arrive carrying an address another VM already
-    /// holds, so the last claimant is what releases the slot.
-    private func releaseAddressReservationIfUnused(_ target: (kind: VmnetNetworkKind, mac: String)) {
-        guard isVMNetworkingEntitled else { return }
-        let stillWanted = instances.contains {
-            let other = reservationTarget(for: $0.configuration)
-            return other?.kind == target.kind && other?.mac == target.mac
-        }
-        guard !stillWanted else { return }
-        vmnetNetworks.releaseAddressReservation(for: target.mac, kind: target.kind)
-    }
-
-    /// The address this VM's MAC reserves on the app-managed network it joins,
-    /// or `nil` when it has none to report — networking off, Bridged (where
-    /// external DHCP owns addressing), a build without the reservation
-    /// machinery, or a slot whose network has not been materialized yet.
-    ///
-    /// Reads the reservation store without taking a slot: the sync at every
-    /// configuration change is what claims one.
-    func reservedAddress(for config: VMConfiguration) -> String? {
-        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return nil }
-        return vmnetNetworks.reservedAddress(for: target.mac, kind: target.kind)
-    }
-
-    /// Keeps the VM's port-forwarding rules in step with its configuration: a
-    /// Shared Network VM declares its rules on that network, a VM in any other
-    /// mode declares none. Runs wherever ``syncAddressReservation(for:)`` does.
-    private func syncPortForwardingRules(for config: VMConfiguration) {
-        let forwards = config.networkEnabled && config.networkMode == .shared
-        declarePortForwardingRules(forwards ? config.portForwardingRules : [], for: config)
-    }
-
-    /// Declares `rules` for the VM `config` identifies.
-    ///
-    /// Entitlement-gated like the reservation machinery it rides on — an
-    /// unentitled build attaches system NAT, which forwards nothing.
-    private func declarePortForwardingRules(
-        _ rules: [PortForwardingRule], for config: VMConfiguration
-    ) {
-        guard isVMNetworkingEntitled, let mac = config.macAddress else { return }
-        vmnetNetworks.setPortForwardingRules(rules, for: mac, kind: .shared)
-    }
-
-    /// Withdraws the rules `config` declared, unless a VM still in the library
-    /// carries the same MAC — rules are keyed on the address, so a blanket
-    /// withdrawal would disarm that VM's rules too; its own are re-declared
-    /// instead. An address is one VM's alone once it passes
-    /// ``refuseIfDuplicateMACAddress(_:on:)``, so the survivor is a bundle that
-    /// arrived carrying one already in use.
-    private func withdrawPortForwardingRules(for config: VMConfiguration) {
-        guard let mac = config.macAddress?.lowercased() else { return }
-        let survivor = instances.first { $0.configuration.macAddress?.lowercased() == mac }
-        if let survivor {
-            syncPortForwardingRules(for: survivor.configuration)
-        } else {
-            declarePortForwardingRules([], for: config)
-        }
-    }
-
-    /// The VMs other than `instance` whose configuration carries `mac`, in
-    /// library order — the one lookup every duplicate-address question derives
-    /// from.
-    ///
-    /// Case-insensitive, matching the reservation slots and forwarding rules the
-    /// address keys. A VM with networking off counts: the address persists
-    /// across mode changes, so turning networking back on would re-form the
-    /// collision.
-    private func vmsHoldingMACAddress(_ mac: String, otherThan instance: VMInstance) -> [VMInstance] {
-        let wanted = mac.lowercased()
-        return instances.filter {
-            $0 !== instance && $0.configuration.macAddress?.lowercased() == wanted
-        }
-    }
-
-    /// Names of the other VMs in the library carrying `instance`'s MAC address,
-    /// in library order — empty when the address is this VM's alone.
-    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
-        guard let mac = instance.configuration.macAddress else { return [] }
-        return vmsHoldingMACAddress(mac, otherThan: instance).map(\.name)
-    }
-
-    /// Records every MAC address two or more VMs in the library hold.
-    ///
-    /// Import, load and reconcile admit whatever address a bundle arrives
-    /// carrying, so this is where a pair the app never authored becomes
-    /// traceable. Runs on each of those three, which are the paths a VM the app
-    /// did not author an address for enters by.
-    private func logDuplicateMACAddressHolders() {
-        let holders = Dictionary(grouping: instances) { $0.configuration.macAddress?.lowercased() }
-        for (mac, vms) in holders where mac != nil && vms.count > 1 {
-            let names = vms.map { "'\($0.name)'" }.joined(separator: ", ")
-            Self.logger.warning(
-                "MAC address \(mac ?? "", privacy: .public) is held by \(names, privacy: .public)")
-        }
-    }
-
-    /// Refuses a change that would give `instance` a MAC address another VM in
-    /// the library holds, logging the refusal and surfacing the alert.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    private func refuseIfDuplicateMACAddress(_ mac: String, on instance: VMInstance) -> Bool {
-        guard let holder = vmsHoldingMACAddress(mac, otherThan: instance).first else { return false }
-        Self.logger.notice(
-            "Refused the MAC address \(mac, privacy: .public) for '\(instance.name, privacy: .public)': '\(holder.name, privacy: .public)' already holds it"
-        )
-        surfaceError(
-            "“\(holder.name)” already uses \(mac). "
-                + "Each virtual machine needs its own MAC address. "
-                + "Change or delete “\(holder.name)” first to move this address to “\(instance.name)”.",
-            title: "MAC Address In Use")
-        return true
-    }
-
-    /// Refuses an operation that would put a second guest on one MAC address on
-    /// one network, logging the refusal and surfacing the alert.
-    ///
-    /// `config` is the configuration the VM would run under — its own at start,
-    /// the prospective one for a live mode switch, which moves an unchanged
-    /// address onto a different network.
-    ///
-    /// ``refuseIfDuplicateMACAddress(_:on:)`` keeps the library unique for every
-    /// address the app writes; this covers the pair a bundle arrived carrying,
-    /// which passed through no writer.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    func refuseIfDuplicateMACAddressConflict(
-        _ instance: VMInstance, joining config: VMConfiguration
-    ) -> Bool {
-        guard let conflict = liveMACAddressConflict(for: config, excluding: instance),
-            let mac = config.macAddress
-        else { return false }
-        Self.logger.notice(
-            "Refused to run '\(instance.name, privacy: .public)': shares the MAC address \(mac, privacy: .public) with active VM '\(conflict.name, privacy: .public)'"
-        )
-        surfaceError(
-            "“\(instance.name)” has the same MAC address as “\(conflict.name)”, which is active. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Stop “\(conflict.name)” first, or give one of them a new address in Network settings.",
-            title: "Duplicate MAC Address")
-        return true
-    }
-
-    /// The first live VM sharing `config`'s MAC address on the network `config`
-    /// joins, if any.
-    ///
-    /// Live means VZ holds the attachment, as it does for the machine identity.
-    /// The mode names the network, so two holders collide only where both
-    /// guests attach: networking off puts no address on a wire, and Shared,
-    /// Host Only and Bridged are separate networks. Two bridged VMs compare as
-    /// one network whatever interface each names — Automatic resolves at start,
-    /// so which link they land on is not knowable in advance.
-    func liveMACAddressConflict(
-        for config: VMConfiguration, excluding instance: VMInstance
-    ) -> VMInstance? {
-        guard config.networkEnabled, let mac = config.macAddress else { return nil }
-        return vmsHoldingMACAddress(mac, otherThan: instance).first { other in
-            (other.isActive || other.isLivePaused)
-                && other.configuration.networkEnabled
-                && other.configuration.networkMode == config.networkMode
-        }
-    }
-
-    /// Recreates every app-managed network whose DHCP reservations or
-    /// forwarding rules are no longer the ones that should install, once no VM
-    /// could be attached to it.
-    ///
-    /// Both are fixed at creation, so a change reaches guests only through a
-    /// recreate — and only while no session holds an attachment on the network.
-    /// The recreate keeps the network's addressing, so no guest's address
-    /// moves.
-    /// `tornDown` is the instance whose session just ended, excluded from the
-    /// idle scan: `tearDownSession` fires its hook before the caller settles
-    /// the status, so a VM released from a transitioning one (`.saving` on a
-    /// save-suspend, `.installing` on a cancelled guest setup) would otherwise
-    /// read as still holding the network it just let go of.
-    private func rebuildNetworksIfIdle(ignoring tornDown: VMInstance? = nil) {
-        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind, ignoring: tornDown) }
-    }
-
-    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind, ignoring tornDown: VMInstance?) {
-        guard vmnetNetworks.networkConfigurationIsPending(for: kind) else { return }
-        let attached = instances.contains {
-            $0 !== tornDown && $0.mayHoldAttachment(on: kind)
-        }
-        guard !attached else { return }
-        Self.logger.notice(
-            "Recreating the \(kind.rawValue, privacy: .public) network to install its pending changes"
-        )
-        vmnetNetworks.invalidateNetwork(for: kind)
+        networkSlots.rebuildNetworksIfIdle()
     }
 
     /// The single entry point for any UI-driven or programmatic mutation of
@@ -865,54 +618,23 @@ final class VMLibrary {
         var new = old
         mutate(&new)
         guard new != old else { return true }
-        if let mac = new.macAddress, mac.lowercased() != old.macAddress?.lowercased(),
-            refuseIfDuplicateMACAddress(mac, on: instance)
-        {
-            return false
-        }
-        // A live VM's Mode picker stays enabled, and a mode change hot-swaps the
-        // attachment: the address is unchanged, so the refusal above never sees
-        // it, and the network it lands on is not the one `start` checked. Only a
-        // VM already running can form the collision this way, and only a
-        // configuration not already in one is refused — a VM that reached a
-        // collision by some other route has to stay editable to leave it.
-        if instance.isActive || instance.isLivePaused,
-            liveMACAddressConflict(for: old, excluding: instance) == nil,
-            refuseIfDuplicateMACAddressConflict(instance, joining: new)
-        {
+        guard !networkSlots.refuseSlotConflict(on: instance, movingFrom: old, to: new) else {
             return false
         }
         instance.configuration = new
-        // An edited MAC leaves its predecessor holding an older — so
-        // higher-priority — reservation slot. Left declared there, the retired
-        // address keeps claiming the VM's host ports and the rules re-declared
-        // under the new one are dropped as duplicates.
-        if let retired = old.macAddress, retired != new.macAddress {
-            withdrawPortForwardingRules(for: old)
-        }
-        // Released before the new slot is taken, so the freed slot is the
-        // lowest one available and an edited MAC normally keeps the VM's
-        // address. Covers a MAC change, a mode switch, and networking off.
-        if let retired = reservationTarget(for: old) {
-            let kept = reservationTarget(for: new)
-            if kept?.kind != retired.kind || kept?.mac != retired.mac {
-                releaseAddressReservationIfUnused(retired)
-            }
-        }
-        syncAddressReservation(for: new)
-        syncPortForwardingRules(for: new)
+        networkSlots.moveSlots(from: old, to: new)
         let saved = saveConfiguration(for: instance)
         // A live session still reads as attached to the network it is *on*, so
         // the network this VM is switching *to* is idle only until
         // `applyLivePolicy` attaches it — which it does synchronously. Recreate
         // it now, or the change this VM just declared waits for a teardown.
-        rebuildNetworksIfIdle()
+        networkSlots.rebuildNetworksIfIdle()
         applyLivePolicy(for: instance, old: old, new: new)
         // A live switch off a network frees it inside `applyLivePolicy` — the
         // pass above ran while the session still held that attachment, so
         // re-check now rather than leaving the pending change to an unrelated
         // event.
-        rebuildNetworksIfIdle()
+        networkSlots.rebuildNetworksIfIdle()
         return saved
     }
 
@@ -924,299 +646,7 @@ final class VMLibrary {
     /// persisted-only and waits for next start.
     func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
-
-        let mediaChanged = VMConfiguration.removableMediaChanged(old: old, new: new)
-        // Only dispatch when there is a session to attach to — every other VM,
-        // a cold-paused one included, persists the new media list and picks it
-        // up on next start.
-        guard mediaChanged, let sessionID = instance.attachableSessionID else { return }
-
-        let id = instance.instanceID
-        pendingRemovableMediaTarget[id] = PendingRemovableMediaChange(
-            sessionID: sessionID, target: new.removableMedia ?? [])
-        guard !reconcilingRemovableMediaInstances.contains(id) else { return }
-        reconcilingRemovableMediaInstances.insert(id)
-        Task { [weak self] in
-            await self?.runRemovableMediaReconciliation(for: instance, id: id)
-        }
-    }
-
-    /// Drains `pendingRemovableMediaTarget` for a single instance until empty.
-    ///
-    /// Writes that arrive during a pass are picked up by the next iteration, so rapid
-    /// edits always converge to the final user-selected state.
-    ///
-    /// Each pass carries the token its entry was queued with all the way down,
-    /// so a stop — or a stop and a restart — mid-pass abandons the pass rather
-    /// than driving whatever is live by then.
-    ///
-    /// Attachability is read before the dequeue, so an entry the VM is only
-    /// momentarily unable to act on (a save in flight on the same session)
-    /// stays queued for a later pass instead of being consumed and dropped.
-    private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
-        defer { reconcilingRemovableMediaInstances.remove(id) }
-        while let pending = pendingRemovableMediaTarget[id] {
-            guard let sessionID = instance.attachableSessionID else { break }
-            pendingRemovableMediaTarget.removeValue(forKey: id)
-            guard pending.sessionID == sessionID else {
-                Self.logger.notice(
-                    "Dropping queued removable-media target for '\(instance.name, privacy: .public)': session \(pending.sessionID, privacy: .public) is no longer live"
-                )
-                continue
-            }
-            await applyLiveRemovableMediaChange(
-                for: instance, target: pending.target, actingFor: sessionID)
-        }
-    }
-
-    /// Reconciles the live removable media list with `target`, diffing per id against
-    /// `instance.liveRemovableMedia`.
-    ///
-    /// Detaches run before attaches, so swapping the medium in a slot cannot collide
-    /// with itself on a duplicate UUID.
-    ///
-    /// On unexpected detach or attach errors the persisted config is rolled back to
-    /// match `instance.liveRemovableMedia`, so the UI snaps to what is actually
-    /// attached rather than describing a state VZ refused. `deviceNotFound` (which
-    /// also covers a guest-side eject) and `noVirtualMachine` are handled as
-    /// confirmed-gone / silent bail.
-    ///
-    /// Every framework call, bookkeeping write and failure handler here acts for
-    /// `sessionID` and drops once that session is no longer live.
-    private func applyLiveRemovableMediaChange(
-        for instance: VMInstance,
-        target: [RemovableMediaItem],
-        actingFor sessionID: UUID
-    ) async {
-        let tracked = instance.liveRemovableMedia
-        // Tolerate duplicate ids: a hand-edited or corrupted config.json could ship
-        // two `removableMedia` entries with the same UUID, and a uniquing-free
-        // Dictionary init would trap and take the host app down.
-        let targetByID = Dictionary(target.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let trackedByID = Dictionary(tracked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-
-        // Rollback lookup: tracked entries win over target entries on id collisions,
-        // so a row that failed mid-swap restores its original path/readOnly. A
-        // rebuilt entry keeps its persisted bookmark only when the config row still
-        // matches the live path — a mid-swap rollback can't recover the old path's
-        // bookmark, so it rolls back bookmark-less and the missing-file UX takes over.
-        let configuredByID = Dictionary(
-            (instance.configuration.removableMedia ?? []).map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first })
-        var rollbackLookup: [UUID: RemovableMediaItem] = [:]
-        for info in tracked {
-            let configured = configuredByID[info.id]
-            // Start from the persisted entry so its label and note survive the
-            // rollback; only the fields the live state actually answers for
-            // (path, readOnly, and the bookmark's validity) are overridden.
-            var copy =
-                configured
-                ?? RemovableMediaItem(id: info.id, path: info.path, readOnly: info.readOnly, bookmark: nil)
-            copy.path = info.path
-            copy.readOnly = info.readOnly
-            copy.bookmark = configured?.path == info.path ? configured?.bookmark : nil
-            rollbackLookup[info.id] = copy
-        }
-        for item in target where rollbackLookup[item.id] == nil {
-            rollbackLookup[item.id] = item
-        }
-
-        var toDetach: [USBDeviceInfo] = []
-        var toAttach: [RemovableMediaItem] = []
-        for trackedItem in tracked {
-            guard let desired = targetByID[trackedItem.id] else {
-                toDetach.append(trackedItem)
-                continue
-            }
-            if desired.path != trackedItem.path || desired.readOnly != trackedItem.readOnly {
-                toDetach.append(trackedItem)
-                toAttach.append(desired)
-            }
-        }
-        // Iterate the deduped dictionary, not `target`, so a config with
-        // duplicate ids can't queue two attaches for the same UUID.
-        for targetItem in targetByID.values where trackedByID[targetItem.id] == nil {
-            toAttach.append(targetItem)
-        }
-
-        // Apply detaches first so duplicate-UUID conflicts can't fire when
-        // a swap reuses an id with a different attachment.
-        for device in toDetach {
-            do {
-                try await lifecycle.detachUSBDevice(device, from: instance, for: sessionID)
-            } catch USBDeviceError.noVirtualMachine {
-                Self.logger.notice(
-                    "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
-                )
-                return
-            } catch USBDeviceError.deviceNotFound {
-                // The coordinator's `forgetAttachedMedia` is skipped when the
-                // framework call throws, so clear stale tracking explicitly here.
-                Self.logger.notice(
-                    "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
-                )
-                instance.forgetAttachedMedia(deviceID: device.id, for: sessionID)
-            } catch {
-                Self.logger.error(
-                    "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
-                return
-            }
-        }
-
-        for item in toAttach {
-            do {
-                // The scope must stay live while the service resolves the path and
-                // opens the attachment; on success it is registered with the instance
-                // (released at detach or teardown), and released by deinit if it throws.
-                let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
-                _ = try await lifecycle.attachUSBDevice(
-                    diskImagePath: item.path,
-                    readOnly: item.readOnly,
-                    desiredUUID: item.id,
-                    resolvedURL: scope?.url,
-                    to: instance,
-                    for: sessionID
-                )
-                if let scope {
-                    instance.retainMediaScope(scope, deviceID: item.id, for: sessionID)
-                }
-                Self.logger.notice(
-                    "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
-                )
-            } catch USBDeviceError.noVirtualMachine {
-                Self.logger.notice(
-                    "VM '\(instance.name, privacy: .public)' torn down during media attach; abandoning reconcile"
-                )
-                return
-            } catch {
-                Self.logger.error(
-                    "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
-                return
-            }
-        }
-    }
-
-    /// Rolls the config back to the live state and surfaces `error` — unless the
-    /// pass acting for `sessionID` has been overtaken, whose successor's live
-    /// media the rollback would describe and whose user force-stopped the VM the
-    /// error is about.
-    private func failReconcile(
-        for instance: VMInstance,
-        actingFor sessionID: UUID,
-        lookup: [UUID: RemovableMediaItem],
-        error: any Error
-    ) {
-        guard instance.liveSessionID == sessionID else {
-            Self.logger.notice(
-                "Dropping removable-media reconcile failure for '\(instance.name, privacy: .public)': session \(sessionID, privacy: .public) is no longer live"
-            )
-            return
-        }
-        reconcileConfigToLiveState(for: instance, lookup: lookup)
-        presentError(error)
-    }
-
-    /// Rolls `instance.configuration.removableMedia` back to whatever is
-    /// actually attached in `liveRemovableMedia`.
-    ///
-    /// The write bypasses `updateConfiguration` to avoid re-entering the reconcile
-    /// pipeline — the rolled-back state is the destination, not a retry.
-    private func reconcileConfigToLiveState(
-        for instance: VMInstance,
-        lookup: [UUID: RemovableMediaItem]
-    ) {
-        let rolled = instance.liveRemovableMedia.compactMap { lookup[$0.id] }
-        var newConfig = instance.configuration
-        newConfig.removableMedia = rolled.isEmpty ? nil : rolled
-        guard newConfig != instance.configuration else { return }
-        instance.configuration = newConfig
-        saveConfiguration(for: instance)
-        Self.logger.notice(
-            "Rolled removable media config for '\(instance.name, privacy: .public)' back to live state after reconcile error"
-        )
-    }
-
-    // MARK: - Sleep/Wake
-
-    /// Pauses all running VMs before system sleep, tracking which were auto-paused so
-    /// only those are resumed on wake.
-    func pauseAllForSleep() async {
-        let runningInstances = instances.filter { $0.status == .running }
-        guard !runningInstances.isEmpty else {
-            Self.logger.debug("pauseAllForSleep: no running VMs, nothing to pause")
-            return
-        }
-
-        Self.logger.notice("System going to sleep — pausing \(runningInstances.count, privacy: .public) running VM(s)")
-
-        var failedNames: [String] = []
-        for instance in runningInstances {
-            do {
-                try await lifecycle.pause(instance)
-                sleepPausedInstanceIDs.insert(instance.id)
-                Self.logger.debug(
-                    "Paused '\(instance.name, privacy: .public)' for sleep (status: \(instance.status.displayName, privacy: .public))"
-                )
-            } catch {
-                Self.logger.error(
-                    "Failed to pause '\(instance.name, privacy: .public)' for sleep: \(error.localizedDescription, privacy: .public)"
-                )
-                failedNames.append(instance.name)
-            }
-        }
-        if !failedNames.isEmpty {
-            presentError(SleepWakeError.pauseFailed(vmNames: failedNames))
-        }
-    }
-
-    /// Resumes only VMs that were auto-paused by `pauseAllForSleep()`.
-    func resumeAllAfterWake() async {
-        let idsToResume = sleepPausedInstanceIDs
-        sleepPausedInstanceIDs.removeAll()
-        guard !idsToResume.isEmpty else {
-            Self.logger.debug("resumeAllAfterWake: no sleep-paused VMs to resume")
-            return
-        }
-
-        let instancesToResume = instances.filter { idsToResume.contains($0.id) && $0.status == .paused }
-        guard !instancesToResume.isEmpty else { return }
-
-        Self.logger.notice("System woke up — resuming \(instancesToResume.count, privacy: .public) sleep-paused VM(s)")
-
-        var failedNames: [String] = []
-        for instance in instancesToResume {
-            do {
-                try await lifecycle.resume(instance)
-                Self.logger.debug(
-                    "Resumed '\(instance.name, privacy: .public)' after wake (status: \(instance.status.displayName, privacy: .public))"
-                )
-            } catch {
-                Self.logger.error(
-                    "Failed to resume '\(instance.name, privacy: .public)' after wake: \(error.localizedDescription, privacy: .public)"
-                )
-                failedNames.append(instance.name)
-            }
-        }
-        if !failedNames.isEmpty {
-            presentError(SleepWakeError.resumeFailed(vmNames: failedNames))
-        }
-    }
-
-    private func startSleepWatcher() {
-        let watcher = SystemSleepWatcher(
-            onSleep: { [weak self] in
-                await self?.pauseAllForSleep()
-            },
-            onWake: { [weak self] in
-                await self?.resumeAllAfterWake()
-            }
-        )
-        watcher.start()
-        sleepWatcher = watcher
+        removableMedia.apply(for: instance, old: old, new: new)
     }
 
     // MARK: - Directory Watcher
@@ -1306,7 +736,7 @@ final class VMLibrary {
             if didChange {
                 sortInstances()
                 persistOrder()
-                logDuplicateMACAddressHolders()
+                networkSlots.logDuplicateMACAddressHolders()
             }
 
             let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
@@ -1363,25 +793,6 @@ final class VMLibrary {
                 assert(!names.isEmpty, "bundleLoadFailed requires at least one bundle name")
                 return
                     "Failed to load the following VMs: \(names.joined(separator: ", ")). They may have corrupted configurations."
-            }
-        }
-    }
-
-    /// Error type for sleep/wake lifecycle failures.
-    private enum SleepWakeError: LocalizedError {
-        case pauseFailed(vmNames: [String])
-        case resumeFailed(vmNames: [String])
-
-        var errorDescription: String? {
-            switch self {
-            case .pauseFailed(let vmNames):
-                assert(!vmNames.isEmpty, "pauseFailed requires at least one VM name")
-                return
-                    "Failed to pause the following VMs before sleep: \(vmNames.joined(separator: ", ")). They may experience data corruption."
-            case .resumeFailed(let vmNames):
-                assert(!vmNames.isEmpty, "resumeFailed requires at least one VM name")
-                return
-                    "Failed to resume the following VMs after wake: \(vmNames.joined(separator: ", ")). You may need to restart them manually."
             }
         }
     }

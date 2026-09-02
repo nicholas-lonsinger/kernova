@@ -57,7 +57,7 @@ extension VMCommandCore {
             throw CommandError.conflict(
                 vm: summary(instance), with: summary(conflict), reason: .machineIdentity)
         }
-        if let conflict = library.liveMACAddressConflict(
+        if let conflict = library.networkSlots.liveMACAddressConflict(
             for: instance.configuration, excluding: instance),
             let mac = instance.configuration.macAddress
         {

@@ -32,6 +32,12 @@ final class VMLibraryViewModel {
     let snapshotStore: any VMSnapshotStoring
     let lifecycle: VMLifecycleCoordinator
 
+    /// Pauses running VMs for system sleep and resumes them on wake.
+    ///
+    /// Held rather than read: the sleep watcher it installs is what drives it,
+    /// and this is the composition root that owns its lifetime.
+    private let sleepWake: VMSleepWakeCoordinator
+
     private let preferences: AppPreferences
 
     // MARK: - Library Forwarding
@@ -61,11 +67,6 @@ final class VMLibraryViewModel {
 
     var hasRevertInFlight: Bool { library.hasRevertInFlight }
 
-    var sleepPausedInstanceIDs: Set<UUID> {
-        get { library.sleepPausedInstanceIDs }
-        set { library.sleepPausedInstanceIDs = newValue }
-    }
-
     func isBusy(_ instance: VMInstance) -> Bool { library.isBusy(instance) }
 
     func startLibrary() async { await library.startLibrary() }
@@ -81,7 +82,7 @@ final class VMLibraryViewModel {
     func waitForRevertsToSettle() async { await library.waitForRevertsToSettle() }
 
     func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
-        library.vmNamesSharingMACAddress(with: instance)
+        library.networkSlots.vmNamesSharingMACAddress(with: instance)
     }
 
     @discardableResult
@@ -385,6 +386,8 @@ final class VMLibraryViewModel {
             isVMNetworkingEntitled: isVMNetworkingEntitled
         )
         self.library = library
+        let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
+        self.sleepWake = sleepWake
         self.commands = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -397,6 +400,13 @@ final class VMLibraryViewModel {
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
+        }
+        // A VM out of the library is one no wake pass should resume.
+        library.onEvicted = { [weak sleepWake] id in
+            sleepWake?.forget(id)
+        }
+        sleepWake.onFailure = { [weak self] error in
+            self?.surfaceError(error.localizedDescription)
         }
         // The same routing a call site gets, so a failure nobody awaited still
         // reaches the sheet or the recovery alert its type asks for.
