@@ -353,6 +353,36 @@ struct VMLibraryTests {
         #expect(library.selectedInstance == nil)
     }
 
+    // MARK: - Eviction
+
+    @Test("evict announces the id, so app-level state keyed on it is released")
+    func evictAnnouncesTheID() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = makeInstance()
+        library.instances.append(instance)
+        var evicted: [UUID] = []
+        library.onEvicted = { evicted.append($0) }
+
+        library.evict(instance)
+
+        #expect(evicted == [instance.id])
+    }
+
+    @Test("A reconcile-driven eviction announces the id too")
+    func reconcileEvictionAnnouncesTheID() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = makeInstance()
+        instance.enter(.stopped)
+        library.instances.append(instance)
+        var evicted: [UUID] = []
+        library.onEvicted = { evicted.append($0) }
+
+        // Storage holds no bundles, so the resting VM is no longer on disk.
+        library.reconcileWithDisk()
+
+        #expect(evicted == [instance.id])
+    }
+
     // MARK: - Reconcile With Disk
 
     @Test("reconcileWithDisk adds discovered bundles not in memory")
@@ -670,142 +700,6 @@ struct VMLibraryTests {
         for await _ in cancelStream.stream { break }  // cancel propagated
 
         #expect(library.instances.isEmpty)
-    }
-
-    // MARK: - Sleep/Wake
-
-    @Test("pauseAllForSleep pauses only running VMs")
-    func pauseAllForSleepPausesRunning() async {
-        let (library, _, virtService, _) = makeLibrary()
-        let running1 = makeInstance(name: "Running 1")
-        running1.enter(.running(sessionID: UUID()))
-        let running2 = makeInstance(name: "Running 2")
-        running2.enter(.running(sessionID: UUID()))
-        let stopped = makeInstance(name: "Stopped")
-        stopped.enter(.stopped)
-        let paused = makeInstance(name: "User Paused")
-        paused.enter(.suspended)
-        library.instances = [running1, running2, stopped, paused]
-
-        await library.pauseAllForSleep()
-
-        #expect(virtService.pauseCallCount == 2)
-        #expect(library.sleepPausedInstanceIDs == Set([running1.id, running2.id]))
-        #expect(running1.status == .paused)
-        #expect(running2.status == .paused)
-        #expect(stopped.status == .stopped)
-        #expect(paused.status == .paused)
-    }
-
-    @Test("resumeAllAfterWake resumes only sleep-paused VMs")
-    func resumeAllAfterWakeResumesOnlySleepPaused() async {
-        let (library, _, virtService, _) = makeLibrary()
-        let sleepPaused = makeInstance(name: "Sleep Paused")
-        sleepPaused.enter(.suspended)
-        let userPaused = makeInstance(name: "User Paused")
-        userPaused.enter(.suspended)
-        library.instances = [sleepPaused, userPaused]
-        library.sleepPausedInstanceIDs = Set([sleepPaused.id])
-
-        await library.resumeAllAfterWake()
-
-        #expect(virtService.resumeCallCount == 1)
-        #expect(sleepPaused.status == .running)
-        #expect(userPaused.status == .paused)
-        #expect(library.sleepPausedInstanceIDs.isEmpty)
-    }
-
-    @Test("pauseAllForSleep handles pause failure gracefully")
-    func pauseAllForSleepHandlesError() async {
-        let virtService = MockVirtualizationService()
-        virtService.pauseError = VirtualizationError.noVirtualMachine
-        let (library, _, _, _) = makeLibrary(virtualizationService: virtService)
-        let running = makeInstance(name: "Running")
-        running.enter(.running(sessionID: UUID()))
-        library.instances = [running]
-
-        await library.pauseAllForSleep()
-
-        // Error is surfaced to the user
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("Running") == true)
-        // Failed pause should not track the instance
-        #expect(library.sleepPausedInstanceIDs.isEmpty)
-    }
-
-    @Test("resumeAllAfterWake clears tracking set even on failure")
-    func resumeAllAfterWakeClearsOnError() async {
-        let virtService = MockVirtualizationService()
-        virtService.resumeError = VirtualizationError.noVirtualMachine
-        let (library, _, _, _) = makeLibrary(virtualizationService: virtService)
-        let instance = makeInstance(name: "Sleep Paused")
-        instance.enter(.suspended)
-        library.instances = [instance]
-        library.sleepPausedInstanceIDs = Set([instance.id])
-
-        await library.resumeAllAfterWake()
-
-        #expect(library.sleepPausedInstanceIDs.isEmpty)
-        // Error is surfaced to the user
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("Sleep Paused") == true)
-    }
-
-    @Test("pauseAllForSleep is no-op when no running VMs")
-    func pauseAllForSleepNoOp() async {
-        let (library, _, virtService, _) = makeLibrary()
-        let stopped = makeInstance(name: "Stopped")
-        stopped.enter(.stopped)
-        library.instances = [stopped]
-
-        await library.pauseAllForSleep()
-
-        #expect(virtService.pauseCallCount == 0)
-        #expect(library.sleepPausedInstanceIDs.isEmpty)
-    }
-
-    @Test("resumeAllAfterWake is no-op when no sleep-paused VMs")
-    func resumeAllAfterWakeNoOp() async {
-        let (library, _, virtService, _) = makeLibrary()
-        let paused = makeInstance(name: "User Paused")
-        paused.enter(.suspended)
-        library.instances = [paused]
-        // sleepPausedInstanceIDs is empty
-
-        await library.resumeAllAfterWake()
-
-        #expect(virtService.resumeCallCount == 0)
-    }
-
-    @Test("pauseAllForSleep skips non-running states")
-    func pauseAllForSleepSkipsNonRunning() async {
-        let (library, _, virtService, _) = makeLibrary()
-        let starting = makeInstance(name: "Starting")
-        starting.enter(.starting(sessionID: nil))
-        let saving = makeInstance(name: "Saving")
-        saving.enter(.saving(sessionID: UUID()))
-        let error = makeInstance(name: "Error")
-        error.enter(.failed(message: "Test failure"))
-        library.instances = [starting, saving, error]
-
-        await library.pauseAllForSleep()
-
-        #expect(virtService.pauseCallCount == 0)
-        #expect(library.sleepPausedInstanceIDs.isEmpty)
-    }
-
-    @Test("resumeAllAfterWake skips VMs no longer paused")
-    func resumeAllAfterWakeSkipsNonPaused() async {
-        let (library, _, virtService, _) = makeLibrary()
-        let instance = makeInstance(name: "Was Paused")
-        instance.enter(.stopped)  // Status changed between sleep and wake
-        library.instances = [instance]
-        library.sleepPausedInstanceIDs = Set([instance.id])
-
-        await library.resumeAllAfterWake()
-
-        #expect(virtService.resumeCallCount == 0)
-        #expect(library.sleepPausedInstanceIDs.isEmpty)
     }
 
     // MARK: - hasPreparing

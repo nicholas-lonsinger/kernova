@@ -480,7 +480,6 @@ extension VMCommandCore {
         instance.tearDownSession(restingAt: .stopped)
         cleanupSetupResumeData(for: instance, permanently: permanently)
         lifecycle.clearActiveOperation(for: instance.id)
-        library.sleepPausedInstanceIDs.remove(instance.id)
         library.evict(instance)
         library.persistOrder()
         if permanently {

@@ -13,7 +13,7 @@ import os
 /// is the AppKit adapter that owns one of these and wires all three.
 @MainActor
 @Observable
-final class VMLibrary {
+final class VMLibrary: VMInstanceRoster {
     nonisolated private static let logger = Logger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
@@ -46,6 +46,10 @@ final class VMLibrary {
 
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
+
+    /// Fires when a VM leaves the library, so app-level state keyed on its id
+    /// is released with it — whichever path evicted it.
+    @ObservationIgnored var onEvicted: ((UUID) -> Void)?
 
     // MARK: - State
 
@@ -144,11 +148,6 @@ final class VMLibrary {
 
     private var directoryWatcher: VMDirectoryWatcher?
 
-    // MARK: - Sleep/Wake
-
-    private var sleepWatcher: SystemSleepWatcher?
-    var sleepPausedInstanceIDs: Set<UUID> = []
-
     var selectedInstance: VMInstance? {
         instances.first { $0.id == selectedID }
     }
@@ -171,8 +170,6 @@ final class VMLibrary {
         self.preferences = preferences
         self.vmnetNetworks = vmnetNetworks
         self.isVMNetworkingEntitled = isVMNetworkingEntitled
-
-        startSleepWatcher()
     }
 
     /// Fills the library from disk, then starts watching the VMs directory for
@@ -527,6 +524,7 @@ final class VMLibrary {
             releaseAddressReservationIfUnused(target)
         }
         rebuildNetworksIfIdle()
+        onEvicted?(instance.id)
     }
 
     // MARK: - Reorder
@@ -1140,85 +1138,6 @@ final class VMLibrary {
         )
     }
 
-    // MARK: - Sleep/Wake
-
-    /// Pauses all running VMs before system sleep, tracking which were auto-paused so
-    /// only those are resumed on wake.
-    func pauseAllForSleep() async {
-        let runningInstances = instances.filter { $0.status == .running }
-        guard !runningInstances.isEmpty else {
-            Self.logger.debug("pauseAllForSleep: no running VMs, nothing to pause")
-            return
-        }
-
-        Self.logger.notice("System going to sleep — pausing \(runningInstances.count, privacy: .public) running VM(s)")
-
-        var failedNames: [String] = []
-        for instance in runningInstances {
-            do {
-                try await lifecycle.pause(instance)
-                sleepPausedInstanceIDs.insert(instance.id)
-                Self.logger.debug(
-                    "Paused '\(instance.name, privacy: .public)' for sleep (status: \(instance.status.displayName, privacy: .public))"
-                )
-            } catch {
-                Self.logger.error(
-                    "Failed to pause '\(instance.name, privacy: .public)' for sleep: \(error.localizedDescription, privacy: .public)"
-                )
-                failedNames.append(instance.name)
-            }
-        }
-        if !failedNames.isEmpty {
-            presentError(SleepWakeError.pauseFailed(vmNames: failedNames))
-        }
-    }
-
-    /// Resumes only VMs that were auto-paused by `pauseAllForSleep()`.
-    func resumeAllAfterWake() async {
-        let idsToResume = sleepPausedInstanceIDs
-        sleepPausedInstanceIDs.removeAll()
-        guard !idsToResume.isEmpty else {
-            Self.logger.debug("resumeAllAfterWake: no sleep-paused VMs to resume")
-            return
-        }
-
-        let instancesToResume = instances.filter { idsToResume.contains($0.id) && $0.status == .paused }
-        guard !instancesToResume.isEmpty else { return }
-
-        Self.logger.notice("System woke up — resuming \(instancesToResume.count, privacy: .public) sleep-paused VM(s)")
-
-        var failedNames: [String] = []
-        for instance in instancesToResume {
-            do {
-                try await lifecycle.resume(instance)
-                Self.logger.debug(
-                    "Resumed '\(instance.name, privacy: .public)' after wake (status: \(instance.status.displayName, privacy: .public))"
-                )
-            } catch {
-                Self.logger.error(
-                    "Failed to resume '\(instance.name, privacy: .public)' after wake: \(error.localizedDescription, privacy: .public)"
-                )
-                failedNames.append(instance.name)
-            }
-        }
-        if !failedNames.isEmpty {
-            presentError(SleepWakeError.resumeFailed(vmNames: failedNames))
-        }
-    }
-
-    private func startSleepWatcher() {
-        let watcher = SystemSleepWatcher(
-            onSleep: { [weak self] in
-                await self?.pauseAllForSleep()
-            },
-            onWake: { [weak self] in
-                await self?.resumeAllAfterWake()
-            }
-        )
-        watcher.start()
-        sleepWatcher = watcher
-    }
-
     // MARK: - Directory Watcher
 
     private func startDirectoryWatcher() {
@@ -1363,25 +1282,6 @@ final class VMLibrary {
                 assert(!names.isEmpty, "bundleLoadFailed requires at least one bundle name")
                 return
                     "Failed to load the following VMs: \(names.joined(separator: ", ")). They may have corrupted configurations."
-            }
-        }
-    }
-
-    /// Error type for sleep/wake lifecycle failures.
-    private enum SleepWakeError: LocalizedError {
-        case pauseFailed(vmNames: [String])
-        case resumeFailed(vmNames: [String])
-
-        var errorDescription: String? {
-            switch self {
-            case .pauseFailed(let vmNames):
-                assert(!vmNames.isEmpty, "pauseFailed requires at least one VM name")
-                return
-                    "Failed to pause the following VMs before sleep: \(vmNames.joined(separator: ", ")). They may experience data corruption."
-            case .resumeFailed(let vmNames):
-                assert(!vmNames.isEmpty, "resumeFailed requires at least one VM name")
-                return
-                    "Failed to resume the following VMs after wake: \(vmNames.joined(separator: ", ")). You may need to restart them manually."
             }
         }
     }
