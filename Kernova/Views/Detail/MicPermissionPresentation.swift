@@ -29,32 +29,6 @@ func micPermissionPresentation(_ status: AVAuthorizationStatus, audioInputEnable
     }
 }
 
-/// Absolute path → security bookmark of every user-supplied attachment
-/// (external storage disks + removable media) for a configuration.
-///
-/// Internal disks are excluded — they live inside the VM bundle and can't be
-/// moved out from under the app. The bookmark is what lets the sandboxed monitor
-/// probe existence of out-of-container paths; should the same path appear on
-/// both lists, a non-nil bookmark wins.
-func externalAttachmentRefs(for configuration: VMConfiguration) -> [String: Data?] {
-    var refs: [String: Data?] = [:]
-    func add(_ path: String, _ bookmark: Data?) {
-        if (refs[path] ?? nil) != nil { return }
-        refs.updateValue(bookmark, forKey: path)
-    }
-    if let disks = configuration.storageDisks {
-        for disk in disks where !disk.isInternal {
-            add(disk.path, disk.bookmark)
-        }
-    }
-    if let media = configuration.removableMedia {
-        for item in media {
-            add(item.path, item.bookmark)
-        }
-    }
-    return refs
-}
-
 /// Whether the Guest Agent settings section applies to a guest OS.
 ///
 /// The guest agent ships only for macOS guests, so the section is hidden for

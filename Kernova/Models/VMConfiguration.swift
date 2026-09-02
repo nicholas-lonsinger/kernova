@@ -647,6 +647,101 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - External file references
+
+extension VMConfiguration {
+    /// Every user-picked path this configuration points at, projected into
+    /// ``ExternalFileReference``.
+    ///
+    /// The single walk of the external fields: consumers filter it by
+    /// ``ExternalFileReference/Kind`` instead of re-deriving their own subset.
+    /// Internal disks are absent — they live inside the bundle, are addressed
+    /// bundle-relative, and carry no bookmark.
+    var externalFileReferences: [ExternalFileReference] {
+        var references: [ExternalFileReference] = []
+        if let kernelPath {
+            references.append(
+                ExternalFileReference(
+                    id: singletonReferenceID(seed: "kernel"), kind: .kernel, label: "Kernel",
+                    path: kernelPath, bookmark: kernelBookmark))
+        }
+        if let initrdPath {
+            references.append(
+                ExternalFileReference(
+                    id: singletonReferenceID(seed: "initrd"), kind: .initrd,
+                    label: "Initial RAM Disk", path: initrdPath, bookmark: initrdBookmark))
+        }
+        for disk in storageDisks ?? [] where !disk.isInternal {
+            references.append(
+                ExternalFileReference(
+                    id: disk.id, kind: .storageDisk, label: disk.label, path: disk.path,
+                    bookmark: disk.bookmark))
+        }
+        for item in removableMedia ?? [] {
+            references.append(
+                ExternalFileReference(
+                    id: item.id, kind: .removableMedia, label: item.label, path: item.path,
+                    bookmark: item.bookmark))
+        }
+        for directory in sharedDirectories ?? [] {
+            references.append(
+                ExternalFileReference(
+                    id: directory.id, kind: .sharedDirectory, label: directory.displayName,
+                    path: directory.path, bookmark: directory.bookmark))
+        }
+        if let localIPSWPath = installContext?.localIPSWPath {
+            references.append(
+                ExternalFileReference(
+                    id: singletonReferenceID(seed: "local-ipsw"), kind: .localIPSW,
+                    label: "Installer Image", path: localIPSWPath,
+                    bookmark: installContext?.localIPSWBookmark))
+        }
+        return references
+    }
+
+    /// Writes a resolved path and freshly minted bookmark back to the field
+    /// `reference` was projected from.
+    ///
+    /// A list entry the id no longer matches — removed between the projection
+    /// and the write-back — is a no-op.
+    mutating func healExternalReference(
+        _ reference: ExternalFileReference, movedTo path: String, bookmark: Data
+    ) {
+        switch reference.kind {
+        case .kernel:
+            kernelPath = path
+            kernelBookmark = bookmark
+        case .initrd:
+            initrdPath = path
+            initrdBookmark = bookmark
+        case .storageDisk:
+            guard let index = storageDisks?.firstIndex(where: { $0.id == reference.id })
+            else { return }
+            storageDisks?[index].path = path
+            storageDisks?[index].bookmark = bookmark
+        case .removableMedia:
+            guard let index = removableMedia?.firstIndex(where: { $0.id == reference.id })
+            else { return }
+            removableMedia?[index].path = path
+            removableMedia?[index].bookmark = bookmark
+        case .sharedDirectory:
+            guard let index = sharedDirectories?.firstIndex(where: { $0.id == reference.id })
+            else { return }
+            sharedDirectories?[index].path = path
+            sharedDirectories?[index].bookmark = bookmark
+        case .localIPSW:
+            installContext?.localIPSWPath = path
+            installContext?.localIPSWBookmark = bookmark
+        }
+    }
+
+    /// Identity for a kind a configuration holds at most one of, seeded on this
+    /// configuration so successive projections agree on it.
+    private func singletonReferenceID(seed: String) -> UUID {
+        StableID.uuid(seed: "\(id.uuidString)\u{0}\(seed)")
+    }
+}
+
 // MARK: - Effective guest version
 
 extension VMConfiguration {

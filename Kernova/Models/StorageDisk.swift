@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Bus class for a `StorageDisk` entry.
@@ -104,7 +103,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// row the user just clicked — silently no-op'ing the entry removal while
     /// still trashing the underlying file.
     static func mainDisk(layout: VMBundleLayout) -> StorageDisk {
-        let stableMainDiskID = stableID(seed: layout.bundleURL.path)
+        let stableMainDiskID = StableID.uuid(seed: layout.bundleURL.path)
         return StorageDisk(
             id: stableMainDiskID,
             path: layout.diskImageURL.lastPathComponent,
@@ -113,19 +112,6 @@ struct StorageDisk: Codable, Sendable, Equatable {
             isInternal: true,
             kind: .virtio
         )
-    }
-
-    /// A UUID fixed by `seed`.
-    static func stableID(seed: String) -> UUID {
-        let digest = SHA256.hash(data: Data(seed.utf8))
-        let bytes = Array(digest.prefix(16))
-        return UUID(
-            uuid: (
-                bytes[0], bytes[1], bytes[2], bytes[3],
-                bytes[4], bytes[5], bytes[6], bytes[7],
-                bytes[8], bytes[9], bytes[10], bytes[11],
-                bytes[12], bytes[13], bytes[14], bytes[15]
-            ))
     }
 
     /// Display string used in the UI subtitle.
@@ -192,27 +178,24 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     }
 }
 
-/// A storage disk or removable media item that lives *outside* the VM
-/// bundle and is therefore not trashed automatically when the bundle is
-/// trashed.
+/// An external file a VM references that lives *outside* the VM bundle and is
+/// therefore not trashed automatically when the bundle is trashed.
 ///
 /// Surfaces in the delete confirmation sheet so the user can opt to send these
 /// files to Trash alongside the VM. `sharedWithVMNames` is non-empty when other
 /// VMs reference the same path, so the UI can warn before trashing a shared
 /// file.
 struct ExternalAttachment: Sendable, Equatable {
-    enum Kind: Sendable, Equatable {
-        case storageDisk
-        case removableMedia
-    }
-
-    let id: UUID
-    let kind: Kind
-    let label: String
-    let path: String
+    /// The projected reference this attachment annotates.
+    let reference: ExternalFileReference
     let sharedWithVMNames: [String]
     /// `true` when `path` no longer resolves to a file on disk.
     let isMissing: Bool
+
+    var id: UUID { reference.id }
+    var kind: ExternalFileReference.Kind { reference.kind }
+    var label: String { reference.label }
+    var path: String { reference.path }
 
     var isShared: Bool { !sharedWithVMNames.isEmpty }
 }

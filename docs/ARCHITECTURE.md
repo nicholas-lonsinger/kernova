@@ -474,10 +474,12 @@ so every disk shape ships as a bundled template.
 
 ### App Sandbox with per-path security bookmarks
 
-Every user-picked external path — external `StorageDisk`s, `RemovableMediaItem`s,
-`SharedDirectory`s, Linux `kernelPath`/`initrdPath`, a local IPSW — carries an optional
-`bookmark: Data?` beside its raw path in `config.json`. `VMInstance.openRuntimeFileAccess()`
-resolves them per boot attempt, healing stale bookmarks and moved paths back into the config.
+Every user-picked external path carries an optional `bookmark: Data?` beside its raw path in
+`config.json`. `VMConfiguration.externalFileReferences` projects them into
+`ExternalFileReference`s — the one walk of those fields, which every consumer filters by
+`ExternalFileReference.Kind` — and `healExternalReference` writes a resolved path and re-minted
+bookmark back. `VMInstance.openRuntimeFileAccess()` walks the projection per boot attempt,
+healing stale bookmarks and moved paths back into the config.
 
 **Scopes stay open for the whole VM runtime, not just across the config-build call.** VZ opens its
 fds at config-build time with no published retention guarantee, and an unbalanced release leaks

@@ -525,14 +525,12 @@ struct DeleteVMSheetContentViewControllerTests {
 
     @Test("a file shared with many VMs renders its wrapped warning without clipping")
     func sharedWarningWrapsWithoutClipping() throws {
-        let external = ExternalAttachment(
-            id: UUID(), kind: .storageDisk, label: "Installer",
-            path: "/Volumes/External/installer.iso",
-            sharedWithVMNames: [
+        let external = makeAttachment(
+            id: UUID(), label: "Installer", path: "/Volumes/External/installer.iso",
+            shared: [
                 "Windows 11 Pro", "Development Box", "CI Runner Node",
                 "Sonoma Test", "Ventura Test", "Sequoia Test",
-            ],
-            isMissing: false)
+            ])
         let vc = make(
             vmName: "VM",
             bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")],
@@ -580,10 +578,8 @@ struct DeleteVMSheetContentViewControllerTests {
         id: UUID, label: String, path: String, shared: [String] = [], missing: Bool = false
     ) -> ExternalAttachment {
         ExternalAttachment(
-            id: id,
-            kind: .storageDisk,
-            label: label,
-            path: path,
+            reference: ExternalFileReference(
+                id: id, kind: .storageDisk, label: label, path: path, bookmark: nil),
             sharedWithVMNames: shared,
             isMissing: missing
         )
