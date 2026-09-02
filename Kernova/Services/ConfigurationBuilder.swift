@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Virtualization
 import os
@@ -308,20 +307,14 @@ struct ConfigurationBuilder: Sendable {
 
     /// Builds the ordered `storageDevices` array from `config.storageDisks`.
     ///
-    /// Position [0] boots first on EFI guests. When the list is `nil` or empty,
-    /// a single main-disk entry at the bundle's `Disk.asif` is synthesized.
+    /// Position [0] boots first on EFI guests.
     private func configureStorageDisks(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,
         bundleURL: URL
     ) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        let disks: [StorageDisk]
-        if let configured = config.storageDisks, !configured.isEmpty {
-            disks = configured
-        } else {
-            disks = [Self.defaultMainDisk(layout: layout)]
-        }
+        let disks = config.effectiveStorageDisks(layout: layout)
 
         var built: [VZStorageDeviceConfiguration] = []
         for disk in disks {
@@ -505,19 +498,6 @@ struct ConfigurationBuilder: Sendable {
         return infos
     }
 
-    /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
-    /// list is empty or absent.
-    static func defaultMainDisk(layout: VMBundleLayout) -> StorageDisk {
-        StorageDisk(
-            id: stableMainDiskID(forBundleAt: layout.bundleURL),
-            path: layout.diskImageURL.lastPathComponent,
-            readOnly: false,
-            label: "Main Disk",
-            isInternal: true,
-            kind: .virtio
-        )
-    }
-
     /// Synthesizes the guest-agent installer's disk entry.
     ///
     /// The entry is built per boot and never written to `config.storageDisks`:
@@ -537,35 +517,13 @@ struct ConfigurationBuilder: Sendable {
         )
     }
 
-    /// Deterministic UUID for the synthesized main disk, derived from the bundle path.
-    ///
-    /// Without stable identity, `removeStorageDisk`'s lookup-by-id would miss the
-    /// row the user just clicked — silently no-op'ing the entry removal while
-    /// still trashing the underlying file.
-    private static func stableMainDiskID(forBundleAt bundleURL: URL) -> UUID {
-        stableDiskID(seed: bundleURL.path)
-    }
-
     /// Deterministic UUID for the guest-agent disk, salted so it can never
     /// collide with the main disk's on the same bundle.
     ///
     /// It reaches the guest as `blockDeviceIdentifier`, so a fresh UUID per
     /// launch would vary the disk's guest-side name from one boot to the next.
     private static func stableGuestAgentDiskID(forBundleAt bundleURL: URL) -> UUID {
-        stableDiskID(seed: bundleURL.path + "\u{0}guest-agent")
-    }
-
-    /// A UUID fixed by `seed`.
-    private static func stableDiskID(seed: String) -> UUID {
-        let digest = SHA256.hash(data: Data(seed.utf8))
-        let bytes = Array(digest.prefix(16))
-        return UUID(
-            uuid: (
-                bytes[0], bytes[1], bytes[2], bytes[3],
-                bytes[4], bytes[5], bytes[6], bytes[7],
-                bytes[8], bytes[9], bytes[10], bytes[11],
-                bytes[12], bytes[13], bytes[14], bytes[15]
-            ))
+        StorageDisk.stableID(seed: bundleURL.path + "\u{0}guest-agent")
     }
 
     private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration)

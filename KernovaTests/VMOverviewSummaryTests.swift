@@ -88,7 +88,7 @@ struct VMOverviewSummaryTests {
     func storageStatesBootDiskAndTheRest() {
         let instance = makeInstance()
         // No explicit list: the synthesized main disk is what the pane shows.
-        let boot = instance.displayedStorageDisks[0].label
+        let boot = instance.effectiveStorageDisks[0].label
         #expect(rows(.storage, instance).map(\.label) == ["Boot disk", "Other"])
         // The capacity read hasn't landed, so the row states the label alone.
         #expect(value("Boot disk", .storage, instance) == boot)

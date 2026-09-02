@@ -155,7 +155,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// a runloop turn, which can land after `reconfigure` rebinds `self.instance`
     /// to a different VM — resolves against the VM it actually started with.
     private func attachmentStorageDisks(for instance: VMInstance) -> [StorageDisk] {
-        instance.displayedStorageDisks
+        instance.effectiveStorageDisks
     }
 
     private var currentRemovableMedia: [RemovableMediaItem] {
@@ -163,7 +163,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func writeStorageDisks(_ disks: [StorageDisk]) {
-        viewModel.updateConfiguration(of: instance) { $0.storageDisks = disks.isEmpty ? nil : disks }
+        viewModel.updateConfiguration(of: instance) { $0.setStorageDisks(disks) }
     }
 
     private func writeRemovableMedia(_ items: [RemovableMediaItem]) {

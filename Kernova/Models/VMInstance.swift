@@ -344,6 +344,11 @@ final class VMInstance {
 
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
 
+    /// ``VMConfiguration/effectiveStorageDisks(layout:)`` for this instance's bundle.
+    var effectiveStorageDisks: [StorageDisk] {
+        configuration.effectiveStorageDisks(layout: bundleLayout)
+    }
+
     var diskImageURL: URL { bundleLayout.diskImageURL }
     var auxiliaryStorageURL: URL { bundleLayout.auxiliaryStorageURL }
     var hardwareModelURL: URL { bundleLayout.hardwareModelURL }

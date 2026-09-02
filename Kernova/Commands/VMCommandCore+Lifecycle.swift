@@ -607,8 +607,7 @@ extension VMCommandCore {
     /// The storage disk `id` refers to, resolving the synthesized main disk
     /// when the VM has no explicit list.
     func storageDisk(id: UUID, on instance: VMInstance) -> StorageDisk? {
-        (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
-            .first { $0.id == id }
+        instance.effectiveStorageDisks.first { $0.id == id }
     }
 
     /// `true` when `disk` is the VM's primary (boot) `Disk.asif`.
@@ -618,11 +617,5 @@ extension VMCommandCore {
     func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
         ConfigurationBuilder.isMainBundleDisk(
             disk, layout: VMBundleLayout(bundleURL: instance.bundleURL))
-    }
-
-    /// The storage disks list to render when `storageDisks` is `nil` / empty.
-    static func defaultStorageDisks(for instance: VMInstance) -> [StorageDisk] {
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        return [ConfigurationBuilder.defaultMainDisk(layout: layout)]
     }
 }

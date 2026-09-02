@@ -320,7 +320,7 @@ final class VMOverviewResolver {
     /// read, so a re-bind to another VM — or another disk — ignores a result
     /// issued for the previous one.
     private func refreshBootDisk() {
-        let key = instance.displayedStorageDisks.first.map {
+        let key = instance.effectiveStorageDisks.first.map {
             BootDiskKey(instanceID: instance.id, path: $0.path, isInternal: $0.isInternal)
         }
         guard key != bootDiskKey else { return }

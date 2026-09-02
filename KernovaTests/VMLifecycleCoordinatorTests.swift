@@ -1140,6 +1140,22 @@ struct VMLifecycleCoordinatorTests {
         #expect(disks[1] == existing)
     }
 
+    @Test("downloadLinuxImage over an empty configured disk list synthesizes the main disk")
+    func downloadLinuxImageSynthesizesMainDiskForEmptyList() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+        instance.configuration.storageDisks = []
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        let disks = try #require(instance.configuration.storageDisks)
+        #expect(disks.count == 2)
+        #expect(disks[1].label == "Main Disk")
+        #expect(disks[1].isInternal)
+    }
+
     @Test("downloadLinuxImage persists the destination before the download runs")
     func downloadLinuxImagePersistsDestination() async throws {
         // Read on the failure path: a successful run clears the context.

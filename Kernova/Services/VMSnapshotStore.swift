@@ -40,7 +40,7 @@ struct VMSnapshotStore: VMSnapshotStoring {
     static func capturedRelativePaths(
         for configuration: VMConfiguration, layout: VMBundleLayout
     ) -> [String] {
-        let disks = configuration.storageDisks ?? [ConfigurationBuilder.defaultMainDisk(layout: layout)]
+        let disks = configuration.effectiveStorageDisks(layout: layout)
         var paths = disks.filter(\.isInternal).map(\.path)
         for firmware in ["AuxiliaryStorage", "EFIVariableStore"] {
             let url = layout.bundleURL.appendingPathComponent(firmware)

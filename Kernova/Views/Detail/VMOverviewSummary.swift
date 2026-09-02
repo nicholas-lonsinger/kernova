@@ -116,7 +116,7 @@ enum VMOverviewSummary {
                 Row(label: "Audio", value: audioValue(config)),
             ]
         case .storage:
-            let disks = instance.displayedStorageDisks
+            let disks = instance.effectiveStorageDisks
             guard let boot = disks.first else { return [Row(label: "Disks", value: "None")] }
             let capacity = resolved.bootDiskBytes.map {
                 " \u{00B7} \(DataFormatters.formatBytes($0))"
