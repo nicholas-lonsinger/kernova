@@ -134,6 +134,55 @@ struct VMCommandEnvelopeRouter {
         case .cancelPreparing(let selector, let confirmed):
             try commands.cancelPreparing(selector, confirmed: confirmed)
             return .ok
+
+        case .editStorageDisk(let selector, let edit):
+            try await apply(edit, to: selector)
+            return .ok
+        case .editRemovableMedia(let selector, let edit):
+            try await apply(edit, to: selector)
+            return .ok
+        case .guestAgentDisk(let selector, let edit):
+            switch edit {
+            case .mount: _ = try commands.mountGuestAgentDisk(selector)
+            case .unmount: try commands.unmountGuestAgentDisk(selector)
+            }
+            return .ok
+        }
+    }
+
+    /// One storage-disk edit, dispatched on the payload the verb carries.
+    private func apply(_ edit: StorageDiskEdit, to selector: VMSelector) async throws {
+        switch edit {
+        case .create(let sizeInGB):
+            try await commands.createStorageDisk(selector, sizeInGB: sizeInGB)
+        case .remove(let disk, let trashFile, let confirmed):
+            try await commands.removeStorageDisk(
+                selector, disk: disk, trashFile: trashFile, confirmed: confirmed)
+        case .rename(let disk, let newLabel):
+            try commands.renameStorageDisk(selector, disk: disk, to: newLabel)
+        case .setNotes(let disk, let notes):
+            try commands.setStorageDiskNotes(selector, disk: disk, notes: notes)
+        case .setReadOnly(let disk, let readOnly):
+            try commands.setStorageDiskReadOnly(selector, disk: disk, readOnly: readOnly)
+        case .reorder(let order):
+            try commands.reorderStorageDisks(selector, order: order)
+        }
+    }
+
+    /// One removable-media edit, dispatched on the payload the verb carries.
+    private func apply(_ edit: RemovableMediaEdit, to selector: VMSelector) async throws {
+        switch edit {
+        case .remove(let item, let trashFile, let confirmed):
+            try await commands.removeRemovableMedia(
+                selector, item: item, trashFile: trashFile, confirmed: confirmed)
+        case .eject(let item):
+            try commands.ejectRemovableMedia(selector, item: item)
+        case .rename(let item, let newLabel):
+            try commands.renameRemovableMedia(selector, item: item, to: newLabel)
+        case .setNotes(let item, let notes):
+            try commands.setRemovableMediaNotes(selector, item: item, notes: notes)
+        case .setReadOnly(let item, let readOnly):
+            try commands.setRemovableMediaReadOnly(selector, item: item, readOnly: readOnly)
         }
     }
 

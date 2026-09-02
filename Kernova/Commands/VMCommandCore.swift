@@ -102,6 +102,13 @@ final class VMCommandCore: VMCommanding {
         library.onPoweredOff = { [weak self] instance in
             self?.revertToEphemeralBaselineIfNeeded(instance)
         }
+        // The installer disk comes out the moment the agent it carries
+        // handshakes as current, whichever surface asked for the mount — so the
+        // handler belongs with the guest-agent-disk verb rather than with any
+        // of them.
+        library.onAgentBecameCurrent = { [weak self] instance in
+            self?.detachGuestAgentDisk(from: instance)
+        }
         broadcaster.onSubscriberCountChanged = { [weak self] count in
             self?.reconcileEventLoop(subscriberCount: count)
         }

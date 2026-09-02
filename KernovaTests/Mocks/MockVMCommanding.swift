@@ -56,6 +56,25 @@ final class MockVMCommanding: VMCommanding {
     private(set) var deleteCalls:
         [(selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool)] = []
     private(set) var cancelPreparingCalls: [(selector: VMSelector, confirmed: Bool)] = []
+    private(set) var attachStorageDiskCalls: [(selector: VMSelector, files: [PickedFile])] = []
+    private(set) var createStorageDiskCalls: [(selector: VMSelector, sizeInGB: Int)] = []
+    private(set) var removeStorageDiskCalls: [(selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool)] = []
+    private(set) var renameStorageDiskCalls: [(selector: VMSelector, disk: UUID, newLabel: String)] =
+        []
+    private(set) var setStorageDiskNotesCalls: [(selector: VMSelector, disk: UUID, notes: String)] =
+        []
+    private(set) var setStorageDiskReadOnlyCalls: [(selector: VMSelector, disk: UUID, readOnly: Bool)] = []
+    private(set) var reorderStorageDisksCalls: [(selector: VMSelector, order: [UUID])] = []
+    private(set) var attachRemovableMediaCalls: [(selector: VMSelector, files: [PickedFile])] = []
+    private(set) var createRemovableMediaCalls: [(selector: VMSelector, sizeInGB: Int, destinationURL: URL)] = []
+    private(set) var removeRemovableMediaCalls: [(selector: VMSelector, item: UUID, trashFile: Bool, confirmed: Bool)] =
+        []
+    private(set) var ejectRemovableMediaCalls: [(selector: VMSelector, item: UUID)] = []
+    private(set) var renameRemovableMediaCalls: [(selector: VMSelector, item: UUID, newLabel: String)] = []
+    private(set) var setRemovableMediaNotesCalls: [(selector: VMSelector, item: UUID, notes: String)] = []
+    private(set) var setRemovableMediaReadOnlyCalls: [(selector: VMSelector, item: UUID, readOnly: Bool)] = []
+    private(set) var mountGuestAgentDiskSelectors: [VMSelector] = []
+    private(set) var unmountGuestAgentDiskSelectors: [VMSelector] = []
 
     // MARK: - Error injection
 
@@ -80,6 +99,9 @@ final class MockVMCommanding: VMCommanding {
     var renameError: (any Error)?
     var deleteError: (any Error)?
     var cancelPreparingError: (any Error)?
+    var storageDiskEditError: (any Error)?
+    var removableMediaEditError: (any Error)?
+    var guestAgentDiskError: (any Error)?
 
     /// Refuses `stop` until it is called with `confirmed: true`, then succeeds —
     /// the consent round trip every destructive verb performs.
@@ -94,6 +116,11 @@ final class MockVMCommanding: VMCommanding {
     var cancelPreparingConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `cancelGuestSetup`.
     var cancelGuestSetupConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for a trashing attachment removal.
+    var removeAttachmentConsentPrompt: ConfirmationPrompt?
+
+    /// What `mountGuestAgentDisk` answers with.
+    var guestAgentDiskMountOutcome: GuestAgentDiskMountOutcome = .attached(.usb)
 
     // MARK: - Events
 
@@ -288,6 +315,101 @@ final class MockVMCommanding: VMCommanding {
         if let cancelPreparingConsentPrompt, !confirmed {
             throw CommandError.confirmationRequired(cancelPreparingConsentPrompt)
         }
+    }
+
+    // MARK: - Attachments
+
+    func attachStorageDisks(_ selector: VMSelector, paths files: [PickedFile]) throws {
+        attachStorageDiskCalls.append((selector, files))
+        if let storageDiskEditError { throw storageDiskEditError }
+    }
+
+    func createStorageDisk(_ selector: VMSelector, sizeInGB: Int) async throws {
+        createStorageDiskCalls.append((selector, sizeInGB))
+        if let storageDiskEditError { throw storageDiskEditError }
+    }
+
+    func removeStorageDisk(
+        _ selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool
+    ) async throws {
+        removeStorageDiskCalls.append((selector, disk, trashFile, confirmed))
+        if let storageDiskEditError { throw storageDiskEditError }
+        if let removeAttachmentConsentPrompt, trashFile, !confirmed {
+            throw CommandError.confirmationRequired(removeAttachmentConsentPrompt)
+        }
+    }
+
+    func renameStorageDisk(_ selector: VMSelector, disk: UUID, to newLabel: String) throws {
+        renameStorageDiskCalls.append((selector, disk, newLabel))
+        if let storageDiskEditError { throw storageDiskEditError }
+    }
+
+    func setStorageDiskNotes(_ selector: VMSelector, disk: UUID, notes: String) throws {
+        setStorageDiskNotesCalls.append((selector, disk, notes))
+        if let storageDiskEditError { throw storageDiskEditError }
+    }
+
+    func setStorageDiskReadOnly(_ selector: VMSelector, disk: UUID, readOnly: Bool) throws {
+        setStorageDiskReadOnlyCalls.append((selector, disk, readOnly))
+        if let storageDiskEditError { throw storageDiskEditError }
+    }
+
+    func reorderStorageDisks(_ selector: VMSelector, order: [UUID]) throws {
+        reorderStorageDisksCalls.append((selector, order))
+        if let storageDiskEditError { throw storageDiskEditError }
+    }
+
+    func attachRemovableMedia(_ selector: VMSelector, paths files: [PickedFile]) throws {
+        attachRemovableMediaCalls.append((selector, files))
+        if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func createRemovableMedia(
+        _ selector: VMSelector, sizeInGB: Int, destinationURL: URL
+    ) async throws {
+        createRemovableMediaCalls.append((selector, sizeInGB, destinationURL))
+        if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func removeRemovableMedia(
+        _ selector: VMSelector, item: UUID, trashFile: Bool, confirmed: Bool
+    ) async throws {
+        removeRemovableMediaCalls.append((selector, item, trashFile, confirmed))
+        if let removableMediaEditError { throw removableMediaEditError }
+        if let removeAttachmentConsentPrompt, trashFile, !confirmed {
+            throw CommandError.confirmationRequired(removeAttachmentConsentPrompt)
+        }
+    }
+
+    func ejectRemovableMedia(_ selector: VMSelector, item: UUID) throws {
+        ejectRemovableMediaCalls.append((selector, item))
+        if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func renameRemovableMedia(_ selector: VMSelector, item: UUID, to newLabel: String) throws {
+        renameRemovableMediaCalls.append((selector, item, newLabel))
+        if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func setRemovableMediaNotes(_ selector: VMSelector, item: UUID, notes: String) throws {
+        setRemovableMediaNotesCalls.append((selector, item, notes))
+        if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func setRemovableMediaReadOnly(_ selector: VMSelector, item: UUID, readOnly: Bool) throws {
+        setRemovableMediaReadOnlyCalls.append((selector, item, readOnly))
+        if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome {
+        mountGuestAgentDiskSelectors.append(selector)
+        if let guestAgentDiskError { throw guestAgentDiskError }
+        return guestAgentDiskMountOutcome
+    }
+
+    func unmountGuestAgentDisk(_ selector: VMSelector) throws {
+        unmountGuestAgentDiskSelectors.append(selector)
+        if let guestAgentDiskError { throw guestAgentDiskError }
     }
 
     // MARK: - Observation

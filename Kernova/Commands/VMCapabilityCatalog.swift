@@ -31,6 +31,8 @@ enum VMCapability: CaseIterable, Hashable {
     case deleteSnapshot
     case renameSnapshot
     case setSnapshotNotes
+    case editStorageDisks
+    case editRemovableMedia
     case clone
     case rename
     case delete
@@ -66,12 +68,15 @@ enum VMCapability: CaseIterable, Hashable {
         case .deleteSnapshot: .deleteSnapshot
         case .renameSnapshot: .renameSnapshot
         case .setSnapshotNotes: .setSnapshotNotes
+        case .editStorageDisks: .editStorageDisk
+        case .editRemovableMedia: .editRemovableMedia
         case .clone: .clone
         case .rename: .rename
         case .delete: .delete
         case .cancelPreparing: .cancelPreparing
+        case .toggleGuestAgentDisk: .guestAgentDisk
         case .startInRecovery, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
-            .toggleGuestAgentDisk, .toggleSettingsPane:
+            .toggleSettingsPane:
             nil
         }
     }
@@ -88,9 +93,9 @@ enum VMCapability: CaseIterable, Hashable {
             true
         case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
             .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
-            .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete,
-            .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
-            .toggleSettingsPane:
+            .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .editStorageDisks,
+            .editRemovableMedia, .clone, .rename, .delete, .togglePopOut, .toggleFullscreen,
+            .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
             false
         }
     }
@@ -111,9 +116,9 @@ enum VMCapability: CaseIterable, Hashable {
             true
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
-            .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete, .cancelPreparing,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
-            .toggleSettingsPane:
+            .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia, .clone,
+            .rename, .delete, .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen,
+            .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
             false
         }
     }
@@ -168,6 +173,12 @@ struct VMCapabilityCatalog {
             instance.canTakeSnapshot
         case .revertToSnapshot:
             instance.canRevertToSnapshot
+        case .editStorageDisks:
+            instance.canEditSettings
+        case .editRemovableMedia:
+            // Removable media is hot-pluggable, so a live guest takes an edit
+            // the pinned device set of a stopped VM's saved state cannot.
+            instance.canEditSettings || instance.hasLiveSession
         case .clone:
             instance.canEditSettings
         case .rename:
@@ -217,8 +228,9 @@ struct VMCapabilityCatalog {
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .clone, .delete, .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen,
-            .showClipboard, .toggleGuestAgentDisk, .toggleSettingsPane:
+            .editStorageDisks, .editRemovableMedia, .clone, .delete, .cancelPreparing,
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
+            .toggleSettingsPane:
             return isAvailable(capability, on: instance)
         }
     }

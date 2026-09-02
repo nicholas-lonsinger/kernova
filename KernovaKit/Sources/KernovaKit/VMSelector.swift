@@ -51,6 +51,9 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case delete
     case importVM
     case cancelPreparing
+    case editStorageDisk
+    case editRemovableMedia
+    case guestAgentDisk
 
     /// What a person calls this verb.
     ///
@@ -81,6 +84,9 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .delete: "Delete"
         case .importVM: "Import"
         case .cancelPreparing: "Cancel"
+        case .editStorageDisk: "Edit Storage Disks"
+        case .editRemovableMedia: "Edit Removable Media"
+        case .guestAgentDisk: "Guest Agent Disk"
         }
     }
 
@@ -93,7 +99,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .list, .info, .ipAddress, .snapshots: true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .create, .clone, .rename, .delete, .importVM, .cancelPreparing:
+            .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,
+            .editRemovableMedia, .guestAgentDisk:
             false
         }
     }

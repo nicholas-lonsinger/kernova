@@ -14,7 +14,12 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     let context: VMSettingsPanelContext
     let category = VMSettingsCategory.storage
+    /// The Storage Disks section's locked rows — what only a VM whose hardware
+    /// is not pinned can change.
     private var lockRegistry = VMSettingsLockRegistry()
+    /// The Removable Media section's own, driven by the hot-plug capability
+    /// rather than the storage one.
+    private var removableLockRegistry = VMSettingsLockRegistry()
 
     private let panelStack = NSStackView()
 
@@ -42,6 +47,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         loadViewIfNeeded()
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
+        removableLockRegistry.removeAll()
         activeStorageEdit = nil
         activeRemovableEdit = nil
         storageRowsByID.removeAll()
@@ -73,7 +79,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     func refresh() {
-        lockRegistry.apply(isReadOnly: isReadOnly)
+        lockRegistry.apply(isReadOnly: !canEditStorageDisks)
+        removableLockRegistry.apply(isReadOnly: !canEditRemovableMedia)
         refreshStorageList()
         refreshRemovableList()
         startInstanceSideEffects()
@@ -86,6 +93,32 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         activeStorageEdit = nil
         activeRemovableEdit = nil
+    }
+
+    /// Whether this VM's disk list takes an edit right now.
+    ///
+    /// The model gate, not the route's `isReadOnly`: a second surface asking
+    /// the same question has to get the same answer, and the verb behind every
+    /// control here refuses on exactly this.
+    private var canEditStorageDisks: Bool {
+        viewModel.capabilities.isAvailable(.editStorageDisks, on: instance)
+    }
+
+    /// What the Removable Media header says while its rows are locked.
+    ///
+    /// Its own wording rather than the shared "Editable when stopped": a
+    /// running guest takes a hot-plug, so the shared claim is one the user can
+    /// disprove in a second. What is left out is a VM mid-save, mid-capture,
+    /// mid-restore, or paused to disk — each pins the device set its saved
+    /// state or its capture will be read back into.
+    static let removableMediaLockHintText = "Editable when stopped or running"
+
+    /// Whether this VM's removable-media list takes an edit right now.
+    ///
+    /// Wider than ``canEditStorageDisks``: the media are hot-pluggable, so a
+    /// live guest takes an edit that a suspended VM's pinned device set cannot.
+    private var canEditRemovableMedia: Bool {
+        viewModel.capabilities.isAvailable(.editRemovableMedia, on: instance)
     }
 
     private let fileMonitor = AttachmentFileMonitor()
@@ -105,7 +138,10 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             "Creates an ASIF sparse disk image inside the VM bundle. Physical size grows as data is written.",
         onConfirm: { [weak self] sizeInGB in
             guard let self else { return }
-            self.viewModel.createStorageDisk(for: self.instance, sizeInGB: sizeInGB)
+            let instance = self.instance
+            Task { [weak self] in
+                await self?.viewModel.createStorageDisk(for: instance, sizeInGB: sizeInGB)
+            }
         }
     )
     private lazy var removableMediaCoordinator = DiskSizePopoverCoordinator(
@@ -145,29 +181,11 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     // MARK: - Read accessors (materialize defaults)
 
     private var currentStorageDisks: [StorageDisk] {
-        attachmentStorageDisks(for: instance)
-    }
-
-    /// The storage disks list to render for `instance`.
-    ///
-    /// Takes the instance explicitly (rather than reading `self.instance`) so a
-    /// caller holding a pinned instance — a rename/notes commit deferred across
-    /// a runloop turn, which can land after `reconfigure` rebinds `self.instance`
-    /// to a different VM — resolves against the VM it actually started with.
-    private func attachmentStorageDisks(for instance: VMInstance) -> [StorageDisk] {
         instance.effectiveStorageDisks
     }
 
     private var currentRemovableMedia: [RemovableMediaItem] {
         instance.configuration.removableMedia ?? []
-    }
-
-    private func writeStorageDisks(_ disks: [StorageDisk]) {
-        viewModel.updateConfiguration(of: instance) { $0.setStorageDisks(disks) }
-    }
-
-    private func writeRemovableMedia(_ items: [RemovableMediaItem]) {
-        viewModel.updateConfiguration(of: instance) { $0.removableMedia = items.isEmpty ? nil : items }
     }
 
     /// Seeds the file monitor with the current instance's attachment paths.
@@ -245,8 +263,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let create = makeGroupedFormPushButton(
             "Create New Disk…", target: self, action: #selector(createRemovableTapped))
         createRemovableButton = create
-        // Not lockable — removable media is hot-pluggable.
-        let buttonRow = makeGroupedFormButtonRow([attach, create])
+        let buttonRow = removableLockRegistry.lockable(
+            makeGroupedFormButtonRow([attach, create]), attach, create)
         let card = makeGroupedFormCard(rows: [removableListStack, buttonRow])
 
         let firstParagraph: InfoPopoverParagraph =
@@ -256,8 +274,10 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             )
             : .body("Appears as a removable USB drive in Finder; auto-mounts.")
         return makeGroupedFormSection([
-            lockRegistry.makeHeader(
+            removableLockRegistry.makeHeader(
                 "Removable Media",
+                lockable: true,
+                lockHintText: Self.removableMediaLockHintText,
                 paragraphs: [
                     firstParagraph,
                     .body(
@@ -285,7 +305,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? disk.path : nil,
                 readOnly: disk.readOnly,
-                controlsEnabled: !isReadOnly)
+                controlsEnabled: canEditStorageDisks)
         }
         refreshAttachmentList(
             models: models, listStack: storageListStack, kind: .storage,
@@ -311,13 +331,11 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 iconSystemName: "opticaldisc",
                 title: item.label,
                 notes: item.notes,
-                // Removable media is always external and hot-pluggable, so
-                // controls stay enabled even while the VM runs.
                 subtitle: item.path,
                 isMissing: isMissing,
                 missingPath: isMissing ? item.path : nil,
                 readOnly: item.readOnly,
-                controlsEnabled: true)
+                controlsEnabled: canEditRemovableMedia)
         }
         refreshAttachmentList(
             models: models, listStack: removableListStack, kind: .removable,
@@ -488,15 +506,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             guard let self else { return }
             switch ref.kind {
             case .storage:
-                if let disk = self.attachmentStorageDisks(for: instance).first(where: { $0.id == ref.id }) {
-                    self.viewModel.renameStorageDisk(disk, newLabel: newLabel, on: instance)
-                }
+                self.viewModel.renameStorageDisk(ref.id, newLabel: newLabel, on: instance)
             case .removable:
-                if let item = (instance.configuration.removableMedia ?? [])
-                    .first(where: { $0.id == ref.id })
-                {
-                    self.viewModel.renameRemovableMedia(item, newLabel: newLabel, on: instance)
-                }
+                self.viewModel.renameRemovableMedia(ref.id, newLabel: newLabel, on: instance)
             }
             // A no-op rename (empty / unchanged) fires no observation, so force a
             // refresh to pick up any size update suppressed during the edit.
@@ -513,15 +525,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             guard let self else { return }
             switch ref.kind {
             case .storage:
-                if let disk = self.attachmentStorageDisks(for: instance).first(where: { $0.id == ref.id }) {
-                    self.viewModel.setStorageDiskNotes(disk, notes: notes, on: instance)
-                }
+                self.viewModel.setStorageDiskNotes(ref.id, notes: notes, on: instance)
             case .removable:
-                if let item = (instance.configuration.removableMedia ?? [])
-                    .first(where: { $0.id == ref.id })
-                {
-                    self.viewModel.setRemovableMediaNotes(item, notes: notes, on: instance)
-                }
+                self.viewModel.setRemovableMediaNotes(ref.id, notes: notes, on: instance)
             }
             self.refresh(ref.kind)
         }
@@ -551,14 +557,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let urls = NSOpenPanel.browseDiskImages(
             message: "Select disk images to attach to the VM", allowsMultipleSelection: true)
         guard !urls.isEmpty else { return }
-        var current = currentStorageDisks
-        let existing = Set(current.map(\.path))
-        for url in urls {
-            let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            guard !existing.contains(path) else { continue }
-            current.append(StorageDisk(path: path, bookmark: bookmark))
-        }
-        writeStorageDisks(current)
+        viewModel.attachStorageDisks(urls.map(Self.pick), to: instance)
     }
 
     @objc private func createStorageTapped() {
@@ -579,10 +578,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func setStorageReadOnly(_ readOnly: Bool, forDiskID id: UUID) {
-        var disks = currentStorageDisks
-        guard let index = disks.firstIndex(where: { $0.id == id }) else { return }
-        disks[index].readOnly = readOnly
-        writeStorageDisks(disks)
+        viewModel.setStorageDiskReadOnly(id, readOnly: readOnly, on: instance)
     }
 
     private func presentStorageDeleteConfirmation(forDiskID id: UUID) {
@@ -592,18 +588,28 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         // Internal (bundle-relative) disks are per-VM, so they're never shared;
         // only resolve sharing for external disks.
         let shared = disk.isInternal ? [] : viewModel.sharingVMNames(forPath: disk.path, excluding: instance)
-        let prompt = Self.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: disk.label,
             isInternal: disk.isInternal,
             isMainDisk: viewModel.isMainDisk(disk, of: instance),
             isGuestAgent: false,
             sharedVMNames: shared)
+        let instance = instance
         presentSheetAlert(
             makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
-                guard let self else { return }
-                _ = self.viewModel.removeStorageDisk(disk, from: self.instance, trashFile: trashFile)
+                Task { [weak self] in
+                    await self?.viewModel.removeStorageDisk(
+                        disk.id, from: instance, trashFile: trashFile)
+                }
             },
             in: window)
+    }
+
+    /// One open-panel URL as the core takes it — path plus the app-scoped
+    /// bookmark minted from this pick's grant.
+    private static func pick(_ url: URL) -> PickedFile {
+        let (path, bookmark) = SecurityScopedBookmark.capture(url)
+        return PickedFile(path: path, bookmark: bookmark)
     }
 
     // MARK: Attachment context menu (shared by both lists)
@@ -633,8 +639,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let readOnly: Bool
         let busText: String
         let notes: String
-        /// Rename / Read Only / Remove gating: storage follows the running-VM
-        /// read-only lock; removable media is hot-pluggable, so always editable.
+        /// Rename / Read Only / Remove gating, read from the capability the
+        /// verb behind each of them refuses on.
         let editable: Bool
     }
 
@@ -646,13 +652,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 id: disk.id, label: disk.label, path: disk.path, isInternal: disk.isInternal,
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
-                notes: disk.notes, editable: !isReadOnly)
+                notes: disk.notes, editable: canEditStorageDisks)
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: item.id, label: item.label, path: item.path, isInternal: false,
                 readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
-                editable: true)
+                editable: canEditRemovableMedia)
         }
     }
 
@@ -857,67 +863,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         return AlertConfiguration(title: prompt.title, message: prompt.message, buttons: buttons)
     }
 
-    /// Decides the per-row delete confirmation (title, message, offered actions)
-    /// purely from the item's nature.
-    ///
-    /// The Guest Agent installer and files shared with another VM can only be
-    /// detached, never trashed.
-    static func attachmentDeletePrompt(
-        label: String,
-        isInternal: Bool,
-        isMainDisk: Bool,
-        isGuestAgent: Bool,
-        sharedVMNames: [String]
-    ) -> AttachmentDeletePrompt {
-        let title = "Remove \u{201C}\(label)\u{201D}?"
-
-        if isGuestAgent {
-            return AttachmentDeletePrompt(
-                title: title,
-                message:
-                    "Detaches the Guest Agent installer from this VM. It's part of Kernova, so the file isn't deleted.",
-                actions: [.removeFromVM])
-        }
-
-        if !sharedVMNames.isEmpty {
-            return AttachmentDeletePrompt(
-                title: title,
-                message:
-                    "Detaches it from this VM. Its file is kept — still used by \(DataFormatters.quotedList(sharedVMNames)).",
-                actions: [.removeFromVM])
-        }
-
-        if isInternal {
-            let base = "Moves the disk image to the Trash. You can restore it with Finder's Put Back."
-            return AttachmentDeletePrompt(
-                title: title,
-                message: isMainDisk
-                    ? "\(base) This is the VM's startup disk — it won't boot without it."
-                    : base,
-                actions: [.moveToTrash])
-        }
-
-        return AttachmentDeletePrompt(
-            title: title,
-            message:
-                "Move to Trash sends the file to the Trash. Remove from VM detaches it but keeps the file.",
-            actions: [.moveToTrash, .removeFromVM])
-    }
-
     // MARK: Removable
 
     @objc private func attachRemovableTapped() {
         let urls = NSOpenPanel.browseDiskImages(
             message: "Select disk images to attach to the VM", allowsMultipleSelection: true)
         guard !urls.isEmpty else { return }
-        var current = currentRemovableMedia
-        let existing = Set(current.map(\.path))
-        for url in urls {
-            let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            guard !existing.contains(path) else { continue }
-            current.append(RemovableMediaItem(path: path, readOnly: true, bookmark: bookmark))
-        }
-        writeRemovableMedia(current)
+        viewModel.attachRemovableMedia(urls.map(Self.pick), to: instance)
     }
 
     @objc private func createRemovableTapped() {
@@ -931,10 +883,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func setRemovableReadOnly(_ readOnly: Bool, forItemID id: UUID) {
-        var items = currentRemovableMedia
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].readOnly = readOnly
-        writeRemovableMedia(items)
+        viewModel.setRemovableMediaReadOnly(id, readOnly: readOnly, on: instance)
     }
 
     /// Ejects a removable medium from its inline trailing button.
@@ -950,8 +899,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// Dropping the `removableMedia` entry is what the live reconcile
     /// hot-detaches from a running VM. No alert: ejecting is reversible.
     private func ejectRemovableMedia(forItemID id: UUID) {
-        guard let item = currentRemovableMedia.first(where: { $0.id == id }) else { return }
-        _ = viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
+        viewModel.ejectRemovableMedia(id, from: instance)
     }
 
     private func presentRemovableDeleteConfirmation(forItemID id: UUID) {
@@ -960,16 +908,19 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         else { return }
         let isAgent = viewModel.isGuestAgentInstaller(item)
         let shared = isAgent ? [] : viewModel.sharingVMNames(forPath: item.path, excluding: instance)
-        let prompt = Self.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: item.label,
             isInternal: false,
             isMainDisk: false,
             isGuestAgent: isAgent,
             sharedVMNames: shared)
+        let instance = instance
         presentSheetAlert(
             makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
-                guard let self else { return }
-                _ = self.viewModel.removeRemovableMedia(item, from: self.instance, trashFile: trashFile)
+                Task { [weak self] in
+                    await self?.viewModel.removeRemovableMedia(
+                        item.id, from: instance, trashFile: trashFile)
+                }
             },
             in: window)
     }
@@ -982,9 +933,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         panel.nameFieldStringValue = "\(instance.name) Removable Disk.asif"
         panel.allowedContentTypes = [.asif]
         panel.canCreateDirectories = true
+        let instance = instance
         panel.begin { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            self.viewModel.createRemovableMedia(for: self.instance, sizeInGB: sizeInGB, destinationURL: url)
+            guard response == .OK, let url = panel.url else { return }
+            Task { [weak self] in
+                await self?.viewModel.createRemovableMedia(
+                    for: instance, sizeInGB: sizeInGB, destinationURL: url)
+            }
         }
     }
 }
@@ -997,7 +952,7 @@ extension VMSettingsStoragePanelViewController:
     func storageDiskReorderSheet(
         _ vc: StorageDiskReorderSheetContentViewController, didReorderTo disks: [StorageDisk]
     ) {
-        writeStorageDisks(disks)
+        viewModel.reorderStorageDisks(disks.map(\.id), on: instance)
     }
 
     func storageDiskReorderSheetDidDismiss(_ vc: StorageDiskReorderSheetContentViewController) {

@@ -13,6 +13,7 @@ struct VMCommandEnvelopeTests {
     // unwrapped is a literal that can be mistyped into a crash.
     private let vmID = UUID(uuid: (1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5))
     private let snapshotID = UUID(uuid: (6, 6, 7, 7, 8, 8, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0))
+    private let diskID = UUID(uuid: (2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6))
 
     private var summary: VMSummary {
         VMSummary(id: vmID, name: "Alpha", status: "running")
@@ -85,12 +86,26 @@ struct VMCommandEnvelopeTests {
             .delete(selector, permanently: true, alsoRemoving: [snapshotID], confirmed: true),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova"),
             .cancelPreparing(selector, confirmed: true),
+            .editStorageDisk(selector, .create(sizeInGB: 32)),
+            .editStorageDisk(selector, .remove(disk: diskID, trashFile: true, confirmed: false)),
+            .editStorageDisk(selector, .rename(disk: diskID, newLabel: "Scratch")),
+            .editStorageDisk(selector, .setNotes(disk: diskID, notes: "the build cache")),
+            .editStorageDisk(selector, .setReadOnly(disk: diskID, readOnly: true)),
+            .editStorageDisk(selector, .reorder(order: [diskID, snapshotID])),
+            .editRemovableMedia(
+                selector, .remove(item: diskID, trashFile: false, confirmed: true)),
+            .editRemovableMedia(selector, .eject(item: diskID)),
+            .editRemovableMedia(selector, .rename(item: diskID, newLabel: "Installer")),
+            .editRemovableMedia(selector, .setNotes(item: diskID, notes: "from the mirror")),
+            .editRemovableMedia(selector, .setReadOnly(item: diskID, readOnly: false)),
+            .guestAgentDisk(selector, .mount),
+            .guestAgentDisk(selector, .unmount),
         ]
         // Every case of the vocabulary is represented, so a verb added without a
-        // round trip fails here rather than shipping unencodable. `create` takes
-        // the configuration the wizard assembles, including the security
-        // bookmarks only an in-process pick can mint, so the wire vocabulary
-        // does not offer it; every other verb round-trips.
+        // round trip fails here rather than shipping unencodable. `create` is
+        // the one verb the wire does not offer: it takes the configuration the
+        // wizard assembles, including security bookmarks only an in-process
+        // pick can mint. Every other verb round-trips.
         #expect(Set(verbs.map(\.verb)) == Set(VMVerb.allCases).subtracting([.create]))
 
         for verb in verbs {
@@ -103,6 +118,43 @@ struct VMCommandEnvelopeTests {
     }
 
     // MARK: - Responses
+
+    /// Every storage-disk edit the wire offers, named exhaustively.
+    ///
+    /// An attach added to the payload stops compiling here: a pick carries a
+    /// security-scoped bookmark only an in-process panel can mint, and no
+    /// transport can supply one. A create is offered because the image it
+    /// writes lands inside the VM's own bundle, needing no grant at all.
+    private func name(of edit: StorageDiskEdit) -> String {
+        switch edit {
+        case .create: "create"
+        case .remove: "remove"
+        case .rename: "rename"
+        case .setNotes: "setNotes"
+        case .setReadOnly: "setReadOnly"
+        case .reorder: "reorder"
+        }
+    }
+
+    /// Every removable-media edit the wire offers, named exhaustively for the
+    /// reason ``name(of:)`` states — and with no create either, because the
+    /// user picks that disk's destination.
+    private func name(of edit: RemovableMediaEdit) -> String {
+        switch edit {
+        case .remove: "remove"
+        case .eject: "eject"
+        case .rename: "rename"
+        case .setNotes: "setNotes"
+        case .setReadOnly: "setReadOnly"
+        }
+    }
+
+    @Test("Neither attachment payload offers an operation that needs a live panel grant")
+    func picksStayOffTheWire() {
+        #expect(name(of: .create(sizeInGB: 32)) == "create")
+        #expect(name(of: .eject(item: diskID)) == "eject")
+        #expect(GuestAgentDiskEdit.allCases == [.mount, .unmount])
+    }
 
     @Test("Every response result round-trips")
     func everyResponseRoundTrips() throws {

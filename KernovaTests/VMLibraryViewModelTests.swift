@@ -534,292 +534,7 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
-    // MARK: - Storage Disk rename / create
-
-    @Test("renameStorageDisk trims, persists the new label, and saves once")
-    func renameStorageDiskPersists() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let disk = StorageDisk(
-            path: "AdditionalDisks/x.asif", label: "Original", isInternal: true, kind: .virtio)
-        instance.configuration.storageDisks = [disk]
-
-        viewModel.renameStorageDisk(disk, newLabel: "  Renamed  ", on: instance)
-
-        #expect(instance.configuration.storageDisks?[0].label == "Renamed")
-        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].label == "Renamed")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("renameStorageDisk ignores an empty / whitespace label and does not save")
-    func renameStorageDiskEmptyGuard() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let disk = StorageDisk(
-            path: "AdditionalDisks/x.asif", label: "Original", isInternal: true, kind: .virtio)
-        instance.configuration.storageDisks = [disk]
-
-        viewModel.renameStorageDisk(disk, newLabel: "   ", on: instance)
-
-        #expect(instance.configuration.storageDisks?[0].label == "Original")
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("renameStorageDisk is a no-op for an unknown disk id")
-    func renameStorageDiskUnknownID() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.storageDisks = [
-            StorageDisk(
-                path: "AdditionalDisks/x.asif", label: "Original", isInternal: true, kind: .virtio)
-        ]
-        let unknown = StorageDisk(
-            path: "AdditionalDisks/y.asif", label: "Other", isInternal: true, kind: .virtio)
-
-        viewModel.renameStorageDisk(unknown, newLabel: "New", on: instance)
-
-        #expect(instance.configuration.storageDisks?[0].label == "Original")
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("setStorageDiskNotes trims, persists the note, and saves once")
-    func setStorageDiskNotesPersists() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let disk = StorageDisk(
-            path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
-        instance.configuration.storageDisks = [disk]
-
-        viewModel.setStorageDiskNotes(disk, notes: "  holds the build cache  ", on: instance)
-
-        #expect(instance.configuration.storageDisks?[0].notes == "holds the build cache")
-        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].notes == "holds the build cache")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("setStorageDiskNotes clears an existing note to empty, and saves")
-    func setStorageDiskNotesClearsToEmpty() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        var disk = StorageDisk(
-            path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
-        disk.notes = "before"
-        instance.configuration.storageDisks = [disk]
-
-        viewModel.setStorageDiskNotes(disk, notes: "   ", on: instance)
-
-        #expect(instance.configuration.storageDisks?[0].notes == "")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("setStorageDiskNotes is a no-op when the trimmed note is unchanged")
-    func setStorageDiskNotesNoOpUnchanged() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        var disk = StorageDisk(
-            path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
-        disk.notes = "before"
-        instance.configuration.storageDisks = [disk]
-
-        viewModel.setStorageDiskNotes(disk, notes: "before", on: instance)
-
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("setStorageDiskNotes is a no-op for an unknown disk id")
-    func setStorageDiskNotesUnknownID() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.storageDisks = [
-            StorageDisk(path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
-        ]
-        let unknown = StorageDisk(
-            path: "AdditionalDisks/y.asif", label: "Other", isInternal: true, kind: .virtio)
-
-        viewModel.setStorageDiskNotes(unknown, notes: "New", on: instance)
-
-        #expect(instance.configuration.storageDisks?[0].notes == "")
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("setStorageDiskNotes on a nil storageDisks list persists the materialized list")
-    func setStorageDiskNotesMaterializesDefaultDisks() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        let mainDisk = instance.effectiveStorageDisks[0]
-
-        viewModel.setStorageDiskNotes(mainDisk, notes: "the startup disk", on: instance)
-
-        #expect(instance.configuration.storageDisks?.count == 1)
-        #expect(instance.configuration.storageDisks?[0].notes == "the startup disk")
-        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].notes == "the startup disk")
-    }
-
-    @Test("setStorageDiskNotes on an empty storageDisks list persists the materialized list")
-    func setStorageDiskNotesMaterializesDefaultDisksForEmptyList() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        instance.configuration.storageDisks = []
-        let mainDisk = instance.effectiveStorageDisks[0]
-
-        viewModel.setStorageDiskNotes(mainDisk, notes: "the startup disk", on: instance)
-
-        #expect(instance.configuration.storageDisks?.count == 1)
-        #expect(instance.configuration.storageDisks?[0].notes == "the startup disk")
-        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].notes == "the startup disk")
-    }
-
-    @Test("createStorageDisk gives a new disk a collision-free default label")
-    func createStorageDiskUniqueLabel() async {
-        let (viewModel, _, diskImage, _, _) = makeViewModel()
-        let instance = makeInstance()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        // Pre-seed a disk already using the default "100 GB Disk" label.
-        instance.configuration.storageDisks = [
-            StorageDisk(
-                path: "AdditionalDisks/a.asif", label: "100 GB Disk", isInternal: true,
-                kind: .virtio)
-        ]
-
-        await viewModel.createStorageDisk(for: instance, sizeInGB: 100).value
-
-        #expect(diskImage.createDiskImageCallCount == 1)
-        let disks = instance.configuration.storageDisks ?? []
-        #expect(disks.count == 2)
-        #expect(disks[1].label == "100 GB Disk 2")
-        #expect(disks[1].isInternal)
-    }
-
-    // MARK: - Removable media rename
-
-    @Test("renameRemovableMedia trims, persists the new label, and saves once")
-    func renameRemovableMediaPersists() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
-        instance.configuration.removableMedia = [item]
-
-        viewModel.renameRemovableMedia(item, newLabel: "  Renamed  ", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].label == "Renamed")
-        #expect(storage.bundles[instance.bundleURL]?.removableMedia?[0].label == "Renamed")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("renameRemovableMedia leaves path and readOnly untouched (stays mounted live)")
-    func renameRemovableMediaKeepsMountIdentity() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
-        instance.configuration.removableMedia = [item]
-
-        viewModel.renameRemovableMedia(item, newLabel: "Renamed", on: instance)
-
-        // A label-only edit must not change path/readOnly, or the live diff would
-        // detach and reattach the medium (ejecting it from the running guest).
-        #expect(instance.configuration.removableMedia?[0].path == "/tmp/installer.iso")
-        #expect(instance.configuration.removableMedia?[0].readOnly == true)
-    }
-
-    @Test("renameRemovableMedia ignores an empty / whitespace label and does not save")
-    func renameRemovableMediaEmptyGuard() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
-        instance.configuration.removableMedia = [item]
-
-        viewModel.renameRemovableMedia(item, newLabel: "   ", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].label == "Original")
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("renameRemovableMedia is a no-op for an unknown item id")
-    func renameRemovableMediaUnknownID() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.removableMedia = [
-            RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
-        ]
-        let unknown = RemovableMediaItem(path: "/tmp/other.iso", readOnly: true, label: "Other")
-
-        viewModel.renameRemovableMedia(unknown, newLabel: "New", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].label == "Original")
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("setRemovableMediaNotes trims, persists the note, and saves once")
-    func setRemovableMediaNotesPersists() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
-        instance.configuration.removableMedia = [item]
-
-        viewModel.setRemovableMediaNotes(item, notes: "  from the Ubuntu mirror  ", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].notes == "from the Ubuntu mirror")
-        #expect(
-            storage.bundles[instance.bundleURL]?.removableMedia?[0].notes == "from the Ubuntu mirror")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("setRemovableMediaNotes leaves path and readOnly untouched (stays mounted live)")
-    func setRemovableMediaNotesKeepsMountIdentity() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
-        instance.configuration.removableMedia = [item]
-
-        viewModel.setRemovableMediaNotes(item, notes: "note", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].path == "/tmp/installer.iso")
-        #expect(instance.configuration.removableMedia?[0].readOnly == true)
-    }
-
-    @Test("setRemovableMediaNotes clears an existing note to empty, and saves")
-    func setRemovableMediaNotesClearsToEmpty() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        var item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
-        item.notes = "before"
-        instance.configuration.removableMedia = [item]
-
-        viewModel.setRemovableMediaNotes(item, notes: "   ", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].notes == "")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("setRemovableMediaNotes is a no-op when the trimmed note is unchanged")
-    func setRemovableMediaNotesNoOpUnchanged() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        var item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
-        item.notes = "before"
-        instance.configuration.removableMedia = [item]
-
-        viewModel.setRemovableMediaNotes(item, notes: "before", on: instance)
-
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
-
-    @Test("setRemovableMediaNotes is a no-op for an unknown item id")
-    func setRemovableMediaNotesUnknownID() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.removableMedia = [
-            RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
-        ]
-        let unknown = RemovableMediaItem(path: "/tmp/other.iso", readOnly: true, label: "Other")
-
-        viewModel.setRemovableMediaNotes(unknown, notes: "New", on: instance)
-
-        #expect(instance.configuration.removableMedia?[0].notes == "")
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
+    // MARK: - Delete Externals
 
     @Test("deleteVM trashes the selected external disks and removable media")
     func deleteVMTrashesExternals() async throws {
@@ -5283,7 +4998,7 @@ struct VMLibraryViewModelTests {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance()
+        let instance = makeInstance(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         viewModel.instances.append(instance)
@@ -5308,7 +5023,8 @@ struct VMLibraryViewModelTests {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance()
+        let instance = makeInstance(guestOS: .macOS)
+        instance.enter(.running(sessionID: UUID()))
         instance.configuration.removableMedia = [
             RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         ]
@@ -5323,54 +5039,11 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.removableMedia?.count == 1)
     }
 
-    @Test("unmountGuestAgentInstaller is no-op when DMG not in removableMedia")
-    func unmountGuestAgentInstallerNoOpWhenNotPresent() async throws {
-        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance()
-        // List has an unrelated item only
-        let unrelated = RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
-        instance.configuration.removableMedia = [unrelated]
-        viewModel.instances.append(instance)
-
-        viewModel.unmountGuestAgentInstaller(from: instance)
-        await Task.yield()
-
-        #expect(mock.detachCallCount == 0)
-        #expect(instance.configuration.removableMedia?.count == 1)
-        #expect(instance.configuration.removableMedia?.first?.path == unrelated.path)
-    }
-
-    @Test("unmountGuestAgentInstaller removes DMG entry and triggers detach")
-    func unmountGuestAgentInstallerRemovesEntry() async throws {
-        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance()
-        let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
-        instance.beginSessionContext()
-        let installerItem = RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
-        instance.configuration.removableMedia = [installerItem]
-        instance.recordAttachedMedia(
-            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly),
-            for: sessionID)
-        viewModel.instances.append(instance)
-
-        viewModel.unmountGuestAgentInstaller(from: instance)
-
-        while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
-
-        #expect(mock.detachCallCount == 1)
-        #expect(instance.configuration.removableMedia == nil)
-    }
-
     @Test("mountGuestAgentInstaller forwards the .manage purpose to the alert")
     func mountGuestAgentInstallerManagePurpose() throws {
         _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = makeInstance(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -5403,32 +5076,6 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
     }
 
-    @Test("A virtio-delivery guest still ejects a USB disk left over from an earlier session")
-    func virtioGuestStillEjectsStaleUSBDisk() async throws {
-        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance(guestOS: .macOS)
-        instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
-        instance.beginSessionContext()
-        let installerItem = RemovableMediaItem(
-            path: installerURL.path(percentEncoded: false), readOnly: true)
-        instance.configuration.removableMedia = [installerItem]
-        instance.recordAttachedMedia(
-            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly),
-            for: sessionID)
-        viewModel.instances.append(instance)
-
-        viewModel.unmountGuestAgentInstaller(from: instance)
-
-        while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
-
-        #expect(mock.detachCallCount == 1)
-        #expect(instance.configuration.removableMedia == nil)
-    }
-
     @Test("isGuestAgentInstallerMounted reflects whether the bundled DMG is attached")
     func isGuestAgentInstallerMountedReflectsState() throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
@@ -5454,7 +5101,7 @@ struct VMLibraryViewModelTests {
     func onAgentBecameCurrentAutoEjectsInstaller() async throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let storage = MockVMStorageService()
-        var config = VMConfiguration(name: "Wired VM", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(name: "Wired VM", guestOS: .macOS, bootMode: .macOS)
         config.removableMedia = [
             RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         ]
@@ -5477,238 +5124,18 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Storage Disk Helpers
 
-    @Test("removeStorageDisk with trashFile=false removes the entry without touching the file")
-    func removeStorageDiskKeepsFile() {
+    @Test("An edit naming an attachment that is already gone raises no alert")
+    func staleAttachmentEditIsSilent() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
-        let mainDisk = StorageDisk(
-            path: "Disk.asif", readOnly: false, label: "Main Disk",
-            isInternal: true, kind: .virtio
-        )
-        let extra = StorageDisk(
-            path: "AdditionalDisks/\(UUID().uuidString).asif",
-            readOnly: false, label: "Extra", isInternal: true, kind: .virtio
-        )
-        instance.configuration.storageDisks = [mainDisk, extra]
         viewModel.instances.append(instance)
 
-        viewModel.removeStorageDisk(extra, from: instance, trashFile: false)
+        // The verb refuses — a rename field can commit after its row went — and
+        // the adapter logs rather than putting a second alert in front of a
+        // user who can already see the row is gone.
+        viewModel.renameStorageDisk(UUID(), newLabel: "New", on: instance)
+        viewModel.setRemovableMediaNotes(UUID(), notes: "New", on: instance)
 
-        let disks = instance.configuration.storageDisks ?? []
-        #expect(disks.count == 1)
-        #expect(disks.first?.id == mainDisk.id)
-        // No presentError side effect — no file op was attempted.
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeStorageDisk on external disk with trashFile=true trashes the host file")
-    func removeStorageDiskExternalTrashesFile() async throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-external.img")
-
-        let external = StorageDisk(
-            path: destination.path(percentEncoded: false),
-            readOnly: false, label: "External", isInternal: false, kind: .virtio
-        )
-        instance.configuration.storageDisks = [external]
-        viewModel.instances.append(instance)
-
-        await viewModel.removeStorageDisk(external, from: instance, trashFile: true)?.value
-
-        #expect(instance.configuration.storageDisks == nil)
-        #expect(fileSystem.trashedURLs == [destination])
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeStorageDisk on external disk with trashFile=false leaves the host file alone")
-    func removeStorageDiskExternalKeepsFile() throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-external.img")
-
-        let external = StorageDisk(
-            path: destination.path(percentEncoded: false),
-            readOnly: false, label: "External", isInternal: false, kind: .virtio
-        )
-        instance.configuration.storageDisks = [external]
-        viewModel.instances.append(instance)
-
-        viewModel.removeStorageDisk(external, from: instance, trashFile: false)
-
-        #expect(instance.configuration.storageDisks == nil)
-        #expect(fileSystem.trashedURLs.isEmpty)
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeStorageDisk with trashFile=true swallows missing-file errors")
-    func removeStorageDiskMissingFileSwallows() async {
-        // A user can race delete-in-Finder against the confirmation alert,
-        // or an external disk's source can be moved between sessions.
-        // trashItem failing with `.fileNoSuchFile` should not raise an
-        // error alert — there's nothing actionable for the user.
-        let (viewModel, _, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileNoSuchFile)
-        let instance = makeInstance()
-        let ghostPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).img")
-            .path(percentEncoded: false)
-        let ghost = StorageDisk(
-            path: ghostPath,
-            readOnly: false, label: "Ghost", isInternal: false, kind: .virtio
-        )
-        instance.configuration.storageDisks = [ghost]
-        viewModel.instances.append(instance)
-
-        await viewModel.removeStorageDisk(ghost, from: instance, trashFile: true)?.value
-
-        #expect(instance.configuration.storageDisks == nil)
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeRemovableMedia with trashFile=false removes the entry without touching the file")
-    func removeRemovableMediaKeepsFile() throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-media.iso")
-
-        let item = RemovableMediaItem(
-            path: destination.path(percentEncoded: false), readOnly: true)
-        instance.configuration.removableMedia = [item]
-        viewModel.instances.append(instance)
-
-        viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
-
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(fileSystem.trashedURLs.isEmpty)
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeRemovableMedia with trashFile=true trashes the host file")
-    func removeRemovableMediaTrashesFile() async throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-media.iso")
-
-        let item = RemovableMediaItem(
-            path: destination.path(percentEncoded: false), readOnly: true)
-        instance.configuration.removableMedia = [item]
-        viewModel.instances.append(instance)
-
-        await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
-
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(fileSystem.trashedURLs == [destination])
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeRemovableMedia with trashFile=true swallows missing-file errors")
-    func removeRemovableMediaMissingFileSwallows() async {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileNoSuchFile)
-        let instance = makeInstance()
-        let ghostPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
-            .path(percentEncoded: false)
-        let item = RemovableMediaItem(path: ghostPath, readOnly: true)
-        instance.configuration.removableMedia = [item]
-        viewModel.instances.append(instance)
-
-        await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
-
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeStorageDisk with trashFile=true surfaces non-missing-file trash failures")
-    func removeStorageDiskTrashFailureSurfacesError() async {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
-        let instance = makeInstance()
-        let external = StorageDisk(
-            path: FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(UUID().uuidString)-external.img")
-                .path(percentEncoded: false),
-            readOnly: false, label: "External", isInternal: false, kind: .virtio
-        )
-        instance.configuration.storageDisks = [external]
-        viewModel.instances.append(instance)
-
-        await viewModel.removeStorageDisk(external, from: instance, trashFile: true)?.value
-
-        // The entry is still removed, and the failure is surfaced as an alert
-        // (unlike the swallowed missing-file case above).
-        #expect(instance.configuration.storageDisks == nil)
-        #expect(presenter.showError == true)
-    }
-
-    @Test("removeStorageDisk with trashFile=true keeps a file shared with another VM")
-    func removeStorageDiskKeepsSharedFile() throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let shared = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-shared.img")
-        let sharedPath = shared.path(percentEncoded: false)
-
-        let target = makeInstance(name: "Target")
-        let disk = StorageDisk(
-            path: sharedPath, readOnly: false, label: "Shared", isInternal: false, kind: .virtio)
-        target.configuration.storageDisks = [disk]
-        let other = makeInstance(name: "Other")
-        other.configuration.storageDisks = [
-            StorageDisk(path: sharedPath, readOnly: false, label: "Shared", isInternal: false, kind: .virtio)
-        ]
-        viewModel.instances = [target, other]
-
-        // Even asked to trash, a file another VM still references is kept: no
-        // trash task is spawned and no trash request reaches the file system.
-        let task = viewModel.removeStorageDisk(disk, from: target, trashFile: true)
-        #expect(task == nil)
-        #expect(target.configuration.storageDisks == nil)
-        #expect(fileSystem.trashedURLs.isEmpty)
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeRemovableMedia with trashFile=true keeps a file shared with another VM")
-    func removeRemovableMediaKeepsSharedFile() throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let shared = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-shared.iso")
-        let sharedPath = shared.path(percentEncoded: false)
-
-        let target = makeInstance(name: "Target")
-        let item = RemovableMediaItem(path: sharedPath, readOnly: true)
-        target.configuration.removableMedia = [item]
-        let other = makeInstance(name: "Other")
-        other.configuration.removableMedia = [RemovableMediaItem(path: sharedPath, readOnly: true)]
-        viewModel.instances = [target, other]
-
-        let task = viewModel.removeRemovableMedia(item, from: target, trashFile: true)
-        #expect(task == nil)
-        #expect(target.configuration.removableMedia == nil)
-        #expect(fileSystem.trashedURLs.isEmpty)
-        #expect(!presenter.showError)
-    }
-
-    @Test("removeRemovableMedia with trashFile=true never trashes the Guest Agent DMG")
-    func removeRemovableMediaNeverTrashesGuestAgent() throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-            .path(percentEncoded: false)
-        let instance = makeInstance()
-        let item = RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
-        instance.configuration.removableMedia = [item]
-        viewModel.instances.append(instance)
-
-        // No trash task is spawned for the app-owned DMG (guard returns nil
-        // before any detached trash), and the bundled file is left intact.
-        let task = viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
-        #expect(task == nil)
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(FileManager.default.fileExists(atPath: agentPath))
         #expect(!presenter.showError)
     }
 
@@ -5781,133 +5208,6 @@ struct VMLibraryViewModelTests {
             isInternal: true, kind: .virtio)
         #expect(mainWithFreshID.id != main.id)
         #expect(viewModel.isMainDisk(mainWithFreshID, of: instance))
-    }
-
-    @Test("createStorageDisk appends an internal virtio disk with the expected fields")
-    func createStorageDiskAppends() async throws {
-        let (viewModel, _, diskService, _, _) = makeViewModel()
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        // The viewmodel creates a real directory inside `instance.bundleURL`,
-        // so set up a unique scratch bundle and clean it up.
-        try FileManager.default.createDirectory(at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-
-        viewModel.createStorageDisk(for: instance, sizeInGB: 32)
-
-        // The disk-creation Task is async; spin until the config materializes.
-        while instance.configuration.storageDisks == nil { await Task.yield() }
-
-        let disks = instance.configuration.storageDisks ?? []
-        // Pre-existing default main disk + the newly-created one.
-        #expect(disks.count == 2)
-
-        let newDisk = try #require(disks.last)
-        #expect(newDisk.isInternal == true)
-        #expect(newDisk.kind == .virtio)
-        #expect(newDisk.readOnly == false)
-        #expect(newDisk.path.hasPrefix("AdditionalDisks/"))
-        #expect(newDisk.path.hasSuffix(".asif"))
-        #expect(newDisk.label == "32 GB Disk")
-
-        #expect(diskService.createDiskImageCallCount == 1)
-        #expect(diskService.lastCreatedSizeInGB == 32)
-        #expect(!presenter.showError)
-    }
-
-    @Test("createRemovableMedia appends an external item with the chosen path and read-write default")
-    func createRemovableMediaAppends() async throws {
-        let (viewModel, _, diskService, _, _) = makeViewModel()
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString) Removable Disk.asif")
-
-        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
-
-        while instance.configuration.removableMedia == nil { await Task.yield() }
-
-        let media = instance.configuration.removableMedia ?? []
-        #expect(media.count == 1)
-
-        let item = try #require(media.first)
-        // Removable media is always external — no `isInternal` flag exists on the
-        // model. The stored path is the absolute host path the user picked.
-        #expect(item.path == destination.path(percentEncoded: false))
-        #expect(item.readOnly == false)
-        #expect(item.label == destination.deletingPathExtension().lastPathComponent)
-
-        #expect(diskService.createDiskImageCallCount == 1)
-        #expect(diskService.lastCreatedSizeInGB == 16)
-        #expect(!presenter.showError)
-    }
-
-    @Test("createRemovableMedia surfaces errors and leaves the list unchanged")
-    func createRemovableMediaErrorIsSurfaced() async throws {
-        let diskService = MockDiskImageService()
-        diskService.createDiskImageError = NSError(domain: "test", code: 1)
-        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).asif")
-
-        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
-
-        while !presenter.showError { await Task.yield() }
-
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(diskService.createDiskImageCallCount == 1)
-    }
-
-    @Test("createRemovableMedia trashes the destination when DiskImageError.writeFailed is thrown")
-    func createRemovableMediaWriteFailedTrashesFile() async throws {
-        let diskService = MockDiskImageService()
-        // `.writeFailed` signals the write phase started — the destination file
-        // may exist as a partial write, so the catch path must attempt cleanup.
-        diskService.createDiskImageError = DiskImageError.writeFailed(
-            NSError(domain: "test", code: 1))
-        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        // Stand in for the partial file `createDiskImage` would have left.
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).asif")
-
-        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
-
-        while !presenter.showError { await Task.yield() }
-
-        // The partial file was handed to the Trash seam.
-        #expect(fileSystem.trashedURLs == [destination])
-        #expect(instance.configuration.removableMedia == nil)
-    }
-
-    @Test("createRemovableMedia leaves an unrelated pre-existing file alone on pre-write failure")
-    func createRemovableMediaPreWriteFailureLeavesFileAlone() async throws {
-        let diskService = MockDiskImageService()
-        // `.templateMissing` throws before any byte is written. The user may have
-        // pointed the save panel at a pre-existing file they confirmed "Replace"
-        // on — we must not trash it when the write never started.
-        diskService.createDiskImageError = DiskImageError.templateMissing(sizeInGB: 16)
-        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).asif")
-
-        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
-
-        while !presenter.showError { await Task.yield() }
-
-        // Pre-existing file is intact — no trash request was made.
-        #expect(fileSystem.trashedURLs.isEmpty)
-        #expect(instance.configuration.removableMedia == nil)
     }
 
     // MARK: - Reconcile Rollback
@@ -6095,27 +5395,6 @@ struct VMLibraryViewModelTests {
         #expect(rolled.first?.id == id)
         // Critical: path is the ORIGINAL one, not the failed-swap target.
         #expect(rolled.first?.path == "/tmp/old.iso")
-    }
-
-    @Test("removeStorageDisk on synthetic main disk leaves storageDisks empty")
-    func removeSyntheticMainDiskClearsList() {
-        // Regression test: with a non-deterministic synthesized UUID, the
-        // remove path would no-op the entry removal (UUID mismatch between
-        // binding and removeStorageDisk's own re-synthesis) while still
-        // trashing `Disk.asif` — bricking the VM.
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.storageDisks = nil
-        viewModel.instances.append(instance)
-
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        let synthetic = StorageDisk.mainDisk(layout: layout)
-
-        viewModel.removeStorageDisk(synthetic, from: instance, trashFile: false)
-
-        // Either nil (the empty-collapses-to-nil persistence) or empty.
-        let surviving = instance.configuration.storageDisks ?? []
-        #expect(surviving.isEmpty)
     }
 }
 

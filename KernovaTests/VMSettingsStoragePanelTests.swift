@@ -24,10 +24,11 @@ struct VMSettingsStoragePanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage,
+        phase: VMLifecyclePhase = .stopped
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
-            guestOS: guestOS, isReadOnly: isReadOnly, category: category,
+            guestOS: guestOS, isReadOnly: isReadOnly, category: category, phase: phase,
             preferences: preferences)
     }
 
@@ -85,11 +86,49 @@ struct VMSettingsStoragePanelTests {
         try await waitUntil { !self.showsMissingBadge(in: vc) }
     }
 
+    // MARK: - Section lock hints
+
+    @Test("Each section's lock hint names the states that section is editable in")
+    func sectionLockHintsNameTheirOwnCondition() throws {
+        let hintText = VMSettingsStoragePanelViewController.removableMediaLockHintText
+        // Removable media is hot-pluggable, so the shared "Editable when
+        // stopped" would be a claim the user disproves the moment a guest boots.
+        #expect(hintText != groupedFormLockHintText)
+
+        // A stopped VM edits both lists, so neither hint shows.
+        let (stopped, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(visibleLockHints(in: stopped.view).isEmpty)
+
+        // Running pins the disks and still takes a hot-plug: the disk hint
+        // shows alone.
+        let (running, _, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .running(sessionID: UUID()))
+        #expect(visibleLockHints(in: running.view) == [groupedFormLockHintText])
+
+        // A suspended VM's saved state pins both, so both sections say so.
+        let (suspended, _, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .suspended)
+        #expect(
+            Set(visibleLockHints(in: suspended.view)) == [groupedFormLockHintText, hintText])
+    }
+
+    /// The tooltip of every lock hint currently on screen.
+    private func visibleLockHints(in view: NSView) -> [String] {
+        allSubviews(NSStackView.self, in: view) {
+            !$0.isHidden && $0.toolTip != nil
+                && [
+                    groupedFormLockHintText,
+                    VMSettingsStoragePanelViewController.removableMediaLockHintText,
+                ].contains($0.toolTip ?? "")
+        }
+        .compactMap(\.toolTip)
+    }
+
     // MARK: - Per-row delete confirmation prompt
 
     @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")
     func deletePromptInternalDisk() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Extra Disk", isInternal: true, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
@@ -98,7 +137,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Main disk delete warns it's the startup disk")
     func deletePromptMainDisk() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Main Disk", isInternal: true, isMainDisk: true,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
@@ -107,7 +146,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Private external delete offers both Move-to-Trash and Remove-from-VM")
     func deletePromptPrivateExternal() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Scratch", isInternal: false, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash, .removeFromVM])
@@ -115,7 +154,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Shared external delete hard-blocks trashing (Remove-from-VM only) and names the VMs")
     func deletePromptSharedExternal() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Installer", isInternal: false, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: ["macOS Copy", "Linux"])
         #expect(prompt.actions == [.removeFromVM])
@@ -125,7 +164,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Guest Agent delete only detaches and says the installer isn't deleted")
     func deletePromptGuestAgent() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Kernova Guest Agent", isInternal: false, isMainDisk: false,
             isGuestAgent: true, sharedVMNames: [])
         #expect(prompt.actions == [.removeFromVM])
@@ -156,9 +195,12 @@ struct VMSettingsStoragePanelTests {
         #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == true)
     }
 
-    @Test("Edit Notes and Rename are disabled on a read-only VM's storage row")
-    func attachmentMenuEditNotesFollowsReadOnly() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: true)
+    @Test("Edit Notes and Rename are disabled on a running VM's storage row")
+    func attachmentMenuEditNotesFollowsTheDiskGate() {
+        // The model gate, not the route: a running VM's disks are pinned by the
+        // `VZVirtualMachine`, which is what closes the row's edits.
+        let (vc, _, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .running(sessionID: UUID()))
         let row = storageRow(in: vc.view)
         let menu = row?.contextMenu?()
 

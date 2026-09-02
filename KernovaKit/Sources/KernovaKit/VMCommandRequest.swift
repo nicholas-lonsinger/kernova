@@ -51,6 +51,10 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case importVM(path: String)
         case cancelPreparing(VMSelector, confirmed: Bool)
 
+        case editStorageDisk(VMSelector, StorageDiskEdit)
+        case editRemovableMedia(VMSelector, RemovableMediaEdit)
+        case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
+
         /// Which verb this is, for a transport mapping onto its own naming.
         public var verb: VMVerb {
             switch self {
@@ -76,6 +80,9 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .delete: .delete
             case .importVM: .importVM
             case .cancelPreparing: .cancelPreparing
+            case .editStorageDisk: .editStorageDisk
+            case .editRemovableMedia: .editRemovableMedia
+            case .guestAgentDisk: .guestAgentDisk
             }
         }
     }

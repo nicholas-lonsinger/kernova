@@ -397,6 +397,124 @@ struct VMCommandEnvelopeRouterTests {
         virtualization.resumeSuspended()
     }
 
+    // MARK: - Attachments
+
+    @Test("Each storage-disk edit crosses the wire onto its own facade call")
+    func storageDiskEditsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        double.library = [summary]
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let selector = VMSelector.id(summary.id)
+        let disk = UUID()
+
+        for edit: StorageDiskEdit in [
+            .create(sizeInGB: 32),
+            .remove(disk: disk, trashFile: true, confirmed: true),
+            .rename(disk: disk, newLabel: "Scratch"),
+            .setNotes(disk: disk, notes: "the build cache"),
+            .setReadOnly(disk: disk, readOnly: true),
+            .reorder(order: [disk]),
+        ] {
+            #expect(try await transport.send(.editStorageDisk(selector, edit)).result == .ok)
+        }
+
+        #expect(double.createStorageDiskCalls.map(\.sizeInGB) == [32])
+        #expect(double.removeStorageDiskCalls.map(\.disk) == [disk])
+        #expect(double.removeStorageDiskCalls.map(\.trashFile) == [true])
+        #expect(double.renameStorageDiskCalls.map(\.newLabel) == ["Scratch"])
+        #expect(double.setStorageDiskNotesCalls.map(\.notes) == ["the build cache"])
+        #expect(double.setStorageDiskReadOnlyCalls.map(\.readOnly) == [true])
+        #expect(double.reorderStorageDisksCalls.map(\.order) == [[disk]])
+    }
+
+    @Test("Each removable-media edit crosses the wire onto its own facade call")
+    func removableMediaEditsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running")
+        double.library = [summary]
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let selector = VMSelector.id(summary.id)
+        let item = UUID()
+
+        for edit: RemovableMediaEdit in [
+            .remove(item: item, trashFile: false, confirmed: true),
+            .eject(item: item),
+            .rename(item: item, newLabel: "Installer"),
+            .setNotes(item: item, notes: "from the mirror"),
+            .setReadOnly(item: item, readOnly: false),
+        ] {
+            #expect(try await transport.send(.editRemovableMedia(selector, edit)).result == .ok)
+        }
+
+        #expect(double.removeRemovableMediaCalls.map(\.trashFile) == [false])
+        #expect(double.ejectRemovableMediaCalls.map(\.item) == [item])
+        #expect(double.renameRemovableMediaCalls.map(\.newLabel) == ["Installer"])
+        #expect(double.setRemovableMediaNotesCalls.map(\.notes) == ["from the mirror"])
+        #expect(double.setRemovableMediaReadOnlyCalls.map(\.readOnly) == [false])
+    }
+
+    @Test("Both guest-agent-disk edits cross the wire")
+    func guestAgentDiskEditsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running")
+        double.library = [summary]
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let selector = VMSelector.id(summary.id)
+
+        #expect(try await transport.send(.guestAgentDisk(selector, .mount)).result == .ok)
+        #expect(try await transport.send(.guestAgentDisk(selector, .unmount)).result == .ok)
+
+        #expect(double.mountGuestAgentDiskSelectors == [selector])
+        #expect(double.unmountGuestAgentDiskSelectors == [selector])
+    }
+
+    @Test("A running VM refuses a disk edit over the wire and names what it does take")
+    func storageDiskEditRefusedOnARunningVM() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        instance.configuration.storageDisks = [disk]
+
+        let response = try await harness.transport.send(
+            .editStorageDisk(.id(instance.id), .rename(disk: disk.id, newLabel: "New")))
+
+        guard case .invalidState(_, _, let allowed) = try #require(response.failure) else {
+            Issue.record("expected an invalid-state refusal, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(!allowed.contains(.editStorageDisk))
+        #expect(allowed.contains(.editRemovableMedia))
+        #expect(instance.configuration.storageDisks?[0].label == "Extra")
+    }
+
+    @Test("A trashing removal refuses over the wire until consent comes with it")
+    func trashingRemovalAsksForConsentOverTheWire() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-external.img")
+            .path(percentEncoded: false)
+        let disk = StorageDisk(path: path, label: "External", isInternal: false)
+        instance.configuration.storageDisks = [disk]
+
+        let refused = try await harness.transport.send(
+            .editStorageDisk(
+                .id(instance.id), .remove(disk: disk.id, trashFile: true, confirmed: false)))
+        guard case .confirmationRequired(let prompt) = try #require(refused.failure) else {
+            Issue.record("expected a consent refusal, got \(String(describing: refused.failure))")
+            return
+        }
+        #expect(prompt.kind == .removeAttachment)
+        #expect(instance.configuration.storageDisks?.count == 1)
+
+        let confirmed = try await harness.transport.send(
+            .editStorageDisk(
+                .id(instance.id), .remove(disk: disk.id, trashFile: true, confirmed: true)))
+        #expect(confirmed.result == .ok)
+        #expect(instance.configuration.storageDisks == nil)
+    }
+
     // MARK: - Events
 
     @Test("A clone's settling crosses the wire as an event")
