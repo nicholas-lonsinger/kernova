@@ -167,7 +167,13 @@ extension VMCommandCore {
             }
         }
 
-        var filesToCopy = ["Disk.asif"]
+        // The bundle disk is copied only while the source still references it:
+        // a `Disk.asif` removed entry-only would otherwise ride into the clone
+        // unreferenced.
+        var filesToCopy =
+            instance.effectiveStorageDisks.contains {
+                ConfigurationBuilder.isMainBundleDisk($0, layout: instance.bundleLayout)
+            } ? ["Disk.asif"] : []
         switch clonedConfig.guestOS {
         case .macOS:
             filesToCopy.append(contentsOf: ["AuxiliaryStorage", "HardwareModel"])
@@ -180,7 +186,7 @@ extension VMCommandCore {
             }
         }
 
-        // The main bundle disk lives at a fixed relative path, so only
+        // `Disk.asif` lives at a fixed relative path, so only
         // `AdditionalDisks/<id>.asif` entries need remapping — their cloned ids
         // differ from the originals.
         let originalDisks = instance.configuration.storageDisks ?? []
@@ -277,6 +283,16 @@ extension VMCommandCore {
                             updated.path = newPath
                             return updated
                         } ?? []
+                    // An empty list would store `nil`, which re-synthesizes a
+                    // `Disk.asif` row for a file the copy never wrote — so a
+                    // clone left with no disk fails instead of publishing.
+                    guard !remapped.isEmpty else {
+                        throw CommandError.operationFailed(
+                            verb: .clone,
+                            message:
+                                "None of the disk files of \u{201C}\(sourceName)\u{201D} could be copied, so the clone would have no storage disk."
+                        )
+                    }
                     phantom.configuration.setStorageDisks(remapped)
                     try storage.saveConfiguration(phantom.configuration, to: staged)
                 }

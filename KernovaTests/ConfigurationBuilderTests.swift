@@ -1595,4 +1595,26 @@ struct ConfigurationBuilderTests {
         #expect(disk.readOnly)
         #expect(!disk.isInternal)
     }
+
+    @Test("isMainBundleDisk matches the bundle-relative path, not the disk id")
+    func isMainBundleDiskMatchesByPath() throws {
+        let bundleURL = try makeTempBundle()
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+
+        // A clone regenerates every disk id, so a fresh id at the canonical
+        // path is still the bundle disk.
+        let freshID = StorageDisk(
+            id: UUID(), path: layout.diskImageURL.lastPathComponent, readOnly: false,
+            label: "Main Disk", isInternal: true, kind: .virtio)
+        #expect(ConfigurationBuilder.isMainBundleDisk(freshID, layout: layout))
+
+        let additional = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        #expect(!ConfigurationBuilder.isMainBundleDisk(additional, layout: layout))
+
+        let externalAtSameName = StorageDisk(
+            path: layout.diskImageURL.path(percentEncoded: false), label: "External",
+            isInternal: false)
+        #expect(!ConfigurationBuilder.isMainBundleDisk(externalAtSameName, layout: layout))
+    }
 }

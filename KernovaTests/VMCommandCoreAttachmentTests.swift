@@ -309,7 +309,8 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness)
         let path = externalPath("external.img")
         let external = StorageDisk(path: path, label: "External", isInternal: false)
-        instance.configuration.storageDisks = [external]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [external, keeper]
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
@@ -318,12 +319,12 @@ struct VMCommandCoreAttachmentTests {
         #expect(refusal?.confirmationPrompt?.kind == .removeAttachment)
         #expect(refusal?.confirmationPrompt?.confirmTitle == "Move to Trash")
         // Refused, so nothing moved.
-        #expect(instance.configuration.storageDisks?.count == 1)
+        #expect(instance.configuration.storageDisks?.count == 2)
 
         try await harness.core.removeStorageDisk(
             .id(instance.id), disk: external.id, trashFile: true, confirmed: true)
 
-        #expect(instance.configuration.storageDisks == nil)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.fileSystem.trashedURLs == [URL(fileURLWithPath: path)])
     }
 
@@ -333,7 +334,8 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness)
         let internalDisk = StorageDisk(
             path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        instance.configuration.storageDisks = [internalDisk]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [internalDisk, keeper]
 
         try await harness.core.removeStorageDisk(
             .id(instance.id), disk: internalDisk.id, trashFile: true, confirmed: true)
@@ -350,7 +352,8 @@ struct VMCommandCoreAttachmentTests {
         let other = makeInstance(in: harness, name: "Other")
         let path = externalPath("shared.img")
         let disk = StorageDisk(path: path, label: "Shared", isInternal: false)
-        target.configuration.storageDisks = [disk]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        target.configuration.storageDisks = [disk, keeper]
         other.configuration.storageDisks = [StorageDisk(path: path, label: "Shared")]
 
         // A shared file is offered detach-only, so that is what confirming does.
@@ -364,7 +367,7 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStorageDisk(
             .id(target.id), disk: disk.id, trashFile: true, confirmed: true)
 
-        #expect(target.configuration.storageDisks == nil)
+        #expect(target.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
@@ -376,7 +379,8 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness)
         let ghost = StorageDisk(path: externalPath("ghost.img"), label: "Ghost")
         let doomed = StorageDisk(path: externalPath("locked.img"), label: "Locked")
-        instance.configuration.storageDisks = [ghost, doomed]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [ghost, doomed, keeper]
 
         harness.fileSystem.trashError = CocoaError(.fileNoSuchFile)
         try await harness.core.removeStorageDisk(
@@ -389,12 +393,12 @@ struct VMCommandCoreAttachmentTests {
 
         // The entry goes either way; only the second failure is worth telling
         // the user about.
-        #expect(instance.configuration.storageDisks == nil)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(failures.count == 1)
         #expect(failures.first?.isOperationFailure == true)
     }
 
-    @Test("The synthesized main disk is refused, so its row can never outlive its file")
+    @Test("The synthesized main disk is a VM's only disk, so its removal is refused")
     func removeSyntheticMainDiskIsRefused() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
@@ -412,22 +416,62 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("A materialized main disk is refused on the same rule as the synthesized one")
-    func removeMaterializedMainDiskIsRefused() async throws {
+    @Test("Disk.asif goes like any other disk once the VM has a sibling")
+    func removeMainDiskWithASiblingSucceeds() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
         let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         instance.configuration.storageDisks = [main, extra]
 
+        try await harness.core.removeStorageDisk(
+            .id(instance.id), disk: main.id, trashFile: true, confirmed: true)
+
+        #expect(instance.configuration.storageDisks?.map(\.id) == [extra.id])
+        #expect(
+            harness.fileSystem.trashedURLs.contains(
+                instance.bundleURL.appendingPathComponent("Disk.asif")))
+    }
+
+    @Test("A VM's only disk is refused whichever file backs it")
+    func removeSoleAdditionalDiskIsRefused() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        instance.configuration.storageDisks = [extra]
+
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: main.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: extra.id, trashFile: true, confirmed: true)
         }
 
         #expect(refusal?.isOperationFailure == true)
-        #expect(instance.configuration.storageDisks?.map(\.id) == [main.id, extra.id])
+        #expect(instance.configuration.storageDisks?.map(\.id) == [extra.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("A disk left the VM's last while sharing resolves is refused on the far side")
+    func removeStorageDiskRefusesBecomingTheSoleDiskDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let path = externalPath("external.img")
+        let external = StorageDisk(path: path, label: "External", isInternal: false)
+        let other = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        instance.configuration.storageDisks = [external, other]
+        // A second surface removing the other disk while this one's resolve is
+        // in flight: trashing this one now would empty the list.
+        harness.core.afterSharingResolveForTesting = {
+            instance.configuration.storageDisks = [external]
+        }
+
+        let refusal = await commandError {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: external.id, trashFile: true, confirmed: true)
+        }
+
+        #expect(refusal?.isOperationFailure == true)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [external.id])
     }
 
     @Test("A disk detached while sharing resolves is refused, and its file is left alone")
@@ -645,7 +689,8 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness)
         let path = externalPath("external.img")
         let disk = StorageDisk(path: path, label: "External", isInternal: false)
-        instance.configuration.storageDisks = [disk]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
         // The removal's sheet leaves the menu key equivalents live, so a Start
         // can land in the suspension the sharing resolve opens — this is that
         // keystroke, landing there deterministically.
@@ -663,7 +708,7 @@ struct VMCommandCoreAttachmentTests {
             return
         }
         // Neither the entry nor the file moved: the disk is still the VM's.
-        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id])
+        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
@@ -862,7 +907,8 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed."))
         let path = externalPath("missing.img")
         let disk = StorageDisk(path: path, label: "Scratch", isInternal: false)
-        instance.configuration.storageDisks = [disk]
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
 
         // `.failed` satisfies `canEditSettings`, so neither new capability
         // blocks the recovery a failed start offered.
@@ -874,7 +920,7 @@ struct VMCommandCoreAttachmentTests {
                 kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"),
             on: instance)
 
-        #expect(instance.configuration.storageDisks == nil)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         // The file the start could not open is left exactly where it is.
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
