@@ -76,10 +76,10 @@ final class VMRemovableMediaReconciler {
     /// attach to.
     func apply(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         let mediaChanged = VMConfiguration.removableMediaChanged(old: old, new: new)
-        // Only dispatch when there is a session to attach to. A sessionless VM,
-        // a cold-paused one included, persists the new media list and picks it
-        // up on next start; a VM whose session is live but unattachable never
-        // reaches here, `updateConfiguration` having refused the edit.
+        // Only dispatch when there is a session to attach to. A stopped VM
+        // persists the new media list and picks it up on next start; a VM whose
+        // session is live but unattachable never reaches here,
+        // `updateConfiguration` having refused the edit.
         guard mediaChanged, let sessionID = instance.attachableSessionID else { return }
 
         let id = instance.instanceID
