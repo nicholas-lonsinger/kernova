@@ -126,8 +126,8 @@ stateless ones are `Sendable` structs.
   run with KVO progress.
 - `USBDeviceService` — runtime USB mass-storage attach/detach against the live XHCI controller.
   Owned by `VMLifecycleCoordinator`.
-- `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMLibrary`, which
-  auto-pauses running VMs before sleep and resumes them on wake.
+- `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMSleepWakeCoordinator`,
+  which auto-pauses running VMs before sleep and resumes them on wake.
 
 `Sendable` structs:
 
@@ -160,7 +160,8 @@ that cannot materialize, builds the device detached rather than failing the boot
 off-main assembly and the main-actor live-switch path) owns the app's managed vmnet networks and
 the per-VM DHCP reservations and port-forwarding rules riding them, materialized over the
 `VmnetNetworkOperating` seam. Each VM holds a slot keyed on its persisted MAC, and slots and rules
-alike are kept in step with configurations through `VMLibrary`'s persistence funnel.
+alike are kept in step with configurations by `VMNetworkSlotRegistry`, which `VMLibrary`
+sequences from its persistence funnel.
 
 While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by
 `VMSessionContext`, activated when the VM first reaches `.running`) keeps the live attachment
@@ -268,11 +269,17 @@ session down without that hook, so a suspended session survives to revert at its
 ### ViewModels
 
 - `VMLibrary` — the headless `@Observable` source of truth. Owns `[VMInstance]`, the selection and
-  sidebar order (persisted through an injected `AppPreferences`), the library read and the
-  directory/sleep watchers, the configuration-write funnel, and the DHCP-reservation and
-  port-forwarding bookkeeping. It imports no AppKit and presents nothing: failures and the two
-  per-instance hooks a verb answers leave through `onFailure`, `onAgentBecameCurrent` and
-  `onPoweredOff`.
+  sidebar order (persisted through an injected `AppPreferences`), the library read, the directory
+  watcher, the configuration-write funnel, and the revert registry. It imports no AppKit and
+  presents nothing: failures and the per-instance hooks answered elsewhere leave through
+  `onFailure`, `onAgentBecameCurrent`, `onPoweredOff` and `onEvicted`.
+- `VMNetworkSlotRegistry` and `VMRemovableMediaReconciler` — collaborators `VMLibrary` owns and
+  sequences: the DHCP-reservation, port-forwarding and MAC-uniqueness bookkeeping, and the live
+  XHCI removable-media reconcile. Each reads the instance list through the `VMInstanceRoster`
+  seam rather than owning it.
+- `VMSleepWakeCoordinator` — the sleep/wake pass, wired at the composition root beside the
+  library. Reads the roster, drives `VMLifecycleCoordinator.pause`/`resume` directly, and is told
+  which VMs left the library through `VMLibrary.onEvicted`.
 - `VMCommandCore` — the headless implementation of every VM verb, beneath the UI and every
   automation surface, conforming to the `VMCommanding` facade. `@MainActor` and deliberately not
   `@Observable`: it holds no state, only `VMLibrary` and `VMLifecycleCoordinator`. VMs are addressed
@@ -382,7 +389,10 @@ AppDelegate
     ├── creates → VMLibraryViewModel (AppKit adapter: sheets, consent, presentation)
     │                 ├── VMCommandCore (the verbs, headless; conforms to VMCommanding)
     │                 ├── VMLibrary (owns [VMInstance])
-    │                 │      └── VMDirectoryWatcher, SystemSleepWatcher
+    │                 │      ├── VMDirectoryWatcher
+    │                 │      └── VMNetworkSlotRegistry, VMRemovableMediaReconciler
+    │                 ├── VMSleepWakeCoordinator
+    │                 │      └── SystemSleepWatcher
     │                 ├── VMStorageService, VMSnapshotStore (one each, held by all three)
     │                 ├── DiskImageService
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)

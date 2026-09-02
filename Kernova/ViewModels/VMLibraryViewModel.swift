@@ -82,7 +82,7 @@ final class VMLibraryViewModel {
     func waitForRevertsToSettle() async { await library.waitForRevertsToSettle() }
 
     func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
-        library.vmNamesSharingMACAddress(with: instance)
+        library.networkSlots.vmNamesSharingMACAddress(with: instance)
     }
 
     @discardableResult

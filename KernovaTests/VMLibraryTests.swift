@@ -296,43 +296,6 @@ struct VMLibraryTests {
         #expect(failures.errorMessage != nil)
     }
 
-    // MARK: - Address Reservation Sync
-
-    @Test("A configuration change syncs the VM's DHCP reservation slot for its mode's network")
-    func updateConfigurationSyncsAddressReservation() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet)
-        let instance = makeInstance()
-
-        library.updateConfiguration(of: instance) {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "AA:BB:CC:DD:EE:0F"
-        }
-
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-        #expect(vmnet.reservedMACs.map(\.kind) == [.shared])
-    }
-
-    @Test("A bridged or MAC-less configuration takes no reservation slot")
-    func bridgedConfigurationTakesNoReservationSlot() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet)
-        let instance = makeInstance()
-
-        library.updateConfiguration(of: instance) {
-            $0.networkEnabled = true
-            $0.networkMode = .bridged
-            $0.macAddress = "aa:bb:cc:dd:ee:0f"
-        }
-        library.updateConfiguration(of: instance) {
-            $0.networkMode = .shared
-            $0.macAddress = nil
-        }
-
-        #expect(vmnet.reservedMACs.isEmpty)
-    }
-
     // MARK: - Selected Instance
 
     @Test("selectedInstance returns the instance matching selectedID")

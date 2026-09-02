@@ -2,15 +2,20 @@ import Foundation
 import os
 
 /// The set of VMs the app knows about, and the bookkeeping that keeps it in
-/// step with the bundles on disk: the library read, the directory watcher, the
-/// sleep/wake pass, configuration persistence, DHCP-reservation and
-/// port-forwarding slots, and sidebar ordering.
+/// step with the bundles on disk: membership and sidebar ordering, the library
+/// read, the directory-watched reconcile, `prepareBundle`/`registerPhantom`/
+/// `evict`, the configuration persistence funnel, and the revert registry.
+///
+/// It also sequences two collaborators it owns — ``networkSlots`` and
+/// ``removableMedia`` — because only the library knows where in a configuration
+/// write each of them belongs.
 ///
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
-/// to be told about leaves through ``onFailure``, and the two `VMInstance`
-/// hooks whose handling belongs to a verb — ``onAgentBecameCurrent`` and
-/// ``onPoweredOff`` — leave through their own closures. ``VMLibraryViewModel``
-/// is the AppKit adapter that owns one of these and wires all three.
+/// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
+/// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
+/// ``onPoweredOff`` and ``onEvicted`` — leave through their own closures.
+/// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
+/// wires them all.
 @MainActor
 @Observable
 final class VMLibrary: VMInstanceRoster {
@@ -22,12 +27,6 @@ final class VMLibrary: VMInstanceRoster {
     private let snapshotStore: any VMSnapshotStoring
     private let lifecycle: VMLifecycleCoordinator
 
-    private let vmnetNetworks: any VmnetNetworkProviding
-
-    /// Whether this build's reservation machinery is live — a process-wide
-    /// constant, snapshotted at init.
-    private let isVMNetworkingEntitled: Bool
-
     private let fileSystem: any FileSystemOperating
 
     private let preferences: AppPreferences
@@ -37,6 +36,10 @@ final class VMLibrary: VMInstanceRoster {
     /// Drives a running VM's XHCI removable-media list to what its
     /// configuration asks for, dispatched from ``applyLivePolicy(for:old:new:)``.
     @ObservationIgnored let removableMedia: VMRemovableMediaReconciler
+
+    /// The DHCP-reservation and port-forwarding slots each VM holds, and the
+    /// MAC-address uniqueness both are keyed on.
+    @ObservationIgnored let networkSlots: VMNetworkSlotRegistry
 
     // MARK: - Adapter Hooks
 
@@ -148,17 +151,21 @@ final class VMLibrary: VMInstanceRoster {
         self.lifecycle = lifecycle
         self.fileSystem = fileSystem
         self.preferences = preferences
-        self.vmnetNetworks = vmnetNetworks
-        self.isVMNetworkingEntitled = isVMNetworkingEntitled
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
+        self.networkSlots = VMNetworkSlotRegistry(
+            vmnetNetworks: vmnetNetworks, isVMNetworkingEntitled: isVMNetworkingEntitled)
 
-        // Assigned after every stored property is set: both closures capture
-        // the library, which cannot be referenced before then.
+        // Assigned after every stored property is set: each closure — and the
+        // roster — references the library, which cannot be named before then.
         removableMedia.onSaveConfiguration = { [weak self] instance in
             self?.saveConfiguration(for: instance)
         }
         removableMedia.onFailure = { [weak self] error in
             self?.presentError(error)
+        }
+        networkSlots.roster = self
+        networkSlots.onFailure = { [weak self] title, message in
+            self?.surfaceError(message, title: title)
         }
     }
 
@@ -281,7 +288,7 @@ final class VMLibrary: VMInstanceRoster {
                 wirePersistence(for: instance)
                 return instance
             } + addedDuringRead
-        logDuplicateMACAddressHolders()
+        networkSlots.logDuplicateMACAddressHolders()
 
         if !scan.failedBundleNames.isEmpty {
             reportedFailedBundles.formUnion(scan.failedBundleNames)
@@ -307,29 +314,8 @@ final class VMLibrary: VMInstanceRoster {
                 selectedID = instances.first?.id
             }
         }
-        pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
+        networkSlots.pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
         Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
-    }
-
-    /// Frees every reservation slot no VM in the library claims — the reclaim
-    /// for slots orphaned while the app was not running (a bundle trashed in
-    /// Finder), which no in-session release can catch.
-    ///
-    /// Runs only over a complete library: a bundle whose configuration failed
-    /// to parse is absent from `instances` while its VM still exists, so its
-    /// slot must not be handed to somebody else. Entitlement-gated like the
-    /// rest of the reservation machinery — an unentitled build never reserves,
-    /// so pruning there would empty a store the entitled build owns.
-    private func pruneAddressReservations(scanWasComplete: Bool) {
-        guard isVMNetworkingEntitled, scanWasComplete else { return }
-        let targets = instances.compactMap { reservationTarget(for: $0.configuration) }
-        for kind in VmnetNetworkKind.allCases {
-            let macs = Set(targets.filter { $0.kind == kind }.map(\.mac))
-            vmnetNetworks.retainAddressReservations(macs, kind: kind)
-        }
-        // A reload can run while a network is materialized, so the slots this
-        // just reclaimed only reach guests through a recreate.
-        rebuildNetworksIfIdle()
     }
 
     // MARK: - Revert Registry
@@ -393,7 +379,7 @@ final class VMLibrary: VMInstanceRoster {
         instances.append(phantom)
         sortInstances()
         persistOrder()
-        logDuplicateMACAddressHolders()
+        networkSlots.logDuplicateMACAddressHolders()
         if selectedInstance?.isPreparing != true {
             selectedID = phantom.id
         }
@@ -509,11 +495,8 @@ final class VMLibrary: VMInstanceRoster {
         }
         // A VM out of the library stops claiming its host ports and its
         // address, so the next VM created can be handed both.
-        withdrawPortForwardingRules(for: instance.configuration)
-        if bundleIsGone, let target = reservationTarget(for: instance.configuration) {
-            releaseAddressReservationIfUnused(target)
-        }
-        rebuildNetworksIfIdle()
+        networkSlots.releaseSlots(for: instance.configuration, bundleIsGone: bundleIsGone)
+        networkSlots.rebuildNetworksIfIdle()
         onEvicted?(instance.id)
     }
 
@@ -590,7 +573,7 @@ final class VMLibrary: VMInstanceRoster {
         // change made while a VM ran waits for the last session on that network
         // to release it.
         instance.onSessionTornDown = { [weak self, weak instance] in
-            self?.rebuildNetworksIfIdle(ignoring: instance)
+            self?.networkSlots.rebuildNetworksIfIdle(ignoring: instance)
         }
         // An Ephemeral Mode VM goes back to its baseline on every power-off.
         instance.onPoweredOff = { [weak self, weak instance] in
@@ -605,228 +588,10 @@ final class VMLibrary: VMInstanceRoster {
         // found here belongs to no running revert, and reclaiming it does not
         // wait on the next revert of this VM to come along.
         snapshotStore.sweepRestoreStaging(bundleURL: instance.bundleURL)
-        syncAddressReservation(for: instance.configuration)
-        syncPortForwardingRules(for: instance.configuration)
+        networkSlots.claimSlots(for: instance.configuration)
         // The create/clone/import/load entry point: a VM arriving with a slot
         // on an already-materialized network is pending until it is recreated.
-        rebuildNetworksIfIdle()
-    }
-
-    /// The reservation slot `config` wants: the network its mode maps to and
-    /// the lowercased MAC keying the slot, `nil` for a VM that can join no
-    /// app-managed network (networking off, or Bridged, where external DHCP
-    /// owns addressing).
-    private func reservationTarget(
-        for config: VMConfiguration
-    ) -> (kind: VmnetNetworkKind, mac: String)? {
-        guard config.networkEnabled, let mac = config.macAddress,
-            let kind = VmnetNetworkKind(mode: config.networkMode)
-        else { return nil }
-        return (kind: kind, mac: mac.lowercased())
-    }
-
-    /// Keeps the VM's DHCP reservation slot in step with its configuration:
-    /// any VM that can join an app-managed network holds a slot keyed on its
-    /// persisted MAC, so its address is assigned before the network next
-    /// materializes. Runs at every instance construction and configuration
-    /// change; cheap and idempotent. Entitlement-gated like every other
-    /// consumer of the reservation machinery — an unentitled build never
-    /// materializes a network, so slots taken there would be dead weight.
-    private func syncAddressReservation(for config: VMConfiguration) {
-        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return }
-        vmnetNetworks.reserveAddressIfNeeded(for: target.mac, kind: target.kind)
-    }
-
-    /// Frees `target`'s reservation slot unless a VM still in the library wants
-    /// the same one — a bundle can arrive carrying an address another VM already
-    /// holds, so the last claimant is what releases the slot.
-    private func releaseAddressReservationIfUnused(_ target: (kind: VmnetNetworkKind, mac: String)) {
-        guard isVMNetworkingEntitled else { return }
-        let stillWanted = instances.contains {
-            let other = reservationTarget(for: $0.configuration)
-            return other?.kind == target.kind && other?.mac == target.mac
-        }
-        guard !stillWanted else { return }
-        vmnetNetworks.releaseAddressReservation(for: target.mac, kind: target.kind)
-    }
-
-    /// The address this VM's MAC reserves on the app-managed network it joins,
-    /// or `nil` when it has none to report — networking off, Bridged (where
-    /// external DHCP owns addressing), a build without the reservation
-    /// machinery, or a slot whose network has not been materialized yet.
-    ///
-    /// Reads the reservation store without taking a slot: the sync at every
-    /// configuration change is what claims one.
-    func reservedAddress(for config: VMConfiguration) -> String? {
-        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return nil }
-        return vmnetNetworks.reservedAddress(for: target.mac, kind: target.kind)
-    }
-
-    /// Keeps the VM's port-forwarding rules in step with its configuration: a
-    /// Shared Network VM declares its rules on that network, a VM in any other
-    /// mode declares none. Runs wherever ``syncAddressReservation(for:)`` does.
-    private func syncPortForwardingRules(for config: VMConfiguration) {
-        let forwards = config.networkEnabled && config.networkMode == .shared
-        declarePortForwardingRules(forwards ? config.portForwardingRules : [], for: config)
-    }
-
-    /// Declares `rules` for the VM `config` identifies.
-    ///
-    /// Entitlement-gated like the reservation machinery it rides on — an
-    /// unentitled build attaches system NAT, which forwards nothing.
-    private func declarePortForwardingRules(
-        _ rules: [PortForwardingRule], for config: VMConfiguration
-    ) {
-        guard isVMNetworkingEntitled, let mac = config.macAddress else { return }
-        vmnetNetworks.setPortForwardingRules(rules, for: mac, kind: .shared)
-    }
-
-    /// Withdraws the rules `config` declared, unless a VM still in the library
-    /// carries the same MAC — rules are keyed on the address, so a blanket
-    /// withdrawal would disarm that VM's rules too; its own are re-declared
-    /// instead. An address is one VM's alone once it passes
-    /// ``refuseIfDuplicateMACAddress(_:on:)``, so the survivor is a bundle that
-    /// arrived carrying one already in use.
-    private func withdrawPortForwardingRules(for config: VMConfiguration) {
-        guard let mac = config.macAddress?.lowercased() else { return }
-        let survivor = instances.first { $0.configuration.macAddress?.lowercased() == mac }
-        if let survivor {
-            syncPortForwardingRules(for: survivor.configuration)
-        } else {
-            declarePortForwardingRules([], for: config)
-        }
-    }
-
-    /// The VMs other than `instance` whose configuration carries `mac`, in
-    /// library order — the one lookup every duplicate-address question derives
-    /// from.
-    ///
-    /// Case-insensitive, matching the reservation slots and forwarding rules the
-    /// address keys. A VM with networking off counts: the address persists
-    /// across mode changes, so turning networking back on would re-form the
-    /// collision.
-    private func vmsHoldingMACAddress(_ mac: String, otherThan instance: VMInstance) -> [VMInstance] {
-        let wanted = mac.lowercased()
-        return instances.filter {
-            $0 !== instance && $0.configuration.macAddress?.lowercased() == wanted
-        }
-    }
-
-    /// Names of the other VMs in the library carrying `instance`'s MAC address,
-    /// in library order — empty when the address is this VM's alone.
-    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
-        guard let mac = instance.configuration.macAddress else { return [] }
-        return vmsHoldingMACAddress(mac, otherThan: instance).map(\.name)
-    }
-
-    /// Records every MAC address two or more VMs in the library hold.
-    ///
-    /// Import, load and reconcile admit whatever address a bundle arrives
-    /// carrying, so this is where a pair the app never authored becomes
-    /// traceable. Runs on each of those three, which are the paths a VM the app
-    /// did not author an address for enters by.
-    private func logDuplicateMACAddressHolders() {
-        let holders = Dictionary(grouping: instances) { $0.configuration.macAddress?.lowercased() }
-        for (mac, vms) in holders where mac != nil && vms.count > 1 {
-            let names = vms.map { "'\($0.name)'" }.joined(separator: ", ")
-            Self.logger.warning(
-                "MAC address \(mac ?? "", privacy: .public) is held by \(names, privacy: .public)")
-        }
-    }
-
-    /// Refuses a change that would give `instance` a MAC address another VM in
-    /// the library holds, logging the refusal and surfacing the alert.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    private func refuseIfDuplicateMACAddress(_ mac: String, on instance: VMInstance) -> Bool {
-        guard let holder = vmsHoldingMACAddress(mac, otherThan: instance).first else { return false }
-        Self.logger.notice(
-            "Refused the MAC address \(mac, privacy: .public) for '\(instance.name, privacy: .public)': '\(holder.name, privacy: .public)' already holds it"
-        )
-        surfaceError(
-            "“\(holder.name)” already uses \(mac). "
-                + "Each virtual machine needs its own MAC address. "
-                + "Change or delete “\(holder.name)” first to move this address to “\(instance.name)”.",
-            title: "MAC Address In Use")
-        return true
-    }
-
-    /// Refuses an operation that would put a second guest on one MAC address on
-    /// one network, logging the refusal and surfacing the alert.
-    ///
-    /// `config` is the configuration the VM would run under — its own at start,
-    /// the prospective one for a live mode switch, which moves an unchanged
-    /// address onto a different network.
-    ///
-    /// ``refuseIfDuplicateMACAddress(_:on:)`` keeps the library unique for every
-    /// address the app writes; this covers the pair a bundle arrived carrying,
-    /// which passed through no writer.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    func refuseIfDuplicateMACAddressConflict(
-        _ instance: VMInstance, joining config: VMConfiguration
-    ) -> Bool {
-        guard let conflict = liveMACAddressConflict(for: config, excluding: instance),
-            let mac = config.macAddress
-        else { return false }
-        Self.logger.notice(
-            "Refused to run '\(instance.name, privacy: .public)': shares the MAC address \(mac, privacy: .public) with active VM '\(conflict.name, privacy: .public)'"
-        )
-        surfaceError(
-            "“\(instance.name)” has the same MAC address as “\(conflict.name)”, which is active. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Stop “\(conflict.name)” first, or give one of them a new address in Network settings.",
-            title: "Duplicate MAC Address")
-        return true
-    }
-
-    /// The first live VM sharing `config`'s MAC address on the network `config`
-    /// joins, if any.
-    ///
-    /// Live means VZ holds the attachment, as it does for the machine identity.
-    /// The mode names the network, so two holders collide only where both
-    /// guests attach: networking off puts no address on a wire, and Shared,
-    /// Host Only and Bridged are separate networks. Two bridged VMs compare as
-    /// one network whatever interface each names — Automatic resolves at start,
-    /// so which link they land on is not knowable in advance.
-    func liveMACAddressConflict(
-        for config: VMConfiguration, excluding instance: VMInstance
-    ) -> VMInstance? {
-        guard config.networkEnabled, let mac = config.macAddress else { return nil }
-        return vmsHoldingMACAddress(mac, otherThan: instance).first { other in
-            (other.isActive || other.isLivePaused)
-                && other.configuration.networkEnabled
-                && other.configuration.networkMode == config.networkMode
-        }
-    }
-
-    /// Recreates every app-managed network whose DHCP reservations or
-    /// forwarding rules are no longer the ones that should install, once no VM
-    /// could be attached to it.
-    ///
-    /// Both are fixed at creation, so a change reaches guests only through a
-    /// recreate — and only while no session holds an attachment on the network.
-    /// The recreate keeps the network's addressing, so no guest's address
-    /// moves.
-    /// `tornDown` is the instance whose session just ended, excluded from the
-    /// idle scan: `tearDownSession` fires its hook before the caller settles
-    /// the status, so a VM released from a transitioning one (`.saving` on a
-    /// save-suspend, `.installing` on a cancelled guest setup) would otherwise
-    /// read as still holding the network it just let go of.
-    private func rebuildNetworksIfIdle(ignoring tornDown: VMInstance? = nil) {
-        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind, ignoring: tornDown) }
-    }
-
-    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind, ignoring tornDown: VMInstance?) {
-        guard vmnetNetworks.networkConfigurationIsPending(for: kind) else { return }
-        let attached = instances.contains {
-            $0 !== tornDown && $0.mayHoldAttachment(on: kind)
-        }
-        guard !attached else { return }
-        Self.logger.notice(
-            "Recreating the \(kind.rawValue, privacy: .public) network to install its pending changes"
-        )
-        vmnetNetworks.invalidateNetwork(for: kind)
+        networkSlots.rebuildNetworksIfIdle()
     }
 
     /// The single entry point for any UI-driven or programmatic mutation of
@@ -853,54 +618,23 @@ final class VMLibrary: VMInstanceRoster {
         var new = old
         mutate(&new)
         guard new != old else { return true }
-        if let mac = new.macAddress, mac.lowercased() != old.macAddress?.lowercased(),
-            refuseIfDuplicateMACAddress(mac, on: instance)
-        {
-            return false
-        }
-        // A live VM's Mode picker stays enabled, and a mode change hot-swaps the
-        // attachment: the address is unchanged, so the refusal above never sees
-        // it, and the network it lands on is not the one `start` checked. Only a
-        // VM already running can form the collision this way, and only a
-        // configuration not already in one is refused — a VM that reached a
-        // collision by some other route has to stay editable to leave it.
-        if instance.isActive || instance.isLivePaused,
-            liveMACAddressConflict(for: old, excluding: instance) == nil,
-            refuseIfDuplicateMACAddressConflict(instance, joining: new)
-        {
+        guard !networkSlots.refuseSlotConflict(on: instance, movingFrom: old, to: new) else {
             return false
         }
         instance.configuration = new
-        // An edited MAC leaves its predecessor holding an older — so
-        // higher-priority — reservation slot. Left declared there, the retired
-        // address keeps claiming the VM's host ports and the rules re-declared
-        // under the new one are dropped as duplicates.
-        if let retired = old.macAddress, retired != new.macAddress {
-            withdrawPortForwardingRules(for: old)
-        }
-        // Released before the new slot is taken, so the freed slot is the
-        // lowest one available and an edited MAC normally keeps the VM's
-        // address. Covers a MAC change, a mode switch, and networking off.
-        if let retired = reservationTarget(for: old) {
-            let kept = reservationTarget(for: new)
-            if kept?.kind != retired.kind || kept?.mac != retired.mac {
-                releaseAddressReservationIfUnused(retired)
-            }
-        }
-        syncAddressReservation(for: new)
-        syncPortForwardingRules(for: new)
+        networkSlots.moveSlots(from: old, to: new)
         let saved = saveConfiguration(for: instance)
         // A live session still reads as attached to the network it is *on*, so
         // the network this VM is switching *to* is idle only until
         // `applyLivePolicy` attaches it — which it does synchronously. Recreate
         // it now, or the change this VM just declared waits for a teardown.
-        rebuildNetworksIfIdle()
+        networkSlots.rebuildNetworksIfIdle()
         applyLivePolicy(for: instance, old: old, new: new)
         // A live switch off a network frees it inside `applyLivePolicy` — the
         // pass above ran while the session still held that attachment, so
         // re-check now rather than leaving the pending change to an unrelated
         // event.
-        rebuildNetworksIfIdle()
+        networkSlots.rebuildNetworksIfIdle()
         return saved
     }
 
@@ -1002,7 +736,7 @@ final class VMLibrary: VMInstanceRoster {
             if didChange {
                 sortInstances()
                 persistOrder()
-                logDuplicateMACAddressHolders()
+                networkSlots.logDuplicateMACAddressHolders()
             }
 
             let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
