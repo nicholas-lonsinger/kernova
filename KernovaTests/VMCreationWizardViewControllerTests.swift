@@ -100,6 +100,28 @@ struct VMCreationWizardViewControllerTests {
         #expect(delegate.cancelCount == 1)
     }
 
+    @Test("A second Create activation makes no second request")
+    func createIsOneShot() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .review
+        vm.vmName = "Double Clicked"
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        let delegate = MockDelegate()
+        wizard.delegate = delegate
+        wizard.loadViewIfNeeded()
+
+        // The sheet dismisses asynchronously, so a double click reaches the
+        // button twice with the wizard still on screen.
+        let create = findButton(titled: "Create", in: wizard.view)
+        create?.performClick(nil)
+        create?.performClick(nil)
+
+        #expect(delegate.createRequests.count == 1)
+        #expect(create?.isEnabled == false)
+        #expect(findButton(titled: "Back", in: wizard.view)?.isEnabled == false)
+        #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == false)
+    }
+
     @Test("A refused create leaves the wizard usable for a retry")
     func refusedCreateLeavesWizardUsable() {
         let vm = VMCreationViewModel()
@@ -110,9 +132,6 @@ struct VMCreationWizardViewControllerTests {
         wizard.delegate = delegate
         wizard.loadViewIfNeeded()
 
-        // The create registers its row and returns on the same turn, so the
-        // sheet is either closed or still showing the step to retry from —
-        // never a disabled shell waiting on a copy.
         findButton(titled: "Create", in: wizard.view)?.performClick(nil)
         #expect(delegate.createRequests.count == 1)
 
@@ -120,7 +139,12 @@ struct VMCreationWizardViewControllerTests {
         // written. (No window in the test, so no alert is presented.)
         wizard.presentCreationFailure(message: "Disk full")
         #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == true)
+        #expect(findButton(titled: "Back", in: wizard.view)?.isEnabled == true)
         #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == true)
+
+        // And the retry goes through, rather than tripping the one-shot again.
+        findButton(titled: "Create", in: wizard.view)?.performClick(nil)
+        #expect(delegate.createRequests.count == 2)
     }
 
     @Test("Validation message displays and gates Next when the model is invalid")

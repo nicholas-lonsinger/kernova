@@ -50,6 +50,15 @@ final class VMCreationWizardViewController: NSViewController {
     private var displayedStep: VMCreationStep?
     private var observation: ObservationLoop?
 
+    /// Set the first time Create is activated, and cleared only by
+    /// ``presentCreationFailure(message:)``.
+    ///
+    /// The sheet dismisses asynchronously, so the second click of a double
+    /// click — or a held Return — reaches the button again after the delegate
+    /// has already made a VM. This is the one-shot that keeps the second
+    /// activation from making another.
+    private var didRequestCreate = false
+
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
         super.init(nibName: nil, bundle: nil)
@@ -228,8 +237,12 @@ final class VMCreationWizardViewController: NSViewController {
         let isReview = step == .review
         nextButton.isHidden = isReview
         createButton.isHidden = !isReview
-        nextButton.isEnabled = creationVM.canAdvance
-        createButton.isEnabled = creationVM.canCreate
+        // A create in flight owns the shell: nothing navigates or fires again
+        // until the sheet closes or the host reports a refusal.
+        nextButton.isEnabled = creationVM.canAdvance && !didRequestCreate
+        createButton.isEnabled = creationVM.canCreate && !didRequestCreate
+        backButton.isEnabled = !didRequestCreate
+        cancelButton.isEnabled = !didRequestCreate
 
         // Only the visible primary button owns the Return key.
         nextButton.keyEquivalent = isReview ? "" : "\r"
@@ -307,7 +320,10 @@ final class VMCreationWizardViewController: NSViewController {
     }
 
     @objc private func createTapped() {
+        guard !didRequestCreate else { return }
         commitPendingEdits()
+        didRequestCreate = true
+        apply()
         delegate?.wizardDidRequestCreate(self, creationVM: creationVM)
     }
 
@@ -330,6 +346,9 @@ final class VMCreationWizardViewController: NSViewController {
     /// because the wizard sheet is still attached to that window: an alert atop
     /// the wizard is well-defined, two sheets on the same window contend.
     func presentCreationFailure(message: String?) {
+        // Nothing was written, so the wizard is live again for the retry.
+        didRequestCreate = false
+        apply()
         guard let window = view.window else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning

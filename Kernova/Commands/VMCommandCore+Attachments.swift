@@ -106,7 +106,10 @@ extension VMCommandCore {
     /// Drops a storage disk's entry, and with `trashFile` the file behind it.
     ///
     /// A file another VM still references is never trashed, however `trashFile`
-    /// is set — only the entry goes.
+    /// is set — only the entry goes. The VM's own `Disk.asif` is refused
+    /// outright: it is the disk the guest boots from, an empty list
+    /// re-synthesizes its row, and the same exclusion already keeps it out of
+    /// the start-failure removal offer.
     func removeStorageDisk(
         _ selector: VMSelector, disk id: UUID, trashFile: Bool, confirmed: Bool
     ) async throws {
@@ -115,27 +118,44 @@ extension VMCommandCore {
         guard let disk = storageDisk(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editStorageDisk)
         }
-        // Only external disks can be shared: a bundle-relative path is per-VM
-        // by construction.
+        guard !isMainDisk(disk, of: instance) else {
+            Self.logger.debug(
+                "Refusing to remove the main disk of '\(instance.name, privacy: .public)'")
+            throw CommandError.operationFailed(
+                verb: .editStorageDisk,
+                message:
+                    "\u{201C}\(disk.label)\u{201D} is the disk \u{201C}\(instance.name)\u{201D} starts from. It goes with the VM."
+            )
+        }
+        // `shared` is read only where a file is trashed, and only an external
+        // disk can be shared — a bundle-relative path is per-VM by
+        // construction. Every other removal is entry-only, and stays free of
+        // the suspension the resolve opens.
         var shared: [String] = []
-        if !disk.isInternal {
+        if trashFile, !disk.isInternal {
             shared = await sharingVMNames(
                 forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
             #if DEBUG
             await afterSharingResolveForTesting?()
             #endif
             // The resolve suspends and the panel's sheet leaves the menu key
-            // equivalents live, so the gate runs again on the far side of it: a
-            // Start that landed in the gap must refuse rather than detach a disk
-            // out from under a guest that is running or about to be.
+            // equivalents live, so both the gate and the disk are read again on
+            // the far side of it: a Start that landed in the gap must refuse
+            // rather than detach a disk out from under a guest that is running
+            // or about to be, and a disk detached or re-pointed in the gap is
+            // no longer the one this call resolved sharing for.
             try require(.editStorageDisks, on: instance)
+            guard let current = storageDisk(id: id, on: instance),
+                current.path == disk.path, current.bookmark == disk.bookmark
+            else {
+                throw staleAttachment(id, on: instance, verb: .editStorageDisk)
+            }
         }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
                 Self.removalConsent(
                     Self.attachmentDeletePrompt(
-                        label: disk.label, isInternal: disk.isInternal,
-                        isMainDisk: isMainDisk(disk, of: instance), isGuestAgent: false,
+                        label: disk.label, isInternal: disk.isInternal, isGuestAgent: false,
                         sharedVMNames: shared)))
         }
         detachStorageDisk(id, from: instance)
@@ -285,22 +305,28 @@ extension VMCommandCore {
         }
         let isAgentInstaller = isGuestAgentInstaller(item)
         var shared: [String] = []
-        if !isAgentInstaller {
+        if trashFile, !isAgentInstaller {
             shared = await sharingVMNames(
                 forPath: item.path, bookmark: item.bookmark, excluding: instance)
             #if DEBUG
             await afterSharingResolveForTesting?()
             #endif
-            // Same far-side gate as `removeStorageDisk`. Removable media is
-            // hot-pluggable, so this refuses the states a live session doesn't
-            // cover — a start still bringing the VM up, above all.
+            // Same far-side gate and re-read as `removeStorageDisk`. Removable
+            // media is hot-pluggable, so the gate refuses the states a live
+            // session doesn't cover — a start still bringing the VM up, above
+            // all.
             try require(.editRemovableMedia, on: instance)
+            guard let current = removableMediaItem(id: id, on: instance),
+                current.path == item.path, current.bookmark == item.bookmark
+            else {
+                throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
+            }
         }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
                 Self.removalConsent(
                     Self.attachmentDeletePrompt(
-                        label: item.label, isInternal: false, isMainDisk: false,
+                        label: item.label, isInternal: false,
                         isGuestAgent: isAgentInstaller, sharedVMNames: shared)))
         }
         detachRemovableMedia(id, from: instance)
@@ -519,7 +545,6 @@ extension VMCommandCore {
     static func attachmentDeletePrompt(
         label: String,
         isInternal: Bool,
-        isMainDisk: Bool,
         isGuestAgent: Bool,
         sharedVMNames: [String]
     ) -> AttachmentDeletePrompt {
@@ -542,12 +567,10 @@ extension VMCommandCore {
         }
 
         if isInternal {
-            let base = "Moves the disk image to the Trash. You can restore it with Finder's Put Back."
             return AttachmentDeletePrompt(
                 title: title,
-                message: isMainDisk
-                    ? "\(base) This is the VM's startup disk — it won't boot without it."
-                    : base,
+                message:
+                    "Moves the disk image to the Trash. You can restore it with Finder's Put Back.",
                 actions: [.moveToTrash])
         }
 
@@ -660,34 +683,44 @@ extension VMCommandCore {
     }
 
     /// Applies `edit` to one storage disk, refusing when the VM no longer
-    /// carries it.
+    /// carries it and returning without a write when it changes nothing.
+    ///
+    /// The early-out is what keeps an unchanged edit a no-op: materializing the
+    /// synthesized main disk into `storageDisks` is itself a configuration
+    /// change, so the write funnel's own diff cannot catch this one.
     private func mutateStorageDisk(
         _ id: UUID, on instance: VMInstance, _ edit: (inout StorageDisk) -> Void
     ) throws {
-        guard storageDisk(id: id, on: instance) != nil else {
+        guard let current = storageDisk(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editStorageDisk)
         }
+        var edited = current
+        edit(&edited)
+        guard edited != current else { return }
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         library.updateConfiguration(of: instance) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             guard let index = disks.firstIndex(where: { $0.id == id }) else { return }
-            edit(&disks[index])
+            disks[index] = edited
             config.setStorageDisks(disks)
         }
     }
 
     /// Applies `edit` to one removable medium, refusing when the VM no longer
-    /// carries it.
+    /// carries it and returning without a write when it changes nothing.
     private func mutateRemovableMedia(
         _ id: UUID, on instance: VMInstance, _ edit: (inout RemovableMediaItem) -> Void
     ) throws {
-        guard removableMediaItem(id: id, on: instance) != nil else {
+        guard let current = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
+        var edited = current
+        edit(&edited)
+        guard edited != current else { return }
         library.updateConfiguration(of: instance) { config in
             var items = config.removableMedia ?? []
             guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-            edit(&items[index])
+            items[index] = edited
             config.removableMedia = items.isEmpty ? nil : items
         }
     }

@@ -181,17 +181,4 @@ struct VMSleepWakeCoordinatorTests {
         #expect(virtService.resumeCallCount == 0)
         #expect(coordinator.sleepPausedInstanceIDs.isEmpty)
     }
-
-    @Test("forget drops a sleep-paused VM, so the wake pass leaves it alone")
-    func forgetDropsASleepPausedVM() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let evicted = await makeSleepPaused(coordinator, roster: roster, name: "Deleted")
-        #expect(coordinator.sleepPausedInstanceIDs == Set([evicted.id]))
-
-        coordinator.forget(evicted.id)
-
-        #expect(coordinator.sleepPausedInstanceIDs.isEmpty)
-        await coordinator.resumeAllAfterWake()
-        #expect(virtService.resumeCallCount == 0)
-    }
 }

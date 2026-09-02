@@ -81,9 +81,10 @@ final class VMRemovableMediaReconciler {
     /// so a stop — or a stop and a restart — mid-pass abandons the pass rather
     /// than driving whatever is live by then.
     ///
-    /// Attachability is read before the dequeue, so an entry the VM is only
-    /// momentarily unable to act on (a save in flight on the same session)
-    /// stays queued for a later pass instead of being consumed and dropped.
+    /// Attachability is read before the dequeue, so an entry the VM cannot be
+    /// acted on for (a save in flight on the same session) is left in the queue
+    /// rather than consumed. Nothing re-drives the drain, so that entry waits
+    /// there until the next configuration edit dispatches a pass.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
         defer { reconcilingRemovableMediaInstances.remove(id) }
         while let pending = pendingRemovableMediaTarget[id] {

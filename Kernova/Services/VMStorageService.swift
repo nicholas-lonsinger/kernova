@@ -168,11 +168,10 @@ struct VMStorageService: Sendable {
     }
 
     /// Creates a new VM bundle directory at `bundleURL` and saves the initial configuration.
+    ///
+    /// Every caller writes into a freshly minted ``makeStagedBundleURL()``; the
+    /// collision guard is the rename in ``publishBundle(from:to:)``.
     func createVMBundle(_ configuration: VMConfiguration, at bundleURL: URL) throws {
-        if FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) {
-            throw VMStorageError.bundleAlreadyExists(bundleURL)
-        }
-
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
         try saveConfiguration(configuration, to: bundleURL)
 
@@ -185,10 +184,6 @@ struct VMStorageService: Sendable {
         from sourceBundleURL: URL, to destinationBundleURL: URL, newConfiguration: VMConfiguration,
         filesToCopy: [String]
     ) throws {
-        if FileManager.default.fileExists(atPath: destinationBundleURL.path(percentEncoded: false)) {
-            throw VMStorageError.bundleAlreadyExists(destinationBundleURL)
-        }
-
         try FileManager.default.createDirectory(at: destinationBundleURL, withIntermediateDirectories: true)
 
         let fm = FileManager.default

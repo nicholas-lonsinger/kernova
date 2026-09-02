@@ -272,14 +272,13 @@ session down without that hook, so a suspended session survives to revert at its
   sidebar order (persisted through an injected `AppPreferences`), the library read, the directory
   watcher, the configuration-write funnel, and the revert registry. It imports no AppKit and
   presents nothing: failures and the per-instance hooks answered elsewhere leave through
-  `onFailure`, `onAgentBecameCurrent`, `onPoweredOff` and `onEvicted`.
+  `onFailure`, `onAgentBecameCurrent` and `onPoweredOff`.
 - `VMNetworkSlotRegistry` and `VMRemovableMediaReconciler` — collaborators `VMLibrary` owns and
   sequences: the DHCP-reservation, port-forwarding and MAC-uniqueness bookkeeping, and the live
   XHCI removable-media reconcile. Each reads the instance list through the `VMInstanceRoster`
   seam rather than owning it.
 - `VMSleepWakeCoordinator` — the sleep/wake pass, wired at the composition root beside the
-  library. Reads the roster, drives `VMLifecycleCoordinator.pause`/`resume` directly, and is told
-  which VMs left the library through `VMLibrary.onEvicted`.
+  library. Reads the roster and drives `VMLifecycleCoordinator.pause`/`resume` directly.
 - `VMCommandCore` — the headless implementation of every VM verb, beneath the UI and every
   automation surface, conforming to the `VMCommanding` facade. `@MainActor` and deliberately not
   `@Observable`: it holds no state, only `VMLibrary` and `VMLifecycleCoordinator`. VMs are addressed
