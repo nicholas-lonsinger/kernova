@@ -199,21 +199,23 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             action: #selector(AppDelegate.revertToSnapshot(_:)))
     }
 
-    /// Rebuilds the app menu's quit section from `appMenuQuitItems` for the
-    /// current mode, clearing whatever occupies the section first so the result
-    /// is the model and nothing else.
+    /// Brings the app menu's quit section to `appMenuQuitItems` for the current
+    /// mode, by the least mutation that gets there.
     ///
-    /// The rebuild is skipped only when the *installed* items already are the
-    /// model, item for item — never on an unchanged model alone. AppKit injects
-    /// its own "Quit and Keep Windows" alternate beside a `terminate:` item at
-    /// times of its choosing, so a section that matched a moment ago can hold an
-    /// item the model never named; comparing what is installed is what takes
-    /// ⌥⌘Q back from that alternate.
+    /// The section is swept, not rebuilt: the installed items are walked in
+    /// order against the model, an item matching the next unclaimed model entry
+    /// is left exactly where it is, and only an item no entry claims is removed.
+    /// A full teardown happens solely when that pass ends with model entries
+    /// unplaced — a preference flip, or a section too scrambled to salvage.
     ///
-    /// Skipping a matching section is load-bearing, not an optimization: AppKit
-    /// also calls `menuNeedsUpdate(_:)` while *matching key equivalents*, so this
-    /// runs on every ⌘-keystroke — and tearing the items down mid-match is
-    /// exactly the mutation that must not happen.
+    /// Both halves of that are load-bearing. AppKit re-attaches its own "Quit
+    /// and Keep Windows" alternate beside the `terminate:` item as a steady
+    /// state, so the section is *routinely* longer than the model and a
+    /// rebuild-on-any-difference would fire forever; and `menuNeedsUpdate(_:)`
+    /// runs while AppKit matches key equivalents, so it fires on every
+    /// ⌘-keystroke — tearing our items down mid-match is exactly the mutation
+    /// that must not happen. Removing the unclaimed alternate is what takes
+    /// ⌥⌘Q back for the true quit, and it costs the modeled items nothing.
     private func rebuildAppMenuQuitItems() {
         guard let appMenu, let sectionStart = appMenuQuitSectionStart else { return }
         // The preference is read live here, not captured, so a Settings flip is
@@ -227,14 +229,23 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             assertionFailure("App menu quit-section separator is not in the app menu")
             return
         }
+
         // The quit section is the app menu's tail, so everything past the
         // separator is what the model has to account for.
-        let installed = appMenu.items.suffix(from: sectionStartIndex + 1)
-        if installed.count == model.count,
-            zip(model, installed).allSatisfy({ $0.matches($1) })
-        {
-            return
+        var placed = 0
+        var index = sectionStartIndex + 1
+        while index < appMenu.numberOfItems {
+            guard let item = appMenu.item(at: index) else { break }
+            if placed < model.count, model[placed].matches(item) {
+                placed += 1
+                index += 1
+            } else {
+                appMenu.removeItem(at: index)
+            }
         }
+        // Every entry placed, in order, means the section now *is* the model:
+        // the sweep kept nothing else.
+        guard placed < model.count else { return }
 
         while appMenu.numberOfItems > sectionStartIndex + 1 {
             appMenu.removeItem(at: appMenu.numberOfItems - 1)
