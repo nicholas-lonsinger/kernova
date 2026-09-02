@@ -105,4 +105,89 @@ extension Sequence<ExternalFileReference> {
         }
         return refs
     }
+
+    /// Bookmark blob → the path it currently resolves to, one resolution per
+    /// *distinct* blob; a blob that no longer resolves is absent.
+    ///
+    /// Blocking and sandbox-touching — never call this on the main actor. The
+    /// memo carries the cost: a clone copies its origin's bookmark bytes
+    /// verbatim, so a library full of clones resolves once.
+    func resolvedTargets() -> [Data: String] {
+        var targets: [Data: String] = [:]
+        for reference in self {
+            guard let bookmark = reference.bookmark, targets[bookmark] == nil,
+                let target = SecurityScopedBookmark.resolvedTargetPath(bookmark)
+            else { continue }
+            targets[bookmark] = target
+        }
+        return targets
+    }
+
+    /// Every canonical path these references stand for — the union of each
+    /// reference's stored path and, when `resolvedTargets` carries one, its
+    /// bookmark's current target.
+    ///
+    /// Two reference sets name the same file when their identities intersect.
+    func fileIdentities(resolvedTargets: [Data: String]) -> Set<String> {
+        var identities: Set<String> = []
+        for reference in self {
+            identities.formUnion(
+                ExternalFileReference.fileIdentities(
+                    forPath: reference.path,
+                    resolvedTarget: reference.bookmark.flatMap { resolvedTargets[$0] }))
+        }
+        return identities
+    }
+}
+
+extension ExternalFileReference {
+    /// One file's identity: its stored path, plus its bookmark's resolved
+    /// target when the two differ.
+    ///
+    /// The union is what makes the comparison conservative in both healing
+    /// directions — a VM whose path healed to the file's new home still matches
+    /// a sibling still holding the old one, and a reference whose bookmark is
+    /// absent or dead still matches on the path it stored.
+    static func fileIdentities(forPath path: String, resolvedTarget: String?) -> Set<String> {
+        var identities: Set<String> = [canonicalPath(path)]
+        if let resolvedTarget { identities.insert(canonicalPath(resolvedTarget)) }
+        return identities
+    }
+
+    /// The comparison form of a path: `.`/`..` and a trailing slash removed,
+    /// and the name precomposed.
+    ///
+    /// APFS hands back a decomposed (NFD) form of a name the open panel stored
+    /// precomposed (NFC), and a `sharedDirectory` pick can carry a trailing
+    /// slash the same file's disk pick does not. The `isDirectory` hint is
+    /// pinned so the form is the string's alone — left to infer it, `URL` stats
+    /// the path and keeps the trailing slash for a directory that exists.
+    static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: false).standardizedFileURL
+            .path(percentEncoded: false)
+            .precomposedStringWithCanonicalMapping
+    }
+
+    /// A library VM as the shared-file check sees it: its name, and the
+    /// external references that decide whether it shares a file.
+    ///
+    /// Snapshotted on the main actor so the resolution pass behind
+    /// ``Swift/Sequence/fileIdentities(resolvedTargets:)`` can run detached.
+    struct SharingCandidate: Sendable {
+        let name: String
+        let references: [ExternalFileReference]
+    }
+}
+
+extension Sequence<ExternalFileReference.SharingCandidate> {
+    /// The candidates reduced to what a match needs — each one's name and
+    /// identity set — for ``VMCommandCore/sharingVMNames(matching:among:)``.
+    func identified(resolvedTargets: [Data: String]) -> [(name: String, identities: Set<String>)] {
+        map {
+            (
+                name: $0.name,
+                identities: $0.references.fileIdentities(resolvedTargets: resolvedTargets)
+            )
+        }
+    }
 }

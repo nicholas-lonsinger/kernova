@@ -318,7 +318,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("externalAttachments returns external disks and removable media with sharing info")
-    func externalAttachmentsLists() {
+    func externalAttachmentsLists() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let sharedISO = "/tmp/shared-installer.iso"
         let target = makeInstance(name: "Target")
@@ -343,7 +343,7 @@ struct VMLibraryViewModelTests {
         let unrelated = makeInstance(name: "Unrelated")
         viewModel.instances = [target, sharer, unrelated]
 
-        let attachments = viewModel.externalAttachments(for: target)
+        let attachments = await viewModel.externalAttachments(for: target)
 
         // Internal disks are excluded; the two externals appear in
         // disks-then-media order.
@@ -357,21 +357,21 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("externalAttachments lists a Linux VM's kernel and initrd")
-    func externalAttachmentsIncludeKernelAndInitrd() {
+    func externalAttachmentsIncludeKernelAndInitrd() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let target = makeInstance(name: "Linux")
         target.configuration.kernelPath = "/Users/me/vmlinuz"
         target.configuration.initrdPath = "/Users/me/initrd.img"
         viewModel.instances = [target]
 
-        let attachments = viewModel.externalAttachments(for: target)
+        let attachments = await viewModel.externalAttachments(for: target)
         #expect(attachments.map(\.kind) == [.kernel, .initrd])
         #expect(attachments.map(\.label) == ["Kernel", "Initial RAM Disk"])
         #expect(attachments.allSatisfy { !$0.isShared })
     }
 
     @Test("A kernel a sibling VM also boots from is reported as shared")
-    func externalAttachmentsMarkSharedKernel() {
+    func externalAttachmentsMarkSharedKernel() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let kernelPath = "/Users/me/vmlinuz"
         let target = makeInstance(name: "Original")
@@ -380,24 +380,24 @@ struct VMLibraryViewModelTests {
         clone.configuration.kernelPath = kernelPath
         viewModel.instances = [target, clone]
 
-        let attachments = viewModel.externalAttachments(for: target)
+        let attachments = await viewModel.externalAttachments(for: target)
         #expect(attachments.count == 1)
         #expect(attachments.first?.kind == .kernel)
         #expect(attachments.first?.sharedWithVMNames == ["Clone"])
     }
 
     @Test("externalAttachments never offers a shared directory")
-    func externalAttachmentsExcludeSharedDirectories() {
+    func externalAttachmentsExcludeSharedDirectories() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let target = makeInstance(name: "Sharer")
         target.configuration.sharedDirectories = [SharedDirectory(path: "/Users/me/Projects")]
         viewModel.instances = [target]
 
-        #expect(viewModel.externalAttachments(for: target).isEmpty)
+        #expect(await viewModel.externalAttachments(for: target).isEmpty)
     }
 
-    @Test("externalAttachmentsResolvingExistence flags isMissing per backing-file existence")
-    func externalAttachmentsResolvingExistenceFlagsMissing() async throws {
+    @Test("externalAttachments flags isMissing per backing-file existence")
+    func externalAttachmentsFlagMissing() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let presentDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("present-\(UUID().uuidString).img")
@@ -418,10 +418,7 @@ struct VMLibraryViewModelTests {
         ]
         viewModel.instances = [instance]
 
-        // The synchronous enumeration never touches the filesystem.
-        #expect(viewModel.externalAttachments(for: instance).allSatisfy { !$0.isMissing })
-
-        let attachments = await viewModel.externalAttachmentsResolvingExistence(for: instance)
+        let attachments = await viewModel.externalAttachments(for: instance)
         #expect(attachments.count == 2)
         #expect(attachments[0].path == presentDisk.path)
         #expect(attachments[0].isMissing == false)
@@ -430,7 +427,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("externalAttachments is empty when the VM only has internal disks")
-    func externalAttachmentsEmptyForInternalOnly() {
+    func externalAttachmentsEmptyForInternalOnly() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.configuration.storageDisks = [
@@ -441,11 +438,11 @@ struct VMLibraryViewModelTests {
         ]
         viewModel.instances.append(instance)
 
-        #expect(viewModel.externalAttachments(for: instance).isEmpty)
+        #expect(await viewModel.externalAttachments(for: instance).isEmpty)
     }
 
     @Test("externalAttachments excludes the bundled Guest Agent DMG")
-    func externalAttachmentsExcludesGuestAgentDMG() throws {
+    func externalAttachmentsExcludesGuestAgentDMG() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
@@ -456,7 +453,7 @@ struct VMLibraryViewModelTests {
         ]
         viewModel.instances.append(instance)
 
-        let attachments = viewModel.externalAttachments(for: instance)
+        let attachments = await viewModel.externalAttachments(for: instance)
 
         // The app-owned DMG is filtered out; only the user's ISO remains —
         // so it can never be surfaced for, or moved to, the Trash.
@@ -466,7 +463,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("externalAttachments is empty when the only external is the Guest Agent DMG")
-    func externalAttachmentsEmptyForGuestAgentOnly() throws {
+    func externalAttachmentsEmptyForGuestAgentOnly() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
@@ -478,7 +475,7 @@ struct VMLibraryViewModelTests {
 
         // Empty means the sheet's "Files outside this VM" section is omitted
         // entirely — there is nothing for the user to decide about.
-        #expect(viewModel.externalAttachments(for: instance).isEmpty)
+        #expect(await viewModel.externalAttachments(for: instance).isEmpty)
     }
 
     @Test("deleteVM never trashes the Guest Agent DMG even if its id is selected")
@@ -628,6 +625,41 @@ struct VMLibraryViewModelTests {
         await viewModel.delete(target, deletingExternalIDs: [sharedID])
 
         // Hard-block: a shared file is never trashed, so the other VM keeps it.
+        #expect(fileSystem.trashedURLs.isEmpty)
+        #expect(!presenter.showError)
+    }
+
+    @Test("deleteVM never trashes a file a sibling names in a different path form")
+    func deleteVMNeverTrashesSharedExternalAcrossPathForms() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let sharedDisk = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "\(UUID().uuidString)-Cafe\u{0301}.img".precomposedStringWithCanonicalMapping)
+
+        let sharedID = UUID()
+        let sharedPath = sharedDisk.path(percentEncoded: false)
+        let target = makeInstance(name: "Target")
+        target.configuration.storageDisks = [
+            StorageDisk(
+                id: sharedID, path: sharedPath,
+                readOnly: false, label: "Shared", isInternal: false, kind: .virtio
+            )
+        ]
+        // The sibling stores the decomposed form APFS reports for the same
+        // name — a divergence a boot's path healing writes on its own.
+        let other = makeInstance(name: "Other")
+        other.configuration.storageDisks = [
+            StorageDisk(
+                path: sharedPath.decomposedStringWithCanonicalMapping, readOnly: false,
+                label: "Shared", isInternal: false, kind: .virtio
+            )
+        ]
+        viewModel.instances = [target, other]
+        storage.bundles[target.bundleURL] = target.configuration
+
+        await viewModel.delete(target, deletingExternalIDs: [sharedID])
+
+        // One file, two spellings: the hard-block still holds.
         #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
@@ -5285,7 +5317,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("sharingVMNames lists other VMs referencing a path and excludes the instance")
-    func sharingVMNamesDetectsAndExcludes() throws {
+    func sharingVMNamesDetectsAndExcludes() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let sharedPath = "/Volumes/External/shared.img"
         let target = makeInstance(name: "Target")
@@ -5301,15 +5333,17 @@ struct VMLibraryViewModelTests {
         let unrelated = makeInstance(name: "Unrelated")
         viewModel.instances = [target, diskSharer, mediaSharer, unrelated]
 
-        let names = viewModel.sharingVMNames(forPath: sharedPath, excluding: target)
+        let names = await viewModel.sharingVMNames(forPath: sharedPath, bookmark: nil, excluding: target)
         #expect(Set(names) == ["DiskSharer", "MediaSharer"])
 
         // A unique path is shared with no one.
-        #expect(viewModel.sharingVMNames(forPath: "/Volumes/External/unique.img", excluding: target).isEmpty)
+        let unique = await viewModel.sharingVMNames(
+            forPath: "/Volumes/External/unique.img", bookmark: nil, excluding: target)
+        #expect(unique.isEmpty)
     }
 
     @Test("sharingVMNames ignores internal (bundle-relative) disks")
-    func sharingVMNamesIgnoresInternalDisks() {
+    func sharingVMNamesIgnoresInternalDisks() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let a = makeInstance(name: "A")
         a.configuration.storageDisks = [
@@ -5321,7 +5355,8 @@ struct VMLibraryViewModelTests {
         ]
         viewModel.instances = [a, b]
         // Same relative path, but both are bundle-internal → not shared.
-        #expect(viewModel.sharingVMNames(forPath: "Disk.asif", excluding: a).isEmpty)
+        let shared = await viewModel.sharingVMNames(forPath: "Disk.asif", bookmark: nil, excluding: a)
+        #expect(shared.isEmpty)
     }
 
     @Test("isGuestAgentInstaller matches the bundled DMG path only")

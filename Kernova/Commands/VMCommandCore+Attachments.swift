@@ -117,8 +117,11 @@ extension VMCommandCore {
         }
         // Only external disks can be shared: a bundle-relative path is per-VM
         // by construction.
-        let shared =
-            disk.isInternal ? [] : sharingVMNames(forPath: disk.path, excluding: instance)
+        var shared: [String] = []
+        if !disk.isInternal {
+            shared = await sharingVMNames(
+                forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
+        }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
                 Self.removalConsent(
@@ -273,8 +276,11 @@ extension VMCommandCore {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
         let isAgentInstaller = isGuestAgentInstaller(item)
-        let shared =
-            isAgentInstaller ? [] : sharingVMNames(forPath: item.path, excluding: instance)
+        var shared: [String] = []
+        if !isAgentInstaller {
+            shared = await sharingVMNames(
+                forPath: item.path, bookmark: item.bookmark, excluding: instance)
+        }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
                 Self.removalConsent(

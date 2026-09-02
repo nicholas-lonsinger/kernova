@@ -219,4 +219,123 @@ struct ExternalFileReferenceTests {
         let config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
         #expect(config.externalFileReferences.bookmarksByPath.isEmpty)
     }
+
+    // MARK: - File identities
+
+    /// A reference at `path`, carrying `bookmark` when given.
+    ///
+    /// The kind is irrelevant to identity, so every case here uses one.
+    private func makeReference(path: String, bookmark: Data? = nil) -> ExternalFileReference {
+        ExternalFileReference(
+            id: UUID(), kind: .storageDisk, label: "Disk", path: path, bookmark: bookmark)
+    }
+
+    @Test("A reference with no bookmark is identified by its stored path alone")
+    func identitiesWithoutBookmark() {
+        let references = [makeReference(path: "/Volumes/External/data.img")]
+        #expect(references.fileIdentities(resolvedTargets: [:]) == ["/Volumes/External/data.img"])
+    }
+
+    @Test("A bookmark pointing elsewhere adds the resolved target to the identity")
+    func identitiesIncludeResolvedTarget() {
+        let bookmark = Data([0xA1])
+        let references = [makeReference(path: "/Volumes/External/old.img", bookmark: bookmark)]
+
+        // The union is what matches a sibling still holding the pre-move path.
+        #expect(
+            references.fileIdentities(resolvedTargets: [bookmark: "/Volumes/External/new.img"])
+                == ["/Volumes/External/old.img", "/Volumes/External/new.img"])
+    }
+
+    @Test("A bookmark resolving to the stored path yields one identity")
+    func identitiesCollapseWhenBookmarkAgrees() {
+        let bookmark = Data([0xA2])
+        let references = [makeReference(path: "/Volumes/External/data.img", bookmark: bookmark)]
+        #expect(
+            references.fileIdentities(resolvedTargets: [bookmark: "/Volumes/External/data.img"])
+                == ["/Volumes/External/data.img"])
+    }
+
+    @Test("A bookmark absent from the resolutions falls back to the stored path")
+    func identitiesFallBackWhenResolutionFailed() {
+        let references = [makeReference(path: "/Volumes/External/data.img", bookmark: Data([0xA3]))]
+        #expect(references.fileIdentities(resolvedTargets: [:]) == ["/Volumes/External/data.img"])
+    }
+
+    @Test("A decomposed resolved name matches the precomposed stored one")
+    func identitiesCanonicalizeUnicodeForm() {
+        let bookmark = Data([0xA4])
+        let precomposed = "/Users/me/Cafe\u{0301}".precomposedStringWithCanonicalMapping
+        let decomposed = precomposed.decomposedStringWithCanonicalMapping
+        let references = [makeReference(path: precomposed, bookmark: bookmark)]
+
+        // APFS hands back the decomposed form of a name the panel stored
+        // precomposed; that is the same file, not a second identity.
+        #expect(references.fileIdentities(resolvedTargets: [bookmark: decomposed]).count == 1)
+    }
+
+    @Test("A trailing slash and a redundant component don't split an identity")
+    func identitiesCanonicalizePathForm() {
+        let bookmark = Data([0xA5])
+        let references = [makeReference(path: "/Users/me/Projects/", bookmark: bookmark)]
+        #expect(
+            references.fileIdentities(resolvedTargets: [bookmark: "/Users/me/./Projects"])
+                == ["/Users/me/Projects"])
+    }
+
+    @Test("Identities across references are unioned")
+    func identitiesUnionEveryReference() {
+        let references = [
+            makeReference(path: "/Users/me/vmlinuz"),
+            makeReference(path: "/Users/me/initrd.img"),
+        ]
+        #expect(
+            references.fileIdentities(resolvedTargets: [:])
+                == ["/Users/me/vmlinuz", "/Users/me/initrd.img"])
+    }
+
+    // MARK: - Sharing match
+
+    @Test("A VM whose bookmark resolved to the file is shared despite a stale stored path")
+    func sharingMatchesOnResolvedTarget() {
+        // The subject healed to the file's new home; the sibling never booted
+        // since the move, so its config still names the old one.
+        let subject: Set<String> = ["/Volumes/External/new.img"]
+        let sibling = [makeReference(path: "/Volumes/External/old.img", bookmark: Data([0xB1]))]
+            .fileIdentities(resolvedTargets: [Data([0xB1]): "/Volumes/External/new.img"])
+
+        #expect(
+            VMCommandCore.sharingVMNames(
+                matching: subject, among: [(name: "Sibling", identities: sibling)]) == ["Sibling"])
+    }
+
+    @Test("Disjoint identities share nothing")
+    func sharingIgnoresUnrelatedFiles() {
+        #expect(
+            VMCommandCore.sharingVMNames(
+                matching: ["/Users/me/a.img"],
+                among: [(name: "Other", identities: ["/Users/me/b.img"])]
+            ).isEmpty)
+    }
+
+    @Test("A VM with no external references shares nothing")
+    func sharingIgnoresReferenceLessVMs() {
+        #expect(
+            VMCommandCore.sharingVMNames(
+                matching: ["/Users/me/a.img"], among: [(name: "Bare", identities: [])]
+            ).isEmpty)
+    }
+
+    @Test("Matching names come back in the order the candidates were given")
+    func sharingPreservesLibraryOrder() {
+        let shared: Set<String> = ["/Users/me/shared.iso"]
+        #expect(
+            VMCommandCore.sharingVMNames(
+                matching: shared,
+                among: [
+                    (name: "First", identities: shared),
+                    (name: "Unrelated", identities: ["/Users/me/other.iso"]),
+                    (name: "Second", identities: shared),
+                ]) == ["First", "Second"])
+    }
 }
