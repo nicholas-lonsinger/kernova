@@ -41,7 +41,7 @@ struct VMOverviewResolved: Sendable {
     /// The Mode picker's current title, which names the bridged interface.
     var networkModeTitle: String?
     /// What the guest's address resolves to for the mode it is on.
-    var ipAddress: VMOverviewIPAddress = .unavailable
+    var ipAddress: GuestIPAddress = .unavailable
     /// Forwarded-rule count, `nil` wherever forwarding does not apply.
     var portForwardingRuleCount: Int?
     /// The boot disk's capacity, once its off-main read lands.

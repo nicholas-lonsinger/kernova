@@ -344,6 +344,12 @@ protocol VmnetNetworkProviding: Sendable {
     /// while `mac` holds no slot or the network has never materialized (its
     /// addressing is not yet known).
     func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String?
+    /// Whether the addressing of the network of `kind` is known — the subnet a
+    /// slot's position maps to, established by a materialization and kept in
+    /// the store across launches. `false` means no slot on that network
+    /// derives an address yet. Cheap and non-blocking — safe from the main
+    /// actor.
+    func addressingIsKnown(for kind: VmnetNetworkKind) -> Bool
     /// Records `rules` as what the VM at `mac` forwards on the network of
     /// `kind`, replacing whatever it declared before; an empty array declares
     /// none. Cheap and non-blocking — safe from the main actor.
@@ -383,10 +389,10 @@ protocol VmnetNetworkRecreating: Sendable {
 /// addressing plus reservation slots — is persisted to
 /// `Application Support/Kernova/networks.json`, and the addressing is pinned
 /// onto the recreated network in later launches, keeping guest addressing
-/// stable. Materialization is lazy — a launch that never uses a kind never
-/// creates it — and a materialized network is held until the app exits: the
-/// subnet reservation lives as long as the ref, and every concurrent VM in
-/// the mode shares the one network.
+/// stable. A materialization is what establishes a kind's addressing, and the
+/// store keeps it from then on. A materialized network is held until the app
+/// exits: the subnet reservation lives as long as the ref, and every concurrent
+/// VM in the mode shares the one network.
 ///
 /// Reservations and forwarding rules are both fixed at network creation
 /// (vmnet.h: modifying reservations is not allowed while a network is active,
@@ -409,7 +415,8 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// Guards `networks`, `records`, `desiredForwardingRules` and
     /// `pinnedOnlyKinds` — never held across a vmnet call or file I/O, so the
     /// main-actor paths (`attachmentIfMaterialized`, `reserveAddressIfNeeded`,
-    /// `reservedAddress`) can never block behind a materialization in flight.
+    /// `reservedAddress`, `addressingIsKnown`) can never block behind a
+    /// materialization in flight.
     private let stateLock = NSLock()
     /// The materialized network of each kind, present exactly for the kinds one
     /// exists for.
@@ -1023,6 +1030,12 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
             return nil
         }
         return derived
+    }
+
+    func addressingIsKnown(for kind: VmnetNetworkKind) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return records[kind]?.addressing != nil
     }
 
     func setPortForwardingRules(

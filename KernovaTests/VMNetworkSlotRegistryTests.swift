@@ -85,6 +85,145 @@ struct VMNetworkSlotRegistryTests {
         #expect(vmnet.reservedMACs.isEmpty)
     }
 
+    // MARK: - The Reserved Address
+
+    @Test("Each configuration shape resolves to the one answer every surface states")
+    func reservedAddressAnswersEachConfigurationShape() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.3"]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let base = makeInstance().configuration
+
+        #expect(registry.reservedAddress(for: shared(base, mac: "aa:bb:cc:dd:ee:01")) == .reserved("192.168.64.3"))
+        #expect(registry.reservedAddress(for: shared(base, mac: "aa:bb:cc:dd:ee:02")) == .pending)
+        #expect(registry.reservedAddress(for: shared(base, mac: nil)) == .unavailable)
+
+        var bridged = shared(base, mac: "aa:bb:cc:dd:ee:01")
+        bridged.networkMode = .bridged
+        #expect(registry.reservedAddress(for: bridged) == .externallyAssigned)
+
+        var off = shared(base, mac: "aa:bb:cc:dd:ee:01")
+        off.networkEnabled = false
+        #expect(registry.reservedAddress(for: off) == .unavailable)
+    }
+
+    @Test("An unentitled build states no address but still hands bridged to the network")
+    func reservedAddressIsUnavailableUnentitled() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.3"]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
+        let base = makeInstance().configuration
+
+        #expect(registry.reservedAddress(for: shared(base, mac: "aa:bb:cc:dd:ee:01")) == .unavailable)
+
+        var bridged = shared(base, mac: "aa:bb:cc:dd:ee:01")
+        bridged.networkMode = .bridged
+        #expect(registry.reservedAddress(for: bridged) == .externallyAssigned)
+    }
+
+    // MARK: - Learning a Network's Addressing
+
+    @Test("Claiming a slot on a network with no addressing materializes that kind, once")
+    func claimingASlotLearnsTheAddressingOnce() async {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let config = shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01")
+
+        registry.claimSlots(for: config)
+        // A second claim while the first is in flight rides the same learn.
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:02"))
+        await registry.addressingLearnTaskForTesting(.shared)?.value
+
+        #expect(vmnet.materializeRequestedKinds == [.shared])
+
+        // And once it has landed, nothing asks again — the addressing is known.
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:03"))
+        #expect(registry.addressingLearnTaskForTesting(.shared) == nil)
+        #expect(vmnet.materializeCount == 1)
+    }
+
+    @Test("A network whose addressing is already known is not materialized to learn it")
+    func aKnownAddressingIsNotRelearned() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+
+        #expect(vmnet.materializeCount == 0)
+        #expect(registry.addressingLearnTaskForTesting(.shared) == nil)
+    }
+
+    @Test("A failed learn is retried at the next slot sync")
+    func aFailedLearnRetriesAtTheNextSync() async {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
+        vmnet.materializeFails = true
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        await registry.addressingLearnTaskForTesting(.shared)?.value
+        #expect(vmnet.materializeCount == 1)
+
+        vmnet.materializeFails = false
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:02"))
+        await registry.addressingLearnTaskForTesting(.shared)?.value
+
+        #expect(vmnet.materializeCount == 2)
+        #expect(vmnet.knownAddressingKinds.contains(.shared))
+    }
+
+    @Test("An unentitled build learns nothing — it materializes no network to learn from")
+    func anUnentitledBuildLearnsNoAddressing() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
+
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+
+        #expect(registry.addressingLearnTaskForTesting(.shared) == nil)
+        #expect(vmnet.materializeCount == 0)
+    }
+
+    @Test("A learn landing on a network that installed nothing recreates it there and then")
+    func aLearnRecreatesANetworkLeftPending() async {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
+        // The materialized network carries none of what it should — the state a
+        // re-grabbed subnet, or a spent attempt limit, leaves behind.
+        vmnet.scriptedPendingKinds = [.shared]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = []
+
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        #expect(vmnet.invalidatedKinds.isEmpty)
+        await registry.addressingLearnTaskForTesting(.shared)?.value
+
+        // Without this the address waits on an unrelated event to arrive.
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("A learned addressing, and an invalidation, each tell a reader to ask again")
+    func readersAreToldWhenTheAnswerCanMove() async {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = []
+
+        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        let beforeLearn = registry.addressingGeneration
+        await registry.addressingLearnTaskForTesting(.shared)?.value
+        #expect(registry.addressingGeneration > beforeLearn)
+
+        // An invalidation drops the network that contradicted a slot taken
+        // after its creation, so the address it withheld derives now.
+        let beforeRecreate = registry.addressingGeneration
+        vmnet.scriptedPendingKinds = [.shared]
+        registry.rebuildNetworksIfIdle()
+        #expect(vmnet.invalidatedKinds == [.shared])
+        #expect(registry.addressingGeneration > beforeRecreate)
+    }
+
     // MARK: - moveSlots Ordering
 
     @Test("An edited MAC releases the retired slot before reserving the new one")

@@ -1,6 +1,27 @@
 import Foundation
 import os
 
+/// What the guest's IPv4 address resolves to for the mode it is on — the one
+/// answer every surface states, whether it renders prose or reports the bare
+/// address.
+enum GuestIPAddress: Equatable, Sendable {
+    /// Nothing assigns the guest an address the app can state — the row is
+    /// absent rather than empty.
+    case unavailable
+    /// Bridged: the guest asks the network, so there is nothing deterministic.
+    case externallyAssigned
+    /// A reservation exists but the network's addressing is not known yet.
+    case pending
+    case reserved(String)
+
+    /// The address itself, `nil` unless the app reserved one — what a headless
+    /// surface answers with, where the other cases are prose rather than data.
+    var reservedAddress: String? {
+        guard case .reserved(let address) = self else { return nil }
+        return address
+    }
+}
+
 /// The slots a VM holds on the app-managed networks: its DHCP address
 /// reservation, its port-forwarding rules, and the uniqueness of the MAC
 /// address both are keyed on.
@@ -11,22 +32,39 @@ import os
 ///
 /// Headless: the two refusals leave through ``onFailure``.
 @MainActor
+@Observable
 final class VMNetworkSlotRegistry {
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VMNetworkSlotRegistry")
 
+    @ObservationIgnored
     private let vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating
 
     /// Whether this build's reservation machinery is live — a process-wide
     /// constant, snapshotted at init.
+    @ObservationIgnored
     private let isVMNetworkingEntitled: Bool
 
     /// Which VMs exist. Weak and assigned after construction: the library owns
     /// this registry, so a strong reference back would be a cycle.
+    @ObservationIgnored
     weak var roster: (any VMInstanceRoster)?
 
     /// Receives the refusals a user has to be told about.
+    @ObservationIgnored
     var onFailure: ((_ title: String, _ message: String) -> Void)?
+
+    /// Bumped whenever ``reservedAddress(for:)`` can answer differently for an
+    /// unchanged configuration: a learned addressing, or an invalidation that
+    /// lets a slot taken after its network's creation derive an address at last.
+    /// A reader registers for it by calling that method — nothing else has to
+    /// know the counter exists.
+    private(set) var addressingGeneration = 0
+
+    /// The in-flight addressing learn per kind, doubling as its single-flight
+    /// guard.
+    @ObservationIgnored
+    private var addressingLearns: [VmnetNetworkKind: Task<Void, Never>] = [:]
 
     private var instances: [VMInstance] {
         guard let roster else {
@@ -140,6 +178,40 @@ final class VMNetworkSlotRegistry {
     private func syncAddressReservation(for config: VMConfiguration) {
         guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return }
         vmnetNetworks.reserveAddressIfNeeded(for: target.mac, kind: target.kind)
+        learnNetworkAddressingIfNeeded(target.kind)
+    }
+
+    /// Materializes `kind`'s network once, when nothing has established its
+    /// addressing yet.
+    ///
+    /// A slot's address is its position within the network's subnet, so it is
+    /// derivable only once that subnet is known, and only a materialization
+    /// establishes it. The registry handing out the slots is therefore what
+    /// learns it: leaving each reader to trigger a materialization of its own is
+    /// what made the answer depend on which surface asked.
+    ///
+    /// Single-flight per kind, and the entry is cleared however the
+    /// materialization ended — a failed one is retried at the next slot sync,
+    /// which is the whole retry ladder. Reached only from
+    /// ``syncAddressReservation(for:)``, so the entitlement gate there covers it.
+    private func learnNetworkAddressingIfNeeded(_ kind: VmnetNetworkKind) {
+        guard addressingLearns[kind] == nil, !vmnetNetworks.addressingIsKnown(for: kind) else {
+            return
+        }
+        let networks = vmnetNetworks
+        addressingLearns[kind] = Task { [weak self] in
+            _ = await networks.materializeNetwork(for: kind)
+            guard let self else { return }
+            self.addressingLearns[kind] = nil
+            // A materialization reports success for two states that install no
+            // reservations — the subnet was re-grabbed between the probe and the
+            // recreate, or the attempt limit was spent — and both leave the
+            // network idle with its declarations pending. Recreating here is what
+            // keeps the address from waiting on an unrelated event; a no-op
+            // wherever the network already carries what it should.
+            self.rebuildNetworksIfIdle()
+            self.addressingGeneration &+= 1
+        }
     }
 
     /// Frees `target`'s reservation slot unless a VM still in the library wants
@@ -155,16 +227,28 @@ final class VMNetworkSlotRegistry {
         vmnetNetworks.releaseAddressReservation(for: target.mac, kind: target.kind)
     }
 
-    /// The address this VM's MAC reserves on the app-managed network it joins,
-    /// or `nil` when it has none to report — networking off, Bridged (where
-    /// external DHCP owns addressing), a build without the reservation
-    /// machinery, or a slot whose network has not been materialized yet.
+    /// What the guest gets for an address on the network its mode joins — the
+    /// one read the Overview, the Network panel and the command surface all
+    /// take, so none of them can answer differently from the others.
     ///
     /// Reads the reservation store without taking a slot: the sync at every
-    /// configuration change is what claims one.
-    func reservedAddress(for config: VMConfiguration) -> String? {
-        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return nil }
-        return vmnetNetworks.reservedAddress(for: target.mac, kind: target.kind)
+    /// configuration change is what claims one, and the addressing a
+    /// ``GuestIPAddress/pending`` answer waits on is learned there too.
+    func reservedAddress(for config: VMConfiguration) -> GuestIPAddress {
+        // Registers the caller with the generation the learn bumps, so a
+        // pending answer repaints itself once the addressing lands.
+        _ = addressingGeneration
+        guard config.networkEnabled else { return .unavailable }
+        // Answered before the entitlement gate: external DHCP owns a bridged
+        // guest's address whether or not this build can manage a network.
+        if config.networkMode == .bridged { return .externallyAssigned }
+        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else {
+            return .unavailable
+        }
+        if let address = vmnetNetworks.reservedAddress(for: target.mac, kind: target.kind) {
+            return .reserved(address)
+        }
+        return .pending
     }
 
     /// Frees every reservation slot no VM in the library claims — the reclaim
@@ -370,9 +454,19 @@ final class VMNetworkSlotRegistry {
         Self.logger.notice(
             "Recreating the \(kind.rawValue, privacy: .public) network \(reason, privacy: .public)")
         vmnetNetworks.invalidateNetwork(for: kind)
+        // The network that contradicted a slot taken after its creation is
+        // gone, so an address pending on that contradiction derives now.
+        addressingGeneration &+= 1
         // The network a detached session was waiting on just went away, on both
         // reasons alike — its retry ladder is spent, so this nudge is the only
         // wake-up it gets. A no-op for every VM not detached on this kind.
         for instance in others { instance.vmnetNetworkWasInvalidated(kind) }
     }
+
+    #if DEBUG
+    /// The in-flight addressing learn for `kind`, for event-driven test waits.
+    func addressingLearnTaskForTesting(_ kind: VmnetNetworkKind) -> Task<Void, Never>? {
+        addressingLearns[kind]
+    }
+    #endif
 }

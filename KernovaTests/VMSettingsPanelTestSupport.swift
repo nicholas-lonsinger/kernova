@@ -9,8 +9,14 @@ import Testing
 /// Each suite passes its own `suiteName` for preferences: a defaults domain
 /// shared across suites running in parallel is a flake source.
 
+/// The library the pane reads through. `vmnetNetworks` and `entitled` reach the
+/// slot registry, which is what answers every surface's IP address row.
 @MainActor
-func makeSettingsViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
+func makeSettingsViewModel(
+    preferences: AppPreferences,
+    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    entitled: Bool = true
+) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: MockVMStorageService(),
         diskImageService: MockDiskImageService(),
@@ -18,7 +24,9 @@ func makeSettingsViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         usbDeviceService: MockUSBDeviceService(),
-        preferences: preferences
+        preferences: preferences,
+        vmnetNetworks: vmnetNetworks,
+        isVMNetworkingEntitled: entitled
     )
 }
 

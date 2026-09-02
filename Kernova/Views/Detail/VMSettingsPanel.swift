@@ -18,7 +18,6 @@ final class VMSettingsPanelContext {
     let bridgedInterfaces: any BridgedInterfaceProviding
     /// Decides whether that picker offers Bridged at all.
     let entitlements: EntitlementService
-    let vmnetNetworks: any VmnetNetworkProviding
     let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
     let systemSettings: SystemSettingsLink
 
@@ -41,7 +40,6 @@ final class VMSettingsPanelContext {
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding,
         entitlements: EntitlementService,
-        vmnetNetworks: any VmnetNetworkProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus,
         systemSettings: SystemSettingsLink
     ) {
@@ -50,13 +48,11 @@ final class VMSettingsPanelContext {
         self.isReadOnly = isReadOnly
         self.bridgedInterfaces = bridgedInterfaces
         self.entitlements = entitlements
-        self.vmnetNetworks = vmnetNetworks
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
         self.overview = VMOverviewResolver(
             instance: instance, viewModel: viewModel, entitlements: entitlements,
-            vmnetNetworks: vmnetNetworks, bridgedInterfaces: bridgedInterfaces,
-            micPermissionStatus: micPermissionStatus)
+            bridgedInterfaces: bridgedInterfaces, micPermissionStatus: micPermissionStatus)
     }
 
     /// Rebinds every panel at once; the shell calls this inside `reconfigure`.

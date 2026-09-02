@@ -71,7 +71,6 @@ final class VMSettingsViewController: NSViewController {
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
         entitlements: EntitlementService = .shared,
-        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },
@@ -83,8 +82,7 @@ final class VMSettingsViewController: NSViewController {
         self.panelContext = VMSettingsPanelContext(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
             bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
-            vmnetNetworks: vmnetNetworks, micPermissionStatus: micPermissionStatus,
-            systemSettings: systemSettings)
+            micPermissionStatus: micPermissionStatus, systemSettings: systemSettings)
         super.init(nibName: nil, bundle: nil)
         panelContext.host = self
         panelContext.overview.onCategoryResolved = { [weak self] category in
@@ -232,6 +230,9 @@ final class VMSettingsViewController: NSViewController {
                 // its own rather than riding the read above, which is free to
                 // stop enumerating every configuration.
                 _ = self.viewModel.macOSVMNamesMarkedForAutoStart
+                // Registers the reservation store's addressing, so an address
+                // still pending fills in once it becomes derivable.
+                _ = self.viewModel.reservedAddress(for: self.instance.configuration)
                 // Registers every instance's `preparingState`, so the Storage
                 // lock follows a clone of *this* VM starting and finishing.
                 _ = self.viewModel.capabilities.isAvailable(.editStorageDisks, on: self.instance)

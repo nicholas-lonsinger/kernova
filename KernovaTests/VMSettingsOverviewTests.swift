@@ -12,15 +12,7 @@ struct VMSettingsOverviewTests {
     // MARK: - Fixtures
 
     private func makeViewModel() -> VMLibraryViewModel {
-        VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
+        makeSettingsViewModel(preferences: preferences)
     }
 
     private func makeInstance(guestOS: VMGuestOS, macAddress: String? = nil) -> VMInstance {

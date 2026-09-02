@@ -21,8 +21,12 @@ struct VMSettingsNetworkPanelTests {
         vc.settingsPanelForTesting(.network) as? VMSettingsNetworkPanelViewController
     }
 
-    private func makeViewModel() -> VMLibraryViewModel {
-        makeSettingsViewModel(preferences: preferences)
+    private func makeViewModel(
+        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        entitled: Bool = true
+    ) -> VMLibraryViewModel {
+        makeSettingsViewModel(
+            preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled)
     }
 
     private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
@@ -64,13 +68,18 @@ struct VMSettingsNetworkPanelTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        // The pane always shows a VM the library holds, and the library's slot
+        // declaration is what makes an address derivable — so `vmnetNetworks`
+        // reaches the panel through the library, never the panel directly.
+        let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
+        library.instances.append(instance)
+        library.library.wirePersistence(for: instance)
         let vc = VMSettingsViewController(
-            instance: instance, viewModel: viewModel ?? makeViewModel(), isReadOnly: isReadOnly,
+            instance: instance, viewModel: library, isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,
             entitlements: EntitlementService(
                 reader: MockEntitlementReader(
-                    granted: entitled ? ["com.apple.vm.networking"] : [])),
-            vmnetNetworks: vmnetNetworks)
+                    granted: entitled ? ["com.apple.vm.networking"] : [])))
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.network)
@@ -88,7 +97,7 @@ struct VMSettingsNetworkPanelTests {
 
     // MARK: - IP Address row
 
-    @Test("An entitled Shared VM shows its reserved address and takes a reservation slot")
+    @Test("An entitled Shared VM shows the address its slot reserves")
     func entitledSharedVMShowsReservedAddress() throws {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.10"]
@@ -96,47 +105,52 @@ struct VMSettingsNetworkPanelTests {
 
         #expect(visibleLabel("IP address", in: vc.view))
         #expect(visibleLabel("192.168.64.10", in: vc.view))
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:ff"])
-        #expect(vmnet.reservedMACs.map(\.kind) == [.shared])
     }
 
-    @Test("An entitled Host Only VM's row reserves on the Host Only network")
-    func entitledHostOnlyVMReservesOnItsNetwork() throws {
+    @Test("An entitled Host Only VM shows the address it holds on that network")
+    func entitledHostOnlyVMShowsItsAddress() throws {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.128.5"]
         let (vc, _) = makeNetworkController(mode: .hostOnly, vmnetNetworks: vmnet)
 
         #expect(visibleLabel("192.168.128.5", in: vc.view))
-        #expect(vmnet.reservedMACs.map(\.kind) == [.hostOnly])
     }
 
-    @Test("A not-yet-derivable address renders as a placeholder, then fills in after materialization")
-    func pendingAddressShowsPlaceholderAndMaterializes() async throws {
+    @Test("A not-yet-derivable address renders as a placeholder, then fills in on its own")
+    func pendingAddressShowsPlaceholderAndFillsIn() async throws {
         let vmnet = MockVmnetNetworkProvider()
-        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+        // A machine that has never created this network: nothing derives an
+        // address until the registry learns its addressing.
+        vmnet.knownAddressingKinds = []
+        let viewModel = makeViewModel(vmnetNetworks: vmnet)
+        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet, viewModel: viewModel)
 
         #expect(visibleLabel("—", in: vc.view))
-        // The address becomes derivable once the network materializes — which
-        // the row kicked off itself.
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        await vc.overviewResolverForTesting.ipMaterializeTaskForTesting?.value
+        await viewModel.library.networkSlots.addressingLearnTaskForTesting(.shared)?.value
+        // The learn's generation bump reaches the pane through its observation
+        // loop, which applies on the next main-actor turn.
+        for _ in 0..<5 { await Task.yield() }
 
         #expect(vmnet.materializeCount == 1)
         #expect(visibleLabel("192.168.64.9", in: vc.view))
         // The Network card states the same address: nothing else re-renders it
-        // for an idle stopped VM, so the materialization has to reach both.
+        // for an idle stopped VM, so the fill-in has to reach both.
         vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
         #expect(findLabel(withText: "192.168.64.9", in: card) != nil)
     }
 
-    @Test("A failed materialization leaves the placeholder without spinning the refresh loop")
-    func failedMaterializationLeavesPlaceholder() async throws {
+    @Test("A failed learn leaves the placeholder without spinning the refresh loop")
+    func failedLearnLeavesPlaceholder() async throws {
         let vmnet = MockVmnetNetworkProvider()
+        vmnet.knownAddressingKinds = []
         vmnet.materializeFails = true
-        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+        let viewModel = makeViewModel(vmnetNetworks: vmnet)
+        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet, viewModel: viewModel)
 
-        await vc.overviewResolverForTesting.ipMaterializeTaskForTesting?.value
+        await viewModel.library.networkSlots.addressingLearnTaskForTesting(.shared)?.value
+        for _ in 0..<5 { await Task.yield() }
 
         #expect(visibleLabel("—", in: vc.view))
         #expect(vmnet.materializeCount == 1)

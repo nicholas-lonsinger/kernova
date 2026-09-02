@@ -96,6 +96,11 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
     var materializedKinds: Set<VmnetNetworkKind> = Set(VmnetNetworkKind.allCases)
     /// When `true`, `materializeNetwork` fails and leaves `materializedKinds` as is.
     var materializeFails = false
+    /// The kinds whose addressing is established, as `networks.json` carries it
+    /// across launches. Defaults to every kind — a suite opts into the
+    /// fresh-machine case, where the registry learns the addressing, by
+    /// emptying it. `materializeNetwork` inserts.
+    var knownAddressingKinds: Set<VmnetNetworkKind> = Set(VmnetNetworkKind.allCases)
 
     // MARK: - Error Injection
 
@@ -124,6 +129,7 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
         materializeRequestedKinds.append(kind)
         guard !materializeFails else { return false }
         materializedKinds.insert(kind)
+        knownAddressingKinds.insert(kind)
         return true
     }
 
@@ -167,6 +173,10 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
 
     func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String? {
         scriptedAddresses[mac.lowercased()]
+    }
+
+    func addressingIsKnown(for kind: VmnetNetworkKind) -> Bool {
+        knownAddressingKinds.contains(kind)
     }
 
     // MARK: - Port forwarding

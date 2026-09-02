@@ -21,6 +21,7 @@ struct VMCommandCoreTests {
         let virtualization: MockVirtualizationService
         let snapshots: MockVMSnapshotStore
         let fileSystem: MockFileSystem
+        let vmnet: MockVmnetNetworkProvider
     }
 
     private func makeHarness(
@@ -29,6 +30,7 @@ struct VMCommandCoreTests {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
+        let vmnet = MockVmnetNetworkProvider()
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
@@ -44,7 +46,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: vmnet,
             isVMNetworkingEntitled: true
         )
         let core = VMCommandCore(
@@ -58,7 +60,8 @@ struct VMCommandCoreTests {
         )
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
-            virtualization: virtualization, snapshots: snapshots, fileSystem: fileSystem)
+            virtualization: virtualization, snapshots: snapshots, fileSystem: fileSystem,
+            vmnet: vmnet)
     }
 
     private struct SuspendingHarness {
@@ -234,6 +237,30 @@ struct VMCommandCoreTests {
         // Networking is off on the fixture, so there is no address to report.
         #expect(info.ipAddress == nil)
         #expect(info.networkMode == nil)
+    }
+
+    @Test("A stopped VM's reserved address answers info and the ip verb alike")
+    func theReservedAddressAnswersEveryHeadlessRead() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Addressed")
+        // Through the declaration path, which is what claims the slot the
+        // address derives from — no surface reserves one by reading.
+        harness.library.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "aa:bb:cc:dd:ee:01"
+        }
+        #expect(harness.vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
+
+        // Nothing derives an address until the network's addressing is known,
+        // and no headless read invents one meanwhile.
+        #expect(try harness.core.info(.id(instance.id)).ipAddress == nil)
+        #expect(try harness.core.ipAddress(of: .id(instance.id)) == nil)
+
+        harness.vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.4"]
+
+        #expect(try harness.core.info(.id(instance.id)).ipAddress == "192.168.64.4")
+        #expect(try harness.core.ipAddress(of: .id(instance.id)) == "192.168.64.4")
     }
 
     @Test("snapshots answers the manifest newest first")
