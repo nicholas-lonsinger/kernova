@@ -70,19 +70,27 @@ struct VMCapabilityCatalogTests {
         let id = VMLifecyclePhaseFixtures.session
         let display: Set<VMCapability> = [.open, .toggleSettingsPane]
         let cases: [(label: String, phase: VMLifecyclePhase, added: Set<VMCapability>)] = [
-            ("stopped", .stopped, [.start, .takeSnapshot, .clone, .rename, .delete]),
+            (
+                "stopped", .stopped,
+                [
+                    .start, .takeSnapshot, .editStorageDisks, .editRemovableMedia, .clone, .rename,
+                    .delete,
+                ]
+            ),
             (
                 "running", .running(sessionID: id),
                 [
                     .stop, .restart, .forceStop, .pause, .suspend, .open, .takeSnapshot,
-                    .rename, .togglePopOut, .toggleFullscreen, .toggleSettingsPane,
+                    .editRemovableMedia, .rename, .togglePopOut, .toggleFullscreen,
+                    .toggleSettingsPane,
                 ]
             ),
             (
                 "live-paused", .livePaused(sessionID: id),
                 [
                     .stop, .restart, .forceStop, .resume, .suspend, .open, .takeSnapshot,
-                    .rename, .togglePopOut, .toggleFullscreen, .toggleSettingsPane,
+                    .editRemovableMedia, .rename, .togglePopOut, .toggleFullscreen,
+                    .toggleSettingsPane,
                 ]
             ),
             // No save file on disk, so a suspended VM has no suspend slot to
@@ -104,8 +112,14 @@ struct VMCapabilityCatalogTests {
             ("reverting to a snapshot", .revertingToSnapshot, display),
             ("installing", .installing(sessionID: id), []),
             ("installing, no VM yet", .installing(sessionID: nil), []),
-            ("failed", .failed(message: "Boot failed."), [.start, .clone, .rename, .delete]),
-            ("initialBoot", .initialBoot, [.start, .clone, .rename, .delete]),
+            (
+                "failed", .failed(message: "Boot failed."),
+                [.start, .editStorageDisks, .editRemovableMedia, .clone, .rename, .delete]
+            ),
+            (
+                "initialBoot", .initialBoot,
+                [.start, .editStorageDisks, .editRemovableMedia, .clone, .rename, .delete]
+            ),
         ]
 
         for testCase in cases {

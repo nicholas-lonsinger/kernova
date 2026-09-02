@@ -51,7 +51,7 @@ enum VMIntentConsent {
         case .stopPaused:
             false
         case .forceStop, .deleteVM, .deleteSnapshot, .revertToSnapshot, .cancelPreparing,
-            .cancelGuestSetup:
+            .cancelGuestSetup, .removeAttachment:
             true
         }
     }

@@ -23,12 +23,12 @@ func makeSettingsViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
 }
 
 @MainActor
-func makeSettingsInstance(guestOS: VMGuestOS) -> VMInstance {
+func makeSettingsInstance(guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped) -> VMInstance {
     let config = VMConfiguration(
         name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
     let bundleURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    return VMInstance(configuration: config, bundleURL: bundleURL)
+    return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
 }
 
 /// Builds the settings pane and runs its appearance lifecycle so `apply()` has
@@ -39,10 +39,10 @@ func makeSettingsInstance(guestOS: VMGuestOS) -> VMInstance {
 @MainActor
 func makeSettingsController(
     guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil,
-    preferences: AppPreferences
+    phase: VMLifecyclePhase = .stopped, preferences: AppPreferences
 ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
     let viewModel = makeSettingsViewModel(preferences: preferences)
-    let instance = makeSettingsInstance(guestOS: guestOS)
+    let instance = makeSettingsInstance(guestOS: guestOS, phase: phase)
     let vc = VMSettingsViewController(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
     vc.loadViewIfNeeded()

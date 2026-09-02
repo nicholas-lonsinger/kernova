@@ -492,11 +492,12 @@ extension VMCommandCore {
         // library even if one of these fails.
         let vmName = instance.name
         for attachment in toDelete {
-            await deleteExternalAttachment(
+            await trashExternalFile(
                 at: URL(fileURLWithPath: attachment.path),
                 bookmark: attachment.reference.bookmark,
                 label: attachment.label,
                 vmName: vmName,
+                verb: .delete,
                 permanently: permanently)
         }
     }
@@ -541,55 +542,6 @@ extension VMCommandCore {
         Self.logger.notice(
             "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
-    }
-
-    /// Deletes one external attachment, to Trash or immediately depending on
-    /// `permanently`.
-    ///
-    /// Missing files are swallowed at `.notice` (the source may have been moved or
-    /// deleted out-of-band); other failures log `.warning` and surface a single
-    /// error. The blocking call runs off the main actor — `trashItem` can hang for
-    /// seconds on a slow or unresponsive volume.
-    private func deleteExternalAttachment(
-        at url: URL, bookmark: Data?, label: String, vmName: String, permanently: Bool
-    ) async {
-        let fileSystem = fileSystem
-        let outcome = await Task.detached(priority: .userInitiated) { () -> String? in
-            do {
-                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
-                    target in
-                    if permanently {
-                        try fileSystem.removeItem(at: target)
-                    } else {
-                        try fileSystem.trashItem(at: target)
-                    }
-                }
-                return nil
-            } catch let error as CocoaError
-                where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile
-            {
-                return ""
-            } catch {
-                return error.localizedDescription
-            }
-        }.value
-        switch outcome {
-        case .none:
-            Self.logger.notice(
-                "Deleted external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
-            )
-        case .some(let message) where message.isEmpty:
-            Self.logger.notice(
-                "External attachment already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)'; skipping delete"
-            )
-        case .some(let message):
-            Self.logger.warning(
-                "Failed to delete external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
-            )
-            // No instance to name: the VM was evicted before these ran, which is
-            // the whole point of doing them after the bundle.
-            report(.operationFailed(verb: .delete, message: message), on: nil)
-        }
     }
 
     // MARK: - Attachment Projections

@@ -262,7 +262,7 @@ rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes
 `applyLivePolicy`. No control writes `instance.configuration` directly.
 
 **Ephemeral Mode reverts through one seam.** `VMInstance.resetToStopped()` fires `onPoweredOff`,
-which `VMLibrary` relays to the adapter, landing on the same revert a user confirms. A save-suspend tears the
+which `VMLibrary` relays to the core, landing on the same revert a user confirms. A save-suspend tears the
 session down without that hook, so a suspended session survives to revert at its next shutdown.
 
 ### ViewModels

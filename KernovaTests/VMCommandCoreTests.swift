@@ -363,7 +363,8 @@ struct VMCommandCoreTests {
         #expect(
             harness.core.allowedVerbs(for: stopped) == [
                 .info, .ipAddress, .snapshots, .start, .takeSnapshot, .deleteSnapshot,
-                .renameSnapshot, .setSnapshotNotes, .clone, .rename, .delete,
+                .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
+                .clone, .rename, .delete,
             ])
 
         let running = makeInstance(
@@ -371,7 +372,8 @@ struct VMCommandCoreTests {
         #expect(
             harness.core.allowedVerbs(for: running) == [
                 .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open,
-                .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .rename,
+                .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
+                .editRemovableMedia, .rename,
             ])
     }
 

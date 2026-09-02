@@ -123,6 +123,89 @@ protocol VMCommanding: AnyObject {
     /// Cancels an in-flight create, clone or import and removes its row.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
 
+    // MARK: - Storage Disks
+
+    /// Appends the picked files to the VM's storage-disk list, skipping paths
+    /// it already carries.
+    ///
+    /// Takes files rather than opening a panel: a pick carries a
+    /// security-scoped bookmark only an in-process open panel can mint, which
+    /// is why no wire verb offers this.
+    func attachStorageDisks(_ selector: VMSelector, paths files: [PickedFile]) throws
+
+    /// Writes a new sparse image inside the VM's bundle and appends it.
+    func createStorageDisk(_ selector: VMSelector, sizeInGB: Int) async throws
+
+    /// Drops a storage disk's entry, and with `trashFile` the file behind it.
+    ///
+    /// A file another VM still references is never trashed, however `trashFile`
+    /// is set.
+    func removeStorageDisk(
+        _ selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool
+    ) async throws
+
+    /// Replaces a storage disk's user-facing label; an empty label is a no-op.
+    func renameStorageDisk(_ selector: VMSelector, disk: UUID, to newLabel: String) throws
+
+    /// Replaces a storage disk's note. An empty note is a legitimate value —
+    /// it clears the note.
+    func setStorageDiskNotes(_ selector: VMSelector, disk: UUID, notes: String) throws
+
+    func setStorageDiskReadOnly(_ selector: VMSelector, disk: UUID, readOnly: Bool) throws
+
+    /// Rewrites the boot order; disks `order` does not name keep their relative
+    /// order behind those it does.
+    func reorderStorageDisks(_ selector: VMSelector, order: [UUID]) throws
+
+    // MARK: - Removable Media
+
+    /// Appends the picked files to the VM's removable-media list, skipping
+    /// paths it already carries — off the wire for the reason
+    /// ``attachStorageDisks(_:paths:)`` states.
+    func attachRemovableMedia(_ selector: VMSelector, paths files: [PickedFile]) throws
+
+    /// Writes a new sparse image at a destination the user chose and attaches
+    /// it as a hot-pluggable removable disk.
+    ///
+    /// Off the wire: the write rides a live save-panel grant, which is also
+    /// what the entry's bookmark is minted from.
+    func createRemovableMedia(
+        _ selector: VMSelector, sizeInGB: Int, destinationURL: URL
+    ) async throws
+
+    /// Drops a removable medium's entry, and with `trashFile` the file behind
+    /// it.
+    ///
+    /// The bundled Guest Agent installer and files shared with another VM are
+    /// never trashed.
+    func removeRemovableMedia(
+        _ selector: VMSelector, item: UUID, trashFile: Bool, confirmed: Bool
+    ) async throws
+
+    /// Detaches a removable medium and keeps its file — what a running guest
+    /// sees as an eject.
+    func ejectRemovableMedia(_ selector: VMSelector, item: UUID) throws
+
+    /// Replaces a removable medium's label; an empty label is a no-op.
+    func renameRemovableMedia(_ selector: VMSelector, item: UUID, to newLabel: String) throws
+
+    /// Replaces a removable medium's note. An empty note clears it.
+    func setRemovableMediaNotes(_ selector: VMSelector, item: UUID, notes: String) throws
+
+    func setRemovableMediaReadOnly(_ selector: VMSelector, item: UUID, readOnly: Bool) throws
+
+    // MARK: - Guest Agent Disk
+
+    /// Puts the bundled guest-agent installer image in front of the guest,
+    /// answering which bus it reached the guest on.
+    ///
+    /// A guest that already carries the image attaches nothing and says so.
+    @discardableResult
+    func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome
+
+    /// Takes the bundled installer image away again.
+    func unmountGuestAgentDisk(_ selector: VMSelector) throws
+
     // MARK: - Observation
 
     /// A stream of library changes, for callers that cannot observe the model.

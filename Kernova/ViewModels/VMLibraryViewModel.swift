@@ -4,9 +4,8 @@ import Virtualization
 import os
 
 /// The AppKit adapter over ``VMCommandCore``: the sheets and alerts that gather
-/// consent for a verb, the routing of a refused verb to the right surface, the
-/// inline-rename editing state, and the settings edits no automation surface
-/// speaks yet.
+/// consent for a verb, the routing of a refused verb to the right surface, and
+/// the inline-rename editing state.
 ///
 /// It runs no verb itself. Each method here does three things and stops: show
 /// the sheet if one is owed, call the facade with explicit consent, and route
@@ -32,8 +31,6 @@ final class VMLibraryViewModel {
     let diskImageService: any DiskImageProviding
     let snapshotStore: any VMSnapshotStoring
     let lifecycle: VMLifecycleCoordinator
-
-    private let fileSystem: any FileSystemOperating
 
     private let preferences: AppPreferences
 
@@ -146,6 +143,99 @@ final class VMLibraryViewModel {
 
     func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
         commands.isGuestAgentInstallerMounted(on: instance)
+    }
+
+    // MARK: - Attachment Forwarding
+
+    // The settings pane's Storage category, one forward per verb. Each is
+    // documented on ``VMCommandCore``; the pane gathers its own consent, so
+    // every removal arrives pre-confirmed.
+
+    func attachStorageDisks(_ files: [PickedFile], to instance: VMInstance) {
+        runEdit(on: instance) { try self.commands.attachStorageDisks(.id(instance.id), paths: files) }
+    }
+
+    func createStorageDisk(for instance: VMInstance, sizeInGB: Int) async {
+        await run(on: instance) {
+            try await self.commands.createStorageDisk(.id(instance.id), sizeInGB: sizeInGB)
+        }
+    }
+
+    func removeStorageDisk(_ disk: UUID, from instance: VMInstance, trashFile: Bool) async {
+        await runEdit(on: instance) {
+            try await self.commands.removeStorageDisk(
+                .id(instance.id), disk: disk, trashFile: trashFile, confirmed: true)
+        }
+    }
+
+    func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.renameStorageDisk(.id(instance.id), disk: disk, to: newLabel)
+        }
+    }
+
+    func setStorageDiskNotes(_ disk: UUID, notes: String, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.setStorageDiskNotes(.id(instance.id), disk: disk, notes: notes)
+        }
+    }
+
+    func setStorageDiskReadOnly(_ disk: UUID, readOnly: Bool, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.setStorageDiskReadOnly(
+                .id(instance.id), disk: disk, readOnly: readOnly)
+        }
+    }
+
+    func reorderStorageDisks(_ order: [UUID], on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.reorderStorageDisks(.id(instance.id), order: order)
+        }
+    }
+
+    func attachRemovableMedia(_ files: [PickedFile], to instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.attachRemovableMedia(.id(instance.id), paths: files)
+        }
+    }
+
+    func createRemovableMedia(
+        for instance: VMInstance, sizeInGB: Int, destinationURL: URL
+    ) async {
+        await run(on: instance) {
+            try await self.commands.createRemovableMedia(
+                .id(instance.id), sizeInGB: sizeInGB, destinationURL: destinationURL)
+        }
+    }
+
+    func removeRemovableMedia(_ item: UUID, from instance: VMInstance, trashFile: Bool) async {
+        await runEdit(on: instance) {
+            try await self.commands.removeRemovableMedia(
+                .id(instance.id), item: item, trashFile: trashFile, confirmed: true)
+        }
+    }
+
+    func ejectRemovableMedia(_ item: UUID, from instance: VMInstance) {
+        runEdit(on: instance) { try self.commands.ejectRemovableMedia(.id(instance.id), item: item) }
+    }
+
+    func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.renameRemovableMedia(.id(instance.id), item: item, to: newLabel)
+        }
+    }
+
+    func setRemovableMediaNotes(_ item: UUID, notes: String, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.setRemovableMediaNotes(.id(instance.id), item: item, notes: notes)
+        }
+    }
+
+    func setRemovableMediaReadOnly(_ item: UUID, readOnly: Bool, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.setRemovableMediaReadOnly(
+                .id(instance.id), item: item, readOnly: readOnly)
+        }
     }
 
     /// Cancels a guest setup from the confirmation `GuestSetupProgressViewController`
@@ -271,7 +361,6 @@ final class VMLibraryViewModel {
         self.storageService = storageService
         self.diskImageService = diskImageService
         self.snapshotStore = snapshotStore
-        self.fileSystem = fileSystem
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
@@ -308,9 +397,6 @@ final class VMLibraryViewModel {
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
-        }
-        library.onAgentBecameCurrent = { [weak self] instance in
-            self?.unmountGuestAgentInstaller(from: instance)
         }
         // The same routing a call site gets, so a failure nobody awaited still
         // reaches the sheet or the recovery alert its type asks for.
@@ -368,62 +454,12 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Confirmed action of the start-failed alert: detach the failing
-    /// attachment (file untouched) and immediately retry the start.
-    ///
-    /// No-ops if the VM is gone or the entry has already been removed: alerts are
-    /// serialized, so this confirmation can arrive long after the failed start, and
-    /// retrying after a removal that found nothing would re-raise the same failure.
+    /// Confirmed action of the start-failed alert, performed by the core that
+    /// offered the recovery.
     func removeStartFailedAttachmentAndStart(
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
-        guard instances.contains(where: { $0.id == instance.id }) else {
-            Self.logger.debug(
-                "Ignoring start-failed removal for already-removed VM '\(instance.name, privacy: .public)'"
-            )
-            return
-        }
-
-        let removed: Bool
-        switch failure.kind {
-        case .storageDisk:
-            if let disk = commands.storageDisk(id: failure.id, on: instance) {
-                _ = removeStorageDisk(disk, from: instance, trashFile: false)
-                removed = true
-            } else {
-                removed = false
-            }
-        case .removableMedia:
-            if let item = (instance.configuration.removableMedia ?? [])
-                .first(where: { $0.id == failure.id })
-            {
-                removeRemovableMedia(item, from: instance, trashFile: false)
-                removed = true
-            } else {
-                removed = false
-            }
-        }
-
-        guard removed else {
-            Self.logger.notice(
-                "Failed attachment '\(failure.label, privacy: .public)' already gone from '\(instance.name, privacy: .public)'; not retrying start"
-            )
-            return
-        }
-        Self.logger.notice(
-            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'; retrying start"
-        )
-        // A save file restores only into the exact device set it was saved
-        // with, so it cannot outlive the removal — the alert disclosed the
-        // discard before the user confirmed.
-        if instance.hasSaveFile {
-            instance.removeSaveFile()
-            Self.logger.notice(
-                "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
-            )
-            if instance.isColdPaused { instance.enter(.stopped) }
-        }
-        await start(instance)
+        await commands.removeStartFailedAttachmentAndStart(failure, on: instance)
     }
 
     func stop(_ instance: VMInstance) async {
@@ -773,48 +809,26 @@ final class VMLibraryViewModel {
 
     // MARK: - Guest Agent Installer
 
-    /// Mounts the bundled `KernovaMacOSAgent.dmg` as a read-only USB device so
-    /// the user can run `install.command` inside the guest.
+    /// Mounts the bundled `KernovaMacOSAgent.dmg` so the user can run
+    /// `install.command` inside the guest, then shows the next-step alert.
     ///
-    /// On mount — and when the disk is already mounted — asks the presenter to show
-    /// the next-step alert, so every entry point gives the user feedback. The mount
-    /// itself is a no-op when the DMG is already in this VM's `removableMedia` list.
-    ///
-    /// A guest taking the disk over virtio already has it, attached for the whole
-    /// session, so there the alert is the entire action.
+    /// The alert is the whole action on two of the verb's three paths — an
+    /// image already mounted, and a guest that takes it on virtio for the whole
+    /// session — so every outcome presents it.
     func mountGuestAgentInstaller(
         on instance: VMInstance, purpose: GuestAgentInstallerPurpose = .install
     ) {
-        guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else {
-            Self.logger.fault("Guest agent installer DMG missing from app bundle")
-            assertionFailure("KernovaMacOSAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
-            return
+        runEdit(on: instance) {
+            let outcome = try self.commands.mountGuestAgentDisk(.id(instance.id))
+            self.presenter?.presentInstallerMounted(
+                vmName: instance.name, purpose: purpose, delivery: outcome.delivery)
         }
-        let delivery = GuestAgentDiskDelivery.mode(for: instance.configuration)
-        guard delivery == .usb else {
-            Self.logger.debug(
-                "Guest agent disk reaches '\(instance.name, privacy: .public)' over virtio; showing next steps only")
-            presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose, delivery: delivery)
-            return
-        }
-        if isGuestAgentInstallerMounted(on: instance) {
-            Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
-            presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose, delivery: delivery)
-            return
-        }
-        let path = url.path(percentEncoded: false)
-        Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        updateConfiguration(of: instance) { config in
-            config.removableMedia =
-                (config.removableMedia ?? []) + [
-                    RemovableMediaItem(
-                        path: path,
-                        readOnly: true,
-                        label: KernovaMacOSAgentInfo.diskLabel
-                    )
-                ]
-        }
-        presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose, delivery: delivery)
+    }
+
+    /// Removes the bundled guest agent installer entry from `removableMedia` if
+    /// currently present. The reconcile flow performs the runtime detach.
+    func unmountGuestAgentInstaller(from instance: VMInstance) {
+        runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.
@@ -848,328 +862,6 @@ final class VMLibraryViewModel {
         agentInstallPromptDisabled = false
         for instance in instances {
             setAgentInstallNudgeDismissed(false, for: instance)
-        }
-    }
-
-    /// Removes the bundled guest agent installer entry from
-    /// `removableMedia` if currently present.
-    ///
-    /// The reconcile flow performs the runtime detach.
-    func unmountGuestAgentInstaller(from instance: VMInstance) {
-        guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else { return }
-        guard isGuestAgentInstallerMounted(on: instance) else { return }
-        let path = url.path(percentEncoded: false)
-        Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        updateConfiguration(of: instance) { config in
-            let pruned = (config.removableMedia ?? []).filter { $0.path != path }
-            config.removableMedia = pruned.isEmpty ? nil : pruned
-        }
-    }
-
-    // MARK: - Storage Disks
-
-    /// Removes a storage disk entry from the configuration.
-    ///
-    /// When `trashFile` is `true` the underlying file is moved to Trash — internal
-    /// (bundle-owned) disks resolve against `instance.bundleURL`, external disks
-    /// against their absolute path; an already-missing file is logged and swallowed.
-    ///
-    /// `FileManager.trashItem` can block for seconds on slow or unresponsive volumes,
-    /// so the trash runs in `Task.detached`. The returned Task lets tests await it.
-    @discardableResult
-    func removeStorageDisk(
-        _ disk: StorageDisk, from instance: VMInstance, trashFile: Bool
-    ) -> Task<Void, Never>? {
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        updateConfiguration(of: instance) { config in
-            var disks = config.effectiveStorageDisks(layout: layout)
-            disks.removeAll { $0.id == disk.id }
-            config.setStorageDisks(disks)
-        }
-
-        guard trashFile else { return nil }
-        // Never trash a file another VM still references; only external disks can be
-        // shared, since bundle-relative paths are per-VM.
-        if !disk.isInternal, !sharingVMNames(forPath: disk.path, excluding: instance).isEmpty {
-            Self.logger.notice(
-                "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
-            )
-            return nil
-        }
-        let diskURL: URL =
-            disk.isInternal
-            ? instance.bundleURL.appendingPathComponent(disk.path)
-            : URL(fileURLWithPath: disk.path)
-        let label = disk.label
-        let vmName = instance.name
-        let bookmark = disk.isInternal ? nil : disk.bookmark
-        let fileSystem = fileSystem
-        return Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: diskURL) {
-                    try fileSystem.trashItem(at: $0)
-                }
-                Self.logger.notice(
-                    "Trashed disk '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
-                )
-            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
-                Self.logger.notice(
-                    "Disk file already gone for '\(label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)); skipping trash"
-                )
-            } catch {
-                let message = error.localizedDescription
-                Self.logger.warning(
-                    "Failed to trash disk '\(label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
-                )
-                await MainActor.run { [weak self] in
-                    self?.surfaceError(message)
-                }
-            }
-        }
-    }
-
-    /// Renames a storage disk's user-facing label.
-    ///
-    /// The label is cosmetic — the virtio block identifier derives from the disk's
-    /// UUID and the backing file keeps its UUID name — so renaming is safe for any
-    /// disk including the main disk. Whitespace is trimmed and an empty result
-    /// ignored. Duplicate labels are allowed on an explicit rename; only
-    /// machine-generated defaults are uniqued.
-    func renameStorageDisk(_ disk: StorageDisk, newLabel: String, on instance: VMInstance) {
-        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        updateConfiguration(of: instance) { config in
-            var disks = config.effectiveStorageDisks(layout: layout)
-            guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
-            disks[index].label = trimmed
-            config.setStorageDisks(disks)
-        }
-    }
-
-    /// Renames a removable medium's user-facing label.
-    ///
-    /// Safe while the VM is running: the live reconciliation only detaches and
-    /// reattaches when `path` or `readOnly` differs, so a label-only edit leaves the
-    /// medium mounted. Whitespace is trimmed and an empty result ignored.
-    func renameRemovableMedia(
-        _ item: RemovableMediaItem, newLabel: String, on instance: VMInstance
-    ) {
-        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        updateConfiguration(of: instance) { config in
-            var items = config.removableMedia ?? []
-            guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-            items[index].label = trimmed
-            config.removableMedia = items.isEmpty ? nil : items
-        }
-    }
-
-    /// Replaces a storage disk's note; an unchanged value is a no-op.
-    ///
-    /// Unlike a label, an empty note is a legitimate value — it clears the
-    /// note. Leading and trailing whitespace is trimmed; interior newlines are
-    /// kept.
-    func setStorageDiskNotes(_ disk: StorageDisk, notes: String, on instance: VMInstance) {
-        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != disk.notes else { return }
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        updateConfiguration(of: instance) { config in
-            var disks = config.effectiveStorageDisks(layout: layout)
-            guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
-            disks[index].notes = trimmed
-            config.setStorageDisks(disks)
-        }
-    }
-
-    /// Replaces a removable medium's note; an unchanged value is a no-op.
-    ///
-    /// Safe while the VM is running: the live reconciliation only detaches and
-    /// reattaches when `path` or `readOnly` differs, so a note-only edit leaves
-    /// the medium mounted. Unlike a label, an empty note is a legitimate value —
-    /// it clears the note. Leading and trailing whitespace is trimmed; interior
-    /// newlines are kept.
-    func setRemovableMediaNotes(_ item: RemovableMediaItem, notes: String, on instance: VMInstance) {
-        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != item.notes else { return }
-        updateConfiguration(of: instance) { config in
-            var items = config.removableMedia ?? []
-            guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-            items[index].notes = trimmed
-            config.removableMedia = items.isEmpty ? nil : items
-        }
-    }
-
-    /// Removes a removable media entry from the configuration.
-    ///
-    /// When `trashFile` is `true` the file at the item's absolute path is moved to
-    /// Trash — every removable item is a user-picked external file. Missing files are
-    /// swallowed at `.notice` because removable media are often transient.
-    ///
-    /// `trashItem` succeeds even while the VM still holds the file open, so this
-    /// doesn't wait for the hot-detach. The returned Task lets tests await it.
-    @discardableResult
-    func removeRemovableMedia(
-        _ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool
-    ) -> Task<Void, Never>? {
-        updateConfiguration(of: instance) { config in
-            var items = config.removableMedia ?? []
-            items.removeAll { $0.id == item.id }
-            config.removableMedia = items.isEmpty ? nil : items
-        }
-
-        guard trashFile else { return nil }
-        // The bundled Guest Agent installer is app-owned: removing it only detaches
-        // the entry — trashing it would corrupt the app bundle for every VM.
-        if isGuestAgentInstaller(item) {
-            Self.logger.notice(
-                "Kept Guest Agent installer '\(item.label, privacy: .public)' — app-owned; removed entry only"
-            )
-            return nil
-        }
-        // Never trash a file another VM still references.
-        if !sharingVMNames(forPath: item.path, excluding: instance).isEmpty {
-            Self.logger.notice(
-                "Kept shared media '\(item.label, privacy: .public)' — still used by another VM; removed entry only"
-            )
-            return nil
-        }
-        let url = URL(fileURLWithPath: item.path)
-        let label = item.label
-        let vmName = instance.name
-        let bookmark = item.bookmark
-        let fileSystem = fileSystem
-        return Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
-                    try fileSystem.trashItem(at: $0)
-                }
-                Self.logger.notice(
-                    "Trashed removable media '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
-                )
-            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
-                Self.logger.notice(
-                    "Removable media file already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)'; skipping trash"
-                )
-            } catch {
-                let message = error.localizedDescription
-                Self.logger.warning(
-                    "Failed to trash removable media '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
-                )
-                await MainActor.run { [weak self] in
-                    self?.surfaceError(message)
-                }
-            }
-        }
-    }
-
-    /// Creates a new ASIF disk image inside the VM bundle and adds it to
-    /// `storageDisks`.
-    ///
-    /// The returned Task lets tests await completion of the async create + persist.
-    @discardableResult
-    func createStorageDisk(for instance: VMInstance, sizeInGB: Int) -> Task<Void, Never> {
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        let diskID = UUID()
-        let diskURL = layout.additionalDiskURL(id: diskID)
-
-        return Task {
-            do {
-                try FileManager.default.createDirectory(
-                    at: layout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
-
-                try await diskImageService.createDiskImage(at: diskURL, sizeInGB: sizeInGB)
-
-                // Bundle-relative so the entry travels with the bundle on clone / move.
-                let relativePath = "AdditionalDisks/\(diskID.uuidString).asif"
-                // Compute the unique default label *inside* the mutate closure against
-                // the live config, so two rapid creates can't read the same snapshot
-                // and pick the same "… 2" suffix.
-                var createdLabel = "\(sizeInGB) GB Disk"
-                updateConfiguration(of: instance) { config in
-                    var disks = config.effectiveStorageDisks(layout: layout)
-                    let label = StorageDisk.uniqueLabel(
-                        base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
-                    createdLabel = label
-                    disks.append(
-                        StorageDisk(
-                            id: diskID,
-                            path: relativePath,
-                            readOnly: false,
-                            label: label,
-                            isInternal: true,
-                            kind: .virtio
-                        )
-                    )
-                    config.setStorageDisks(disks)
-                }
-
-                Self.logger.notice(
-                    "Created in-bundle storage disk '\(createdLabel, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
-                )
-            } catch {
-                // Only attempt cleanup when the write itself failed — earlier
-                // phases throw before the destination file is touched.
-                if case DiskImageError.writeFailed = error {
-                    do {
-                        try fileSystem.trashItem(at: diskURL)
-                    } catch let cleanupError {
-                        Self.logger.warning(
-                            "Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
-                        )
-                    }
-                }
-                Self.logger.error(
-                    "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                presentError(error)
-            }
-        }
-    }
-
-    /// Creates a new ASIF disk image at a user-chosen external location and
-    /// attaches it to the VM as a hot-pluggable removable disk.
-    ///
-    /// The backing file is **not** bundle-owned: removal from the list does not trash
-    /// it, and cloning the VM references the same path rather than duplicating it.
-    func createRemovableMedia(for instance: VMInstance, sizeInGB: Int, destinationURL: URL) {
-        Task {
-            do {
-                try await diskImageService.createDiskImage(at: destinationURL, sizeInGB: sizeInGB)
-
-                // Bookmark after the write succeeds: the file must exist to be
-                // bookmarked, and the write rides the still-live save-panel grant.
-                let item = RemovableMediaItem(
-                    path: destinationURL.path(percentEncoded: false),
-                    readOnly: false,
-                    label: destinationURL.deletingPathExtension().lastPathComponent,
-                    bookmark: SecurityScopedBookmark.make(for: destinationURL)
-                )
-                updateConfiguration(of: instance) { config in
-                    config.removableMedia = (config.removableMedia ?? []) + [item]
-                }
-
-                Self.logger.notice(
-                    "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
-                )
-            } catch {
-                // Only clean up when the write itself failed — earlier phases throw
-                // before the destination is touched, and the path is user-chosen, so
-                // trashing there could remove an unrelated pre-existing file.
-                if case DiskImageError.writeFailed = error {
-                    do {
-                        try fileSystem.trashItem(at: destinationURL)
-                    } catch let cleanupError {
-                        Self.logger.warning(
-                            "Failed to clean up partial removable disk at '\(destinationURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
-                        )
-                    }
-                }
-                Self.logger.error(
-                    "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                presentError(error)
-            }
         }
     }
 
@@ -1307,6 +999,41 @@ final class VMLibraryViewModel {
     private func runSync(on instance: VMInstance?, _ verb: () throws -> Void) {
         do {
             try verb()
+        } catch {
+            present(error, for: instance)
+        }
+    }
+
+    /// Runs one attachment edit, routing refusals as ``runSync(on:_:)`` does
+    /// but logging the failure a race raises instead of alerting on it.
+    ///
+    /// Two things reach here as
+    /// ``CommandError/operationFailed(verb:title:message:recovery:)``: an edit
+    /// naming an attachment the list no longer carries — a rename field
+    /// committing after its row went, a second alert for a disk the first
+    /// already removed — and a configuration write the funnel has already told
+    /// the user about. Both were silent before there was a verb to refuse them,
+    /// and the verb throws so a wire client hears about it.
+    private func runEdit(on instance: VMInstance, _ verb: () throws -> Void) {
+        do {
+            try verb()
+        } catch let error as CommandError where error.isOperationFailure {
+            Self.logger.debug(
+                "Attachment edit on '\(instance.name, privacy: .public)' did not apply: \(error.message, privacy: .public)"
+            )
+        } catch {
+            present(error, for: instance)
+        }
+    }
+
+    /// The asynchronous counterpart of ``runEdit(on:_:)``.
+    private func runEdit(on instance: VMInstance, _ verb: () async throws -> Void) async {
+        do {
+            try await verb()
+        } catch let error as CommandError where error.isOperationFailure {
+            Self.logger.debug(
+                "Attachment edit on '\(instance.name, privacy: .public)' did not apply: \(error.message, privacy: .public)"
+            )
         } catch {
             present(error, for: instance)
         }

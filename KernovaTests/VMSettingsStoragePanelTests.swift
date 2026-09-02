@@ -24,10 +24,11 @@ struct VMSettingsStoragePanelTests {
     }
 
     private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage,
+        phase: VMLifecyclePhase = .stopped
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
-            guestOS: guestOS, isReadOnly: isReadOnly, category: category,
+            guestOS: guestOS, isReadOnly: isReadOnly, category: category, phase: phase,
             preferences: preferences)
     }
 
@@ -89,7 +90,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")
     func deletePromptInternalDisk() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Extra Disk", isInternal: true, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
@@ -98,7 +99,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Main disk delete warns it's the startup disk")
     func deletePromptMainDisk() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Main Disk", isInternal: true, isMainDisk: true,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
@@ -107,7 +108,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Private external delete offers both Move-to-Trash and Remove-from-VM")
     func deletePromptPrivateExternal() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Scratch", isInternal: false, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash, .removeFromVM])
@@ -115,7 +116,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Shared external delete hard-blocks trashing (Remove-from-VM only) and names the VMs")
     func deletePromptSharedExternal() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Installer", isInternal: false, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: ["macOS Copy", "Linux"])
         #expect(prompt.actions == [.removeFromVM])
@@ -125,7 +126,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Guest Agent delete only detaches and says the installer isn't deleted")
     func deletePromptGuestAgent() {
-        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
+        let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Kernova Guest Agent", isInternal: false, isMainDisk: false,
             isGuestAgent: true, sharedVMNames: [])
         #expect(prompt.actions == [.removeFromVM])
@@ -156,9 +157,12 @@ struct VMSettingsStoragePanelTests {
         #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == true)
     }
 
-    @Test("Edit Notes and Rename are disabled on a read-only VM's storage row")
-    func attachmentMenuEditNotesFollowsReadOnly() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: true)
+    @Test("Edit Notes and Rename are disabled on a running VM's storage row")
+    func attachmentMenuEditNotesFollowsTheDiskGate() {
+        // The model gate, not the route: a running VM's disks are pinned by the
+        // `VZVirtualMachine`, which is what closes the row's edits.
+        let (vc, _, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .running(sessionID: UUID()))
         let row = storageRow(in: vc.view)
         let menu = row?.contextMenu?()
 

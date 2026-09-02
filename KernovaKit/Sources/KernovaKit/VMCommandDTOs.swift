@@ -153,6 +153,9 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     /// Interrupting a running guest setup — a macOS install, or a Linux
     /// installer image being fetched or verified.
     case cancelGuestSetup
+    /// Detaching one storage disk or removable medium and trashing the file
+    /// behind it.
+    case removeAttachment
 }
 
 /// A second way to satisfy a confirmation, beside its own confirm action.
