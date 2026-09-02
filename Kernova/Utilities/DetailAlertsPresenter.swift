@@ -486,8 +486,15 @@ final class DetailAlertsPresenter: NSObject {
     private func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
+        // Only an external file can be picked again: no verb attaches an entry
+        // at a bundle-internal path, so the re-attach clause is true for
+        // external disks and removable media alone.
+        let isInternal =
+            failure.kind == .storageDisk
+            && vm.effectiveStorageDisks.first { $0.id == failure.id }?.isInternal == true
         var message =
-            "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted, and you can re-attach it later in Settings."
+            "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted"
+        message += isInternal ? "." : ", and you can re-attach it later in Settings."
         if vm.hasSaveFile {
             message +=
                 " Removing it also discards this virtual machine’s saved state, which can only be restored with the same devices attached."

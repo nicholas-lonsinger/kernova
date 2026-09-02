@@ -283,6 +283,16 @@ extension VMCommandCore {
                             updated.path = newPath
                             return updated
                         } ?? []
+                    // An empty list would store `nil`, which re-synthesizes a
+                    // `Disk.asif` row for a file the copy never wrote — so a
+                    // clone left with no disk fails instead of publishing.
+                    guard !remapped.isEmpty else {
+                        throw CommandError.operationFailed(
+                            verb: .clone,
+                            message:
+                                "None of the disk files of \u{201C}\(sourceName)\u{201D} could be copied, so the clone would have no storage disk."
+                        )
+                    }
                     phantom.configuration.setStorageDisks(remapped)
                     try storage.saveConfiguration(phantom.configuration, to: staged)
                 }

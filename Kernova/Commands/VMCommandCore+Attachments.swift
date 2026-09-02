@@ -577,7 +577,7 @@ extension VMCommandCore {
             return AttachmentDeletePrompt(
                 title: title,
                 message:
-                    "Moves the disk image to the Trash. You can restore it with Finder's Put Back.",
+                    "Moves the disk image to the Trash and removes the disk from this VM.",
                 actions: [.moveToTrash])
         }
 

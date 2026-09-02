@@ -1516,6 +1516,61 @@ struct VMCommandCoreTests {
         #expect(removedID == phantom.id)
     }
 
+    @Test("A clone left with no disk fails rather than publishing a re-synthesized Disk.asif")
+    func cloneWithNoCopiableDiskFails() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        // The source's only disk is an additional internal one whose file is
+        // gone, so the remap skips it and nothing is left to publish.
+        let missing = StorageDisk(
+            path: "AdditionalDisks/\(UUID().uuidString).asif", label: "Extra", isInternal: true)
+        instance.configuration.storageDisks = [missing]
+        var events = harness.core.events().makeAsyncIterator()
+
+        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
+        await phantom.preparingState?.task.value
+
+        var failure: VMLibraryEvent?
+        while let event = await events.next() {
+            if case .failure = event {
+                failure = event
+                break
+            }
+        }
+        guard case .failure(let id, _, _)? = failure else {
+            Issue.record("expected a failure event")
+            return
+        }
+        #expect(id == phantom.id)
+        let removed = try #require(await events.next())
+        guard case .removed(let removedID, _) = removed else {
+            Issue.record("expected a removal, got \(removed)")
+            return
+        }
+        #expect(removedID == phantom.id)
+        #expect(!harness.library.instances.contains { $0.id == phantom.id })
+        #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == false)
+    }
+
+    @Test("A clone copies Disk.asif only while the source still references it")
+    func cloneCopiesDiskAsifOnlyWhenReferenced() async throws {
+        let harness = makeHarness()
+        let withMain = makeInstance(in: harness, name: "With Main")
+        withMain.configuration.storageDisks = nil
+        let summary = try harness.core.clone(.id(withMain.id), machineIdentity: .new)
+        await harness.library.instances.first { $0.id == summary.id }?.preparingState?.task.value
+        #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == true)
+
+        let withoutMain = makeInstance(in: harness, name: "Without Main")
+        withoutMain.configuration.storageDisks = [
+            StorageDisk(path: "/tmp/external.img", label: "External", isInternal: false)
+        ]
+        let external = try harness.core.clone(.id(withoutMain.id), machineIdentity: .new)
+        await harness.library.instances.first { $0.id == external.id }?.preparingState?.task.value
+        #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == false)
+    }
+
     @Test("A rename reports what changed, and refuses a row still copying")
     func renameReportsChangeAndRefusesAPreparingRow() async throws {
         let harness = makeHarness()
