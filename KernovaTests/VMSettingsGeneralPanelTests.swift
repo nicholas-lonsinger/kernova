@@ -55,6 +55,53 @@ struct VMSettingsGeneralPanelTests {
         #expect(viewModel.activeRename == .detail(instance.id))
     }
 
+    /// The handoff the two rename surfaces share: the sidebar taking the rename
+    /// supersedes this one, and the text typed here has to reach the model
+    /// rather than being dropped with the box.
+    @Test("A superseded detail rename still commits what was typed into it")
+    func supersededDetailRenameCommitsItsText() throws {
+        let (vc, instance, viewModel) = makeController(
+            guestOS: .linux, isReadOnly: false, category: .general)
+        // The rename verb resolves the VM through the library, so the pane's
+        // instance has to be in it for a commit to land.
+        viewModel.instances = [instance]
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        viewModel.renameVMInDetail(instance)
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+        let panel = try #require(vc.panelForTesting(.general))
+        let field = try #require(findEditableField(in: panel))
+        field.currentEditor()?.string = "Typed in detail"
+        field.stringValue = "Typed in detail"
+
+        // The sidebar takes the rename over, which is what the pane sees.
+        viewModel.renameVMInSidebar(instance)
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+
+        #expect(instance.name == "Typed in detail")
+        // The marker belongs to the sidebar now, and the detail commit left it.
+        #expect(viewModel.activeRename == .sidebar(instance.id))
+    }
+
+    /// The row used to be a borderless button, which grayed its own title; a
+    /// plain label doesn't, so the pane has to gray it.
+    @Test("The name reads as disabled while the VM can't be renamed")
+    func nameGraysWhenRenameIsUnavailable() throws {
+        let viewModel = makeViewModel()
+        let instance = makeSettingsInstance(guestOS: .linux, phase: .starting(sessionID: UUID()))
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: true)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.general)
+
+        #expect(!viewModel.capabilities.isAvailable(.rename, on: instance))
+        let panel = try #require(vc.panelForTesting(.general))
+        let name = try #require(
+            firstSubview(InlineEditableLabel.self, in: panel) { $0.stringValue == instance.name })
+        #expect(name.textColor == .disabledControlTextColor)
+    }
+
     // MARK: - General card OS rows
 
     private func makeOSRowsController(
