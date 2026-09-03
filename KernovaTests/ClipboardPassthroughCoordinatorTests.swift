@@ -350,6 +350,42 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.reports.failure == .itemsSkipped(note: "Couldn't read the dropped item"))
     }
 
+    @Test("a second copy losing the same item is announced again, not collapsed into the first")
+    func eachPartialCopyIsAnnouncedOnItsOwn() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = directory.appendingPathComponent("kept.txt")
+        let doomed = directory.appendingPathComponent("doomed.txt")
+        try Data("kept".utf8).write(to: kept)
+        try Data("doomed".utf8).write(to: doomed)
+        try FileManager.default.removeItem(at: doomed)
+
+        var resolves = 0
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolves += 1
+            resolved.notify()
+        }
+
+        // Two copies of the same partial selection: the second forwards content
+        // the guest already holds, so nothing on the offer path resets what the
+        // first left standing. Each is still a gesture the user made, and each
+        // is owed its own message.
+        writeFileURLs([kept, doomed], to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolves == 1 }
+
+        writeFileURLs([kept, doomed], to: h.pasteboard)
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolves == 2 }
+
+        #expect(h.reports.refusals.count == 2)
+        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
+    }
+
     @Test("a text-only transport's blanket file rejection is not reported")
     func pollStaysQuietForTextOnlyTransport() async throws {
         let h = makeHarness()
