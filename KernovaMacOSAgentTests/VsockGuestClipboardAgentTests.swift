@@ -852,6 +852,12 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
+        // A copy this connection watched arrive, so the one after it reads as a
+        // gesture the guest made rather than a standing snapshot re-evaluated.
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        _ = try await awaitOffer(on: hostChannel)
+
         let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
         defer { try? FileManager.default.removeItem(at: readable.deletingLastPathComponent()) }
         // A mode-000 file stats exactly like a readable one, so only asking for
@@ -875,6 +881,68 @@ struct VsockGuestClipboardAgentTests {
 
         // The host's readout covers what the offer carried, so the item it left
         // out is named here or nowhere (docs/CLIPBOARD.md §13).
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity } == .copyPartlyCarried(skipped: 1))
+    }
+
+    @Test("outbound: the first poll of a connection re-announces a partial copy without a notice")
+    func outboundFirstPollAfterConnectingRaisesNoPartialNotice() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        let resolves = Box(0)
+        let resolved = AsyncGate()
+        await MainActor.run {
+            agent.onFileResolveCompletedForTesting = {
+                resolves.value += 1
+                resolved.notify()
+            }
+        }
+
+        // A copy of two files, one of them unreadable, already standing when the
+        // channel comes up — a VM resumed from a save, the host app restarted,
+        // or clipboard sharing toggled off and on.
+        let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
+        defer { try? FileManager.default.removeItem(at: readable.deletingLastPathComponent()) }
+        let sealed = try writeTempFile(name: "sealed.txt", data: Data("secret".utf8))
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: sealed.path)
+            try? FileManager.default.removeItem(at: sealed.deletingLastPathComponent())
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: sealed.path)
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(readable.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(sealed.absoluteString.utf8))],
+        ])
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.map(\.filename) == ["readable.txt"])
+
+        // Re-announcing to a host with no record of prior offers is not a
+        // gesture anyone just made, and the notice pops the guest's dropdown by
+        // itself — so nobody is interrupted for a copy already accounted for.
+        try await resolved.wait { resolves.value == 1 }
+        #expect(notices.value == 0)
+        #expect(await MainActor.run { agent.clipboardActivity } == .offeredToHost)
+
+        // The copy after it is watched arriving, so that one is reported.
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(readable.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(sealed.absoluteString.utf8))],
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
         try await notices.changed.wait { notices.value == 1 }
         #expect(
             await MainActor.run { agent.clipboardActivity } == .copyPartlyCarried(skipped: 1))

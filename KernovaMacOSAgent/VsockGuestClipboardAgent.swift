@@ -406,6 +406,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
 
+        // Captured once, before any gate advances, and passed to every path that
+        // can raise a menu notice: only a snapshot a poll on this connection
+        // watched arrive is a gesture someone just made. The first poll of a
+        // connection deliberately re-evaluates whatever was already standing
+        // (`unobservedChangeCount`), and a notice for that pops the guest's
+        // dropdown open with nobody having touched the clipboard.
+        let watchedItArrive = lastPasteboardChangeCount != Self.unobservedChangeCount
+
         // The shared reader owns every rule about what may cross — marker
         // disposition, per-item file classification, path-fallback suppression
         // — so a guest copy and a Mac copy are judged identically. What is left
@@ -421,16 +429,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
             lastPasteboardChangeCount = currentCount
         case .empty:
-            noteSnapshotOfferedNothing(pasteboardHeldSomething: false, changeCount: currentCount)
+            noteSnapshotOfferedNothing(
+                pasteboardHeldSomething: false, watchedItArrive: watchedItArrive,
+                changeCount: currentCount)
         case .nothingOfferable:
-            noteSnapshotOfferedNothing(pasteboardHeldSomething: true, changeCount: currentCount)
+            noteSnapshotOfferedNothing(
+                pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
+                changeCount: currentCount)
         case .textOnlyRefusal:
             // Unreachable: this poll always reads with `allowsBinary: true`.
             Self.logger.fault("Clipboard snapshot refused as text-only on a binary transport")
             assertionFailure("Clipboard snapshot refused as text-only on a binary transport")
-            noteSnapshotOfferedNothing(pasteboardHeldSomething: true, changeCount: currentCount)
+            noteSnapshotOfferedNothing(
+                pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
+                changeCount: currentCount)
         case .content(let content, let skipped):
-            offer(content, skipped: skipped, changeCount: currentCount)
+            offer(
+                content, skipped: skipped, watchedItArrive: watchedItArrive,
+                changeCount: currentCount)
         case .pendingFiles(let urls, let unresolved):
             // A file this agent materialized from a prior inbound paste is the
             // Mac's own content; offering it back is an echo, not a copy.
@@ -443,11 +459,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 // pasteboard still moved on, and the offer it displaced is all
                 // that may be withdrawn.
                 noteSnapshotOfferedNothing(
-                    pasteboardHeldSomething: false, changeCount: currentCount)
+                    pasteboardHeldSomething: false, watchedItArrive: watchedItArrive,
+                    changeCount: currentCount)
                 return
             }
             resolveAndOffer(
-                offerable, unresolved: unresolved, channel: channel, changeCount: currentCount)
+                offerable, unresolved: unresolved, watchedItArrive: watchedItArrive,
+                channel: channel, changeCount: currentCount)
         }
     }
 
@@ -456,14 +474,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// `pasteboardHeldSomething` separates a copy whose every flavor was
     /// filtered out from a pasteboard emptied outright, which are not the same
-    /// news. Only a snapshot a poll on this connection watched arrive is a copy
-    /// at all: the first poll re-evaluates whatever was already standing, so it
-    /// re-announces silently rather than reporting a gesture nobody just made.
-    private func noteSnapshotOfferedNothing(pasteboardHeldSomething: Bool, changeCount: Int) {
+    /// news. `watchedItArrive` is `checkClipboardChange`'s reading of whether
+    /// this snapshot is a gesture at all, taken before any gate advanced.
+    private func noteSnapshotOfferedNothing(
+        pasteboardHeldSomething: Bool, watchedItArrive: Bool, changeCount: Int
+    ) {
         // The pasteboard still moved on, so the host's previous offer is retired
         // rather than left serving a copy the user has replaced.
         let released = MainActorBridge.sync { endpoint?.release() ?? false }
-        let watchedItArrive = lastPasteboardChangeCount != Self.unobservedChangeCount
         lastPasteboardChangeCount = changeCount
         guard pasteboardHeldSomething, watchedItArrive else {
             // Nobody's copy came up short here, so the only line that can be
@@ -487,8 +505,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// The gesture was made in this guest, so a partial loss is accounted for
     /// here (docs/CLIPBOARD.md §13): the host's readout covers only what the
-    /// offer carried, and nothing else would name the difference.
-    private func offer(_ content: ClipboardContent, skipped: Int, changeCount: Int) {
+    /// offer carried, and nothing else would name the difference. `watchedItArrive`
+    /// is what keeps a re-announced standing snapshot from claiming a gesture.
+    private func offer(
+        _ content: ClipboardContent, skipped: Int, watchedItArrive: Bool, changeCount: Int
+    ) {
         guard let endpoint else { return }
         switch MainActorBridge.sync({ endpoint.offer(content) }) {
         case .sent, .duplicate:
@@ -503,8 +524,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         guard skipped > 0 else { return }
         Self.logger.warning(
-            "Copy left \(skipped, privacy: .public) unreadable item(s) out of the offer to the host (conn=\(self.connectionTag, privacy: .public))"
+            "The offer to the host left \(skipped, privacy: .public) unreadable item(s) out (conn=\(self.connectionTag, privacy: .public))"
         )
+        // Re-announcing a standing snapshot to a new host is nobody's gesture,
+        // and the notice opens the guest's dropdown by itself — so a reconnect
+        // over an already-partial copy must interrupt no one.
+        guard watchedItArrive else { return }
         clipboardActivityStorage = .copyPartlyCarried(skipped: skipped)
         onClipboardNotice()
     }
@@ -517,7 +542,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// global queue and back; a folder is encoded only when the host requests
     /// the rep, and then straight onto the wire.
     private func resolveAndOffer(
-        _ urls: [URL], unresolved: Int, channel: VsockChannel, changeCount: Int
+        _ urls: [URL], unresolved: Int, watchedItArrive: Bool, channel: VsockChannel,
+        changeCount: Int
     ) {
         guard !resolveInFlight else { return }
         resolveInFlight = true
@@ -543,7 +569,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     // the total loss the inline path reports the same way, and
                     // it advances the gate itself.
                     self.noteSnapshotOfferedNothing(
-                        pasteboardHeldSomething: true, changeCount: changeCount)
+                        pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
+                        changeCount: changeCount)
                     return
                 }
                 // Advance the change-count gate so the files aren't re-walked
@@ -551,7 +578,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 self.lastPasteboardChangeCount = changeCount
                 self.offer(
                     ClipboardContent(representations: intake.representations),
-                    skipped: intake.skipped, changeCount: changeCount)
+                    skipped: intake.skipped, watchedItArrive: watchedItArrive,
+                    changeCount: changeCount)
             }
         }
     }
