@@ -391,7 +391,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: stopped) == [
                 .info, .ipAddress, .snapshots, .start, .takeSnapshot, .deleteSnapshot,
                 .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
-                .clone, .rename, .delete,
+                .editSharedDirectory, .clone, .rename, .delete,
             ])
 
         let running = makeInstance(

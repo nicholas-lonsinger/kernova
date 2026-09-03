@@ -53,6 +53,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
         case editStorageDisk(VMSelector, StorageDiskEdit)
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
+        case editSharedDirectory(VMSelector, SharedDirectoryEdit)
         case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
 
         /// Which verb this is, for a transport mapping onto its own naming.
@@ -82,6 +83,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .cancelPreparing: .cancelPreparing
             case .editStorageDisk: .editStorageDisk
             case .editRemovableMedia: .editRemovableMedia
+            case .editSharedDirectory: .editSharedDirectory
             case .guestAgentDisk: .guestAgentDisk
             }
         }

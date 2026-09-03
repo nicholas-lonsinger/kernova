@@ -454,6 +454,26 @@ struct VMCommandEnvelopeRouterTests {
         #expect(double.setRemovableMediaReadOnlyCalls.map(\.readOnly) == [false])
     }
 
+    @Test("Each shared-directory edit crosses the wire onto its own facade call")
+    func sharedDirectoryEditsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        double.library = [summary]
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let selector = VMSelector.id(summary.id)
+        let directory = UUID()
+
+        for edit: SharedDirectoryEdit in [
+            .remove(directory: directory),
+            .setReadOnly(directory: directory, readOnly: true),
+        ] {
+            #expect(try await transport.send(.editSharedDirectory(selector, edit)).result == .ok)
+        }
+
+        #expect(double.removeSharedDirectoryCalls.map(\.directory) == [directory])
+        #expect(double.setSharedDirectoryReadOnlyCalls.map(\.readOnly) == [true])
+    }
+
     @Test("Both guest-agent-disk edits cross the wire")
     func guestAgentDiskEditsCrossTheWire() async throws {
         let double = MockVMCommanding()

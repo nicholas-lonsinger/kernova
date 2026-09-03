@@ -154,7 +154,8 @@ final class VMLibraryViewModel {
 
     // MARK: - Attachment Forwarding
 
-    // The settings pane's Storage category, one forward per verb. Each is
+    // The settings pane's Storage and Sharing categories, one forward per verb.
+    // Each is
     // documented on ``VMCommandCore``; the pane gathers its own consent, so
     // every removal arrives pre-confirmed.
 
@@ -242,6 +243,25 @@ final class VMLibraryViewModel {
         runEdit(on: instance) {
             try self.commands.setRemovableMediaReadOnly(
                 .id(instance.id), item: item, readOnly: readOnly)
+        }
+    }
+
+    func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.addSharedDirectories(.id(instance.id), paths: files)
+        }
+    }
+
+    func removeSharedDirectory(_ directory: UUID, from instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.removeSharedDirectory(.id(instance.id), directory: directory)
+        }
+    }
+
+    func setSharedDirectoryReadOnly(_ directory: UUID, readOnly: Bool, on instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.setSharedDirectoryReadOnly(
+                .id(instance.id), directory: directory, readOnly: readOnly)
         }
     }
 

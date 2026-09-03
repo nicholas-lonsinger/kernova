@@ -508,7 +508,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let urls = NSOpenPanel.browseDiskImages(
             message: "Select disk images to attach to the VM", allowsMultipleSelection: true)
         guard !urls.isEmpty else { return }
-        viewModel.attachStorageDisks(urls.map(Self.pick), to: instance)
+        viewModel.attachStorageDisks(urls.map(PickedFile.init(picking:)), to: instance)
     }
 
     @objc private func createStorageTapped() {
@@ -563,13 +563,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 },
                 in: window)
         }
-    }
-
-    /// One open-panel URL as the core takes it — path plus the app-scoped
-    /// bookmark minted from this pick's grant.
-    private static func pick(_ url: URL) -> PickedFile {
-        let (path, bookmark) = SecurityScopedBookmark.capture(url)
-        return PickedFile(path: path, bookmark: bookmark)
     }
 
     // MARK: Attachment context menu (shared by both lists)
@@ -832,7 +825,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let urls = NSOpenPanel.browseDiskImages(
             message: "Select disk images to attach to the VM", allowsMultipleSelection: true)
         guard !urls.isEmpty else { return }
-        viewModel.attachRemovableMedia(urls.map(Self.pick), to: instance)
+        viewModel.attachRemovableMedia(urls.map(PickedFile.init(picking:)), to: instance)
     }
 
     @objc private func createRemovableTapped() {

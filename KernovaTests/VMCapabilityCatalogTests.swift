@@ -73,8 +73,8 @@ struct VMCapabilityCatalogTests {
             (
                 "stopped", .stopped,
                 [
-                    .start, .takeSnapshot, .editStorageDisks, .editRemovableMedia, .clone, .rename,
-                    .delete,
+                    .start, .takeSnapshot, .editStorageDisks, .editRemovableMedia,
+                    .editSharedDirectories, .clone, .rename, .delete,
                 ]
             ),
             (
@@ -114,11 +114,17 @@ struct VMCapabilityCatalogTests {
             ("installing, no VM yet", .installing(sessionID: nil), []),
             (
                 "failed", .failed(message: "Boot failed."),
-                [.start, .editStorageDisks, .editRemovableMedia, .clone, .rename, .delete]
+                [
+                    .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone,
+                    .rename, .delete,
+                ]
             ),
             (
                 "initialBoot", .initialBoot,
-                [.start, .editStorageDisks, .editRemovableMedia, .clone, .rename, .delete]
+                [
+                    .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone,
+                    .rename, .delete,
+                ]
             ),
         ]
 
@@ -223,7 +229,9 @@ struct VMCapabilityCatalogTests {
         defer { task.cancel() }
 
         let locked: Set<VMCapability> = [.editStorageDisks, .delete, .revertToSnapshot, .start]
-        let unaffected: Set<VMCapability> = [.clone, .rename, .editRemovableMedia]
+        let unaffected: Set<VMCapability> = [
+            .clone, .rename, .editRemovableMedia, .editSharedDirectories,
+        ]
 
         phantom.preparingState = VMInstance.PreparingState(
             operation: .cloning(sourceID: source.id), task: task)

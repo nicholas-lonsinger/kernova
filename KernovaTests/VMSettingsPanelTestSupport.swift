@@ -39,6 +39,16 @@ func makeSettingsInstance(guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped
     return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
 }
 
+/// Puts `instance` in the view model's library, which is what lets the command
+/// verbs a panel's controls call resolve it by id.
+@MainActor
+func registerSettingsInstance(_ instance: VMInstance, in viewModel: VMLibraryViewModel) {
+    (viewModel.storageService as? MockVMStorageService)?.bundles[instance.bundleURL] =
+        instance.configuration
+    viewModel.library.wirePersistence(for: instance)
+    viewModel.library.instances.append(instance)
+}
+
 /// Builds the settings pane and runs its appearance lifecycle so `apply()` has
 /// populated control values and enabled state.
 ///
