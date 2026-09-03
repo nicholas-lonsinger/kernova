@@ -16,10 +16,11 @@ import Foundation
 /// **A refusal is never lost behind another operation.** It shows the moment it
 /// is recorded, over any running readout, so the surfaces that interrupt fire at
 /// once; the running operation's next emission takes the readout back. When that
-/// operation then completes, its terminal clears the refusal only where it
-/// disproves it: a completion answers the failures that stood before it began
-/// *and* were owed to the same user, so a retry clears the line it is retrying
-/// while the peer's paste leaves this side's refusal standing.
+/// operation then ends, its terminal clears the refusal only where it disproves
+/// it: a completion answers the failures that stood before it began, which is
+/// what lets a retry clear the line it is retrying, and nothing a gesture the
+/// *peer* made ends with — completion, cancellation, or a refusal of its own —
+/// clears a refusal this side's user is owed.
 ///
 /// Not `@Observable` — KernovaKit deploys to macOS 12, which has no Observation.
 /// It notifies through ``onReportChanged`` instead, and the host mirrors that
@@ -250,22 +251,25 @@ public final class ClipboardTransferReporter {
     /// announced in between is a later one, so its repeat is announced again.
     ///
     /// `startedAt` is when the finishing operation began, for the finishes that
-    /// must not install themselves. A completion or cancellation leaves standing
-    /// a refusal raised *during* it, since running to the end says nothing about
-    /// a transfer that failed alongside; a refusal older than the operation is
-    /// one the operation retried, so that one is cleared. It also leaves standing
-    /// any refusal this side's user is owed when the gesture that completed is
-    /// the *peer's*, whenever it began: the two answer different users
-    /// (docs/CLIPBOARD.md §13), so neither disproves the other.
+    /// must not install themselves over a standing refusal — either because they
+    /// disprove nothing about it, or because they are not the same user's news.
     private func record(_ finish: ClipboardTransferFinish, startedAt: Date?) {
         if absorbsRepeats, let standing = lastFinish, standing.isSameNews(as: finish) {
             recompute()
             return
         }
-        if finish.failure == nil, let standing = lastFinish, standing.failure != nil {
-            let raisedDuringTheOperation = startedAt.map { standing.date >= $0 } ?? false
+        if let standing = lastFinish, standing.failure != nil {
+            // A gesture the peer made answers the peer's user, so nothing it ends
+            // with disproves what this side's user is owed
+            // (docs/CLIPBOARD.md §13) — including a refusal of its own, which the
+            // surfaces that interrupt would not present here anyway.
             let answersTheOtherUser = !finish.gesture.isMadeHere && standing.gesture.isMadeHere
-            if raisedDuringTheOperation || answersTheOtherUser {
+            // Running to the end says nothing about a transfer that failed
+            // alongside; a refusal older than the operation is one the operation
+            // retried, so that one is cleared.
+            let raisedDuringTheOperation =
+                finish.failure == nil && (startedAt.map { standing.date >= $0 } ?? false)
+            if answersTheOtherUser || raisedDuringTheOperation {
                 recompute()
                 return
             }
