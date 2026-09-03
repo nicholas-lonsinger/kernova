@@ -120,8 +120,6 @@ final class VMLibraryViewModel {
         commands.canDeleteSnapshot(instance, snapshot: snapshot)
     }
 
-    func reloadSnapshots(for instance: VMInstance) { commands.reloadSnapshots(for: instance) }
-
     func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
         await commands.snapshotOnDiskBytes(for: instance)
     }
@@ -1118,10 +1116,6 @@ final class VMLibraryViewModel {
                 "No sheet to raise for an unconsented \(prompt.kind.rawValue, privacy: .public)"
             )
         }
-    }
-
-    func presentError(_ error: Error) {
-        surfaceError(error.localizedDescription)
     }
 
     /// Routes an error message to the presenter, buffering it if none is

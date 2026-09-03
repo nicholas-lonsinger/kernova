@@ -345,7 +345,7 @@ extension VMSettingsViewController {
     }
 
     /// The panel header's back button.
-    @objc private func backToOverview(_ sender: Any?) {
+    @objc private func backToOverview(_: Any?) {
         showOverview()
     }
 

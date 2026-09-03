@@ -11,20 +11,13 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     private struct State {
         var manifests: [URL: VMSnapshotManifest] = [:]
         var capturedPaths: [UUID: [String]] = [:]
-        var capturedSuspendSlotIDs: [UUID] = []
         var capturedConfigurations: [UUID: VMConfiguration] = [:]
-        var restoredIDs: [UUID] = []
-        var restoredConfigurations: [UUID: VMConfiguration] = [:]
-        var restoredKinds: [UUID: VMSnapshotKind] = [:]
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
         var sizes: [UUID: UInt64] = [:]
         var saveManifestError: (any Error)?
-        var prepareError: (any Error)?
         var captureError: (any Error)?
-        var planRestoreError: (any Error)?
-        var restoreError: (any Error)?
         var discardError: (any Error)?
     }
 
@@ -56,20 +49,6 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     }
     /// Bundle-relative paths passed to `captureDisks`, keyed by snapshot id.
     var capturedPaths: [UUID: [String]] { lock.withLock { state.capturedPaths } }
-    /// Snapshot ids `captureSuspendSlot` was called for, in call order.
-    var capturedSuspendSlotIDs: [UUID] { lock.withLock { state.capturedSuspendSlotIDs } }
-    /// Configurations passed to `prepareSnapshot`, keyed by snapshot id — what
-    /// the snapshot's own `config.json` would hold.
-    var capturedConfigurations: [UUID: VMConfiguration] {
-        lock.withLock { state.capturedConfigurations }
-    }
-    /// Configurations written back over the bundle's, keyed by snapshot id.
-    var restoredConfigurations: [UUID: VMConfiguration] {
-        lock.withLock { state.restoredConfigurations }
-    }
-    /// The plan kind each revert ran under, keyed by snapshot id.
-    var restoredKinds: [UUID: VMSnapshotKind] { lock.withLock { state.restoredKinds } }
-    var restoredIDs: [UUID] { lock.withLock { state.restoredIDs } }
     var discardedIDs: [UUID] { lock.withLock { state.discardedIDs } }
     var removedDirectoryIDs: [UUID] { lock.withLock { state.removedDirectoryIDs } }
     var sweptStagingBundleURLs: [URL] { lock.withLock { state.sweptStagingBundleURLs } }
@@ -80,21 +59,9 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         get { lock.withLock { state.saveManifestError } }
         set { lock.withLock { state.saveManifestError = newValue } }
     }
-    var prepareError: (any Error)? {
-        get { lock.withLock { state.prepareError } }
-        set { lock.withLock { state.prepareError = newValue } }
-    }
     var captureError: (any Error)? {
         get { lock.withLock { state.captureError } }
         set { lock.withLock { state.captureError = newValue } }
-    }
-    var planRestoreError: (any Error)? {
-        get { lock.withLock { state.planRestoreError } }
-        set { lock.withLock { state.planRestoreError = newValue } }
-    }
-    var restoreError: (any Error)? {
-        get { lock.withLock { state.restoreError } }
-        set { lock.withLock { state.restoreError = newValue } }
     }
     var discardError: (any Error)? {
         get { lock.withLock { state.discardError } }
@@ -118,8 +85,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         bundleURL: URL, snapshotID: UUID, configuration: VMConfiguration
     ) throws -> VMSnapshotCapturePlan {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        return try lock.withLock {
-            if let error = state.prepareError { throw error }
+        return lock.withLock {
             state.capturedConfigurations[snapshotID] = configuration
             return VMSnapshotCapturePlan(
                 saveFileURL: layout.snapshotLayout(id: snapshotID).saveFileURL,
@@ -138,7 +104,6 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
         try lock.withLock {
             if let error = state.captureError { throw error }
-            state.capturedSuspendSlotIDs.append(snapshotID)
         }
     }
 
@@ -152,7 +117,6 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     ) throws -> VMSnapshotRestorePlan {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         return try lock.withLock {
-            if let error = state.planRestoreError { throw error }
             guard let configuration = state.capturedConfigurations[snapshotID] else {
                 throw VMSnapshotError.snapshotMissingConfiguration
             }
@@ -164,14 +128,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         }
     }
 
-    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
-        try lock.withLock {
-            if let error = state.restoreError { throw error }
-            state.restoredIDs.append(snapshotID)
-            state.restoredConfigurations[snapshotID] = plan.configuration
-            state.restoredKinds[snapshotID] = plan.kind
-        }
-    }
+    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {}
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
         try lock.withLock {

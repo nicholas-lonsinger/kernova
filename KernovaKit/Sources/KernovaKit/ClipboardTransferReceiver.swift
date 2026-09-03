@@ -14,7 +14,7 @@ import Foundation
 /// Everything runs on the transfer's own serial queue, so the owning actor is
 /// never blocked, and the 33-byte trailer is verified — size and SHA-256 both —
 /// before anything is delivered (docs/CLIPBOARD.md §7).
-public final class ClipboardTransferReceiver: @unchecked Sendable {
+final class ClipboardTransferReceiver: @unchecked Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferReceiver")
 
@@ -23,21 +23,21 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     /// Set from the pull's own registration, never from the wire: the side that
     /// asked for the representation is the side that read the offer describing
     /// it, so nothing on the data connection repeats offer metadata.
-    public struct Plan: Sendable {
+    struct Plan: Sendable {
         /// The representation's UTI.
-        public let uti: String
+        let uti: String
         /// The name a file representation lands under; empty for an inline one.
-        public let filename: String
+        let filename: String
         /// The folder name a directory archive extracts into, or `nil` when the
         /// payload is a file or an inline representation.
-        public let extractsDirectoryNamed: String?
+        let extractsDirectoryNamed: String?
         /// The size the offer advertised — exact for a file, a stat-walk
         /// estimate for a folder — which the extract is held to, and which the
         /// free-space pre-flight and paste ceiling were computed from.
-        public let advertisedByteCount: Int
+        let advertisedByteCount: Int
 
         /// Creates a plan for one awaited transfer.
-        public init(
+        init(
             uti: String, filename: String = "", extractsDirectoryNamed: String? = nil,
             advertisedByteCount: Int = 0
         ) {
@@ -50,7 +50,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
 
     /// How the connection this transfer arrives on is obtained, and what has
     /// already been read off it.
-    public enum Source: Sendable {
+    enum Source: Sendable {
         /// A descriptor a data listener accepted, whose reply the accept path
         /// already read to match this transfer.
         case accepted(fd: Int32, reply: Kernova_V1_ClipboardTransferReply)
@@ -85,9 +85,9 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     }
 
     /// Identifies the transfer this connection carries.
-    public let transferID: UInt64
+    let transferID: UInt64
     /// The offer generation the transfer belongs to.
-    public let generation: UInt64
+    let generation: UInt64
 
     private let source: Source
     private let socketTimeout: TimeInterval
@@ -128,7 +128,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     ///     re-checks its ceiling and the volume.
     ///   - onTransferTimed: fired just before completion, for a successful
     ///     transfer only.
-    public init(
+    init(
         transferID: UInt64,
         generation: UInt64,
         source: Source,
@@ -160,7 +160,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     ///
     /// Exactly one of `onComplete` and `onAbort` fires, off the caller's actor,
     /// on the transfer's queue, after the connection is closed.
-    public func start(
+    func start(
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
         onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil
@@ -177,7 +177,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     /// Safe from any thread and idempotent. The outcome the owner sees is
     /// `cancelled`, which retires the transfer quietly rather than reporting a
     /// failure.
-    public func cancel() {
+    func cancel() {
         // The shutdown happens under the lock the descriptor is cleared under,
         // so a cancellation racing the connection's own close can never reach a
         // descriptor number the system has already handed to someone else.

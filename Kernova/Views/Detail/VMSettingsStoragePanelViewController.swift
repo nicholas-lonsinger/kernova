@@ -1,6 +1,5 @@
 import AppKit
 import UniformTypeIdentifiers
-import os
 
 /// The Storage category: the VM's disks and its hot-pluggable removable media.
 ///
@@ -9,9 +8,6 @@ import os
 /// `AttachmentRef(kind:id:)`, never a second implementation per list.
 @MainActor
 final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPanel {
-    private static let logger = Logger(
-        subsystem: "app.kernova", category: "VMSettingsStoragePanel")
-
     let context: VMSettingsPanelContext
     let category = VMSettingsCategory.storage
     /// The Storage Disks section's locked rows — what only a VM whose hardware

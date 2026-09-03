@@ -33,14 +33,6 @@ struct VMSettingsNetworkPanelTests {
         makeSettingsInstance(guestOS: guestOS)
     }
 
-    private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .network
-    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
-        makeSettingsController(
-            guestOS: guestOS, isReadOnly: isReadOnly, category: category,
-            preferences: preferences)
-    }
-
     // MARK: - Network mode picker
 
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")

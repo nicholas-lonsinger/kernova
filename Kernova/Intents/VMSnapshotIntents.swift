@@ -4,7 +4,7 @@ import KernovaKit
 
 struct FindSnapshotsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Snapshots"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Answers every named restore point a virtual machine holds, newest first.",
         categoryName: "Virtual Machines",
         resultValueName: "Snapshots")
@@ -36,7 +36,7 @@ struct FindSnapshotsIntent: AppIntent {
 /// labelled with the route that was chosen rather than the core's default.
 struct RevertToSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Revert to Snapshot"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Returns a virtual machine to a snapshot, taking one of its current state first unless you turn that off.",
         categoryName: "Virtual Machines")
 
@@ -97,7 +97,7 @@ struct RevertToSnapshotIntent: AppIntent {
 
 struct DeleteSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Delete Snapshot"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Moves one snapshot's saved state and disk copies to the Trash, asking first.",
         categoryName: "Virtual Machines")
 
@@ -127,7 +127,7 @@ struct DeleteSnapshotIntent: AppIntent {
 
 struct RenameSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Rename Snapshot"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Gives one of a virtual machine's snapshots a new name.",
         categoryName: "Virtual Machines")
 
@@ -157,7 +157,7 @@ struct RenameSnapshotIntent: AppIntent {
 
 struct SetSnapshotNotesIntent: AppIntent {
     static let title: LocalizedStringResource = "Edit Snapshot Note"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Replaces the note on one of a virtual machine's snapshots; an empty note clears it.",
         categoryName: "Virtual Machines")
 

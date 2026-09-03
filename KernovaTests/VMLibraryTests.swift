@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import KernovaTestSupport
 
 @testable import Kernova
 

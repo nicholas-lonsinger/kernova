@@ -3,7 +3,6 @@ import Foundation
 /// Abstraction for VM bundle storage operations, enabling dependency injection and testing.
 protocol VMStorageProviding: Sendable {
     var vmsDirectory: URL { get throws }
-    var stagingDirectory: URL { get throws }
     func bundleURL(for configuration: VMConfiguration) throws -> URL
     func makeStagedBundleURL() throws -> URL
     func listVMBundles() throws -> [URL]

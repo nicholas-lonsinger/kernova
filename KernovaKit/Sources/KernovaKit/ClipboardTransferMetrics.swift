@@ -10,11 +10,11 @@ import Foundation
 ///
 /// Successful transfers only — a failed inbound transfer reports through
 /// `ClipboardStreamAbortInfo`, and a failed outbound transfer reports nothing.
-public struct ClipboardTransferMetrics: Sendable, Equatable {
+struct ClipboardTransferMetrics: Sendable, Equatable {
     /// Identifies the transfer these metrics describe.
-    public let transferID: UInt64
+    let transferID: UInt64
     /// UTI of the transferred representation.
-    public let uti: String
+    let uti: String
     /// Payload bytes — the file, tree or inline bytes the transfer carried — in
     /// the unit every readout and the offer's `byte_count` use.
     ///
@@ -22,33 +22,33 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     /// streams, and reports its uncompressed archive stream instead: the tree
     /// plus its per-entry headers, so it reads slightly above the count the
     /// receiver reports for the same transfer.
-    public let byteCount: Int
+    let byteCount: Int
     /// Bytes that crossed the wire: the archive for an archived payload,
     /// `byteCount` itself for a raw one.
-    public let wireByteCount: Int
+    let wireByteCount: Int
     /// Whole-transfer wall time in seconds — the connection opening → the
     /// trailer's digest verified and the payload committed inbound;
     /// registration → the trailer written outbound, so the sender's source-open
     /// ramp is inside it.
-    public let duration: TimeInterval
+    let duration: TimeInterval
     /// What only the measuring side can know.
-    public let detail: Detail
+    let detail: Detail
 
     /// The direction of a transfer, carrying that direction's own figures.
-    public enum Detail: Sendable, Equatable {
+    enum Detail: Sendable, Equatable {
         case inbound(Inbound)
         case outbound(Outbound)
     }
 
     /// What a receiver measures.
-    public struct Inbound: Sendable, Equatable {
+    struct Inbound: Sendable, Equatable {
         /// Whether the payload streamed through the extract pipeline (vs.
         /// reassembling in RAM).
-        public let streamedToDisk: Bool
+        let streamedToDisk: Bool
         /// The descriptor read → digest verified and committed, in seconds,
         /// excluding the connection's own open and the sender's source-open
         /// ramp.
-        public let streamingDuration: TimeInterval?
+        let streamingDuration: TimeInterval?
 
         init(streamedToDisk: Bool, streamingDuration: TimeInterval?) {
             self.streamedToDisk = streamedToDisk
@@ -58,20 +58,20 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
 
     /// What a sender measures: the stage split behind a slow send, in the same
     /// units the whole-transfer figures above are stated in.
-    public struct Outbound: Sendable, Equatable {
+    struct Outbound: Sendable, Equatable {
         /// Whether the payload was encoded onto the wire as an archive — what
         /// the transfer's descriptor declared. Stated rather than inferred from
         /// `wireByteCount != byteCount`, which an incompressible archive
         /// coincides on.
-        public let isArchived: Bool
+        let isArchived: Bool
         /// Registration → first payload byte handed to the socket, in seconds,
         /// covering the payload classification and an archive's first-byte
         /// latency. `nil` when no byte was sent.
-        public let timeToFirstByte: TimeInterval?
+        let timeToFirstByte: TimeInterval?
         /// Seconds spent producing bytes rather than handing them to the
         /// socket — reading and compressing the source, so it is what a slow
         /// source rather than a slow peer costs.
-        public let sourceWait: TimeInterval
+        let sourceWait: TimeInterval
 
         init(isArchived: Bool, timeToFirstByte: TimeInterval?, sourceWait: TimeInterval) {
             self.isArchived = isArchived
@@ -93,13 +93,13 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     }
 
     /// The receive-side figures, or `nil` for a send.
-    public var inbound: Inbound? {
+    var inbound: Inbound? {
         if case .inbound(let inbound) = detail { return inbound }
         return nil
     }
 
     /// The send-side figures, or `nil` for a receive.
-    public var outbound: Outbound? {
+    var outbound: Outbound? {
         if case .outbound(let outbound) = detail { return outbound }
         return nil
     }
@@ -110,7 +110,7 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     /// The rate is in payload bytes — what the user sees move — and the wire
     /// count is stated when it differs, so the compression ratio is one
     /// division away.
-    public var logSummary: String {
+    var logSummary: String {
         let seconds = duration
         let rate = seconds > 0 ? Double(byteCount) / 1_048_576 / seconds : 0
         let kind: String

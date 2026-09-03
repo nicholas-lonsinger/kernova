@@ -8,7 +8,7 @@ import Testing
 struct SnapshotRevertMenuTests {
     /// Stands in for the menu's target; the action is never invoked here.
     private final class Target: NSObject {
-        @objc func revert(_ sender: NSMenuItem) {}
+        @objc func revert(_: NSMenuItem) {}
     }
 
     private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
