@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import os
 
-/// Reactive existence tracker for the user-supplied file paths surfaced as
-/// VM attachments (external storage disks, removable media).
+/// Reactive existence tracker for the user-supplied file paths a VM points at
+/// (external storage disks, removable media, shared directories).
 ///
 /// One `DispatchSourceFileSystemObject` per unique parent directory, plus a full
 /// refresh on `NSWorkspace` mount/unmount notifications. Existence probes must go
