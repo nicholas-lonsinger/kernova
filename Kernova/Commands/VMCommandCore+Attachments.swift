@@ -8,6 +8,17 @@ import KernovaKit
 struct PickedFile: Sendable, Hashable {
     let path: String
     let bookmark: Data?
+
+    /// One open-panel URL as the core takes it — path plus the app-scoped
+    /// bookmark minted from this pick's grant.
+    init(picking url: URL) {
+        (path, bookmark) = SecurityScopedBookmark.capture(url)
+    }
+
+    init(path: String, bookmark: Data?) {
+        self.path = path
+        self.bookmark = bookmark
+    }
 }
 
 /// What a guest-agent disk mount found in front of the guest.
@@ -31,7 +42,7 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 }
 
 /// The attachment verbs — a VM's storage disks, its hot-pluggable removable
-/// media, and the bundled guest-agent installer disk.
+/// media, its shared directories, and the bundled guest-agent installer disk.
 ///
 /// Every one resolves through a ``VMSelector``, refuses through
 /// ``VMCommandCore/require(_:on:)``, and writes through
@@ -425,6 +436,59 @@ extension VMCommandCore {
         try mutateRemovableMedia(id, on: instance) { $0.readOnly = readOnly }
     }
 
+    // MARK: - Shared Directories
+
+    /// Appends `files` to the VM's shared-directory list, skipping paths it
+    /// already carries.
+    func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws {
+        let instance = try resolve(selector)
+        try require(.editSharedDirectories, on: instance)
+        guard !files.isEmpty else { return }
+        library.updateConfiguration(of: instance) { config in
+            var directories = config.sharedDirectories ?? []
+            var known = Set(directories.map(\.path))
+            for file in files where known.insert(file.path).inserted {
+                directories.append(SharedDirectory(path: file.path, bookmark: file.bookmark))
+            }
+            config.sharedDirectories = directories.isEmpty ? nil : directories
+        }
+    }
+
+    /// Drops a shared directory's entry, leaving the folder itself alone.
+    ///
+    /// No consent: nothing is destroyed, for the reason
+    /// ``ejectRemovableMedia(_:item:)`` states.
+    func removeSharedDirectory(_ selector: VMSelector, directory id: UUID) throws {
+        let instance = try resolve(selector)
+        try require(.editSharedDirectories, on: instance)
+        guard sharedDirectory(id: id, on: instance) != nil else {
+            throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
+        }
+        library.updateConfiguration(of: instance) { config in
+            var directories = config.sharedDirectories ?? []
+            directories.removeAll { $0.id == id }
+            config.sharedDirectories = directories.isEmpty ? nil : directories
+        }
+    }
+
+    /// Marks a shared directory read-only, or writable again.
+    func setSharedDirectoryReadOnly(
+        _ selector: VMSelector, directory id: UUID, readOnly: Bool
+    ) throws {
+        let instance = try resolve(selector)
+        try require(.editSharedDirectories, on: instance)
+        guard let current = sharedDirectory(id: id, on: instance) else {
+            throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
+        }
+        guard current.readOnly != readOnly else { return }
+        library.updateConfiguration(of: instance) { config in
+            var directories = config.sharedDirectories ?? []
+            guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
+            directories[index].readOnly = readOnly
+            config.sharedDirectories = directories
+        }
+    }
+
     // MARK: - Guest Agent Disk
 
     /// Puts the bundled `KernovaMacOSAgent.dmg` in front of the guest, so the
@@ -689,6 +753,12 @@ extension VMCommandCore {
     /// it.
     func removableMediaItem(id: UUID, on instance: VMInstance) -> RemovableMediaItem? {
         (instance.configuration.removableMedia ?? []).first { $0.id == id }
+    }
+
+    /// The shared directory `id` names, or `nil` when the VM no longer carries
+    /// it.
+    private func sharedDirectory(id: UUID, on instance: VMInstance) -> SharedDirectory? {
+        (instance.configuration.sharedDirectories ?? []).first { $0.id == id }
     }
 
     /// The refusal an edit naming an attachment that is no longer attached

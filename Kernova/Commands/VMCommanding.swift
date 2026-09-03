@@ -195,6 +195,20 @@ protocol VMCommanding: AnyObject {
 
     func setRemovableMediaReadOnly(_ selector: VMSelector, item: UUID, readOnly: Bool) throws
 
+    // MARK: - Shared Directories
+
+    /// Appends the picked folders to the VM's shared-directory list, skipping
+    /// paths it already carries — off the wire for the reason
+    /// ``attachStorageDisks(_:paths:)`` states.
+    func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws
+
+    /// Drops a shared directory's entry, leaving the folder itself alone.
+    func removeSharedDirectory(_ selector: VMSelector, directory: UUID) throws
+
+    func setSharedDirectoryReadOnly(
+        _ selector: VMSelector, directory: UUID, readOnly: Bool
+    ) throws
+
     // MARK: - Guest Agent Disk
 
     /// Puts the bundled guest-agent installer image in front of the guest,

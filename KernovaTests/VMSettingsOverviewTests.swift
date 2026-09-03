@@ -391,7 +391,16 @@ struct VMSettingsOverviewTests {
 
     @Test("The scoped claim stands beside a card's live switches")
     func scopedLockClaimStandsBesideLiveSwitches() throws {
-        let (vc, _, _) = makeController(isReadOnly: true)
+        // A running VM, not merely a read-only route: the panel's own hint
+        // follows the share verb's state gate, so the claim has to be one the
+        // VM's phase actually makes true.
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .macOS)
+        instance.enter(.running(sessionID: UUID()))
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: true)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
         let sharing = try card(.sharing, in: vc)
 
         // Every switch on the Sharing card edits live; the hint claims only

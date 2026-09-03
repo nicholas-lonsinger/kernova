@@ -43,6 +43,19 @@ public enum RemovableMediaEdit: Codable, Sendable, Hashable {
     case setReadOnly(item: UUID, readOnly: Bool)
 }
 
+/// One change to a VM's shared-directory list.
+///
+/// Adding a share is absent for the reason ``StorageDiskEdit`` states — a
+/// picked folder carries a security-scoped bookmark only an in-process open
+/// panel can mint. A share carries no label or note of its own: its name is the
+/// folder's, which is also what the guest mounts by.
+public enum SharedDirectoryEdit: Codable, Sendable, Hashable {
+    /// Drops the entry. The folder itself is never touched.
+    case remove(directory: UUID)
+    /// Marks the share read-only, or writable again.
+    case setReadOnly(directory: UUID, readOnly: Bool)
+}
+
 /// What to do with the bundled guest-agent installer disk.
 public enum GuestAgentDiskEdit: String, Codable, Sendable, Hashable, CaseIterable {
     /// Put the installer image in front of the guest.

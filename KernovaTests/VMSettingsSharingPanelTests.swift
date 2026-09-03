@@ -18,10 +18,6 @@ struct VMSettingsSharingPanelTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
-        makeSettingsInstance(guestOS: guestOS)
-    }
-
     private func makeController(
         guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .sharing
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
@@ -246,14 +242,18 @@ struct VMSettingsSharingPanelTests {
     // MARK: - Shared directory rows
 
     /// Builds a pane over a VM carrying `directories`, drilled into Sharing.
-    private func makeSharingController(_ directories: [SharedDirectory]) -> (
-        VMSettingsViewController, VMInstance
-    ) {
+    ///
+    /// The VM is registered with the library: every share control calls a verb
+    /// that addresses it by id, so an unregistered one refuses as not found.
+    private func makeSharingController(
+        _ directories: [SharedDirectory], phase: VMLifecyclePhase = .stopped
+    ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux, phase: phase)
         instance.configuration.sharedDirectories = directories
+        registerSettingsInstance(instance, in: viewModel)
         let vc = VMSettingsViewController(
-            instance: instance, viewModel: viewModel, isReadOnly: false)
+            instance: instance, viewModel: viewModel, isReadOnly: phase != .stopped)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.sharing)
@@ -327,5 +327,30 @@ struct VMSettingsSharingPanelTests {
             })
         remove.sendAction(remove.action, to: remove.target)
         #expect(instance.configuration.sharedDirectories == nil)
+    }
+
+    /// A running VM's virtiofs device set is fixed at boot, so the share
+    /// controls go inert — and the verb behind each refuses if one is driven
+    /// anyway.
+    @Test("A running VM's share rows and its Add button are inert")
+    func runningVMLocksTheShareControls() async throws {
+        let (vc, instance) = makeSharingController(
+            [SharedDirectory(path: Self.missingPath)], phase: .running(sessionID: UUID()))
+        try await seedMonitor(vc, paths: [Self.missingPath])
+        let panel = try #require(vc.panelForTesting(.sharing))
+
+        let toggle = try #require(firstSwitch(action: "sharedReadOnlyToggled:", in: panel))
+        #expect(!toggle.isEnabled)
+        let add = try #require(
+            firstSubview(NSButton.self, in: panel) { $0.title == "Add Shared Directory…" })
+        #expect(!add.isEnabled)
+
+        let remove = try #require(
+            firstSubview(NSButton.self, in: panel) {
+                $0.action.map(NSStringFromSelector) == "sharedDeleteTapped:"
+            })
+        #expect(!remove.isEnabled)
+        remove.sendAction(remove.action, to: remove.target)
+        #expect(instance.configuration.sharedDirectories?.count == 1)
     }
 }

@@ -684,6 +684,121 @@ struct VMCommandCoreAttachmentTests {
         #expect(FileManager.default.fileExists(atPath: agentPath))
     }
 
+    // MARK: - Shared directories
+
+    @Test("Adding shares appends every pick and skips a path already shared")
+    func addSharedDirectoriesSkipsDuplicates() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let first = externalPath("one")
+        let second = externalPath("two")
+
+        try harness.core.addSharedDirectories(
+            .id(instance.id), paths: [PickedFile(path: first, bookmark: Data([1]))])
+        try harness.core.addSharedDirectories(
+            .id(instance.id),
+            paths: [PickedFile(path: first, bookmark: nil), PickedFile(path: second, bookmark: nil)])
+
+        let directories = instance.configuration.sharedDirectories ?? []
+        #expect(directories.map(\.path) == [first, second])
+        #expect(directories.first?.bookmark == Data([1]))
+    }
+
+    @Test("An empty pick writes nothing")
+    func addSharedDirectoriesIgnoresAnEmptyPick() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+
+        try harness.core.addSharedDirectories(.id(instance.id), paths: [])
+
+        #expect(instance.configuration.sharedDirectories == nil)
+    }
+
+    @Test("Removing the last share clears the list rather than leaving it empty")
+    func removeSharedDirectoryNilsAnEmptiedList() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let keeper = SharedDirectory(path: externalPath("keeper"))
+        let going = SharedDirectory(path: externalPath("going"))
+        instance.configuration.sharedDirectories = [keeper, going]
+
+        try harness.core.removeSharedDirectory(.id(instance.id), directory: going.id)
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
+
+        try harness.core.removeSharedDirectory(.id(instance.id), directory: keeper.id)
+        #expect(instance.configuration.sharedDirectories == nil)
+    }
+
+    @Test("Read-only flips the share named and leaves its siblings alone")
+    func setSharedDirectoryReadOnlyTouchesOneEntry() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let first = SharedDirectory(path: externalPath("first"))
+        let second = SharedDirectory(path: externalPath("second"))
+        instance.configuration.sharedDirectories = [first, second]
+
+        try harness.core.setSharedDirectoryReadOnly(
+            .id(instance.id), directory: second.id, readOnly: true)
+
+        #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [false, true])
+    }
+
+    @Test("A share the VM no longer carries refuses both edits")
+    func sharedDirectoryEditsRefuseAStaleID() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        instance.configuration.sharedDirectories = [SharedDirectory(path: externalPath("kept"))]
+        let gone = UUID()
+
+        for refusal in [
+            await commandError {
+                try harness.core.removeSharedDirectory(.id(instance.id), directory: gone)
+            },
+            await commandError {
+                try harness.core.setSharedDirectoryReadOnly(
+                    .id(instance.id), directory: gone, readOnly: true)
+            },
+        ] {
+            guard case .operationFailed(let verb, _, _, _) = try #require(refusal) else {
+                Issue.record("expected an operation failure, got \(String(describing: refusal))")
+                continue
+            }
+            #expect(verb == .editSharedDirectory)
+        }
+        #expect(instance.configuration.sharedDirectories?.count == 1)
+    }
+
+    @Test("A running VM refuses every share edit — the device set is fixed at boot")
+    func runningVMRefusesShareEdits() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let directory = SharedDirectory(path: externalPath("kept"))
+        instance.configuration.sharedDirectories = [directory]
+
+        for refusal in [
+            await commandError {
+                try harness.core.addSharedDirectories(
+                    .id(instance.id), paths: [PickedFile(path: externalPath("new"), bookmark: nil)])
+            },
+            await commandError {
+                try harness.core.removeSharedDirectory(
+                    .id(instance.id), directory: directory.id)
+            },
+            await commandError {
+                try harness.core.setSharedDirectoryReadOnly(
+                    .id(instance.id), directory: directory.id, readOnly: true)
+            },
+        ] {
+            guard case .invalidState(_, let current, let allowed) = try #require(refusal) else {
+                Issue.record("expected an invalid-state refusal, got \(String(describing: refusal))")
+                continue
+            }
+            #expect(current == .running)
+            #expect(!allowed.contains(.editSharedDirectory))
+        }
+        #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [false])
+    }
+
     // MARK: - State gates
 
     @Test("A running VM refuses a disk edit and takes a removable one")

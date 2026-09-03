@@ -72,8 +72,7 @@ struct VMSettingsNetworkPanelTests {
         // declaration is what makes an address derivable — so `vmnetNetworks`
         // reaches the panel through the library, never the panel directly.
         let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
-        library.instances.append(instance)
-        library.library.wirePersistence(for: instance)
+        registerSettingsInstance(instance, in: library)
         let vc = VMSettingsViewController(
             instance: instance, viewModel: library, isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,

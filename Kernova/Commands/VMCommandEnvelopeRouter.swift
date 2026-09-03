@@ -141,6 +141,9 @@ struct VMCommandEnvelopeRouter {
         case .editRemovableMedia(let selector, let edit):
             try await apply(edit, to: selector)
             return .ok
+        case .editSharedDirectory(let selector, let edit):
+            try apply(edit, to: selector)
+            return .ok
         case .guestAgentDisk(let selector, let edit):
             switch edit {
             case .mount: _ = try commands.mountGuestAgentDisk(selector)
@@ -183,6 +186,17 @@ struct VMCommandEnvelopeRouter {
             try commands.setRemovableMediaNotes(selector, item: item, notes: notes)
         case .setReadOnly(let item, let readOnly):
             try commands.setRemovableMediaReadOnly(selector, item: item, readOnly: readOnly)
+        }
+    }
+
+    /// One shared-directory edit, dispatched on the payload the verb carries.
+    private func apply(_ edit: SharedDirectoryEdit, to selector: VMSelector) throws {
+        switch edit {
+        case .remove(let directory):
+            try commands.removeSharedDirectory(selector, directory: directory)
+        case .setReadOnly(let directory, let readOnly):
+            try commands.setSharedDirectoryReadOnly(
+                selector, directory: directory, readOnly: readOnly)
         }
     }
 

@@ -73,6 +73,9 @@ final class MockVMCommanding: VMCommanding {
     private(set) var renameRemovableMediaCalls: [(selector: VMSelector, item: UUID, newLabel: String)] = []
     private(set) var setRemovableMediaNotesCalls: [(selector: VMSelector, item: UUID, notes: String)] = []
     private(set) var setRemovableMediaReadOnlyCalls: [(selector: VMSelector, item: UUID, readOnly: Bool)] = []
+    private(set) var addSharedDirectoriesCalls: [(selector: VMSelector, files: [PickedFile])] = []
+    private(set) var removeSharedDirectoryCalls: [(selector: VMSelector, directory: UUID)] = []
+    private(set) var setSharedDirectoryReadOnlyCalls: [(selector: VMSelector, directory: UUID, readOnly: Bool)] = []
     private(set) var mountGuestAgentDiskSelectors: [VMSelector] = []
     private(set) var unmountGuestAgentDiskSelectors: [VMSelector] = []
 
@@ -101,6 +104,7 @@ final class MockVMCommanding: VMCommanding {
     var cancelPreparingError: (any Error)?
     var storageDiskEditError: (any Error)?
     var removableMediaEditError: (any Error)?
+    var sharedDirectoryEditError: (any Error)?
     var guestAgentDiskError: (any Error)?
 
     /// Refuses `stop` until it is called with `confirmed: true`, then succeeds —
@@ -399,6 +403,23 @@ final class MockVMCommanding: VMCommanding {
     func setRemovableMediaReadOnly(_ selector: VMSelector, item: UUID, readOnly: Bool) throws {
         setRemovableMediaReadOnlyCalls.append((selector, item, readOnly))
         if let removableMediaEditError { throw removableMediaEditError }
+    }
+
+    func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws {
+        addSharedDirectoriesCalls.append((selector, files))
+        if let sharedDirectoryEditError { throw sharedDirectoryEditError }
+    }
+
+    func removeSharedDirectory(_ selector: VMSelector, directory: UUID) throws {
+        removeSharedDirectoryCalls.append((selector, directory))
+        if let sharedDirectoryEditError { throw sharedDirectoryEditError }
+    }
+
+    func setSharedDirectoryReadOnly(
+        _ selector: VMSelector, directory: UUID, readOnly: Bool
+    ) throws {
+        setSharedDirectoryReadOnlyCalls.append((selector, directory, readOnly))
+        if let sharedDirectoryEditError { throw sharedDirectoryEditError }
     }
 
     func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome {

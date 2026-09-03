@@ -64,7 +64,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     func refresh() {
-        lockRegistry.apply(isReadOnly: isReadOnly)
+        lockRegistry.apply(isReadOnly: !canEditSharedDirectories)
         refreshGuestAgent()
         refreshClipboard()
         refreshSharedList()
@@ -85,10 +85,13 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             apply: { [weak self] in self?.refreshSharedList() })
     }
 
-    private func writeSharedDirectories(_ directories: [SharedDirectory]) {
-        viewModel.updateConfiguration(of: instance) {
-            $0.sharedDirectories = directories.isEmpty ? nil : directories
-        }
+    /// Whether this VM's shared-directory list takes an edit right now.
+    ///
+    /// The model gate, not the route's `isReadOnly`: a second surface asking
+    /// the same question has to get the same answer, and the verb behind every
+    /// control here refuses on exactly this.
+    private var canEditSharedDirectories: Bool {
+        viewModel.capabilities.isAvailable(.editSharedDirectories, on: instance)
     }
 
     // Shared Directories
@@ -289,6 +292,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshSharedList() {
+        let controlsEnabled = canEditSharedDirectories
         let models = currentSharedDirectories.map { directory -> VMSettingsRenderedRow in
             let isMissing = !context.fileMonitor.exists(directory.path)
             return VMSettingsRenderedRow(
@@ -300,7 +304,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? directory.path : nil,
                 readOnly: directory.readOnly,
-                controlsEnabled: !isReadOnly)
+                controlsEnabled: controlsEnabled)
         }
         sharedList?.update(
             models,
@@ -416,30 +420,17 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         panel.message = "Select directories to share with the VM"
         panel.prompt = "Share"
         guard panel.runModal() == .OK else { return }
-
-        var current = currentSharedDirectories
-        let existing = Set(current.map(\.path))
-        for url in panel.urls {
-            let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            guard !existing.contains(path) else { continue }
-            current.append(SharedDirectory(path: path, bookmark: bookmark))
-        }
-        writeSharedDirectories(current)
+        viewModel.addSharedDirectories(panel.urls.map(PickedFile.init(picking:)), to: instance)
     }
 
     @objc private func sharedReadOnlyToggled(_ sender: NSSwitch) {
         guard let id = attachmentUUID(from: sender) else { return }
-        var directories = currentSharedDirectories
-        guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
-        directories[index].readOnly = sender.state == .on
-        writeSharedDirectories(directories)
+        viewModel.setSharedDirectoryReadOnly(id, readOnly: sender.state == .on, on: instance)
     }
 
     @objc private func sharedDeleteTapped(_ sender: NSButton) {
         guard let id = attachmentUUID(from: sender) else { return }
-        var directories = currentSharedDirectories
-        directories.removeAll { $0.id == id }
-        writeSharedDirectories(directories)
+        viewModel.removeSharedDirectory(id, from: instance)
     }
 
     // MARK: - Mirrored toggles

@@ -98,6 +98,8 @@ struct VMCommandEnvelopeTests {
             .editRemovableMedia(selector, .rename(item: diskID, newLabel: "Installer")),
             .editRemovableMedia(selector, .setNotes(item: diskID, notes: "from the mirror")),
             .editRemovableMedia(selector, .setReadOnly(item: diskID, readOnly: false)),
+            .editSharedDirectory(selector, .remove(directory: diskID)),
+            .editSharedDirectory(selector, .setReadOnly(directory: diskID, readOnly: true)),
             .guestAgentDisk(selector, .mount),
             .guestAgentDisk(selector, .unmount),
         ]
@@ -149,10 +151,20 @@ struct VMCommandEnvelopeTests {
         }
     }
 
-    @Test("Neither attachment payload offers an operation that needs a live panel grant")
+    /// Every shared-directory edit the wire offers, named exhaustively for the
+    /// reason ``name(of:)`` states — an add is what needs the panel grant here.
+    private func name(of edit: SharedDirectoryEdit) -> String {
+        switch edit {
+        case .remove: "remove"
+        case .setReadOnly: "setReadOnly"
+        }
+    }
+
+    @Test("No attachment payload offers an operation that needs a live panel grant")
     func picksStayOffTheWire() {
         #expect(name(of: .create(sizeInGB: 32)) == "create")
         #expect(name(of: .eject(item: diskID)) == "eject")
+        #expect(name(of: .remove(directory: diskID)) == "remove")
         #expect(GuestAgentDiskEdit.allCases == [.mount, .unmount])
     }
 
