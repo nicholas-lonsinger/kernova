@@ -4,7 +4,7 @@ Read this before writing any test that waits on async state or needs access to p
 
 ## Async waits in tests
 
-macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil`/`pollUntil` poll loop, the timeout deadline *is* the pass/fail criterion — so a starved scheduler fails a test whose condition would have become true. **When a test waits for async state that has an underlying signal, make the wait event-driven from the start — do not reach for a poll loop.** With event-driven waits the timeout is only a stuck-condition backstop the happy path never reaches.
+macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil` poll loop, the timeout deadline *is* the pass/fail criterion — so a starved scheduler fails a test whose condition would have become true. **When a test waits for async state that has an underlying signal, make the wait event-driven from the start — do not reach for a poll loop.** With event-driven waits the timeout is only a stuck-condition backstop the happy path never reaches.
 
 **Wait timeouts default to the shared `testWaitBackstop` — don't pass a smaller explicit value.** Runner stalls defeated 5 s *and* 10 s backstops (2026-07-19: two consecutive main-branch runs timed out 12 event-driven waits whose conditions were sound). A shorter timeout is reserved for the rare case where the deadline itself is the assertion; negative assertions ("prove nothing arrived") don't qualify — they use a fixed observation window (`expectNoNewFrames`-style), not a wait timeout.
 
@@ -27,7 +27,7 @@ Gate on the state the next line acts on, never on a proxy for it.
 
 **To cross a production time window, inject `TestEngineClock` and advance it — never sleep through it.** A subject that measures elapsed time (a burst window, a backoff, a liveness deadline) takes `any EngineClock`; the manually advanced conformance in `KernovaTestSupport` moves its reading in one call, so no wall-clock wait and no shortened production window are needed.
 
-Polling (`waitUntil` / `pollUntil`) is acceptable **only** for a genuine no-signal predicate: a negative assertion ("prove nothing arrived"), a filesystem-appearance poll, or an exception-catch predicate. There, use a generous cadence, assert end-state not per-iteration, and add a one-line `RATIONALE:` naming **which** of those three categories applies. That is the local fact a reader cannot derive; the general rule is this document, so cite it rather than restating it at the call site.
+Polling (`waitUntil`) is acceptable **only** for a genuine no-signal predicate: a negative assertion ("prove nothing arrived"), a filesystem-appearance poll, or an exception-catch predicate. There, use a generous cadence, assert end-state not per-iteration, and add a one-line `RATIONALE:` naming **which** of those three categories applies. That is the local fact a reader cannot derive; the general rule is this document, so cite it rather than restating it at the call site.
 
 ### Synchronous pull bridges
 
