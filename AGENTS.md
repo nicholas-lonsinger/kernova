@@ -202,7 +202,7 @@ Same rules, and the default is none — a comment says what the code cannot. A b
 
 ### Size
 
-When you add to a durable doc, read the whole document, not the diff, and decide what no longer earns its place. Growth is invisible at diff altitude: a 5,267-character line was once edited to 5,577 inside a `+1 -1` diff.
+When you add to a durable doc, read the whole document, not the diff, and decide what no longer earns its place. Growth is invisible at diff altitude: a `+1 -1` diff can lengthen one line by hundreds of characters.
 
 Removing nothing is legitimate when the subject genuinely grew; not looking is not. Keep a sentence carrying external evidence, or a constraint the code does not reveal, whatever it costs in length — test 0 outranks size, always.
 
