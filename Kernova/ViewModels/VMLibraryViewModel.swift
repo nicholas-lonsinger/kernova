@@ -154,10 +154,10 @@ final class VMLibraryViewModel {
 
     // MARK: - Attachment Forwarding
 
-    // The settings pane's Storage and Sharing categories, one forward per verb.
-    // Each is
-    // documented on ``VMCommandCore``; the pane gathers its own consent, so
-    // every removal arrives pre-confirmed.
+    // The settings pane's Storage and Sharing categories, one forward per
+    // verb, each documented on ``VMCommandCore``. The pane gathers the consent
+    // a trashing removal asks for, so the storage and removable-media removals
+    // arrive pre-confirmed; a share removal destroys nothing and asks none.
 
     func attachStorageDisks(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) { try self.commands.attachStorageDisks(.id(instance.id), paths: files) }

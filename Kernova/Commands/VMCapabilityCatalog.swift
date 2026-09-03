@@ -135,13 +135,12 @@ enum VMCapability: CaseIterable, Hashable {
     ///
     /// Exhaustive rather than `default`, so a new capability has to choose a
     /// side. Removable media and shared directories are referenced by path,
-    /// never copied, so a live edit of either does not touch anything the
-    /// clone reads; cloning the same source
-    /// again only reads it too. A start (or a start into Recovery) locks too:
-    /// a booted guest writes `Disk.asif`, `AuxiliaryStorage`,
-    /// `EFIVariableStore` and the additional disks the copy is reading, and a
-    /// revert reached only by starting first (an Ephemeral baseline restore)
-    /// is closed by this rather than needing its own guard.
+    /// never copied, so a live edit of either does not touch anything the clone
+    /// reads; cloning the same source again only reads it too. A start (or a
+    /// start into Recovery) locks too: a booted guest writes `Disk.asif`,
+    /// `AuxiliaryStorage`, `EFIVariableStore` and the additional disks the copy
+    /// is reading, and a revert reached only by starting first (an Ephemeral
+    /// baseline restore) is closed by this rather than needing its own guard.
     var locksWhileCloned: Bool {
         switch self {
         case .start, .startInRecovery, .editStorageDisks, .delete, .revertToSnapshot:
