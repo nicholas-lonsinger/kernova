@@ -1,7 +1,7 @@
 import AppKit
 
 /// Popover content shown when the user clicks a missing-attachment warning
-/// icon in a storage / removable-media row.
+/// icon in a storage, removable-media or shared-directory row.
 @MainActor
 final class MissingAttachmentPopoverContentViewController: NSViewController {
     private let path: String

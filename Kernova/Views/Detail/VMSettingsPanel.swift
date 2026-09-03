@@ -25,6 +25,10 @@ final class VMSettingsPanelContext {
     /// the overview's cards and the panels stating the same figure both read.
     let overview: VMOverviewResolver
 
+    /// Existence of every attachment file this VM's rows stand for, shared by
+    /// the panels that render those rows so one watch serves them all.
+    let fileMonitor = AttachmentFileMonitor()
+
     /// The shell, which owns the write paths a panel shares with the overview.
     weak var host: (any VMSettingsPanelHost)?
 
@@ -65,6 +69,18 @@ final class VMSettingsPanelContext {
 
     func setDismissed(_ isDismissed: Bool) {
         self.isDismissed = isDismissed
+    }
+
+    /// Points the file monitor at the current instance's monitored attachment
+    /// paths.
+    ///
+    /// Idempotent, and every caller computes the same union, so the panels that
+    /// render those rows each seed it from their own `rebuild()` and `refresh()`
+    /// — which is what keeps the watch off a VM whose settings nobody opened.
+    func seedFileMonitor() {
+        let refs = instance.configuration.externalFileReferences
+            .filter(\.kind.isExistenceMonitored).bookmarksByPath
+        Task { [fileMonitor] in await fileMonitor.setPaths(refs) }
     }
 }
 
@@ -237,7 +253,7 @@ struct VMSettingsLockRegistry {
 
 /// Value snapshot of one attachment, share or media row's rendered appearance,
 /// used to skip rebuilding a list when nothing it displays has changed.
-struct VMSettingsRenderedRow: Equatable {
+struct VMSettingsRenderedRow: Identifiable, Equatable {
     let id: UUID
     let iconSystemName: String
     let title: String

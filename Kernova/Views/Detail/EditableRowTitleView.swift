@@ -70,6 +70,9 @@ final class EditableRowTitleView: NSView {
 
     /// Begins inline editing of the note, or hands a multi-line one to the
     /// owner's fuller editor.
+    ///
+    /// The only route to a note on a row that has none: with nothing on screen
+    /// to click, the row alone offers no way in.
     func beginNotesEditing() {
         guard !notesHoldsNewline else {
             onNotesOverflowActivated?(itemID)

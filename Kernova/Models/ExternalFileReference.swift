@@ -37,12 +37,12 @@ extension ExternalFileReference.Kind {
         }
     }
 
-    /// Whether the storage settings panel renders a row for this kind, which is
-    /// what its file-existence monitor badges.
-    var hasStorageSettingsRow: Bool {
+    /// Whether ``AttachmentFileMonitor`` watches this kind, so the settings row
+    /// standing for it badges a file that has gone missing.
+    var isExistenceMonitored: Bool {
         switch self {
-        case .storageDisk, .removableMedia: true
-        case .kernel, .initrd, .sharedDirectory, .localIPSW: false
+        case .storageDisk, .removableMedia, .sharedDirectory: true
+        case .kernel, .initrd, .localIPSW: false
         }
     }
 

@@ -260,7 +260,8 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the login-item toggle),
 `EntitlementService` (what this build's signature authorizes, so feature UI can degrade in builds
 signed without a restricted entitlement), `AttachmentFileMonitor` (existence watching for the
-settings attachment rows), `RuntimeFileAccess` (per-boot security-scoped access, released once in
+settings pane's disk, removable-media and shared-directory rows, held by the panel context they
+share), `RuntimeFileAccess` (per-boot security-scoped access, released once in
 `VMSessionContext.tearDown`), and `SerialSocketRelay` (below).
 
 **Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
@@ -346,7 +347,8 @@ Constraints the file layout does not show:
   (`CalloutStyle`, `GroupedFormStyle`, `Spacing`, `Typography`), not inheritance; genuinely
   shareable controllers are reused by init parameterization. The settings panels follow the same
   rule: `VMSettingsPanel` is a protocol with default hook bodies, and what they share beyond it is
-  a context object and the form atoms.
+  a context object, `VMSettingsKeyedListController` behind every list of keyed rows, and the form
+  atoms.
 - **The settings pane holds one surface at a time.** `VMOverviewResolver` answers, without views,
   everything the configuration cannot — host state, injected services, and two off-main reads —
   so the overview's cards need no panel to exist to state a figure, and the panel stating the same

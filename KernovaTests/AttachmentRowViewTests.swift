@@ -7,7 +7,8 @@ import Testing
 @MainActor
 struct AttachmentRowViewTests {
     private func makeRow(
-        title: String = "Data Disk", notes: String = "", controlsEnabled: Bool = true
+        title: String = "Data Disk", notes: String = "", controlsEnabled: Bool = true,
+        isTitleEditable: Bool = true
     ) -> AttachmentRowView {
         AttachmentRowView(
             itemID: UUID(),
@@ -17,7 +18,8 @@ struct AttachmentRowViewTests {
             icon: AttachmentIconButton(),
             subtitle: makeAttachmentSubtitleLabel(path: "", isMissing: false),
             readOnlyToggle: NSSwitch(),
-            readOnlyCaption: NSView())
+            readOnlyCaption: NSView(),
+            isTitleEditable: isTitleEditable)
     }
 
     @Test("A note trails the name in the row")
@@ -104,5 +106,29 @@ struct AttachmentRowViewTests {
         #expect(committed.count == 1)
         #expect(committed.first?.0 == row.itemID)
         #expect(committed.first?.1 == "after")
+    }
+
+    @Test("A row with no editable title ignores an edit request, controls still live")
+    func nonEditableTitleIgnoresEditRequests() throws {
+        let row = makeRow(title: "Projects", controlsEnabled: true, isTitleEditable: false)
+        let window = showInTestWindow(row, size: NSSize(width: 480, height: 80))
+        defer { window.close() }
+        var editBegan = false
+        row.onEditBegan = { _ in editBegan = true }
+
+        row.beginRename()
+        row.update(
+            title: "Projects", notes: "", iconSystemName: "folder", missingPath: nil,
+            readOnly: true, controlsEnabled: true)
+        row.beginRename()
+
+        #expect(!editBegan)
+        #expect(allSubviews(InlineEditableLabel.self, in: row) { $0.isEditable }.isEmpty)
+        // The name still renders, and the row's own controls follow
+        // `controlsEnabled` rather than the title's gate.
+        #expect(findLabel(withText: "Projects", in: row) != nil)
+        let toggle = try #require(firstSubview(NSSwitch.self, in: row))
+        #expect(toggle.isEnabled)
+        #expect(toggle.state == .on)
     }
 }

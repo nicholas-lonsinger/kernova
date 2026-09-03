@@ -1,15 +1,21 @@
 import AppKit
 
-/// A single attachment list row — a storage disk or a removable medium.
+/// A single attachment list row — a storage disk, a removable medium, or a
+/// shared directory.
 ///
 /// The controller builds the icon, subtitle, Read Only switch, and optional eject
 /// button and hands them in; the editable name and note, and their edit state
 /// machine, live in ``EditableRowTitleView``. The context menu is supplied lazily
 /// via ``contextMenu`` so it reflects current state at click time. `itemID` is
-/// the backing model's id (a `StorageDisk` or `RemovableMediaItem`).
+/// the backing model's id (a `StorageDisk`, `RemovableMediaItem` or
+/// `SharedDirectory`).
 @MainActor
 final class AttachmentRowView: NSView {
     let itemID: UUID
+    /// Whether the name and note take an inline edit at all — `false` for a row
+    /// whose model holds neither a label nor a note of its own, whose other
+    /// controls stay live.
+    private let isTitleEditable: Bool
     /// The leading icon view, exposed so the controller can anchor the Get Info
     /// popover to it.
     let infoAnchor: NSView
@@ -68,16 +74,19 @@ final class AttachmentRowView: NSView {
         subtitle: NSTextField,
         readOnlyToggle: NSSwitch,
         readOnlyCaption: NSView,
-        ejectButton: NSButton? = nil
+        ejectButton: NSButton? = nil,
+        isTitleEditable: Bool = true
     ) {
         self.itemID = itemID
+        self.isTitleEditable = isTitleEditable
         self.infoAnchor = icon
         self.iconButton = icon
         self.subtitleField = subtitle
         self.readOnlyToggle = readOnlyToggle
         self.ejectButton = ejectButton
         self.titleView = EditableRowTitleView(
-            itemID: itemID, name: title, notes: notes, controlsEnabled: controlsEnabled)
+            itemID: itemID, name: title, notes: notes,
+            controlsEnabled: controlsEnabled && isTitleEditable)
         super.init(frame: .zero)
         buildLayout(
             icon: icon, subtitle: subtitle, readOnlyToggle: readOnlyToggle,
@@ -93,7 +102,8 @@ final class AttachmentRowView: NSView {
         title: String, notes: String, iconSystemName: String, missingPath: String?,
         readOnly: Bool, controlsEnabled: Bool
     ) {
-        titleView.update(name: title, notes: notes, controlsEnabled: controlsEnabled)
+        titleView.update(
+            name: title, notes: notes, controlsEnabled: controlsEnabled && isTitleEditable)
         readOnlyToggle.state = readOnly ? .on : .off
         readOnlyToggle.isEnabled = controlsEnabled
         ejectButton?.isEnabled = controlsEnabled

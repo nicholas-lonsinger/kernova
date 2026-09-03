@@ -24,11 +24,7 @@ final class SnapshotSectionView: NSView {
     weak var delegate: SnapshotSectionViewDelegate?
 
     /// The snapshot whose name or note is being edited inline, or `nil`.
-    ///
-    /// While set, ``update(manifest:canTakeSnapshot:canRevert:canDelete:baselineID:)``
-    /// skips its rebuild so a refresh landing mid-edit can't destroy the
-    /// editing field.
-    private(set) var activeEdit: UUID?
+    var activeEdit: UUID? { list.activeEdit }
 
     /// The section's info affordance, exposed so a panel header can host it in
     /// place of the inner section header.
@@ -55,42 +51,12 @@ final class SnapshotSectionView: NSView {
         let baselineID: UUID?
     }
 
-    /// Live row views keyed by snapshot id, so the ••• menu's "Rename" starts
-    /// editing on the right row and the size read lands on the right subtitle.
-    private var rowsByID: [UUID: Row] = [:]
-
-    /// One row's views, retained so an in-place update needs no rebuild.
-    private struct Row {
-        let container: NSView
-        let icon: AttachmentIconButton
-        let title: EditableRowTitleView
-        let subtitle: NSTextField
-        let markerLabel: NSTextField
-        let revertButton: NSButton
-    }
-
-    /// Value snapshot of one row's rendered appearance, so a pass that changed
-    /// nothing about it skips the rebuild.
-    private struct RenderedRow: Equatable {
-        let snapshot: VMSnapshot
-        let isCurrent: Bool
-        /// `true` for the snapshot Ephemeral Mode returns this VM to.
-        let isBaseline: Bool
-        let canRevert: Bool
-        let canDelete: Bool
-
-        /// The row's trailing marker — the two roles read as one caption when a
-        /// snapshot holds both, which is where an ephemeral VM rests.
-        var markerText: String {
-            switch (isBaseline, isCurrent) {
-            case (true, true): "Baseline \u{00B7} Current"
-            case (true, false): "Baseline"
-            case (false, true): "Current"
-            case (false, false): ""
-            }
-        }
-    }
-    private var renderedRows: [RenderedRow]?
+    /// The rows, keyed by snapshot id — so the ••• menu's "Rename" starts
+    /// editing on the right row and the size read lands on the right subtitle —
+    /// and the rebuild/in-place diff behind them.
+    private lazy var list = VMSettingsKeyedListController<SnapshotRowModel, SnapshotRowView>(
+        listStack: listStack, emptyMessage: "No snapshots",
+        separator: { makeGroupedFormHairline() })
 
     /// The manifest the rows were last built from, so a delegate callback can
     /// name the snapshot a control belongs to.
@@ -230,58 +196,44 @@ final class SnapshotSectionView: NSView {
         takeSnapshotButton.isEnabled = canTakeSnapshot
 
         let models = manifest.ordered.map { snapshot in
-            RenderedRow(
+            SnapshotRowModel(
                 snapshot: snapshot, isCurrent: snapshot.id == manifest.currentID,
                 isBaseline: snapshot.id == baselineID,
                 canRevert: canRevert, canDelete: canDelete)
         }
-        let structural = renderedRows?.map(\.snapshot.id) != models.map(\.snapshot.id)
-        if structural {
-            // A rebuild would destroy an in-progress editing field, so defer it
-            // until the edit ends (the cancel/commit handler re-runs this).
-            if activeEdit != nil { return }
-            renderedRows = models
-            rebuildRows(models)
-            refreshReadout()
-            return
-        }
-
-        let previous = Dictionary(
-            (renderedRows ?? []).map { ($0.snapshot.id, $0) }, uniquingKeysWith: { first, _ in first }
-        )
-        renderedRows = models
-        for model in models {
-            guard let row = rowsByID[model.snapshot.id], previous[model.snapshot.id] != model
-            else { continue }
-            apply(model, to: row)
-        }
+        list.update(
+            models,
+            makeRow: { [self] model in makeRow(model) },
+            applyRow: { [self] model, row in
+                row.update(model, subtitle: subtitleText(for: model.snapshot))
+            })
         refreshReadout()
     }
 
     /// Fills in the per-row and header size readouts.
     func applySizes(_ bytes: [UUID: UInt64]) {
         sizesByID = bytes
-        for model in renderedRows ?? [] {
-            guard let row = rowsByID[model.snapshot.id] else { continue }
-            row.subtitle.stringValue = subtitleText(for: model.snapshot)
+        for model in list.rendered ?? [] {
+            guard let row = list.row(model.id) else { continue }
+            row.subtitleField.stringValue = subtitleText(for: model.snapshot)
         }
         refreshReadout()
     }
 
     /// Begins inline editing of one snapshot's name.
     func beginRename(_ id: UUID) {
-        rowsByID[id]?.title.beginRename()
+        list.row(id)?.titleView.beginRename()
     }
 
     /// Begins inline editing of one snapshot's note.
     func beginNotesEditing(_ id: UUID) {
-        rowsByID[id]?.title.beginNotesEditing()
+        list.row(id)?.titleView.beginNotesEditing()
     }
 
     /// Drops any in-flight edit marker, so it can't pin the list in its
     /// suppressed (never-rebuilds) state across an appear/disappear cycle.
     func clearActiveEdit() {
-        activeEdit = nil
+        list.activeEdit = nil
     }
 
     /// Ends an inline edit and renders whatever arrived while it was open.
@@ -291,7 +243,7 @@ final class SnapshotSectionView: NSView {
     /// deferred because it can rebuild the rows, and it is reached from inside
     /// the editing field's own callback — that field comes off the stack first.
     private func endEdit() {
-        activeEdit = nil
+        list.activeEdit = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.update(
@@ -305,7 +257,7 @@ final class SnapshotSectionView: NSView {
     /// currently renders; `nil` once the row is gone.
     func makeRowMenu(forRowWith id: UUID) -> NSMenu? {
         guard let snapshot = manifest.snapshot(id: id),
-            let model = renderedRows?.first(where: { $0.snapshot.id == id })
+            let model = list.rendered?.first(where: { $0.id == id })
         else { return nil }
         return makeRowMenu(
             for: snapshot, canRevert: model.canRevert, canDelete: model.canDelete,
@@ -328,8 +280,6 @@ final class SnapshotSectionView: NSView {
         let rename = menuItem("Rename", #selector(menuRename(_:)), snapshot)
         rename.isEnabled = activeEdit == nil
         menu.addItem(rename)
-        // The only route to a note on a row that has none: with nothing on
-        // screen to click, the row alone offers no way in.
         let editNotes = menuItem("Edit Notes", #selector(menuEditNotes(_:)), snapshot)
         editNotes.isEnabled = activeEdit == nil
         menu.addItem(editNotes)
@@ -360,48 +310,19 @@ final class SnapshotSectionView: NSView {
 
     // MARK: - Rows
 
-    private func rebuildRows(_ models: [RenderedRow]) {
-        for view in listStack.arrangedSubviews {
-            listStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        rowsByID.removeAll(keepingCapacity: true)
+    private func makeRow(_ model: SnapshotRowModel) -> SnapshotRowView {
+        let snapshotID = model.id
+        let row = SnapshotRowView(
+            snapshotID: snapshotID, target: self, revertAction: #selector(revertTapped(_:)),
+            moreAction: #selector(moreTapped(_:)))
 
-        guard !models.isEmpty else {
-            let empty = NSTextField(labelWithString: "No snapshots")
-            empty.textColor = .secondaryLabelColor
-            empty.isSelectable = false
-            addFullWidth(empty)
-            return
-        }
-
-        for (index, model) in models.enumerated() {
-            if index > 0 { addFullWidth(makeGroupedFormHairline()) }
-            let row = makeRow(model)
-            rowsByID[model.snapshot.id] = row
-            addFullWidth(row.container)
-        }
-    }
-
-    private func addFullWidth(_ view: NSView) {
-        listStack.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
-    }
-
-    private func makeRow(_ model: RenderedRow) -> Row {
-        let snapshotID = model.snapshot.id
-
-        let icon = AttachmentIconButton()
-        icon.configure(systemName: "clock.arrow.circlepath", missingPath: nil)
-        icon.onActivate = { [weak self] anchor in
+        row.icon.onActivate = { [weak self] anchor in
             guard let self, let snapshot = self.manifest.snapshot(id: snapshotID) else { return }
             self.delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: anchor)
         }
 
-        let title = EditableRowTitleView(
-            itemID: snapshotID, name: model.snapshot.name, notes: model.snapshot.notes,
-            controlsEnabled: true)
-        title.onEditBegan = { [weak self] id in self?.activeEdit = id }
+        let title = row.titleView
+        title.onEditBegan = { [weak self] id in self?.list.activeEdit = id }
         title.onRenameCommitted = { [weak self] id, newName in
             guard let self else { return }
             let snapshot = self.manifest.snapshot(id: id)
@@ -421,7 +342,7 @@ final class SnapshotSectionView: NSView {
         // A note the row can't hold on one line is edited where it fits.
         title.onNotesOverflowActivated = { [weak self] id in
             guard let self, let snapshot = self.manifest.snapshot(id: id),
-                let row = self.rowsByID[id]
+                let row = self.list.row(id)
             else { return }
             self.delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: row.icon)
         }
@@ -429,95 +350,7 @@ final class SnapshotSectionView: NSView {
         // created with, so an enablement change that took the in-place path is
         // reflected.
         title.contextMenu = { [weak self] in self?.makeRowMenu(forRowWith: snapshotID) }
-
-        let subtitle = NSTextField(labelWithString: subtitleText(for: model.snapshot))
-        subtitle.font = .preferredFont(forTextStyle: .caption1)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.lineBreakMode = .byTruncatingTail
-        subtitle.maximumNumberOfLines = 1
-        subtitle.isSelectable = false
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
-        subtitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let textStack = NSStackView(views: [title, subtitle])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = Spacing.hairline
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
-            title.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
-            subtitle.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
-            subtitle.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
-        ])
-
-        let markerLabel = NSTextField(labelWithString: model.markerText)
-        markerLabel.font = .preferredFont(forTextStyle: .caption1)
-        markerLabel.textColor = .secondaryLabelColor
-        markerLabel.isSelectable = false
-
-        let revert = makeLinkButton("Revert", target: self, action: #selector(revertTapped(_:)))
-        revert.font = Typography.body
-        revert.identifier = NSUserInterfaceItemIdentifier(snapshotID.uuidString)
-
-        let menuButton = NSButton()
-        menuButton.image = .systemSymbol("ellipsis.circle", accessibilityDescription: "More")
-        menuButton.imagePosition = .imageOnly
-        menuButton.isBordered = false
-        menuButton.contentTintColor = .secondaryLabelColor
-        menuButton.toolTip = "More"
-        menuButton.identifier = NSUserInterfaceItemIdentifier(snapshotID.uuidString)
-        menuButton.target = self
-        menuButton.action = #selector(moreTapped(_:))
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        for accessory in [icon, markerLabel, revert, menuButton] as [NSView] {
-            accessory.setContentHuggingPriority(.required, for: .horizontal)
-            accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-
-        let container = NSStackView(views: [
-            icon, textStack, spacer, markerLabel, revert, menuButton,
-        ])
-        container.orientation = .horizontal
-        container.alignment = .centerY
-        container.distribution = .fill
-        container.spacing = Spacing.standard
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        let row = Row(
-            container: container, icon: icon, title: title, subtitle: subtitle,
-            markerLabel: markerLabel, revertButton: revert)
-        apply(model, to: row)
         return row
-    }
-
-    private func apply(_ model: RenderedRow, to row: Row) {
-        row.title.update(
-            name: model.snapshot.name, notes: model.snapshot.notes,
-            controlsEnabled: true)
-        row.subtitle.stringValue = subtitleText(for: model.snapshot)
-        row.markerLabel.stringValue = model.markerText
-        row.markerLabel.toolTip = Self.markerToolTip(for: model)
-        row.markerLabel.isHidden = model.markerText.isEmpty
-        row.revertButton.isEnabled = model.canRevert
-    }
-
-    /// What each marker role means, so the caption doesn't have to spell it out.
-    private static func markerToolTip(for model: RenderedRow) -> String? {
-        let current = "The state this VM was last taken from or reverted to"
-        let baseline = "The snapshot this VM returns to at every shutdown"
-        switch (model.isBaseline, model.isCurrent) {
-        case (true, true): return "\(baseline). \(current)."
-        case (true, false): return baseline
-        case (false, true): return current
-        case (false, false): return nil
-        }
     }
 
     /// "date · Disks only · size on disk" — the middle part only for a snapshot
@@ -580,7 +413,7 @@ final class SnapshotSectionView: NSView {
 
     @objc private func menuGetInfo(_ sender: NSMenuItem) {
         guard let snapshot = snapshot(from: sender.representedObject as? String),
-            let row = rowsByID[snapshot.id]
+            let row = list.row(snapshot.id)
         else { return }
         delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: row.icon)
     }

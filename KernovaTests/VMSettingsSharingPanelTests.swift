@@ -242,4 +242,90 @@ struct VMSettingsSharingPanelTests {
         #expect(toggle.isEnabled)
         #expect(!visibleLabel(VMSettingsSharingPanelViewController.installPromptDisabledCaption, in: vc.view))
     }
+
+    // MARK: - Shared directory rows
+
+    /// Builds a pane over a VM carrying `directories`, drilled into Sharing.
+    private func makeSharingController(_ directories: [SharedDirectory]) -> (
+        VMSettingsViewController, VMInstance
+    ) {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        instance.configuration.sharedDirectories = directories
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.sharing)
+        return (vc, instance)
+    }
+
+    /// Seeds the shared file monitor with `paths` and repaints the rows from
+    /// what it found — the two steps the panel takes on its own, awaited here so
+    /// the assertion doesn't race the probe.
+    private func seedMonitor(_ vc: VMSettingsViewController, paths: [String]) async throws {
+        let panel = try #require(vc.settingsPanelForTesting(.sharing))
+        await panel.context.fileMonitor.setPaths(
+            Dictionary(uniqueKeysWithValues: paths.map { ($0, Data?.none) }))
+        panel.refresh()
+    }
+
+    private func sharedRows(in vc: VMSettingsViewController) -> [AttachmentRowView] {
+        guard let panel = vc.panelForTesting(.sharing) else { return [] }
+        return allSubviews(AttachmentRowView.self, in: panel)
+    }
+
+    /// A folder no runner can have, so the probe's answer is not the machine's
+    /// to decide.
+    private static let missingPath = "/kernova-tests/definitely-not-here/Shared"
+
+    @Test("A share whose folder is gone badges as missing; one that is there does not")
+    func missingShareBadgesAfterTheProbeLands() async throws {
+        let present = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-settings-share-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: present, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: present) }
+        let presentPath = present.path(percentEncoded: false)
+
+        let (vc, _) = makeSharingController([
+            SharedDirectory(path: Self.missingPath), SharedDirectory(path: presentPath),
+        ])
+        try await seedMonitor(vc, paths: [Self.missingPath, presentPath])
+
+        let panel = try #require(vc.panelForTesting(.sharing))
+        #expect(findLabel(containing: "Missing \u{2014} \(Self.missingPath)", in: panel) != nil)
+        #expect(findLabel(containing: "Missing \u{2014} \(presentPath)", in: panel) == nil)
+        #expect(findLabel(withText: presentPath, in: panel) != nil)
+    }
+
+    @Test("The share row menu reaches the folder, and dims Show in Finder while it is gone")
+    func shareRowMenuFollowsTheFolder() async throws {
+        let (vc, _) = makeSharingController([SharedDirectory(path: Self.missingPath)])
+        try await seedMonitor(vc, paths: [Self.missingPath])
+
+        let row = try #require(sharedRows(in: vc).first)
+        let menu = try #require(row.contextMenu?())
+        #expect(menu.items.map(\.title) == ["Show in Finder", "Copy Path", "Copy File Name"])
+        #expect(menu.items.first { $0.title == "Show in Finder" }?.isEnabled == false)
+        #expect(menu.items.first { $0.title == "Copy Path" }?.isEnabled == true)
+    }
+
+    @Test("A missing share still takes its read-only toggle and its removal")
+    func missingShareKeepsItsControls() async throws {
+        let (vc, instance) = makeSharingController([SharedDirectory(path: Self.missingPath)])
+        try await seedMonitor(vc, paths: [Self.missingPath])
+        let panel = try #require(vc.panelForTesting(.sharing))
+
+        let toggle = try #require(firstSwitch(action: "sharedReadOnlyToggled:", in: panel))
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+        #expect(instance.configuration.sharedDirectories?.first?.readOnly == true)
+
+        let remove = try #require(
+            firstSubview(NSButton.self, in: panel) {
+                $0.action.map(NSStringFromSelector) == "sharedDeleteTapped:"
+            })
+        remove.sendAction(remove.action, to: remove.target)
+        #expect(instance.configuration.sharedDirectories == nil)
+    }
 }

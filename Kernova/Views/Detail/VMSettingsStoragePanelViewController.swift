@@ -48,34 +48,24 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
         removableLockRegistry.removeAll()
-        activeStorageEdit = nil
-        activeRemovableEdit = nil
-        storageRowsByID.removeAll()
-        removableRowsByID.removeAll()
-        renderedStorageRows = nil
-        renderedRemovableRows = nil
 
+        // Each section builds a fresh list stack and a fresh list controller
+        // over it, which is what drops the rows and edit state of the VM the
+        // panel was showing.
         for section in [buildStorageSection(), buildRemovableMediaSection()] {
             panelStack.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
         }
         // The monitored paths are this instance's, so a rebuild re-seeds them.
-        startInstanceSideEffects()
-        armFileMonitorObservation()
+        context.seedFileMonitor()
+        armFileMonitorLoop()
     }
 
-    /// The observation chain is one-shot and its callback stops re-arming once
-    /// the pane goes away, so re-appearing has to start a fresh one — otherwise
-    /// a single change while hidden freezes the missing-file badges for good.
+    /// ``prepareForDisappearance()`` cancels the observation loop, so
+    /// re-appearing starts a fresh one — otherwise a change while hidden freezes
+    /// the missing-file badges for good.
     func hostDidAppear() {
-        armFileMonitorObservation()
-    }
-
-    /// Starts a fresh observation cycle, retiring any earlier one by token.
-    private func armFileMonitorObservation() {
-        let token = UUID()
-        fileMonitorObservationToken = token
-        observeFileMonitor(token: token)
+        armFileMonitorLoop()
     }
 
     func refresh() {
@@ -84,16 +74,18 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         updateStorageLockHintText()
         refreshStorageList()
         refreshRemovableList()
-        startInstanceSideEffects()
+        context.seedFileMonitor()
     }
 
     func prepareForDisappearance() {
         if reorderSheetPresenter.isShown { reorderSheetPresenter.close() }
         if attachmentInfoPresenter.isShown { attachmentInfoPresenter.close() }
+        fileMonitorLoop?.cancel()
+        fileMonitorLoop = nil
         // Drop any in-flight inline edit so the flag can't pin a list in a
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
-        activeStorageEdit = nil
-        activeRemovableEdit = nil
+        storageList?.activeEdit = nil
+        removableList?.activeEdit = nil
     }
 
     /// Whether this VM's disk list takes an edit right now.
@@ -143,14 +135,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         viewModel.capabilities.isAvailable(.editRemovableMedia, on: instance)
     }
 
-    private let fileMonitor = AttachmentFileMonitor()
-    /// Identifies the current file-monitor observation cycle.
-    ///
-    /// A new token is minted whenever the pane appears or rebuilds; a re-arming
-    /// callback from an older cycle (which the dismissed flag alone can't cancel
-    /// — `withObservationTracking` has no unregister) bails when its token no
-    /// longer matches, so stale chains can't accumulate.
-    private var fileMonitorObservationToken: UUID?
+    private var fileMonitorLoop: ObservationLoop?
 
     private let reorderSheetPresenter = SheetPresenter()
     private let attachmentInfoPresenter = PopoverPresenter()
@@ -180,26 +165,30 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private var attachStorageButton = NSButton()
     private var createStorageButton = NSButton()
     private var editBootOrderButton = NSButton()
-    /// Live storage row views keyed by disk id, so the context-menu "Rename"
-    /// item can start inline editing on the right row.
-    private var storageRowsByID: [UUID: AttachmentRowView] = [:]
-    /// The disk being renamed or noted inline, or `nil`.
-    ///
-    /// While set, `refreshStorageList` skips its rebuild so an async refresh
-    /// landing mid-edit can't destroy the editing field.
-    private var activeStorageEdit: UUID?
+    /// The Storage Disks rows and the diff behind them, rebuilt with the
+    /// section's list stack.
+    private var storageList: AttachmentList?
 
     // Removable Media
     private var removableListStack = NSStackView()
     private var createRemovableButton: NSButton?
-    /// Live removable-media row views keyed by item id.
-    private var removableRowsByID: [UUID: AttachmentRowView] = [:]
-    /// The removable medium being renamed or noted inline, or `nil`;
-    /// suppresses `refreshRemovableList` mid-edit.
-    private var activeRemovableEdit: UUID?
+    /// The Removable Media rows, on the same terms as ``storageList``.
+    private var removableList: AttachmentList?
 
-    private var renderedStorageRows: [VMSettingsRenderedRow]?
-    private var renderedRemovableRows: [VMSettingsRenderedRow]?
+    /// One attachment list: its rows, its rendered snapshot and its edit gate.
+    private typealias AttachmentList = VMSettingsKeyedListController<
+        VMSettingsRenderedRow, AttachmentRowView
+    >
+
+    /// The list serving `kind`, which is what a per-kind row, edit-gate or
+    /// rebuild question resolves to.
+    private func list(_ kind: AttachmentKind) -> AttachmentList? {
+        switch kind {
+        case .storage: storageList
+        case .removable: removableList
+        }
+    }
+
     // MARK: - Read accessors (materialize defaults)
 
     private var currentStorageDisks: [StorageDisk] {
@@ -210,38 +199,23 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         instance.configuration.removableMedia ?? []
     }
 
-    /// Seeds the file monitor with the current instance's attachment paths.
-    private func startInstanceSideEffects() {
-        let refs = instance.configuration.externalFileReferences
-            .filter(\.kind.hasStorageSettingsRow).bookmarksByPath
-        Task { await fileMonitor.setPaths(refs) }
-    }
-
-    /// Re-arming `withObservationTracking` on `fileMonitor.existsByPath`, so the
-    /// missing-file affordance on attachment rows updates live.
-    ///
-    /// The dismissed guard breaks the chain when the pane goes away —
-    /// ``hostDidAppear()`` starts the next one — and the `token` makes a
-    /// callback from a prior cycle bail.
-    private func observeFileMonitor(token: UUID) {
-        if context.isDismissed || fileMonitorObservationToken != token { return }
-        withObservationTracking { [fileMonitor] in
-            _ = fileMonitor.existsByPath
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                guard let self, !self.context.isDismissed, self.fileMonitorObservationToken == token
-                else { return }
-                self.refreshStorageList()
-                self.refreshRemovableList()
-                self.observeFileMonitor(token: token)
-            }
-        }
+    /// Re-renders both lists whenever a watched path appears or disappears, so
+    /// the missing-file affordance on attachment rows stays live.
+    private func armFileMonitorLoop() {
+        fileMonitorLoop?.cancel()
+        fileMonitorLoop = observeRecurring(
+            track: { [monitor = context.fileMonitor] in _ = monitor.existsByPath },
+            apply: { [weak self] in
+                self?.refreshStorageList()
+                self?.refreshRemovableList()
+            })
     }
 
     // MARK: Storage Disks
 
     private func buildStorageSection() -> NSView {
         storageListStack = makeGroupedFormListStack()
+        storageList = AttachmentList(listStack: storageListStack)
         attachStorageButton = makeGroupedFormPushButton(
             "Attach Disk…", target: self, action: #selector(attachStorageTapped))
         createStorageButton = makeGroupedFormPushButton(
@@ -286,6 +260,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     private func buildRemovableMediaSection() -> NSView {
         removableListStack = makeGroupedFormListStack()
+        removableList = AttachmentList(
+            listStack: removableListStack, emptyMessage: "No removable media attached")
         let attach = makeGroupedFormPushButton("Attach Disk…", target: self, action: #selector(attachRemovableTapped))
         let create = makeGroupedFormPushButton(
             "Create New Disk…", target: self, action: #selector(createRemovableTapped))
@@ -320,7 +296,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let disks = currentStorageDisks
         editBootOrderButton.isHidden = disks.count <= 1
         let models = disks.map { disk -> VMSettingsRenderedRow in
-            let isMissing = !disk.isInternal && !fileMonitor.exists(disk.path)
+            let isMissing = !disk.isInternal && !context.fileMonitor.exists(disk.path)
             return VMSettingsRenderedRow(
                 id: disk.id,
                 iconSystemName: diskIconSystemName(for: disk),
@@ -334,25 +310,28 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 readOnly: disk.readOnly,
                 controlsEnabled: canEditStorageDisks)
         }
-        refreshAttachmentList(
-            models: models, listStack: storageListStack, kind: .storage,
-            rowsByID: \.storageRowsByID, rendered: \.renderedStorageRows,
-            activeEdit: \.activeStorageEdit,
-            readOnlySelector: #selector(storageReadOnlyToggled), emptyMessage: nil
-        ) { [weak self] field, model in
-            guard let self,
-                let disk = self.currentStorageDisks.first(where: { $0.id == model.id })
-            else { return }
-            populateDiskSubtitle(
-                field, for: disk, bundleLayout: self.instance.bundleLayout,
-                isMissing: model.isMissing)
-        }
+        storageList?.update(
+            models,
+            readsUnchangedRows: sizesCanMove,
+            makeRow: { model in
+                makeAttachmentRow(
+                    model: model, kind: .storage,
+                    readOnlySelector: #selector(storageReadOnlyToggled))
+            },
+            applyRow: applyAttachmentRow,
+            readLiveSubtitle: { model, row in
+                guard let disk = currentStorageDisks.first(where: { $0.id == model.id })
+                else { return }
+                populateDiskSubtitle(
+                    row.subtitleField, for: disk, bundleLayout: instance.bundleLayout,
+                    isMissing: model.isMissing)
+            })
     }
 
     private func refreshRemovableList() {
         let items = currentRemovableMedia
         let models = items.map { item -> VMSettingsRenderedRow in
-            let isMissing = !fileMonitor.exists(item.path)
+            let isMissing = !context.fileMonitor.exists(item.path)
             return VMSettingsRenderedRow(
                 id: item.id,
                 iconSystemName: "opticaldisc",
@@ -364,20 +343,40 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 readOnly: item.readOnly,
                 controlsEnabled: canEditRemovableMedia)
         }
-        refreshAttachmentList(
-            models: models, listStack: removableListStack, kind: .removable,
-            rowsByID: \.removableRowsByID, rendered: \.renderedRemovableRows,
-            activeEdit: \.activeRemovableEdit,
-            readOnlySelector: #selector(removableReadOnlyToggled),
-            emptyMessage: "No removable media attached"
-        ) { [weak self] field, model in
-            guard let self,
-                let item = self.currentRemovableMedia.first(where: { $0.id == model.id })
-            else { return }
-            populateDiskSubtitle(
-                field, for: item, bundleLayout: self.instance.bundleLayout,
-                isMissing: model.isMissing)
-        }
+        removableList?.update(
+            models,
+            readsUnchangedRows: sizesCanMove,
+            makeRow: { model in
+                makeAttachmentRow(
+                    model: model, kind: .removable,
+                    readOnlySelector: #selector(removableReadOnlyToggled))
+            },
+            applyRow: applyAttachmentRow,
+            readLiveSubtitle: { model, row in
+                guard let item = currentRemovableMedia.first(where: { $0.id == model.id })
+                else { return }
+                populateDiskSubtitle(
+                    row.subtitleField, for: item, bundleLayout: instance.bundleLayout,
+                    isMissing: model.isMissing)
+            })
+    }
+
+    /// Whether a row's size can have moved without anything about the row
+    /// changing.
+    ///
+    /// The size behind a row is a filesystem walk, so it is re-read on every
+    /// pass only while the guest is running and writing to the disk. A stopped
+    /// VM's sizes cannot move on their own, so those rows are re-read when
+    /// something about them changed and not otherwise.
+    private var sizesCanMove: Bool {
+        instance.status == .running
+    }
+
+    private func applyAttachmentRow(_ model: VMSettingsRenderedRow, to row: AttachmentRowView) {
+        row.update(
+            title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
+            missingPath: model.missingPath, readOnly: model.readOnly,
+            controlsEnabled: model.controlsEnabled)
     }
 
     private func refresh(_ kind: AttachmentKind) {
@@ -387,82 +386,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         }
     }
 
-    /// Shared rebuild/in-place-update engine for both attachment lists.
-    ///
-    /// A structural change (rows added, removed, or reordered) rebuilds the
-    /// stack; anything else updates the affected rows in place. Only the
-    /// structural path tears down an in-progress editing field, so only it is
-    /// skipped while a row is being renamed.
-    ///
-    /// The size behind a row is a filesystem walk, so it is re-read on every
-    /// pass only while the guest is running and writing to the disk. A stopped
-    /// VM's sizes cannot move on their own, so those rows are re-read when
-    /// something about them changed and not otherwise.
-    private func refreshAttachmentList(
-        models: [VMSettingsRenderedRow],
-        listStack: NSStackView,
-        kind: AttachmentKind,
-        rowsByID rowsKP: ReferenceWritableKeyPath<VMSettingsStoragePanelViewController, [UUID: AttachmentRowView]>,
-        rendered renderedKP: ReferenceWritableKeyPath<VMSettingsStoragePanelViewController, [VMSettingsRenderedRow]?>,
-        activeEdit activeKP: ReferenceWritableKeyPath<VMSettingsStoragePanelViewController, UUID?>,
-        readOnlySelector: Selector,
-        emptyMessage: String?,
-        populate: @escaping (NSTextField, VMSettingsRenderedRow) -> Void
-    ) {
-        let previousRows = self[keyPath: renderedKP]
-        let structural = previousRows?.map(\.id) != models.map(\.id)
-
-        if structural {
-            // A rebuild would destroy an in-progress editing field, so defer it
-            // until the edit ends (the cancel/commit handler re-runs the refresh).
-            if self[keyPath: activeKP] != nil { return }
-            self[keyPath: renderedKP] = models
-            clearGroupedFormStack(listStack)
-            self[keyPath: rowsKP].removeAll(keepingCapacity: true)
-            guard !models.isEmpty else {
-                if let emptyMessage {
-                    addGroupedFormFullWidth(makeGroupedFormSecondaryLabel(emptyMessage), to: listStack)
-                }
-                return
-            }
-            for model in models {
-                let row = makeAttachmentRow(
-                    model: model, kind: kind, readOnlySelector: readOnlySelector,
-                    activeEdit: activeKP)
-                self[keyPath: rowsKP][model.id] = row
-                addGroupedFormFullWidth(row, to: listStack)
-                // Freshly built rows start with an empty subtitle — read once.
-                populate(row.subtitleField, model)
-            }
-            return
-        }
-
-        self[keyPath: renderedKP] = models
-        let sizesCanMove = instance.status == .running
-        let previousByID = Dictionary(
-            (previousRows ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for model in models {
-            guard let row = self[keyPath: rowsKP][model.id] else { continue }
-            let changed = previousByID[model.id] != model
-            guard changed || sizesCanMove else { continue }
-            if changed {
-                row.update(
-                    title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
-                    missingPath: model.missingPath, readOnly: model.readOnly,
-                    controlsEnabled: model.controlsEnabled)
-            }
-            populate(row.subtitleField, model)
-        }
-    }
-
     /// Builds one attachment row, wiring its icon Get Info, rename/notes
-    /// closures, and context menu; the per-list differences arrive via `kind`,
-    /// `readOnlySelector`, and the active-edit key path.
+    /// closures, and context menu; the per-list differences arrive via `kind`
+    /// and `readOnlySelector`.
     private func makeAttachmentRow(
         model: VMSettingsRenderedRow,
         kind: AttachmentKind,
-        readOnlySelector: Selector,
-        activeEdit activeKP: ReferenceWritableKeyPath<VMSettingsStoragePanelViewController, UUID?>
+        readOnlySelector: Selector
     ) -> AttachmentRowView {
         let ref = AttachmentRef(kind: kind, id: model.id)
         let icon = AttachmentIconButton()
@@ -492,19 +422,19 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 target: self, action: readOnlySelector),
             readOnlyCaption: makeGroupedFormReadOnlyCaption(),
             ejectButton: ejectButton)
-        row.onEditBegan = { [weak self] id in self?[keyPath: activeKP] = id }
+        row.onEditBegan = { [weak self] id in self?.list(kind)?.activeEdit = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
             self?.commitAttachmentRename(ref, newLabel: newLabel)
         }
         row.onRenameCancelled = { [weak self] _ in
-            self?[keyPath: activeKP] = nil
+            self?.clearActiveEdit(kind)
             self?.refresh(kind)
         }
         row.onNotesCommitted = { [weak self] _, notes in
             self?.commitAttachmentNotes(ref, notes: notes)
         }
         row.onNotesCancelled = { [weak self] _ in
-            self?[keyPath: activeKP] = nil
+            self?.clearActiveEdit(kind)
             self?.refresh(kind)
         }
         // A note the row can't hold on one line is edited where it fits. Looked
@@ -561,21 +491,15 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func clearActiveEdit(_ kind: AttachmentKind) {
-        switch kind {
-        case .storage: activeStorageEdit = nil
-        case .removable: activeRemovableEdit = nil
-        }
+        list(kind)?.activeEdit = nil
     }
 
-    /// Whether either attachment list has an inline edit open — Rename and Edit
-    /// Notes on a row have to wait for it, same hazard
+    /// Whether that list has an inline edit open — Rename and Edit Notes on a
+    /// row have to wait for it, same hazard
     /// ``SnapshotSectionView/makeRowMenu(for:canRevert:canDelete:isBaseline:)``
     /// guards against.
     private func hasActiveEdit(_ kind: AttachmentKind) -> Bool {
-        switch kind {
-        case .storage: return activeStorageEdit != nil
-        case .removable: return activeRemovableEdit != nil
-        }
+        list(kind)?.activeEdit != nil
     }
 
     // MARK: Storage
@@ -594,7 +518,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     @objc private func editBootOrderTapped() {
         guard let window = view.window else { return }
         let sheet = StorageDiskReorderSheetContentViewController(
-            disks: currentStorageDisks, instance: instance, fileMonitor: fileMonitor)
+            disks: currentStorageDisks, instance: instance, fileMonitor: context.fileMonitor)
         sheet.delegate = self
         reorderSheetPresenter.show(content: sheet, in: window)
     }
@@ -703,10 +627,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     private func attachmentRow(_ ref: AttachmentRef) -> AttachmentRowView? {
-        switch ref.kind {
-        case .storage: return storageRowsByID[ref.id]
-        case .removable: return removableRowsByID[ref.id]
-        }
+        list(ref.kind)?.row(ref.id)
     }
 
     /// Absolute URL backing an attachment, via the single resolution rule in
@@ -728,8 +649,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let rename = attachmentMenuItem("Rename", #selector(menuAttachmentRename(_:)), ref)
         rename.isEnabled = info.editable && noEditInFlight
         menu.addItem(rename)
-        // The only route to a note on a row that has none: with nothing on
-        // screen to click, the row alone offers no way in.
         let editNotes = attachmentMenuItem("Edit Notes", #selector(menuAttachmentEditNotes(_:)), ref)
         editNotes.isEnabled = info.editable && noEditInFlight
         menu.addItem(editNotes)
@@ -740,7 +659,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let showInFinder = attachmentMenuItem(
             "Show in Finder", #selector(menuAttachmentShowInFinder(_:)), ref)
         // Nothing to reveal when an external file is missing (in-bundle always exists).
-        showInFinder.isEnabled = info.isInternal || fileMonitor.exists(info.path)
+        showInFinder.isEnabled = info.isInternal || context.fileMonitor.exists(info.path)
         menu.addItem(showInFinder)
         menu.addItem(attachmentMenuItem("Copy Path", #selector(menuAttachmentCopyPath(_:)), ref))
         menu.addItem(

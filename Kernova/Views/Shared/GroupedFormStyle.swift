@@ -758,44 +758,6 @@ func makeGroupedFormEjectButton(
     return button
 }
 
-/// One attachment/share row: icon, title over subtitle, the read-only switch and
-/// the eject button.
-@MainActor
-func makeGroupedFormListRow(
-    icon: NSView, title: String, subtitle: NSTextField, id: UUID, readOnly: Bool,
-    controlsEnabled: Bool, target: AnyObject, readOnlySelector: Selector,
-    deleteSelector: Selector
-) -> NSView {
-    let titleLabel = NSTextField(labelWithString: title)
-    titleLabel.font = Typography.body
-    titleLabel.lineBreakMode = .byTruncatingTail
-    titleLabel.maximumNumberOfLines = 1
-    titleLabel.isSelectable = false
-
-    let textStack = NSStackView(views: [titleLabel, subtitle])
-    textStack.orientation = .vertical
-    textStack.alignment = .leading
-    textStack.spacing = Spacing.hairline
-
-    let readOnlyToggle = makeGroupedFormReadOnlySwitch(
-        id: id, isOn: readOnly, enabled: controlsEnabled, target: target,
-        action: readOnlySelector)
-    let readOnlyCaption = makeGroupedFormReadOnlyCaption()
-
-    let eject = makeGroupedFormEjectButton(
-        id: id, enabled: controlsEnabled, target: target, action: deleteSelector)
-
-    let spacer = NSView()
-    spacer.translatesAutoresizingMaskIntoConstraints = false
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-    let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, eject])
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = Spacing.standard
-    return row
-}
-
 @MainActor
 func makeGroupedFormSecondaryLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
