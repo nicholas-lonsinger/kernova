@@ -14,8 +14,6 @@ final class VMLibraryEventBroadcaster {
     /// work that feeds the stream only while somebody is reading it.
     var onSubscriberCountChanged: ((Int) -> Void)?
 
-    var subscriberCount: Int { continuations.count }
-
     func stream() -> AsyncStream<VMLibraryEvent> {
         let id = UUID()
         // `.unbounded` on purpose: dropping an event would make a caller
@@ -36,14 +34,6 @@ final class VMLibraryEventBroadcaster {
         for continuation in continuations.values {
             continuation.yield(event)
         }
-    }
-
-    /// Ends every stream — the teardown an owner runs when it stops producing.
-    func finish() {
-        let held = continuations
-        continuations.removeAll()
-        for continuation in held.values { continuation.finish() }
-        onSubscriberCountChanged?(0)
     }
 
     private func drop(_ id: UUID) {

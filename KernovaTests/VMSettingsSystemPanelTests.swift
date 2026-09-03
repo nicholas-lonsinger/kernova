@@ -22,14 +22,6 @@ struct VMSettingsSystemPanelTests {
         makeSettingsInstance(guestOS: guestOS)
     }
 
-    private func makeController(
-        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .system
-    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
-        makeSettingsController(
-            guestOS: guestOS, isReadOnly: isReadOnly, category: category,
-            preferences: preferences)
-    }
-
     // MARK: - Display section
 
     /// Builds a controller over a config with explicit display settings.

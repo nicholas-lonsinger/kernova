@@ -1043,10 +1043,6 @@ final class VMInstance {
         return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-\(short).sock")
     }
 
-    func stopSerialReading() {
-        sessionContext?.stopSerialReading()
-    }
-
     // MARK: - Clipboard Service Lifecycle
 
     /// Starts clipboard sharing if enabled in this configuration.
@@ -1104,13 +1100,6 @@ final class VMInstance {
         service.start()
         context.clipboardService = service
         Self.logger.info("SPICE clipboard service started for '\(self.name, privacy: .public)'")
-    }
-
-    /// Stops and releases the clipboard service and (for SPICE) closes pipe file handles.
-    ///
-    /// Safe to call when no service is active.
-    func stopClipboardService() {
-        sessionContext?.stopClipboardService()
     }
 
     // MARK: - Vsock Service Lifecycle

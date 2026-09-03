@@ -13,14 +13,6 @@ struct VMSettingsViewControllerTests {
     /// Selection/order persistence never touches the real `.standard` domain.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmsettings")
 
-    private func makeViewModel() -> VMLibraryViewModel {
-        makeSettingsViewModel(preferences: preferences)
-    }
-
-    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
-        makeSettingsInstance(guestOS: guestOS)
-    }
-
     private func makeController(
         guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {

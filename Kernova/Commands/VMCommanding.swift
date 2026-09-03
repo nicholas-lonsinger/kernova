@@ -98,6 +98,7 @@ protocol VMCommanding: AnyObject {
     ///
     /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
     /// write starts nothing.
+    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     @discardableResult
     func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary
 
@@ -131,6 +132,7 @@ protocol VMCommanding: AnyObject {
     /// Takes files rather than opening a panel: a pick carries a
     /// security-scoped bookmark only an in-process open panel can mint, which
     /// is why no wire verb offers this.
+    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func attachStorageDisks(_ selector: VMSelector, paths files: [PickedFile]) throws
 
     /// Writes a new sparse image inside the VM's bundle and appends it.
@@ -163,6 +165,7 @@ protocol VMCommanding: AnyObject {
     /// Appends the picked files to the VM's removable-media list, skipping
     /// paths it already carries — off the wire for the reason
     /// ``attachStorageDisks(_:paths:)`` states.
+    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func attachRemovableMedia(_ selector: VMSelector, paths files: [PickedFile]) throws
 
     /// Writes a new sparse image at a destination the user chose and attaches
@@ -170,6 +173,7 @@ protocol VMCommanding: AnyObject {
     ///
     /// Off the wire: the write rides a live save-panel grant, which is also
     /// what the entry's bookmark is minted from.
+    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func createRemovableMedia(
         _ selector: VMSelector, sizeInGB: Int, destinationURL: URL
     ) async throws
@@ -200,6 +204,7 @@ protocol VMCommanding: AnyObject {
     /// Appends the picked folders to the VM's shared-directory list, skipping
     /// paths it already carries — off the wire for the reason
     /// ``attachStorageDisks(_:paths:)`` states.
+    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws
 
     /// Drops a shared directory's entry, leaving the folder itself alone.

@@ -5700,12 +5700,3 @@ struct VMLibraryViewModelTests {
         #expect(rolled.first?.path == "/tmp/old.iso")
     }
 }
-
-// MARK: - Test helpers
-
-extension Result {
-    fileprivate var isFailure: Bool {
-        if case .failure = self { return true }
-        return false
-    }
-}

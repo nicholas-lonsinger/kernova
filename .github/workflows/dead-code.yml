@@ -17,8 +17,6 @@ jobs:
   scan:
     runs-on: macos-26
     timeout-minutes: 45
-    env:
-      PERIPHERY_VERSION: 3.7.4
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -30,6 +28,19 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
           echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
+
+      - name: Resolve latest Periphery release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release view --repo peripheryapp/periphery --json tagName -q .tagName)
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve the latest Periphery release tag"
+            exit 1
+          fi
+          echo "PERIPHERY_VERSION=$TAG" >> "$GITHUB_ENV"
+          echo "Resolved Periphery $TAG"
 
       - name: Cache Periphery binary
         id: cache-periphery
@@ -62,7 +73,7 @@ jobs:
           # `COMPILER_INDEX_STORE_ENABLE=YES` to xcodebuild. We only need to
           # append `-skipPackagePluginValidation` because the project consumes
           # SwiftPM packages.
-          periphery scan -- -skipPackagePluginValidation \
+          periphery scan --disable-update-check -- -skipPackagePluginValidation \
             > scan-output.txt 2> scan-stderr.txt
           PERIPHERY_EXIT=$?
           set -e
@@ -77,6 +88,17 @@ jobs:
           fi
 
           findings=$(grep -cE ":[0-9]+:[0-9]+: warning:" scan-output.txt || true)
+
+          # An unpinned Periphery can change its output format without failing.
+          # A zero count is only trusted alongside the explicit clean verdict;
+          # otherwise the job fails rather than closing the tracker on a scan
+          # nobody could parse.
+          if [ "$findings" -eq 0 ] && ! grep -q "No unused code detected" scan-output.txt; then
+            echo "::error::Periphery reported no findings and no clean verdict — output format unrecognised"
+            cat scan-output.txt
+            exit 1
+          fi
+
           echo "findings=$findings" >> "$GITHUB_OUTPUT"
           echo "Periphery surfaced $findings finding(s)"
 

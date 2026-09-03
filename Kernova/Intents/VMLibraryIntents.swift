@@ -6,7 +6,7 @@ struct CloneVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Clone Virtual Machine"
     // The copy is dispatched and the new row answered immediately, so this
     // action reports while the bundle is still being written, and says so.
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Copies a virtual machine's bundle into a new one — a copy that carries on after this reports.",
         categoryName: "Virtual Machines",
         resultValueName: "Virtual Machine")
@@ -35,7 +35,7 @@ struct CloneVMIntent: AppIntent {
 
 struct RenameVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Rename Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Gives a virtual machine a new display name.", categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -67,7 +67,7 @@ struct RenameVMIntent: AppIntent {
 /// Shortcut never showed the user which files those are.
 struct DeleteVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Delete Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Moves a virtual machine's bundle to the Trash, asking first. Files stored outside the bundle are left alone.",
         categoryName: "Virtual Machines")
 
@@ -93,7 +93,7 @@ struct DeleteVMIntent: AppIntent {
 
 struct CancelPreparingIntent: AppIntent {
     static let title: LocalizedStringResource = "Cancel Virtual Machine Copy"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Stops a create, clone, or import that is still writing, removing what it has written.",
         categoryName: "Virtual Machines")
 
@@ -119,7 +119,7 @@ struct CancelPreparingIntent: AppIntent {
 
 struct CancelGuestSetupIntent: AppIntent {
     static let title: LocalizedStringResource = "Cancel Guest Setup"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Interrupts the install, download, or verification a virtual machine's first start is running.",
         categoryName: "Virtual Machines")
 

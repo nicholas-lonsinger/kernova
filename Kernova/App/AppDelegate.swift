@@ -243,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// than `showLibrary(_:)`: unlike ⌘0 (only reachable while the app is
     /// already active), a Dock-menu selection can arrive while Kernova is
     /// inactive and needs the summon path's activation request.
-    @objc private func summonLibraryFromDockMenu(_ sender: Any?) {
+    @objc private func summonLibraryFromDockMenu(_: Any?) {
         lifecycle.summonUserInterface()
     }
 

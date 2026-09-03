@@ -121,12 +121,6 @@ extension CommandError {
         return false
     }
 
-    /// The recovery this failure offers, or `nil` when there is none.
-    var recovery: CommandRecovery? {
-        guard case .operationFailed(_, _, _, let recovery) = self else { return nil }
-        return recovery
-    }
-
     /// The confirmation this refusal is asking for, or `nil` when it is not a
     /// consent refusal.
     var confirmationPrompt: ConfirmationPrompt? {

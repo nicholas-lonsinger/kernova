@@ -4,7 +4,7 @@ import KernovaKit
 
 struct ListVMsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Virtual Machines"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Answers with every virtual machine in the library.",
         categoryName: "Virtual Machines",
         resultValueName: "Virtual Machines")
@@ -27,7 +27,7 @@ struct ListVMsIntent: AppIntent {
 /// reports, with the words a person reads carried in the spoken dialog.
 struct GetVMStateIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Virtual Machine State"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Answers a virtual machine's current state.",
         categoryName: "Virtual Machines",
         resultValueName: "State")
@@ -55,7 +55,7 @@ struct GetVMStateIntent: AppIntent {
 
 struct GetVMIPAddressIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Virtual Machine IP Address"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Answers the address Kernova reserved for a virtual machine's guest, if it has one.",
         categoryName: "Virtual Machines",
         resultValueName: "IP Address")
@@ -79,7 +79,7 @@ struct GetVMIPAddressIntent: AppIntent {
 
 struct TakeSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Take Snapshot"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Captures a named restore point for a virtual machine.",
         categoryName: "Virtual Machines",
         resultValueName: "Snapshot Name")

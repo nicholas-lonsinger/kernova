@@ -436,7 +436,7 @@ extension VMCommandCore {
 
     /// The refusal a create, clone or import cancel raises.
     static func cancelPreparingPrompt(
-        _ operation: VMInstance.PreparingOperation, on instance: VMInstance
+        _ operation: VMInstance.PreparingOperation, on _: VMInstance
     ) -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .cancelPreparing,

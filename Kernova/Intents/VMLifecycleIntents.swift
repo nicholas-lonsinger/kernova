@@ -7,7 +7,7 @@ struct StartVMIntent: AppIntent {
     // A machine that still owes guest setup does not boot here: `start`
     // dispatches the install or image download and returns, so this action
     // reports before the setup it began has finished, and says so.
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Starts a virtual machine, or begins the guest setup one still owes — which carries on after this reports.",
         categoryName: "Virtual Machines")
 
@@ -36,7 +36,7 @@ struct StartVMIntent: AppIntent {
 
 struct StopVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Stops a virtual machine, asking before anything that discards unsaved guest state.",
         categoryName: "Virtual Machines")
 
@@ -67,7 +67,7 @@ struct StopVMIntent: AppIntent {
 
 struct PauseVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Pause Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Suspends the guest's execution in place, leaving it in memory.",
         categoryName: "Virtual Machines")
 
@@ -91,7 +91,7 @@ struct PauseVMIntent: AppIntent {
 
 struct ResumeVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Resume Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Lets a paused guest run again.", categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -114,7 +114,7 @@ struct ResumeVMIntent: AppIntent {
 
 struct SuspendVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Suspend Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Saves the running guest to disk so a later start picks the session up where it stopped.",
         categoryName: "Virtual Machines")
 
@@ -138,7 +138,7 @@ struct SuspendVMIntent: AppIntent {
 
 struct RestartVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Shuts the guest down and starts it again once it has powered off.",
         categoryName: "Virtual Machines")
 
@@ -166,7 +166,7 @@ struct RestartVMIntent: AppIntent {
 /// of the user is the whole of what it does.
 struct OpenVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Open Virtual Machine"
-    static let description = IntentDescription(
+    static let description: IntentDescription? = IntentDescription(
         "Brings a virtual machine's display to the front.", categoryName: "Virtual Machines")
 
     static let supportedModes: IntentModes = .foreground(.immediate)

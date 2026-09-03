@@ -49,13 +49,4 @@ enum VMSettingsCategory: String, CaseIterable, Sendable {
         case .sharing: "Folders editable when stopped"
         }
     }
-
-    /// Whether the panel holds a single section, whose header the panel header
-    /// absorbs rather than repeating the category name inside the form.
-    var isSingleSection: Bool {
-        switch self {
-        case .network, .snapshots: true
-        case .general, .system, .storage, .sharing: false
-        }
-    }
 }

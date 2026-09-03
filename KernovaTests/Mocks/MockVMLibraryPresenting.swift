@@ -98,28 +98,4 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
     var installerMountedDelivery: GuestAgentDiskDelivery? { installerMountedDeliveries.last }
     var showCreationWizard: Bool { creationWizardCount > 0 }
-
-    /// Clears all recorded requests (mirrors resetting the former flags).
-    func reset() {
-        errors.removeAll()
-        errorTitles.removeAll()
-        startFailedAttachments.removeAll()
-        startFailedAttachmentInstances.removeAll()
-        deleteSheetInstances.removeAll()
-        deleteSheetPermanentlyFlags.removeAll()
-        takeSnapshotSheetInstances.removeAll()
-        revertSnapshots.removeAll()
-        revertSnapshotInstances.removeAll()
-        deleteSnapshots.removeAll()
-        deleteSnapshotInstances.removeAll()
-        forceStopInstances.removeAll()
-        recoveryBootInstances.removeAll()
-        stopPausedInstances.removeAll()
-        cancelPreparingInstances.removeAll()
-        installerMountedNames.removeAll()
-        installerMountedPurposes.removeAll()
-        installerMountedDeliveries.removeAll()
-        creationWizardCount = 0
-        focusGuestDisplayInstances.removeAll()
-    }
 }
