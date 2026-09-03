@@ -194,13 +194,18 @@ struct AttachmentFileMonitorTests {
         let target = path(in: tmp.url, "vanishes.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
-        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: true))
+        // Its own center: the app-wide activation name reaches every live
+        // monitor and every settings shell in the process, so posting into
+        // `NotificationCenter.default` would drive a concurrently-running
+        // suite's monitor and could satisfy its wait for it.
+        let center = NotificationCenter()
+        let monitor = AttachmentFileMonitor(
+            probe: stubProbe(existence: true), activationCenter: center)
         await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
 
         try FileManager.default.removeItem(atPath: target)
-        NotificationCenter.default.post(
-            name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        center.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
 
         try await waitForChange {
             monitor.exists(target) == false

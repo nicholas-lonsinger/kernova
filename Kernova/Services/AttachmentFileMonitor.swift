@@ -95,13 +95,21 @@ final class AttachmentFileMonitor {
     @ObservationIgnored
     private var refreshAllPending: Bool = false
 
-    init(probe: @escaping Probe = AttachmentFileMonitor.defaultProbe) {
+    /// `activationCenter` is where the app-activation trigger is observed. A
+    /// test posts into its own center so the notification reaches only the
+    /// monitor under test — the app-wide name is observed by every live monitor
+    /// and by the settings shell, so a post into `NotificationCenter.default`
+    /// would drive them all.
+    init(
+        probe: @escaping Probe = AttachmentFileMonitor.defaultProbe,
+        activationCenter: NotificationCenter = .default
+    ) {
         self.probe = probe
         let workspace = NSWorkspace.shared.notificationCenter
         let triggers: [(center: NotificationCenter, name: Notification.Name)] = [
             (workspace, NSWorkspace.didMountNotification),
             (workspace, NSWorkspace.didUnmountNotification),
-            (.default, NSApplication.didBecomeActiveNotification),
+            (activationCenter, NSApplication.didBecomeActiveNotification),
         ]
         for trigger in triggers {
             let token = trigger.center.addObserver(
