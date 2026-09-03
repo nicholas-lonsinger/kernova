@@ -38,7 +38,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         loadViewIfNeeded()
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
-        renderedSharedRows = nil
 
         let sections = [
             buildSharedDirectoriesSection(),
@@ -52,6 +51,16 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             panelStack.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
         }
+        // The monitored paths are this instance's, so a rebuild re-seeds them.
+        context.seedFileMonitor()
+        armFileMonitorLoop()
+    }
+
+    /// ``prepareForDisappearance()`` cancels the observation loop, so
+    /// re-appearing starts a fresh one — otherwise a change while hidden freezes
+    /// the missing-folder badges for good.
+    func hostDidAppear() {
+        armFileMonitorLoop()
     }
 
     func refresh() {
@@ -59,6 +68,21 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         refreshGuestAgent()
         refreshClipboard()
         refreshSharedList()
+        context.seedFileMonitor()
+    }
+
+    func prepareForDisappearance() {
+        fileMonitorLoop?.cancel()
+        fileMonitorLoop = nil
+    }
+
+    /// Re-renders the shared list whenever a watched path appears or
+    /// disappears, so a folder that goes missing badges without a revisit.
+    private func armFileMonitorLoop() {
+        fileMonitorLoop?.cancel()
+        fileMonitorLoop = observeRecurring(
+            track: { [monitor = context.fileMonitor] in _ = monitor.existsByPath },
+            apply: { [weak self] in self?.refreshSharedList() })
     }
 
     private func writeSharedDirectories(_ directories: [SharedDirectory]) {
@@ -69,6 +93,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     // Shared Directories
     private var sharedListStack = NSStackView()
+    /// The shared-directory rows and the diff behind them, rebuilt with the
+    /// section's list stack.
+    private var sharedList: VMSettingsKeyedListController<VMSettingsRenderedRow, AttachmentRowView>?
+    private var fileMonitorLoop: ObservationLoop?
 
     // Guest Agent
     private var logForwardingSwitch = NSSwitch()
@@ -91,11 +119,12 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     private var clipboardPassthroughLabel = NSTextField()
     private var clipboardCaption = NSView()
 
-    private var renderedSharedRows: [VMSettingsRenderedRow]?
     // MARK: Shared Directories
 
     private func buildSharedDirectoriesSection() -> NSView {
         sharedListStack = makeGroupedFormListStack()
+        sharedList = VMSettingsKeyedListController(
+            listStack: sharedListStack, emptyMessage: "No shared directories")
         let add = makeGroupedFormPushButton("Add Shared Directory…", target: self, action: #selector(addSharedTapped))
         let card = makeGroupedFormCard(rows: [
             sharedListStack, lockRegistry.lockable(makeGroupedFormButtonRow([add]), add),
@@ -260,41 +289,111 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshSharedList() {
-        let models = currentSharedDirectories.map { directory in
-            VMSettingsRenderedRow(
+        let models = currentSharedDirectories.map { directory -> VMSettingsRenderedRow in
+            let isMissing = !context.fileMonitor.exists(directory.path)
+            return VMSettingsRenderedRow(
                 id: directory.id,
                 iconSystemName: "folder",
                 title: directory.displayName,
                 notes: "",
                 subtitle: directory.path,
-                isMissing: false,
-                missingPath: nil,
+                isMissing: isMissing,
+                missingPath: isMissing ? directory.path : nil,
                 readOnly: directory.readOnly,
                 controlsEnabled: !isReadOnly)
         }
-        guard models != renderedSharedRows else { return }
-        renderedSharedRows = models
-        clearGroupedFormStack(sharedListStack)
-        if models.isEmpty {
-            addGroupedFormFullWidth(makeGroupedFormSecondaryLabel("No shared directories"), to: sharedListStack)
-            return
+        sharedList?.update(
+            models,
+            makeRow: { model in makeSharedRow(model) },
+            applyRow: { model, row in
+                row.update(
+                    title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
+                    missingPath: model.missingPath, readOnly: model.readOnly,
+                    controlsEnabled: model.controlsEnabled)
+                // The attachment lists repaint their subtitle from an off-main
+                // size read, so the row leaves that field alone; a share's
+                // subtitle is its path and is written here.
+                applyAttachmentSubtitle(
+                    to: row.subtitleField, path: model.subtitle, isMissing: model.isMissing)
+            })
+    }
+
+    /// Builds one shared-directory row.
+    ///
+    /// The name is the folder's — which is also what the guest mounts by — and
+    /// a share carries no note, so the title line renders without its inline
+    /// editor while the read-only switch and the remove button stay live.
+    private func makeSharedRow(_ model: VMSettingsRenderedRow) -> AttachmentRowView {
+        let icon = AttachmentIconButton()
+        icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
+        let row = AttachmentRowView(
+            itemID: model.id,
+            title: model.title,
+            notes: model.notes,
+            controlsEnabled: model.controlsEnabled,
+            icon: icon,
+            subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: model.isMissing),
+            readOnlyToggle: makeGroupedFormReadOnlySwitch(
+                id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled, target: self,
+                action: #selector(sharedReadOnlyToggled)),
+            readOnlyCaption: makeGroupedFormReadOnlyCaption(),
+            ejectButton: makeGroupedFormEjectButton(
+                id: model.id, enabled: model.controlsEnabled, target: self,
+                action: #selector(sharedDeleteTapped)),
+            isTitleEditable: false)
+        row.contextMenu = { [weak self] in self?.buildSharedContextMenu(model.id) }
+        return row
+    }
+
+    /// Builds the right-click menu for a shared-directory row, lazily at click
+    /// time so it reflects whether the folder is there now.
+    private func buildSharedContextMenu(_ id: UUID) -> NSMenu? {
+        guard let directory = currentSharedDirectories.first(where: { $0.id == id }) else {
+            return nil
         }
-        for model in models {
-            let icon = NSImageView(image: .systemSymbol("folder", accessibilityDescription: ""))
-            icon.contentTintColor = .secondaryLabelColor
-            icon.setContentHuggingPriority(.required, for: .horizontal)
-            let row = makeGroupedFormListRow(
-                icon: icon,
-                title: model.title,
-                subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: false),
-                id: model.id,
-                readOnly: model.readOnly,
-                controlsEnabled: model.controlsEnabled,
-                target: self,
-                readOnlySelector: #selector(sharedReadOnlyToggled),
-                deleteSelector: #selector(sharedDeleteTapped))
-            addGroupedFormFullWidth(row, to: sharedListStack)
-        }
+        let menu = NSMenu()
+        // Show in Finder's enablement is managed here, from file presence, so
+        // opt out of auto-validation.
+        menu.autoenablesItems = false
+        let showInFinder = sharedMenuItem(
+            "Show in Finder", #selector(menuSharedShowInFinder(_:)), id)
+        // Nothing to reveal when the folder is gone.
+        showInFinder.isEnabled = context.fileMonitor.exists(directory.path)
+        menu.addItem(showInFinder)
+        menu.addItem(sharedMenuItem("Copy Path", #selector(menuSharedCopyPath(_:)), id))
+        menu.addItem(sharedMenuItem("Copy File Name", #selector(menuSharedCopyFileName(_:)), id))
+        return menu
+    }
+
+    private func sharedMenuItem(_ title: String, _ action: Selector, _ id: UUID) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = id.uuidString
+        return item
+    }
+
+    /// The folder a shared-directory menu item stands for, read fresh so an
+    /// edit landing since the menu was built is reflected.
+    private func sharedDirectoryURL(from sender: NSMenuItem) -> URL? {
+        guard let raw = sender.representedObject as? String, let id = UUID(uuidString: raw),
+            let directory = currentSharedDirectories.first(where: { $0.id == id })
+        else { return nil }
+        return URL(fileURLWithPath: directory.path)
+    }
+
+    @objc private func menuSharedShowInFinder(_ sender: NSMenuItem) {
+        guard let url = sharedDirectoryURL(from: sender) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func menuSharedCopyPath(_ sender: NSMenuItem) {
+        guard let url = sharedDirectoryURL(from: sender) else { return }
+        copyToPasteboard(url.path(percentEncoded: false))
+    }
+
+    @objc private func menuSharedCopyFileName(_ sender: NSMenuItem) {
+        guard let url = sharedDirectoryURL(from: sender) else { return }
+        copyToPasteboard(url.lastPathComponent)
     }
 
     @objc private func logForwardingToggled() {

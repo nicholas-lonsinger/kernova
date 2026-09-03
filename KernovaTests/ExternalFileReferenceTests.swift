@@ -362,4 +362,21 @@ struct ExternalFileReferenceTests {
                     (name: "Second", identities: shared),
                 ]) == ["First", "Second"])
     }
+
+    // MARK: - Kind predicates
+
+    @Test("Existence monitoring covers every kind a settings row can badge")
+    func existenceMonitoringCoversTheBadgedKinds() {
+        // The three kinds the settings lists render a row for, each of which
+        // shows the missing-file badge when its file goes away.
+        #expect(ExternalFileReference.Kind.storageDisk.isExistenceMonitored)
+        #expect(ExternalFileReference.Kind.removableMedia.isExistenceMonitored)
+        #expect(ExternalFileReference.Kind.sharedDirectory.isExistenceMonitored)
+
+        // A kernel and an initrd have System-panel rows that state no existence,
+        // and a local IPSW has no row at all.
+        #expect(!ExternalFileReference.Kind.kernel.isExistenceMonitored)
+        #expect(!ExternalFileReference.Kind.initrd.isExistenceMonitored)
+        #expect(!ExternalFileReference.Kind.localIPSW.isExistenceMonitored)
+    }
 }
