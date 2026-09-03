@@ -17,7 +17,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     init(context: VMSettingsPanelContext) {
         self.context = context
+        self.nameLabel = InlineEditableLabel(
+            text: context.instance.name, font: Typography.body, textColor: .labelColor,
+            placeholder: "Name", controlsEnabled: false)
         super.init(nibName: nil, bundle: nil)
+        wireNameLabel()
     }
 
     @available(*, unavailable)
@@ -39,7 +43,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         loadViewIfNeeded()
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
-        nameRowIsEditing = false
         renderedAutoStartWarning = nil
 
         for section in [buildGeneralSection(), buildStartupSection()] {
@@ -54,36 +57,28 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         refreshStartup()
     }
 
-    /// Ends an in-flight name rename for the outgoing instance while it is still
-    /// bound: a rebuild resets the session flags without commit/cancel, which
-    /// would drop the typed text, strand `activeRename` at the old id
-    /// (re-selecting that VM would spontaneously reopen the box), and leave the
-    /// outside-click monitor installed.
+    /// Commits an in-flight name rename for the outgoing instance while it is
+    /// still bound: a rebuild drops the edit box without commit/cancel, which
+    /// would lose the typed text and strand `activeRename` at the old id —
+    /// re-selecting that VM would spontaneously reopen the box.
     func willRebind() {
-        if isViewLoaded, nameRowIsEditing {
-            endNameRenameSession()
-        }
+        if isViewLoaded { nameLabel.endEditing() }
     }
 
     /// Ends an in-flight rename through the commit path (focus loss commits):
-    /// leaving the session flags armed would re-show the edit box on reappear
-    /// with no outside-click monitor and a stale marker.
+    /// an edit left armed would re-show the box on reappear against a stale
+    /// marker.
     func prepareForDisappearance() {
-        if nameRowIsEditing {
-            endNameRenameSession()
-        }
-        removeNameOutsideClickMonitor()
-    }
-
-    /// Fallback teardown of the name-rename monitor for any path that tears the
-    /// pane down without the orderly one.
-    deinit {
-        MainActor.assumeIsolated { removeNameOutsideClickMonitor() }
+        nameLabel.endEditing()
     }
 
     // General
-    private var nameButton = NSButton()
-    private let nameField = NSTextField()
+    /// The name row's value, which doubles as its rename box.
+    ///
+    /// Built once and re-parented into each rebuilt row: the label owns the
+    /// width cap that hugs the box to the name, so one built per `rebuild()`
+    /// would leave the caps of every earlier build stacked on it.
+    private let nameLabel: InlineEditableLabel
     /// The "Installed From" row and its value label, hidden while the VM
     /// carries no record of the image it was set up from.
     private var installedImageRow: GroupedFormCollapsibleRow?
@@ -92,31 +87,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// one; both `nil` for Linux guests, which have no agent to report one.
     private var guestOSVersionRow: GroupedFormCollapsibleRow?
     private var guestOSVersionValueLabel: NSTextField?
-    private var nameDisplayRow = NSView()
-    private var nameEditRow = NSView()
-    private var nameRowIsEditing = false
-    /// Suppresses the end-editing commit while a path that already settled the
-    /// rename (Escape's cancel) resigns the field editor.
-    private var suppressNameEndEditingCommit = false
-    /// Caps the name edit box at its text width so it hugs the name and grows as
-    /// you type (right-aligned, the leading spacer absorbs the slack).
-    ///
-    /// A `<=` bound, not `==`, so a name wider than the form scrolls instead of
-    /// stretching the window. Created once for the lifetime of the reused
-    /// `nameField`, *not* per `buildForm()`: the constraint lives on the field,
-    /// so a copy minted on every instance swap outlives its build cycle — the
-    /// caps accumulate and the smallest constant wins.
-    private lazy var nameEditMaxWidth: NSLayoutConstraint = {
-        let constraint = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
-        constraint.priority = .defaultHigh
-        return constraint
-    }()
-    /// Active only while renaming: ends the edit on a click outside the name field.
-    ///
-    /// Resigns the field editor (committing the current text) — AppKit doesn't end
-    /// field editing when a click lands on the settings card's non-focusable
-    /// space, so without this the box would linger.
-    private var nameOutsideClickMonitor: Any?
 
     // Startup
     private var autoStartSwitch = NSSwitch()
@@ -162,48 +132,39 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         guestOS == .macOS ? "Installed version" : "Installer image"
     }
 
-    private func buildGeneralSection() -> NSView {
-        nameButton = NSButton(title: instance.name, target: self, action: #selector(startRename))
-        nameButton.isBordered = false
-        nameButton.alignment = .right
-        nameButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    /// Points the shared inline-edit machine at this pane's rename verbs.
+    ///
+    /// The closures read `instance` when they fire rather than capturing it, so
+    /// a commit raised while the pane rebinds still lands on the outgoing VM.
+    private func wireNameLabel() {
+        nameLabel.alignment = .right
         // Right-click "Rename" too, matching the storage rows and sidebar (the
         // item is gated by `validateMenuItem` when the VM can't be renamed).
         let renameMenu = NSMenu()
-        let renameItem = NSMenuItem(title: "Rename", action: #selector(startRename), keyEquivalent: "")
+        let renameItem = NSMenuItem(
+            title: "Rename", action: #selector(startRename), keyEquivalent: "")
         renameItem.target = self
         renameMenu.addItem(renameItem)
-        nameButton.menu = renameMenu
-        nameDisplayRow = makeGroupedFormCardRow("Name", control: nameButton)
+        nameLabel.contextMenu = { renameMenu }
+        // A click asks the model to open the rename; it comes back in through
+        // `refreshGeneral`, which is the one place the box opens.
+        nameLabel.onClicked = { [weak self] in self?.startRename() }
+        nameLabel.currentText = { [weak self] in self?.instance.name ?? "" }
+        nameLabel.onEditCommitted = { [weak self] text, _ in
+            guard let self else { return }
+            self.viewModel.commitRename(for: self.instance, newName: text, from: .detail)
+        }
+        nameLabel.onEditCancelled = { [weak self] in
+            guard let self else { return }
+            self.viewModel.cancelRename(for: self.instance, from: .detail)
+        }
+    }
 
-        nameField.placeholderString = "Name"
-        nameField.alignment = .right
-        nameField.delegate = self
-        nameField.cell?.isScrollable = true
-        // The field fills the row (the leading spacer absorbs the slack) and
-        // `nameEditMaxWidth` caps it at the text width. Hug is one step below the
-        // spacer's so the field claims the slack first; compression is low so it
-        // yields (scrolls) rather than pushes.
-        nameField.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
-        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        nameEditRow = makeGroupedFormCardRow("Name", control: nameField)
-        // `.fill` (vs the default gravity-areas) actually stretches the field to
-        // fill the row, so it claims the slack and the `<=` cap below binds —
-        // otherwise the scrollable field sits at its sliver-sized intrinsic.
-        (nameEditRow as? NSStackView)?.distribution = .fill
-        nameEditRow.isHidden = true
-
-        nameEditMaxWidth.isActive = true
-
-        let nameRow = NSStackView(views: [nameDisplayRow, nameEditRow])
-        nameRow.orientation = .vertical
-        nameRow.alignment = .leading
-        nameRow.spacing = Spacing.none
-        nameDisplayRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
-        nameEditRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
-
+    private func buildGeneralSection() -> NSView {
+        // The row's default trailing spacer absorbs the slack, so the label sits
+        // at the trailing edge as a value and hugs the text as an edit box.
         var rows: [NSView] = [
-            nameRow,
+            makeGroupedFormCardRow("Name", control: nameLabel),
             makeGroupedFormCardRow(
                 "Type", control: makeGroupedFormValueLabel(instance.configuration.guestOS.displayName)),
         ]
@@ -317,94 +278,28 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     // MARK: - Refresh
 
     private func refreshGeneral() {
-        nameButton.title = instance.name
-        nameButton.isEnabled = viewModel.capabilities.isAvailable(.rename, on: instance)
+        let canRename = viewModel.capabilities.isAvailable(.rename, on: instance)
+        nameLabel.update(text: instance.name, controlsEnabled: canRename)
+        // A borderless button grays its own title when disabled and a label does
+        // not, so the unavailable-rename appearance is applied here. Never over
+        // an open box: what is being typed is not disabled.
+        if !nameLabel.isEditing {
+            nameLabel.textColor = canRename ? .labelColor : .disabledControlTextColor
+        }
         let installedImage = instance.configuration.installedImage?.displayName
         installedImageValueLabel?.stringValue = installedImage ?? ""
         installedImageRow?.isHidden = installedImage == nil
         let reportedOSVersion = instance.guestOSVersionDisplay
         guestOSVersionValueLabel?.stringValue = reportedOSVersion ?? ""
         guestOSVersionRow?.isHidden = reportedOSVersion == nil
-        let renaming = isRenaming
-        if renaming != nameRowIsEditing {
-            if renaming {
-                nameRowIsEditing = true
-                nameDisplayRow.isHidden = true
-                nameEditRow.isHidden = false
-                nameField.stringValue = instance.name
-                view.window?.makeFirstResponder(nameField)
-                // Re-seed after taking focus: the makeFirstResponder above can
-                // synchronously commit the *other* surface's pending rename,
-                // changing `instance.name` after the seed — and the mutation
-                // lands inside this very apply() pass, so no later pass repairs
-                // an already-open box.
-                nameField.stringValue = instance.name
-                if let editor = nameField.currentEditor() {
-                    editor.string = instance.name
-                    editor.selectAll(nil)
-                }
-                nameEditMaxWidth.constant = InlineRenameSizing.boxWidth(
-                    for: instance.name, font: Typography.body)
-                installNameOutsideClickMonitor()
-            } else {
-                removeNameOutsideClickMonitor()
-                // End a still-active editor session BEFORE flipping the session
-                // flag or hiding the row: the resign flows through
-                // `controlTextDidEndEditing`, whose commit gate reads
-                // `nameRowIsEditing`, so a superseded rename's in-flight text
-                // still commits and no focused-but-invisible editor survives to
-                // swallow keystrokes.
-                if nameField.currentEditor() != nil {
-                    Self.logger.debug(
-                        "Ending superseded name rename session via end-editing commit")
-                    view.window?.makeFirstResponder(nil)
-                }
-                nameRowIsEditing = false
-                nameDisplayRow.isHidden = false
-                nameEditRow.isHidden = true
-            }
+        // The label's own editing flag is the commit gate, so a rename this
+        // surface lost mid-handoff — the marker has already moved to the sidebar
+        // — still commits the text typed here.
+        if isRenaming {
+            nameLabel.beginEditing()
+        } else {
+            nameLabel.endEditing()
         }
-    }
-
-    /// Installs a local mouse-down monitor that ends the rename on an outside click.
-    ///
-    /// Resigns the field editor so `controlTextDidEndEditing` commits when the
-    /// user clicks anywhere outside the name field — AppKit doesn't end field
-    /// editing on clicks that land on non-focusable space in the settings card.
-    private func installNameOutsideClickMonitor() {
-        removeNameOutsideClickMonitor()
-        nameOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            guard let self, self.isRenaming else { return event }
-            let pointInField = self.nameField.convert(event.locationInWindow, from: nil)
-            if !self.nameField.bounds.contains(pointInField) {
-                self.view.window?.makeFirstResponder(nil)
-            }
-            return event
-        }
-    }
-
-    private func removeNameOutsideClickMonitor() {
-        if let monitor = nameOutsideClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            nameOutsideClickMonitor = nil
-        }
-    }
-
-    /// Ends an in-flight name rename through the end-editing commit path.
-    ///
-    /// For paths that bypass `refreshGeneral`'s teardown transition (instance
-    /// rebind, view disappearance): those reset `nameRowIsEditing` out-of-band,
-    /// stranding the typed text, the marker, and the outside-click monitor.
-    private func endNameRenameSession() {
-        if nameField.currentEditor() != nil {
-            view.window?.makeFirstResponder(nil)
-        }
-        removeNameOutsideClickMonitor()
-        nameRowIsEditing = false
-        nameDisplayRow.isHidden = false
-        nameEditRow.isHidden = true
     }
 
     private func refreshStartup() {
@@ -488,53 +383,5 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     @objc private func ephemeralModeToggled() {
         setToggle(.ephemeralMode, to: ephemeralSwitch.state == .on)
-    }
-}
-
-// MARK: - NSTextFieldDelegate
-
-extension VMSettingsGeneralPanelViewController: NSTextFieldDelegate {
-    func controlTextDidChange(_ obj: Notification) {
-        guard (obj.object as? NSTextField) === nameField else { return }
-        let live = nameField.currentEditor()?.string ?? nameField.stringValue
-        nameEditMaxWidth.constant = InlineRenameSizing.boxWidth(for: live, font: Typography.body)
-    }
-
-    func controlTextDidEndEditing(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField else { return }
-        switch field {
-        case nameField:
-            // Gate on the local session flag, not the model marker: when this
-            // surface's rename is superseded mid-handoff the marker has already
-            // moved to the other surface, but the in-flight text must still
-            // commit.
-            if nameRowIsEditing, !suppressNameEndEditingCommit {
-                viewModel.commitRename(
-                    for: instance, newName: nameField.stringValue, from: .detail)
-            }
-        default:
-            break
-        }
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard control === nameField else { return false }
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            // Resign instead of committing directly: the end-editing path is the
-            // single commit path, so Return, outside clicks, and superseded
-            // teardowns all commit the same way.
-            view.window?.makeFirstResponder(nil)
-            return true
-        }
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            // Clear the rename first, then end the field editor with the
-            // commit suppressed so the resign can't write the live buffer.
-            viewModel.cancelRename(for: instance, from: .detail)
-            suppressNameEndEditingCommit = true
-            view.window?.makeFirstResponder(nil)
-            suppressNameEndEditingCommit = false
-            return true
-        }
-        return false
     }
 }
