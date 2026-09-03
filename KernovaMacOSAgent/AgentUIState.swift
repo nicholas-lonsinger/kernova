@@ -49,6 +49,11 @@ enum ClipboardActivity: Equatable, Sendable {
     ///
     /// The copy was made in this guest, so the outcome is reported here.
     case copyCarriedNothing
+    /// A copy crossed, with `skipped` of its items left out of the offer.
+    ///
+    /// The host's readout covers only what the offer carried, so the count the
+    /// copy lost is named here or nowhere.
+    case copyPartlyCarried(skipped: Int)
     /// Host policy turned clipboard sharing off.
     case disabled
 
@@ -56,10 +61,11 @@ enum ClipboardActivity: Equatable, Sendable {
     /// leaving it for the next time the user opens the dropdown.
     ///
     /// True for the outcomes of a gesture made in this guest that produces no
-    /// other signal — a paste that yields nothing, a copy that crosses nothing.
+    /// other signal — a paste that yields nothing, a copy that crosses nothing
+    /// or only part of itself.
     var isNotice: Bool {
         switch self {
-        case .pasteRefused, .copyCarriedNothing:
+        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried:
             return true
         case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled:
             return false

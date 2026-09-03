@@ -242,7 +242,9 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
   guest content, and the auto-publish path. Both reach the pasteboard through KernovaKit's
   `ClipboardPasteboardPublisher` — the one promised write on either side of the wire, driven by the
-  guest agent too.
+  guest agent too. Its read counterpart is `ClipboardPasteboardReader`, the one snapshot-to-offer
+  intake, driven by the host clipboard window, the passthrough poll, `VsockDropService` and the
+  guest agent's pasteboard poll; each caller maps its outcomes to its own surface's wording.
 - `ClipboardTransferReporter` — one per `VMInstance`, fed by `VsockClipboardService`,
   `VsockDropService` and `ClipboardPassthroughCoordinator`. `VMInstance.clipboardTransferReport`
   mirrors it as the observable value every surface renders; `HostAgentStatusItemController` ranks

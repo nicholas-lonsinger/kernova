@@ -1,6 +1,5 @@
 import Foundation
 import KernovaKit
-import UniformTypeIdentifiers
 import os
 
 /// Streams files dropped on the VM display to the guest agent, which writes them
@@ -67,17 +66,6 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
     // Sendable.
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VsockDropService")
-
-    /// One dropped item's cheap metadata, gathered on the main actor before any
-    /// payload-scaled work.
-    private struct DropCandidate: Sendable {
-        let url: URL
-        let uti: String
-        let filename: String
-        /// A file's stat'd size; `nil` until a folder's walk fills it in.
-        let byteCount: Int?
-        let isDirectory: Bool
-    }
 
     // MARK: - Settle contract
 
@@ -225,7 +213,7 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
         let dropped = urls
         let sizeOf = directoryByteCount
         runOffMainActor { [weak self] in
-            let gathered = Self.gather(dropped, sizeOf: sizeOf)
+            let intake = ClipboardPasteboardReader.resolve(filesAt: dropped, sizeOf: sizeOf)
             MainActorBridge.async {
                 // Every path from here either registers the staged files against
                 // an offer generation or frees them: nothing else holds a
@@ -243,7 +231,7 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
                     self.reportRefusal(.interrupted(fileCount: dropped.count))
                     return
                 }
-                guard !gathered.candidates.isEmpty else {
+                guard !intake.representations.isEmpty else {
                     // The gesture happened on this Mac and produced nothing, so
                     // the silence has to be explained here.
                     stagingDirectory.map(DropPromiseStaging.release)
@@ -251,102 +239,10 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
                     return
                 }
                 self.offer(
-                    Self.representations(for: gathered.candidates, sizes: gathered.sizes),
-                    skipped: gathered.unreadable, stagedIn: stagingDirectory)
+                    intake.representations, skipped: intake.skipped, stagedIn: stagingDirectory)
             }
         }
         return true
-    }
-
-    /// What one off-main pass over the dropped URLs produced.
-    private struct GatheredDrop: Sendable {
-        var candidates: [DropCandidate] = []
-        /// A dropped folder's stat-walk estimate, by folder URL.
-        var sizes: [URL: Int] = [:]
-        /// How many of the dropped items could not be read at all.
-        var unreadable = 0
-    }
-
-    /// Reads every dropped item's metadata, sizing any folder among them and
-    /// leaving out the ones this Mac cannot read.
-    ///
-    /// A folder is checked at its root only: AppleArchive's directory encoder
-    /// has no per-entry skip, so an entry inside one that cannot be read fails
-    /// that folder's own transfer, which the batch then leaves out the way it
-    /// leaves out any other unreadable item.
-    ///
-    /// `nonisolated`: each `resourceValues` call is a `stat(2)` and a folder's
-    /// estimate walks its whole tree, so a drag of several hundred items — or one
-    /// deep folder — would otherwise freeze the app for the length of the walk
-    /// (docs/CLIPBOARD.md §8). The URLs are read off the drag pasteboard on the
-    /// main actor, and the sandbox extension that arrives with them covers the
-    /// process, so reading them from here needs nothing further.
-    nonisolated private static func gather(
-        _ urls: [URL], sizeOf: @Sendable (URL) -> Int
-    ) -> GatheredDrop {
-        var gathered = GatheredDrop()
-        for url in urls {
-            guard let source = readableSource(for: url),
-                let values = try? source.resourceValues(forKeys: [
-                    .contentTypeKey, .isDirectoryKey, .fileSizeKey,
-                ])
-            else {
-                gathered.unreadable += 1
-                continue
-            }
-            // The name the user dragged, whatever the bytes are read from.
-            let filename = url.lastPathComponent
-            if values.isDirectory == true {
-                gathered.candidates.append(
-                    DropCandidate(
-                        url: source, uti: (values.contentType ?? .folder).identifier,
-                        filename: filename, byteCount: nil, isDirectory: true))
-                gathered.sizes[source] = sizeOf(source)
-            } else if let type = values.contentType, let size = values.fileSize {
-                gathered.candidates.append(
-                    DropCandidate(
-                        url: source, uti: type.identifier, filename: filename,
-                        byteCount: size, isDirectory: false))
-            } else {
-                gathered.unreadable += 1
-            }
-        }
-        return gathered
-    }
-
-    /// Where one dropped item's bytes are read from, or `nil` when there are
-    /// none to read: a link with nothing at the end of it, an item this process
-    /// cannot open, one deleted since the drag began.
-    ///
-    /// A symlink crosses as its target's content under the dragged name, which
-    /// is what copying one in Finder delivers. `stat(2)` alone answers none of
-    /// this — a mode-`000` file stats exactly like a readable one — so the
-    /// open permission is asked for separately.
-    nonisolated private static func readableSource(for url: URL) -> URL? {
-        let isSymbolicLink =
-            (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
-        let source = isSymbolicLink ? url.resolvingSymlinksInPath() : url
-        guard (try? source.checkResourceIsReachable()) == true,
-            FileManager.default.isReadableFile(atPath: source.path)
-        else { return nil }
-        return source
-    }
-
-    /// Builds one representation per dropped item, taking a folder's size from
-    /// the completed walk.
-    private static func representations(
-        for candidates: [DropCandidate], sizes: [URL: Int]
-    ) -> [ClipboardContent.Representation] {
-        candidates.map { candidate in
-            guard candidate.isDirectory else {
-                return ClipboardContent.Representation(
-                    uti: candidate.uti, fileURL: candidate.url,
-                    byteCount: candidate.byteCount ?? 0, filename: candidate.filename)
-            }
-            return ClipboardContent.Representation(
-                directorySourceURL: candidate.url, estimatedByteCount: sizes[candidate.url] ?? 0,
-                filename: candidate.filename, uti: candidate.uti)
-        }
     }
 
     /// Announces the drop, opening the readout that spans every file in it, and

@@ -91,12 +91,24 @@ struct AgentMenuTextTests {
 
     @Test("a copy that carried nothing says so rather than naming a cause it can't know")
     func clipboardCopyCarriedNothingLine() {
-        // Unreadable items, an all-filtered flavor set and a pasteboard whose
-        // every item is already staged all reach this line, so it names the
-        // outcome the user can see and no reason it would have to guess at.
+        // Unreadable items, a copy whose files are gone and an all-filtered
+        // flavor set all reach this line, so it names the outcome the user can
+        // see and no reason it would have to guess at.
         #expect(
             AgentMenuText.clipboardLine(.copyCarriedNothing)
                 == "Clipboard: nothing in that copy could be shared")
+    }
+
+    @Test("a copy that partly crossed names how many items it left out")
+    func clipboardCopyPartlyCarriedLine() {
+        // The host's readout covers what the offer carried, so the count is
+        // named here or nowhere.
+        #expect(
+            AgentMenuText.clipboardLine(.copyPartlyCarried(skipped: 1))
+                == "Clipboard: shared with host — 1 item couldn't be")
+        #expect(
+            AgentMenuText.clipboardLine(.copyPartlyCarried(skipped: 3))
+                == "Clipboard: shared with host — 3 items couldn't be")
     }
 
     // MARK: - isNotice
@@ -105,6 +117,7 @@ struct AgentMenuTextTests {
     func noticeActivities() {
         #expect(ClipboardActivity.pasteRefused(.pasteFailed, pasteLimitBytes: nil).isNotice)
         #expect(ClipboardActivity.copyCarriedNothing.isNotice)
+        #expect(ClipboardActivity.copyPartlyCarried(skipped: 1).isNotice)
         for activity: ClipboardActivity in [
             .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled,
         ] {
