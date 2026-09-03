@@ -8,11 +8,11 @@ import AppKit
 /// and read the instance through `self.instance`, so a deleted VM is never kept
 /// alive.
 ///
-/// Inline rename reuses the name field: the controller flips the row into editing
-/// via ``setRenaming(_:)`` and the cell, acting as the field's delegate, commits
-/// on Return/focus-loss and cancels on Escape.
+/// Inline rename reuses the name label: the controller opens the box with
+/// ``beginRename()`` and ends it with ``endRename()``, and the shared
+/// ``InlineEditableLabel`` commits on Return/focus-loss and cancels on Escape.
 @MainActor
-final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
+final class SidebarVMRowCellView: NSTableCellView {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("SidebarVMRowCell")
 
     /// Layout metrics shared by `buildLayout()` and the snap-to-fit measurement,
@@ -38,29 +38,25 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// lifecycle operation no ``VMStatus`` case represents.
     private var isBusy: (() -> Bool)?
 
-    /// `true` while the name field is in its editable rename state.
-    private(set) var isRenaming = false
-
-    /// Suppresses the commit path while an Escape-driven cancel tears down the
-    /// field editor (ending editing would otherwise also fire a commit).
-    private var isCancellingRename = false
+    /// `true` while the name label is in its editable rename state.
+    var isRenaming: Bool { nameLabel.isEditing }
 
     // MARK: - Subviews
 
     private let iconView = NSImageView()
-    private let nameField = NSTextField()
+    /// The row's name, and the rename box it becomes.
+    ///
+    /// Clicks belong to the enclosing outline view: it arms the slow-second
+    /// click itself and does its own selection and drag tracking.
+    private let nameLabel = InlineEditableLabel(
+        text: "", font: Typography.body, textColor: .labelColor, placeholder: "",
+        controlsEnabled: true, clickHandling: .delegatedToEnclosingView)
     private let ephemeralBadge = SidebarEphemeralBadgeView()
     private let agentButton = SidebarAgentStatusButtonView()
     private let spinner = NSProgressIndicator()
-    /// A flexible filler trailing the name so the name field can hug its text
+    /// A flexible filler trailing the name so the name label can hug its text
     /// while renaming; inert in the display state.
     private let nameSpacer = NSView()
-    /// Caps the name field at its text width while renaming so the box hugs it.
-    ///
-    /// A `<=` bound, *not* `==`, so a long name in a narrow sidebar fills the
-    /// available width and scrolls rather than the box demanding room and
-    /// stretching the window.
-    private var nameEditMaxWidth: NSLayoutConstraint?
 
     // MARK: - Init
 
@@ -81,19 +77,17 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        nameField.translatesAutoresizingMaskIntoConstraints = false
-        nameField.isBordered = false
-        nameField.drawsBackground = false
-        nameField.isEditable = false
-        nameField.isSelectable = false
-        nameField.font = Typography.body
-        nameField.lineBreakMode = .byTruncatingTail
-        nameField.maximumNumberOfLines = 1
-        nameField.cell?.usesSingleLineMode = true
-        nameField.delegate = self
-        nameField.cell?.isScrollable = true
-        nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The label hugs its own text by default, which would shrink the display
+        // name to a hit region narrower than the name area a slow second click
+        // arms the rename from. Filling the row instead — with `nameSpacer`
+        // hugging one step harder — is what `isPointOverName` measures against.
+        nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        nameLabel.currentText = { [weak self] in self?.instance?.name }
+        nameLabel.onEditCommitted = { [weak self] newName, endedByReturn in
+            self?.onCommitRename?(newName, endedByReturn)
+        }
+        nameLabel.onEditCancelled = { [weak self] in self?.onCancelRename?() }
 
         // The filler hugs slightly more eagerly than the name field, so the name
         // claims the spare width in the display state, and while renaming the
@@ -123,26 +117,21 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         // shift when they swap. The agent badge stays outermost — it is the one
         // that asks for action, where the ephemeral badge only states a policy.
         let row = NSStackView(views: [
-            iconView, spinner, nameField, nameSpacer, ephemeralBadge, agentButton,
+            iconView, spinner, nameLabel, nameSpacer, ephemeralBadge, agentButton,
         ])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
         row.spacing = Spacing.small
         // No gap between the name and its filler.
-        row.setCustomSpacing(0, after: nameField)
+        row.setCustomSpacing(0, after: nameLabel)
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
-
-        // Inactive here, so the name fills the row in its display state.
-        let editMax = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
-        editMax.priority = .defaultHigh
-        nameEditMaxWidth = editMax
 
         // The icon is deliberately not wired to `imageView`: its state color is
         // baked into a non-template symbol image, so the source list's selection
         // vibrancy leaves it alone instead of drawing it white.
-        textField = nameField
+        textField = nameLabel
 
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.rowLeadingInset),
@@ -185,7 +174,14 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         agentButton.onDismiss = onDismissAgentNudge
 
         applyLiveState()
-        setRenaming(isRenaming)
+        // Re-applied on reconfigure, so a reload mid-rename keeps the box open.
+        // A recycled row's edit is abandoned rather than committed: its typed
+        // text belongs to the VM the cell used to show.
+        if isRenaming {
+            nameLabel.beginEditing()
+        } else {
+            nameLabel.abandonEditing()
+        }
 
         rowObservation?.cancel()
         rowObservation = observeRecurring(
@@ -217,10 +213,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     private func applyLiveState() {
         guard let instance else { return }
 
-        // Don't overwrite the field while the user is mid-rename.
-        if !isRenaming {
-            nameField.stringValue = instance.name
-        }
+        // Self-guards mid-rename, leaving the open box's text alone.
+        nameLabel.update(text: instance.name, controlsEnabled: true)
 
         let busy = isBusy?() ?? false
         if busy {
@@ -288,108 +282,20 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// `true` when `point` (in this cell's coordinate space) is over the editable
     /// name, so a slow-second-click rename starts only over the name itself.
     func isPointOverName(_ point: NSPoint) -> Bool {
-        // Convert into the name field's own space — its `frame` is relative to the
+        // Convert into the name label's own space — its `frame` is relative to the
         // inset row stack, not the cell, so comparing directly never matches.
-        guard !nameField.isHidden else { return false }
-        return nameField.bounds.contains(nameField.convert(point, from: self))
+        guard !nameLabel.isHidden else { return false }
+        return nameLabel.bounds.contains(nameLabel.convert(point, from: self))
     }
 
-    /// Flips the name field between display and editable states.
-    ///
-    /// Re-applied on reconfigure, so a reload mid-rename keeps the field editable.
-    func setRenaming(_ renaming: Bool) {
-        guard renaming != isRenaming else { return }
-        isRenaming = renaming
-
-        if renaming {
-            nameField.isEditable = true
-            nameField.isSelectable = true
-            nameField.isBezeled = true
-            nameField.drawsBackground = true
-            if let instance { nameField.stringValue = instance.name }
-            // Re-capped as the user types.
-            updateRenameBoxWidth(for: nameField.stringValue)
-            nameEditMaxWidth?.isActive = true
-            window?.makeFirstResponder(nameField)
-            // Re-seed after taking focus: the makeFirstResponder above can
-            // synchronously commit the detail surface's pending rename, changing
-            // the name after the seed above.
-            if let instance, nameField.stringValue != instance.name {
-                nameField.stringValue = instance.name
-                nameField.currentEditor()?.string = instance.name
-                updateRenameBoxWidth(for: instance.name)
-            }
-            nameField.currentEditor()?.selectAll(nil)
-        } else {
-            nameField.isEditable = false
-            nameField.isSelectable = false
-            nameField.isBordered = false
-            nameField.isBezeled = false
-            nameField.drawsBackground = false
-            // Back to filling the row for the display label.
-            nameEditMaxWidth?.isActive = false
-            if let instance { nameField.stringValue = instance.name }
-        }
+    /// Opens the rename box on this row.
+    func beginRename() {
+        nameLabel.beginEditing()
     }
 
-    /// Ends a live edit session through the normal commit path.
-    ///
-    /// Resigns the field editor while `isRenaming` is still set, so
-    /// `controlTextDidEndEditing` commits the in-flight text. Callers must use
-    /// this BEFORE `setRenaming(false)`, which flips the commit gate without
-    /// resigning the editor — a later resign then silently drops the typed text.
-    func commitActiveRenameSession() {
-        guard isRenaming, nameField.currentEditor() != nil else { return }
-        window?.makeFirstResponder(nil)
-    }
-
-    /// Caps the rename box at the width of `text` so it hugs the name.
-    private func updateRenameBoxWidth(for text: String) {
-        nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(for: text, font: Typography.body)
-    }
-
-    func controlTextDidChange(_ obj: Notification) {
-        // Grow/shrink the box with the live text so it stays snug while typing.
-        let live = nameField.currentEditor()?.string ?? nameField.stringValue
-        updateRenameBoxWidth(for: live)
-    }
-
-    func controlTextDidEndEditing(_ obj: Notification) {
-        guard isRenaming, !isCancellingRename else { return }
-        let newName = nameField.stringValue
-        // Whether editing ended by Return (vs a click elsewhere): the controller
-        // restores sidebar focus only for Return.
-        let endedByReturn =
-            (obj.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.return.rawValue
-        setRenaming(false)
-        onCommitRename?(newName, endedByReturn)
-    }
-
-    func control(
-        _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
-    ) -> Bool {
-        guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
-        isCancellingRename = true
-        // Revert the live buffer and resign so the field editor actually tears
-        // down — setting `isEditable = false` in `setRenaming(false)` alone leaves
-        // it active, so the box would stay in its editing state.
-        if let instance { nameField.currentEditor()?.string = instance.name }
-        window?.makeFirstResponder(nil)
-        setRenaming(false)
-        isCancellingRename = false
-        onCancelRename?()
-        return true
-    }
-
-    /// Re-establishes first-responder focus when a renaming cell joins a window.
-    ///
-    /// During `reloadData` the cell is configured (and `setRenaming` runs) before
-    /// it's in the window hierarchy, so the `makeFirstResponder` there no-ops.
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard isRenaming, let window else { return }
-        window.makeFirstResponder(nameField)
-        nameField.currentEditor()?.selectAll(nil)
+    /// Ends a live rename through the commit path, so the in-flight text lands.
+    func endRename() {
+        nameLabel.endEditing()
     }
 
     // MARK: - Reuse
@@ -398,7 +304,9 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         super.prepareForReuse()
         rowObservation?.cancel()
         rowObservation = nil
-        setRenaming(false)
+        // Silently: a recycled row's typed name belongs to the VM it used to
+        // show, so committing it here would rename that VM behind the user.
+        nameLabel.abandonEditing()
         instance = nil
         onCommitRename = nil
         onCancelRename = nil
@@ -434,7 +342,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         return width
     }
 
-    /// A borderless field configured like the row's `nameField`, reused to
+    /// A borderless field configured like the row's `nameLabel`, reused to
     /// measure label widths. Its `fittingSize` includes `NSTextField`'s internal
     /// text inset — which a bare `NSString.size(withAttributes:)` omits, leaving
     /// the snapped sidebar a few points too narrow and the name still truncated.

@@ -258,6 +258,96 @@ struct SidebarViewControllerTests {
         #expect(controller.reloadInstancesCallCountForTesting > reloadsWhileOffScreen)
     }
 
+    // MARK: - Inline rename
+
+    /// The row's name label, which is also the box a rename opens.
+    private func nameLabel(in cell: SidebarVMRowCellView) throws -> InlineEditableLabel {
+        try #require(firstSubview(InlineEditableLabel.self, in: cell))
+    }
+
+    private func makeRenamingRow(
+        instance: VMInstance, onCommitRename: @escaping (String, Bool) -> Void = { _, _ in }
+    ) -> SidebarVMRowCellView {
+        let cell = SidebarVMRowCellView()
+        cell.configure(
+            instance: instance,
+            isRenaming: true,
+            installPromptDisabled: false,
+            isBusy: { false },
+            onCommitRename: onCommitRename,
+            onCancelRename: {},
+            onMountAgent: {},
+            onDismissAgentNudge: {})
+        return cell
+    }
+
+    /// During `reloadData` the row is configured — rename and all — before it
+    /// joins the outline view's window, so the focus has to be re-established
+    /// when it does.
+    @Test("A rename armed off-window takes focus once the row joins one")
+    func renameArmedOffWindowTakesFocusOnJoin() throws {
+        let instance = makeInstance()
+        let cell = makeRenamingRow(instance: instance)
+        let label = try nameLabel(in: cell)
+
+        #expect(cell.isRenaming)
+        #expect(label.isEditable)
+        #expect(label.currentEditor() == nil)
+
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = cell
+        defer { window.close() }
+
+        #expect(label.currentEditor() != nil)
+        #expect(cell.isRenaming)
+    }
+
+    /// The controller restores sidebar focus only for a keyboard Return, so the
+    /// flag has to survive the trip out of the shared label.
+    @Test("A Return-terminated rename reports that it ended by Return")
+    func renameCommitReportsEndedByReturn() throws {
+        let instance = makeInstance()
+        var commits: [(name: String, endedByReturn: Bool)] = []
+        let cell = makeRenamingRow(instance: instance) { commits.append(($0, $1)) }
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = cell
+        defer { window.close() }
+        let label = try nameLabel(in: cell)
+
+        label.currentEditor()?.string = "Renamed"
+        label.stringValue = "Renamed"
+        label.controlTextDidEndEditing(
+            Notification(
+                name: NSControl.textDidEndEditingNotification, object: label,
+                userInfo: ["NSTextMovement": NSTextMovement.return.rawValue]))
+
+        #expect(commits.count == 1)
+        #expect(commits.first?.name == "Renamed")
+        #expect(commits.first?.endedByReturn == true)
+        #expect(!cell.isRenaming)
+    }
+
+    /// A recycled row carries typed text belonging to the VM it used to show,
+    /// so the reuse teardown must drop it rather than commit it.
+    @Test("Recycling a row mid-rename commits nothing")
+    func recyclingARenamingRowCommitsNothing() throws {
+        let instance = makeInstance()
+        var commits = 0
+        let cell = makeRenamingRow(instance: instance) { _, _ in commits += 1 }
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = cell
+        defer { window.close() }
+        let label = try nameLabel(in: cell)
+        label.currentEditor()?.string = "Half-typed"
+        label.stringValue = "Half-typed"
+
+        cell.prepareForReuse()
+
+        #expect(commits == 0)
+        #expect(!cell.isRenaming)
+        #expect(!label.isEditable)
+    }
+
     // MARK: - Reorder index math
 
     @Test("reorderTarget maps drops and skips no-ops")

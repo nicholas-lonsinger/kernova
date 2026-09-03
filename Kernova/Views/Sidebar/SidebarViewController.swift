@@ -272,7 +272,7 @@ final class SidebarViewController: NSViewController {
         if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
             as? SidebarVMRowCellView
         {
-            cell.setRenaming(true)
+            cell.beginRename()
         }
         setRowUnemphasized(true, atRow: row)
     }
@@ -286,12 +286,7 @@ final class SidebarViewController: NSViewController {
         if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
             as? SidebarVMRowCellView
         {
-            // Commit a live session before flipping the cell's rename flag:
-            // `setRenaming(false)` alone gates off `controlTextDidEndEditing`
-            // without resigning the editor, so a later resign would silently drop
-            // the typed text.
-            cell.commitActiveRenameSession()
-            cell.setRenaming(false)
+            cell.endRename()
         }
         // Settle the selection emphasis back to its natural state now that the
         // edit is torn down.

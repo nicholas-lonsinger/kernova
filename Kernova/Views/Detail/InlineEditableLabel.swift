@@ -53,8 +53,10 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// The authoritative text, re-read after the label takes first responder.
     ///
     /// Leave it `nil` where the value has one editing surface: the seed the
-    /// edit opened with is then the only text there is.
-    var currentText: (() -> String)?
+    /// edit opened with is then the only text there is. Returning `nil` from it
+    /// says the same for one call — a row bound to nothing has no name to
+    /// re-seed from.
+    var currentText: (() -> String?)?
 
     /// A `<=` cap on the label's width, activated only while editing.
     ///
@@ -212,7 +214,7 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// inside this very pass, so no later pass repairs an already-open box.
     /// `originalText` moves with it, so Escape reverts to the handed-off text.
     private func reseedFromCurrentText() {
-        guard let text = currentText?(), text != stringValue else { return }
+        guard let source = currentText, let text = source(), text != stringValue else { return }
         originalText = text
         stringValue = text
         currentEditor()?.string = text
