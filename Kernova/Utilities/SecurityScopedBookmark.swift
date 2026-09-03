@@ -48,14 +48,28 @@ enum SecurityScopedBookmark {
         }
     }
 
+    /// Resolution options for an advisory read: mounts nothing and puts no
+    /// system UI on screen.
+    ///
+    /// The default `[.withSecurityScope]` resolution is free to mount a network
+    /// volume, and to show the system's own UI while it does. Every caller whose
+    /// answer only feeds an affordance resolves through this instead, so a
+    /// bookmark pointing at an unmounted volume costs one denial rather than a
+    /// mount attempt the user did not ask for.
+    static let advisoryResolution: URL.BookmarkResolutionOptions = [
+        .withSecurityScope, .withoutUI, .withoutMounting,
+    ]
+
     /// Runs `body` with the bookmark's scope active, passing the resolved
     /// URL (which tracks a moved file) — or `fallback` with no scope when
     /// the bookmark is absent or dead, letting the raw-path attempt surface
     /// the usual sandbox denial.
     static func withResolvedURL<T>(
-        bookmark: Data?, fallback: URL, _ body: (URL) throws -> T
+        bookmark: Data?, fallback: URL,
+        options: URL.BookmarkResolutionOptions = [.withSecurityScope],
+        _ body: (URL) throws -> T
     ) rethrows -> T {
-        guard let bookmark, let scope = ScopedAccess(bookmark: bookmark) else {
+        guard let bookmark, let scope = ScopedAccess(bookmark: bookmark, options: options) else {
             return try body(fallback)
         }
         defer { scope.release() }
@@ -65,8 +79,17 @@ enum SecurityScopedBookmark {
     /// Existence check that honors a bookmark when present: probes the
     /// bookmark's resolved location under a momentary scope, so a file the
     /// bookmark still tracks after a move reads as existing.
+    ///
+    /// Advisory, so it resolves through ``advisoryResolution``: this runs on
+    /// every re-probe `AttachmentFileMonitor.revalidate()` sweeps, and a badge
+    /// is never worth mounting a volume for. An auto-mounting volume that is
+    /// currently unmounted therefore reads as missing, which the authoritative
+    /// check at VM start still overrules.
     static func fileExists(atPath path: String, bookmark: Data?) -> Bool {
-        withResolvedURL(bookmark: bookmark, fallback: URL(fileURLWithPath: path)) { url in
+        withResolvedURL(
+            bookmark: bookmark, fallback: URL(fileURLWithPath: path),
+            options: advisoryResolution
+        ) { url in
             FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
         }
     }
@@ -74,12 +97,10 @@ enum SecurityScopedBookmark {
     /// The path `data` currently points at, without starting a scope — the
     /// identity of the file a reference tracks, for comparison alone.
     ///
-    /// Resolution stays silent and side-effect free: the shared-file check runs
-    /// over every library VM's references on an advisory path, where a UI prompt
-    /// or a network-volume mount would be a surprise.
+    /// Advisory: the shared-file check runs over every library VM's references,
+    /// where a UI prompt or a network-volume mount would be a surprise.
     static func resolvedTargetPath(_ data: Data) -> String? {
-        resolve(data, options: [.withSecurityScope, .withoutUI, .withoutMounting])?
-            .url.path(percentEncoded: false)
+        resolve(data, options: advisoryResolution)?.url.path(percentEncoded: false)
     }
 
     /// Resolves bookmark data back to a URL, or `nil` (logged) when the
@@ -130,8 +151,13 @@ final class ScopedAccess {
 
     /// Resolves `bookmark` and starts scoped access; `nil` when the
     /// bookmark doesn't resolve.
-    init?(bookmark: Data) {
-        guard let resolution = SecurityScopedBookmark.resolve(bookmark) else { return nil }
+    ///
+    /// An advisory caller passes `SecurityScopedBookmark.advisoryResolution` so
+    /// the resolution neither mounts a volume nor shows UI.
+    init?(bookmark: Data, options: URL.BookmarkResolutionOptions = [.withSecurityScope]) {
+        guard let resolution = SecurityScopedBookmark.resolve(bookmark, options: options) else {
+            return nil
+        }
         self.url = resolution.url
         self.isStale = resolution.isStale
         self.didStart = resolution.url.startAccessingSecurityScopedResource()

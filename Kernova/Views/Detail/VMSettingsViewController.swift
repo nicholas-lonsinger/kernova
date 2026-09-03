@@ -200,6 +200,10 @@ final class VMSettingsViewController: NSViewController {
         super.viewDidAppear()
         panelContext.setDismissed(false)
         livePanels.forEach { $0.hostDidAppear() }
+        // The pane coming back is a coarse re-ask: `seedFileMonitor()` only diffs,
+        // so an attachment deleted while this was off screen keeps its old answer
+        // until something re-probes it.
+        panelContext.fileMonitor.revalidate()
         if modelObservation == nil {
             restartModelObservation()
             NotificationCenter.default.addObserver(
@@ -394,6 +398,9 @@ extension VMSettingsViewController {
         width.isActive = true
         installedPanelWidth = width
         installedPanel = category
+        // Drilling into a category is the other coarse re-ask, and the one that
+        // covers a deletion made while Kernova stayed frontmost.
+        panelContext.fileMonitor.revalidate()
     }
 
     /// Takes the open panel's view out of the form, leaving its controller — and
@@ -529,7 +536,6 @@ extension VMSettingsViewController {
 
     @objc private func appDidBecomeActive() {
         panelContext.overview.rereadMicPermission()
-        livePanels.forEach { $0.hostDidBecomeActive() }
         apply()
     }
 }

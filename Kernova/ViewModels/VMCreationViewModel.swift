@@ -412,7 +412,7 @@ final class VMCreationViewModel {
                     self.localFileInspectionTask = nil
                 }
             }
-            let scope = bookmark.flatMap(ScopedAccess.init(bookmark:))
+            let scope = bookmark.flatMap { ScopedAccess(bookmark: $0) }
             defer { scope?.release() }
             let url = scope?.url ?? URL(fileURLWithPath: path)
             let inspection: LocalRestoreImageInspection
