@@ -34,6 +34,8 @@ enum AgentMenuText {
         case .pasteRefused(let code, let pasteLimitBytes):
             return "Clipboard: \(pasteRefusalDetail(code, pasteLimitBytes: pasteLimitBytes))"
         case .copyCarriedNothing: return "Clipboard: nothing in that copy could be shared"
+        case .copyPartlyCarried(let skipped):
+            return "Clipboard: shared with host — \(skipped) item\(skipped == 1 ? "" : "s") couldn't be"
         case .disabled: return "Clipboard: disabled"
         }
     }

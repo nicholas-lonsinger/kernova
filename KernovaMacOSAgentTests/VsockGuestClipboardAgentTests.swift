@@ -12,11 +12,11 @@ import UniformTypeIdentifiers
 ///
 /// The write half — promise registration, the OS-fires-a-provider seam, the
 /// write-failure seam — is the shared double both ends of the wire use. Added
-/// here: the read members `Pasteboard` adds on top of `ClipboardWritePasteboard`,
-/// and the test-only resident setup (`setItem`/`setItems`/`setString`) that
-/// models a *user* copying inside the guest, which the agent's outbound poll
-/// reads. A promise write leaves no resident bytes; a fired provider's bytes
-/// become resident, as a real `NSPasteboardItem` retains them.
+/// here: the read half `Pasteboard` composes with it, and the test-only
+/// resident setup (`setItem`/`setItems`/`setString`) that models a *user*
+/// copying inside the guest, which the agent's outbound poll reads. A promise
+/// write leaves no resident bytes; a fired provider's bytes are what its item
+/// serves from afterwards, as a real `NSPasteboardItem` retains them.
 ///
 /// Thread-safe: ``invokeProvider(forType:itemIndex:)`` blocks its calling thread
 /// until the lazy pull behind the promise resolves, so it runs off the test's
@@ -24,30 +24,25 @@ import UniformTypeIdentifiers
 final class FakePasteboard: Pasteboard, @unchecked Sendable {
     private let writer = FakeWritePasteboard()
     private let lock = NSLock()
-    /// Resident (type, data) pairs — a user's own copy, or bytes a fired
-    /// provider resolved.
-    private var residents: [(type: NSPasteboard.PasteboardType, data: Data)] = []
+    /// Resident items — a user's own copy, one entry per pasteboard item.
+    private var residents: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
+    /// Bytes a fired provider resolved, which a promised item serves from.
+    private var resolved: [NSPasteboard.PasteboardType: Data] = [:]
 
     /// Fires after every mutation; await it instead of polling.
     var changed: AsyncGate { writer.changed }
 
     var changeCount: Int { writer.changeCount }
 
-    var firstItemTypes: [NSPasteboard.PasteboardType] {
-        if let promised = writer.promisedTypesByItem.first { return promised }
-        return lock.withLock { residents.map(\.type) }
-    }
-
-    var itemFileURLs: [URL] {
-        lock.withLock {
-            residents
-                .filter { $0.type == .fileURL }
-                .compactMap { String(data: $0.data, encoding: .utf8).flatMap(URL.init(string:)) }
+    /// The pasteboard's items: a standing promise's, which serve only what a
+    /// fired provider has already resolved, or the user's own copy.
+    var items: [any ClipboardPasteboardItemReading] {
+        let promised = writer.promisedTypesByItem
+        guard promised.isEmpty else {
+            let bytes = lock.withLock { resolved }
+            return promised.map { FakePasteboardItem(types: $0, bytes: bytes) }
         }
-    }
-
-    func data(forType type: NSPasteboard.PasteboardType) -> Data? {
-        lock.withLock { residents.first { $0.type == type }?.data }
+        return lock.withLock { residents }.map(FakePasteboardItem.init)
     }
 
     // MARK: - Promised writes
@@ -83,10 +78,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         guard let bytes = writer.invokeProvider(forType: type, itemIndex: itemIndex) else {
             return nil
         }
-        lock.withLock {
-            residents.removeAll { $0.type == type }
-            residents.append((type: type, data: bytes))
-        }
+        lock.withLock { resolved[type] = bytes }
         return bytes
     }
 
@@ -125,7 +117,10 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     /// in the guest.
     @discardableResult
     func setItems(_ items: [[(type: NSPasteboard.PasteboardType, data: Data)]]) -> Bool {
-        lock.withLock { residents = items.flatMap { $0 } }
+        lock.withLock {
+            residents = items
+            resolved.removeAll()
+        }
         // Drops any promise and bumps the change count, as a real write does.
         writer.clearContents()
         return true
@@ -138,7 +133,12 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         setItem([(type: type, data: Data(string.utf8))])
     }
 
-    private func clearResidents() { lock.withLock { residents.removeAll() } }
+    private func clearResidents() {
+        lock.withLock {
+            residents.removeAll()
+            resolved.removeAll()
+        }
+    }
 }
 
 // MARK: - Test Suite
@@ -645,7 +645,7 @@ struct VsockGuestClipboardAgentTests {
         let walked = AsyncGate()
         let walks = Box(0)
         await MainActor.run {
-            agent.onFolderEstimateCompletedForTesting = {
+            agent.onFileResolveCompletedForTesting = {
                 walks.value += 1
                 walked.notify()
             }
@@ -795,6 +795,89 @@ struct VsockGuestClipboardAgentTests {
         // owed a second interruption.
         await MainActor.run { agent.checkClipboardChange() }
         #expect(notices.value == 1)
+    }
+
+    @Test("outbound: a copied file deleted since carries nothing — its path never crosses as text")
+    func outboundVanishedFileNeverOffersItsPath() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // A copy this connection watched arrive, so the one after it reads as a
+        // gesture the guest made rather than a standing snapshot re-evaluated.
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+
+        // A Finder ⌘C leaves the file's URL beside its path as text; the file is
+        // deleted, renamed or unmounted before the poll reads the snapshot.
+        let gone = try writeTempFile(name: "gone.txt", data: Data("bye".utf8))
+        defer { try? FileManager.default.removeItem(at: gone.deletingLastPathComponent()) }
+        try FileManager.default.removeItem(at: gone)
+        pasteboard.setItem([
+            (type: .fileURL, data: Data(gone.absoluteString.utf8)),
+            (type: .string, data: Data(gone.path.utf8)),
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // The path text is the file's descriptor, not what the user copied, so
+        // the copy is a total loss: the host's offer is withdrawn and the
+        // guest's own menu is what accounts for it.
+        let release = try await awaitRelease(on: hostChannel)
+        #expect(release.generation == offer.generation)
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(await MainActor.run { agent.clipboardActivity } == .copyCarriedNothing)
+        try await expectNoOffer(from: hostChannel)
+    }
+
+    @Test("outbound: a copy whose second file can't be read offers the first and names the loss")
+    func outboundPartlyReadableCopyNamesWhatItLeftOut() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
+        defer { try? FileManager.default.removeItem(at: readable.deletingLastPathComponent()) }
+        // A mode-000 file stats exactly like a readable one, so only asking for
+        // the open permission separates them.
+        let sealed = try writeTempFile(name: "sealed.txt", data: Data("secret".utf8))
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: sealed.path)
+            try? FileManager.default.removeItem(at: sealed.deletingLastPathComponent())
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: sealed.path)
+
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(readable.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(sealed.absoluteString.utf8))],
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.map(\.filename) == ["readable.txt"])
+
+        // The host's readout covers what the offer carried, so the item it left
+        // out is named here or nowhere (docs/CLIPBOARD.md §13).
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity } == .copyPartlyCarried(skipped: 1))
     }
 
     @Test("outbound: the first poll of a connection re-reads a snapshot without blaming a copy")

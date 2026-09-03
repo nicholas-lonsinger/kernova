@@ -1,42 +1,15 @@
 import AppKit
 import Foundation
 import KernovaKit
-import UniformTypeIdentifiers
 
 // MARK: - Pasteboard protocol
 
-/// The reads `VsockGuestClipboardAgent` makes of `NSPasteboard`, on top of the
-/// write half every clipboard publication goes through.
-protocol Pasteboard: ClipboardWritePasteboard {
-    /// Types of the **first** pasteboard item, in fidelity order; empty when
-    /// the pasteboard holds nothing.
-    var firstItemTypes: [NSPasteboard.PasteboardType] { get }
+/// Both halves of the `NSPasteboard` `VsockGuestClipboardAgent` polls: the read
+/// half every snapshot comes through and the write half every publication goes
+/// through.
+protocol Pasteboard: ClipboardWritePasteboard, ClipboardReadPasteboard {}
 
-    /// File URLs of every pasteboard item that carries a concrete
-    /// `public.file-url`, in item order; empty when no item is a file.
-    var itemFileURLs: [URL] { get }
-
-    func data(forType type: NSPasteboard.PasteboardType) -> Data?
-}
-
-extension NSPasteboard: Pasteboard {
-    var firstItemTypes: [NSPasteboard.PasteboardType] {
-        pasteboardItems?.first?.types ?? []
-    }
-
-    var itemFileURLs: [URL] {
-        (pasteboardItems ?? []).compactMap { item in
-            guard let string = item.string(forType: .fileURL),
-                let url = URL(string: string), url.isFileURL
-            else { return nil }
-            return url
-        }
-    }
-
-    // `NSPasteboard.data(forType:)` reads from "the first pasteboard item that
-    // contains the type", which is the item-0 semantics this protocol wants, so
-    // no explicit implementation is needed here.
-}
+extension NSPasteboard: Pasteboard {}
 
 // MARK: - VsockGuestClipboardAgent
 
@@ -135,10 +108,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// agent launch clears earlier processes' roots.
     private let staging: ClipboardFileStaging
 
-    /// `true` while an off-main folder estimate walk for an outbound offer is
+    /// `true` while an off-main resolve of copied files for an outbound offer is
     /// running, so overlapping 0.5 s polls don't kick off a second walk of the
     /// same content.
-    private var estimateInFlight = false
+    private var resolveInFlight = false
 
     /// A run-loop timer, not a dispatch timer on `.main`: the poll reads promised
     /// flavors, and a fire it reaches — a promise this agent wrote — gets a wait
@@ -167,10 +140,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Test seam.
     var isEnabledForTesting: Bool { enabled }
 
-    /// Fires on the main queue once a copied folder's off-main estimate walk has
-    /// landed — whether or not it offered — so a test can await the walk instead
-    /// of polling for its side effects.
-    var onFolderEstimateCompletedForTesting: (() -> Void)?
+    /// Fires on the main queue once a copy's off-main file resolve has landed —
+    /// whether or not it offered — so a test can await the walk instead of
+    /// polling for its side effects.
+    var onFileResolveCompletedForTesting: (() -> Void)?
 
     /// Delivers a control frame as the consume loop's main-queue hop would, but
     /// synchronously on the caller's main-queue turn, so a test can order it
@@ -327,9 +300,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         endpoint = nil
         liveChannel = nil
-        // A stale in-flight estimate walk's completion checks `liveChannel` and
-        // drops itself; clear the flag now so the next connection can walk again.
-        estimateInFlight = false
+        // A stale in-flight resolve's completion checks `liveChannel` and drops
+        // itself; clear the flag now so the next connection can walk again.
+        resolveInFlight = false
         // The publisher's promise is left standing: Apple requires a data
         // provider stay alive while its item is still on the pasteboard, and the
         // offer behind it stays servable from its cache.
@@ -433,76 +406,49 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
 
-        // Read once: the marker disposition, the flavors worth reading, and the
-        // account an empty result owes the menu all have to describe the same
-        // snapshot.
-        let firstItemTypes = pasteboard.firstItemTypes
-
-        // `org.nspasteboard.*` marker handling, from the unfiltered first-item
-        // type list: a transient/auto-generated snapshot is never offered; a
-        // concealed one (a password) is offered but flagged so the host window
-        // hides it. Folders are never concealed secrets, so the estimate path
-        // below ignores the flag.
-        let disposition = ClipboardSnapshotPolicy.disposition(
-            forTypes: firstItemTypes.map(\.rawValue))
-        if case .suppress(let reason) = disposition {
+        // The shared reader owns every rule about what may cross — marker
+        // disposition, per-item file classification, path-fallback suppression
+        // — so a guest copy and a Mac copy are judged identically. What is left
+        // here is this side's own bookkeeping: the staging-root exclusion, the
+        // change-count gates, and the guest menu's account of the gesture.
+        let snapshot = MainActorBridge.sync {
+            ClipboardPasteboardReader.readSnapshot(from: self.pasteboard, allowsBinary: true)
+        }
+        switch snapshot {
+        case .suppressed(let reason):
             Self.logger.notice(
                 "Clipboard snapshot suppressed by \(String(describing: reason), privacy: .public) marker"
             )
             lastPasteboardChangeCount = currentCount
-            return
-        }
-        let isConcealed = disposition == .conceal
-
-        // Copied *files* (Finder ⌘C) leave one file URL per pasteboard item —
-        // build a disk-backed rep from each (a stat, no read, no size cap); the
-        // bytes stream later when the host requests them.
-        let fileCandidates = fileExpansionCandidates()
-        if !fileCandidates.isEmpty {
-            if fileCandidates.contains(where: { $0.isDirectory }) {
-                // A folder's stat-walk size estimate runs off the main queue
-                // first — the offer's `byte_count` is that estimate; no archive
-                // is built until the host requests the rep.
-                estimateAndOffer(fileCandidates, channel: channel, changeCount: currentCount)
-            } else {
-                let content = ClipboardContent(
-                    representations: fileCandidates.map { candidate in
-                        ClipboardContent.Representation(
-                            uti: candidate.type.identifier, fileURL: candidate.url,
-                            byteCount: candidate.byteCount, filename: candidate.filename)
-                    }, isConcealed: isConcealed)
-                sendOfferIfNeeded(content, changeCount: currentCount)
+        case .empty:
+            noteSnapshotOfferedNothing(pasteboardHeldSomething: false, changeCount: currentCount)
+        case .nothingOfferable:
+            noteSnapshotOfferedNothing(pasteboardHeldSomething: true, changeCount: currentCount)
+        case .textOnlyRefusal:
+            // Unreachable: this poll always reads with `allowsBinary: true`.
+            Self.logger.fault("Clipboard snapshot refused as text-only on a binary transport")
+            assertionFailure("Clipboard snapshot refused as text-only on a binary transport")
+            noteSnapshotOfferedNothing(pasteboardHeldSomething: true, changeCount: currentCount)
+        case .content(let content, let skipped):
+            offer(content, skipped: skipped, changeCount: currentCount)
+        case .pendingFiles(let urls, let unresolved):
+            // A file this agent materialized from a prior inbound paste is the
+            // Mac's own content; offering it back is an echo, not a copy.
+            let offerable = urls.filter { !staging.isInStagingRoot($0) }
+            guard !offerable.isEmpty else {
+                Self.logger.notice(
+                    "Copy held only files materialized from the host — not offered back (conn=\(self.connectionTag, privacy: .public))"
+                )
+                // Deliberate suppression, so nobody's copy came up short: the
+                // pasteboard still moved on, and the offer it displaced is all
+                // that may be withdrawn.
+                noteSnapshotOfferedNothing(
+                    pasteboardHeldSomething: false, changeCount: currentCount)
+                return
             }
-            return
+            resolveAndOffer(
+                offerable, unresolved: unresolved, channel: channel, changeCount: currentCount)
         }
-
-        // Non-file snapshot. NSPasteboard reads run on the main queue.
-        let raw: [(uti: String, data: Data)] = firstItemTypes.compactMap { type in
-            guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
-                return nil
-            }
-            guard let data = pasteboard.data(forType: type) else { return nil }
-            return (uti: type.rawValue, data: data)
-        }
-        let outcome = ClipboardSnapshotPolicy.evaluate(raw)
-
-        if !outcome.skipped.isEmpty {
-            let summary = outcome.skipped
-                .map { "\($0.uti): \(String(describing: $0.reason))" }
-                .joined(separator: ", ")
-            Self.logger.notice(
-                "Clipboard snapshot skipped \(outcome.skipped.count, privacy: .public) representation(s): \(summary, privacy: .public)"
-            )
-        }
-        // `evaluate` builds non-concealed content; re-stamp the flag when the
-        // marker called for it.
-        let content = outcome.content.withConcealed(isConcealed)
-        guard !content.isEmpty else {
-            noteSnapshotOfferedNothing(
-                pasteboardHeldSomething: !firstItemTypes.isEmpty, changeCount: currentCount)
-            return
-        }
-        sendOfferIfNeeded(content, changeCount: currentCount)
     }
 
     /// Retires the host's offer for a snapshot that yielded nothing offerable,
@@ -535,16 +481,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         onClipboardNotice()
     }
 
-    /// Announces `content` to the host when it's non-empty and not an echo of
-    /// what we last wrote/sent, advancing the change-count bookkeeping.
-    private func sendOfferIfNeeded(_ content: ClipboardContent, changeCount: Int) {
+    /// Announces `content` to the host, advancing the change-count bookkeeping,
+    /// then tells the guest's own menu when the copy behind it left `skipped` of
+    /// its items out.
+    ///
+    /// The gesture was made in this guest, so a partial loss is accounted for
+    /// here (docs/CLIPBOARD.md §13): the host's readout covers only what the
+    /// offer carried, and nothing else would name the difference.
+    private func offer(_ content: ClipboardContent, skipped: Int, changeCount: Int) {
         guard let endpoint else { return }
-        guard !content.isEmpty else {
-            // A caller that can observe an empty snapshot classifies it itself;
-            // one that hasn't can't claim a copy came up short.
-            noteSnapshotOfferedNothing(pasteboardHeldSomething: false, changeCount: changeCount)
-            return
-        }
         switch MainActorBridge.sync({ endpoint.offer(content) }) {
         case .sent, .duplicate:
             // Content the host already holds is as good as sent: the poll rebuilds
@@ -553,112 +498,60 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             lastPasteboardChangeCount = changeCount
         case .nothingToOffer, .sendFailed:
             // The host is still owed this snapshot; leave the gate for the next
-            // poll to re-read.
-            break
+            // poll to re-read, and claim nothing about what it carried.
+            return
         }
+        guard skipped > 0 else { return }
+        Self.logger.warning(
+            "Copy left \(skipped, privacy: .public) unreadable item(s) out of the offer to the host (conn=\(self.connectionTag, privacy: .public))"
+        )
+        clipboardActivityStorage = .copyPartlyCarried(skipped: skipped)
+        onClipboardNotice()
     }
 
-    /// One on-disk pasteboard file or folder gathered for an outbound offer.
-    ///
-    /// A folder (`isDirectory`) carries no `byteCount` yet — the off-main
-    /// estimate walk fills it in; a file's `byteCount` is its stat'd size.
-    private struct FileCandidate {
-        let url: URL
-        let type: UTType
-        let filename: String
-        let byteCount: Int
-        let isDirectory: Bool
-    }
-
-    /// Cheap main-queue metadata check for copied *files and folders*, one per
-    /// pasteboard item.
-    ///
-    /// Size gates nothing: a directory's inode `.fileSize` is meaningless, and a
-    /// zero-byte file is content native macOS copies. An item inside our own
-    /// staging root (materialized from a prior inbound paste) is skipped so it
-    /// can't be offered back to the host — that one is by design, so only the
-    /// unreadable items below are counted and logged.
-    private func fileExpansionCandidates() -> [FileCandidate] {
-        var candidates: [FileCandidate] = []
-        var unreadable = 0
-        for url in pasteboard.itemFileURLs where !staging.isInStagingRoot(url) {
-            guard
-                let values = try? url.resourceValues(forKeys: [
-                    .contentTypeKey, .isDirectoryKey, .fileSizeKey,
-                ])
-            else {
-                unreadable += 1
-                continue
-            }
-            if values.isDirectory == true {
-                candidates.append(
-                    FileCandidate(
-                        url: url, type: values.contentType ?? .folder,
-                        filename: url.lastPathComponent, byteCount: 0, isDirectory: true))
-            } else {
-                guard let type = values.contentType, let size = values.fileSize else {
-                    unreadable += 1
-                    continue
-                }
-                candidates.append(
-                    FileCandidate(
-                        url: url, type: type, filename: url.lastPathComponent, byteCount: size,
-                        isDirectory: false))
-            }
-        }
-        if unreadable > 0 {
-            Self.logger.warning(
-                "Skipped \(unreadable, privacy: .public) unreadable copied item(s) — not offered to the host"
-            )
-        }
-        return candidates
-    }
-
-    /// Sizes any folder candidate off the main queue — a stat-walk estimate, no
-    /// archive — then offers the mixed file/folder content back on main.
+    /// Reads the copied files off the main queue — a stat each, plus a stat-walk
+    /// estimate for any folder among them — then offers what survived back on
+    /// main.
     ///
     /// A large tree's walk would freeze the agent's run loop, so it hops to a
-    /// global queue and back; the tree is encoded only when the host requests the
-    /// rep, and then straight onto the wire.
-    private func estimateAndOffer(
-        _ candidates: [FileCandidate], channel: VsockChannel, changeCount: Int
+    /// global queue and back; a folder is encoded only when the host requests
+    /// the rep, and then straight onto the wire.
+    private func resolveAndOffer(
+        _ urls: [URL], unresolved: Int, channel: VsockChannel, changeCount: Int
     ) {
-        guard !estimateInFlight else { return }
-        estimateInFlight = true
+        guard !resolveInFlight else { return }
+        resolveInFlight = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let reps: [ClipboardContent.Representation] = candidates.map { candidate in
-                if candidate.isDirectory {
-                    return ClipboardContent.Representation(
-                        directorySourceURL: candidate.url,
-                        estimatedByteCount: ClipboardArchive.estimatedByteCount(
-                            at: candidate.url),
-                        filename: candidate.filename, uti: candidate.type.identifier)
-                }
-                return ClipboardContent.Representation(
-                    uti: candidate.type.identifier, fileURL: candidate.url,
-                    byteCount: candidate.byteCount, filename: candidate.filename)
-            }
+            let intake = ClipboardPasteboardReader.resolve(filesAt: urls, unresolved: unresolved)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 // A stale walk must not touch the live connection's in-flight
                 // flag or bookkeeping — leave the newer walk's
-                // `estimateInFlight` intact.
+                // `resolveInFlight` intact.
                 guard self.liveChannel === channel else { return }
-                self.estimateInFlight = false
+                self.resolveInFlight = false
                 #if DEBUG
-                defer { self.onFolderEstimateCompletedForTesting?() }
+                defer { self.onFileResolveCompletedForTesting?() }
                 #endif
                 // A pasteboard that moved on during the walk is another poll's to
                 // read — or already this agent's own promise write, whose gate
                 // must not be wound back to a count that would make the next
                 // poll read the promise as a copy.
                 guard self.pasteboard.changeCount == changeCount else { return }
-                // Advance the change-count gate so the folder isn't re-walked
+                guard !intake.representations.isEmpty else {
+                    // Every file the copy named turned out to be unreadable —
+                    // the total loss the inline path reports the same way, and
+                    // it advances the gate itself.
+                    self.noteSnapshotOfferedNothing(
+                        pasteboardHeldSomething: true, changeCount: changeCount)
+                    return
+                }
+                // Advance the change-count gate so the files aren't re-walked
                 // every 0.5 s poll; a genuine new copy bumps the count.
                 self.lastPasteboardChangeCount = changeCount
-                guard !reps.isEmpty else { return }
-                self.sendOfferIfNeeded(
-                    ClipboardContent(representations: reps), changeCount: changeCount)
+                self.offer(
+                    ClipboardContent(representations: intake.representations),
+                    skipped: intake.skipped, changeCount: changeCount)
             }
         }
     }
