@@ -298,6 +298,40 @@ struct VMSettingsSharingPanelTests {
         #expect(findLabel(withText: presentPath, in: panel) != nil)
     }
 
+    /// The badge has to follow the folder for the whole session, and the parent
+    /// watcher cannot carry that on its own: a Powerbox grant never covers the
+    /// parent directory, so `open(parent, O_EVTONLY)` is denied for most shares
+    /// and no source is ever installed. Nesting the share under a directory that
+    /// does not exist at seed time reproduces that unwatched state here, leaving
+    /// the shell's re-ask on drill-in as the only thing that can move the badge.
+    @Test("Drilling back into Sharing re-asks about a folder no watcher covers")
+    func drillInReprobesAnUnwatchedShare() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-settings-share-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let parent = base.appendingPathComponent("parent", isDirectory: true)
+        let share = parent.appendingPathComponent("Shared", isDirectory: true)
+        let sharePath = share.path(percentEncoded: false)
+
+        let (vc, _) = makeSharingController([SharedDirectory(path: sharePath)])
+        try await seedMonitor(vc, paths: [sharePath])
+
+        let panel = try #require(vc.settingsPanelForTesting(.sharing))
+        #expect(findLabel(containing: "Missing \u{2014} \(sharePath)", in: panel.view) != nil)
+        #expect(panel.context.fileMonitor.watchedParentsForTesting.isEmpty)
+
+        try FileManager.default.createDirectory(at: share, withIntermediateDirectories: true)
+
+        vc.showOverview()
+        vc.showCategory(.sharing)
+
+        try await waitForChange {
+            panel.context.fileMonitor.exists(sharePath)
+        }
+        panel.refresh()
+        #expect(findLabel(containing: "Missing \u{2014} \(sharePath)", in: panel.view) == nil)
+    }
+
     @Test("The share row menu reaches the folder, and dims Show in Finder while it is gone")
     func shareRowMenuFollowsTheFolder() async throws {
         let (vc, _) = makeSharingController([SharedDirectory(path: Self.missingPath)])

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Synchronization
 import Testing
@@ -125,6 +126,81 @@ struct AttachmentFileMonitorTests {
         #expect(monitor.exists(target) == true)
 
         try FileManager.default.removeItem(atPath: target)
+
+        try await waitForChange {
+            monitor.exists(target) == false
+        }
+    }
+
+    // MARK: - Re-probe
+
+    /// Probe stub answering `existence` for every requested path and opening no
+    /// parent, so `setPaths` installs no watcher.
+    ///
+    /// That isolates the re-probe path: with no source on the parent, only an
+    /// explicit sweep can change a tracked value, which is the sandbox's
+    /// situation for an attachment outside the container.
+    private func stubProbe(existence: Bool) -> AttachmentFileMonitor.Probe {
+        { added, _, _ in
+            AttachmentFileMonitor.ProbeResult(
+                existence: Dictionary(uniqueKeysWithValues: added.map { ($0, existence) }),
+                parentFDs: [:]
+            )
+        }
+    }
+
+    @Test("revalidate overwrites a path already answered as present")
+    func revalidateReprobesAPresentPath() async throws {
+        let tmp = try makeTempDir()
+        defer { tmp.cleanup() }
+        let target = path(in: tmp.url, "vanishes.iso")
+        FileManager.default.createFile(atPath: target, contents: Data([0]))
+
+        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: true))
+        await monitor.setPaths([target: nil])
+        #expect(monitor.exists(target) == true)
+        #expect(monitor.watchedParentsForTesting.isEmpty)
+
+        try FileManager.default.removeItem(atPath: target)
+        monitor.revalidate()
+
+        try await waitForChange {
+            monitor.exists(target) == false
+        }
+    }
+
+    @Test("revalidate overwrites a path already answered as missing")
+    func revalidateReprobesAMissingPath() async throws {
+        let tmp = try makeTempDir()
+        defer { tmp.cleanup() }
+        let target = path(in: tmp.url, "reappears.iso")
+
+        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: false))
+        await monitor.setPaths([target: nil])
+        #expect(monitor.exists(target) == false)
+
+        FileManager.default.createFile(atPath: target, contents: Data([0]))
+        monitor.revalidate()
+
+        try await waitForChange {
+            monitor.exists(target) == true
+        }
+    }
+
+    @Test("App activation re-probes every tracked path")
+    func appActivationRevalidates() async throws {
+        let tmp = try makeTempDir()
+        defer { tmp.cleanup() }
+        let target = path(in: tmp.url, "vanishes.iso")
+        FileManager.default.createFile(atPath: target, contents: Data([0]))
+
+        let monitor = AttachmentFileMonitor(probe: stubProbe(existence: true))
+        await monitor.setPaths([target: nil])
+        #expect(monitor.exists(target) == true)
+
+        try FileManager.default.removeItem(atPath: target)
+        NotificationCenter.default.post(
+            name: NSApplication.didBecomeActiveNotification, object: NSApp)
 
         try await waitForChange {
             monitor.exists(target) == false

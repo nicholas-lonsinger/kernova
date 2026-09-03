@@ -5,18 +5,19 @@ import os
 /// Reactive existence tracker for the user-supplied file paths a VM points at
 /// (external storage disks, removable media, shared directories).
 ///
-/// One `DispatchSourceFileSystemObject` per unique parent directory, plus a full
-/// refresh on `NSWorkspace` mount/unmount notifications. Existence probes must go
-/// through each path's security bookmark: under the sandbox a raw `fileExists` on
-/// an out-of-container path is denied and would mark every present attachment
+/// One `DispatchSourceFileSystemObject` per unique parent directory, plus the
+/// full re-probe `revalidate()` runs. Existence probes must go through each
+/// path's security bookmark: under the sandbox a raw `fileExists` on an
+/// out-of-container path is denied and would mark every present attachment
 /// missing.
 ///
 /// Watching is best-effort: a file-scoped bookmark never grants its parent
 /// directory, so `open(parent, O_EVTONLY)` fails for most external attachments and
 /// the `fd >= 0` guard leaves those parents unwatched. Freshness then rests on the
-/// coarse triggers — `setPaths`, app activation, the mount/unmount refresh — which
-/// is why they are not redundant with the per-parent sources. The authoritative
-/// check runs at VM start; this only backs a warning affordance.
+/// coarse triggers that reach `revalidate()` — app activation and `NSWorkspace`
+/// mount/unmount from here, plus the settings shell's calls when its pane comes
+/// back — which is why they are not redundant with the per-parent sources. The
+/// authoritative check runs at VM start; this only backs a warning affordance.
 @MainActor
 @Observable
 final class AttachmentFileMonitor {
@@ -45,12 +46,15 @@ final class AttachmentFileMonitor {
     @ObservationIgnored
     private var debounceTasks: [String: Task<Void, Never>] = [:]
 
-    /// Notification-center tokens for volume mount/unmount observers.
+    /// Notification tokens for the re-probe triggers, each paired with the center
+    /// that minted it — `NSWorkspace.shared.notificationCenter` and
+    /// `NotificationCenter.default` are different objects, and a token is only
+    /// removable from its own.
     ///
     /// `nonisolated(unsafe)` so `deinit` can hand the tokens back to
     /// `NSNotificationCenter`; only mutated on the main actor.
     @ObservationIgnored
-    nonisolated(unsafe) private var volumeObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private var triggerObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
     /// Most recent path set requested via `setPaths(_:)`.
     ///
@@ -81,10 +85,11 @@ final class AttachmentFileMonitor {
             _ paths: Set<String>, _ bookmarks: [String: Data], _ parents: Set<String>
         ) async -> ProbeResult
 
-    /// Single-flight coordination for volume mount/unmount refreshes.
+    /// Single-flight coordination for `revalidate()`.
     ///
     /// `drainRefreshAll` keeps looping while `pending` is set, collapsing a burst
-    /// of mount events (one per volume) into a single refresh sweep.
+    /// of triggers (one mount event per volume, an activation landing beside the
+    /// shell's own call) into a single refresh sweep.
     @ObservationIgnored
     private var refreshAllInFlight: Bool = false
     @ObservationIgnored
@@ -92,16 +97,23 @@ final class AttachmentFileMonitor {
 
     init(probe: @escaping Probe = AttachmentFileMonitor.defaultProbe) {
         self.probe = probe
-        let center = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
-            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        let workspace = NSWorkspace.shared.notificationCenter
+        let triggers: [(center: NotificationCenter, name: Notification.Name)] = [
+            (workspace, NSWorkspace.didMountNotification),
+            (workspace, NSWorkspace.didUnmountNotification),
+            (.default, NSApplication.didBecomeActiveNotification),
+        ]
+        for trigger in triggers {
+            let token = trigger.center.addObserver(
+                forName: trigger.name, object: nil, queue: .main
+            ) { [weak self] _ in
                 // `queue: .main` delivers on the main thread, where the @MainActor
-                // `requestRefreshAll` is callable synchronously.
+                // `revalidate` is callable synchronously.
                 MainActor.assumeIsolated {
-                    self?.requestRefreshAll()
+                    self?.revalidate()
                 }
             }
-            volumeObservers.append(token)
+            triggerObservers.append((trigger.center, token))
         }
     }
 
@@ -109,9 +121,8 @@ final class AttachmentFileMonitor {
         for source in parentSources.values {
             source.cancel()
         }
-        let center = NSWorkspace.shared.notificationCenter
-        for token in volumeObservers {
-            center.removeObserver(token)
+        for observer in triggerObservers {
+            observer.center.removeObserver(observer.token)
         }
     }
 
@@ -247,8 +258,9 @@ final class AttachmentFileMonitor {
         }.value
 
         guard fd >= 0 else {
-            // Parent unreachable (e.g. unmounted volume). Tracked existence stays
-            // `false`; the next mount notification retries.
+            // Parent unreachable (e.g. unmounted volume, or a sandbox denial on an
+            // out-of-container parent). Tracked existence stays as probed; the
+            // next `revalidate()` retries.
             Self.logger.debug(
                 "Could not open parent for monitoring (errno=\(openErrno, privacy: .public)): \(parent, privacy: .public)"
             )
@@ -357,12 +369,17 @@ final class AttachmentFileMonitor {
         }
     }
 
-    /// Entry point from the volume mount/unmount observers.
+    /// Re-probes every tracked path and retries a watcher for each parent still
+    /// unwatched.
     ///
-    /// Coalesces a burst of notifications into a single refresh sweep: a refresh
-    /// already in flight only sets `pending`, so the drain loop runs one more
-    /// pass when the current one finishes.
-    private func requestRefreshAll() {
+    /// The re-probe entry point: `setPaths(_:)` only diffs, so a path it already
+    /// answered for keeps that answer until this runs. Fired here on app
+    /// activation and on volume mount/unmount, and called by the settings shell
+    /// when its pane comes back.
+    ///
+    /// Coalesced: a pass already running only re-arms, so a burst of callers
+    /// costs one extra sweep at most. Returns as soon as the sweep is scheduled.
+    func revalidate() {
         refreshAllPending = true
         guard !refreshAllInFlight else { return }
         refreshAllInFlight = true
@@ -379,8 +396,8 @@ final class AttachmentFileMonitor {
         refreshAllInFlight = false
     }
 
-    /// After a volume mount/unmount, retries parents that couldn't be opened
-    /// earlier and re-checks every tracked path.
+    /// Retries parents that couldn't be opened earlier and re-checks every
+    /// tracked path.
     ///
     /// Snapshots `pathsByParent.keys` up front so a `setPaths` landing during the
     /// awaits can't dereference a missing entry.

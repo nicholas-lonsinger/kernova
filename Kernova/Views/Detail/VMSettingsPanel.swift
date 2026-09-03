@@ -102,7 +102,7 @@ protocol VMSettingsPanelHost: AnyObject {
 /// category the user has not drilled into. Panels never override the appearance
 /// callbacks — AppKit's forwarding to a child view controller whose view is out
 /// of the tree is not dependable — so the shell drives
-/// ``prepareForDisappearance()`` and ``hostDidBecomeActive()`` itself.
+/// ``prepareForDisappearance()`` itself.
 @MainActor
 protocol VMSettingsPanel: NSViewController {
     var context: VMSettingsPanelContext { get }
@@ -123,15 +123,12 @@ protocol VMSettingsPanel: NSViewController {
     func hostDidAppear()
     /// The pane is going away: cancel work and drop in-flight edit state.
     func prepareForDisappearance()
-    /// The app came forward; re-read anything the system may have changed.
-    func hostDidBecomeActive()
 }
 
 extension VMSettingsPanel {
     func willRebind() {}
     func hostDidAppear() {}
     func prepareForDisappearance() {}
-    func hostDidBecomeActive() {}
 
     var chrome: VMSettingsPanelChrome { VMSettingsPanelChrome() }
 
