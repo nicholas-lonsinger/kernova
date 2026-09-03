@@ -49,10 +49,17 @@ final class ClipboardPassthroughCoordinator {
     /// never received loses the copy outright: later polls read the change count
     /// as unchanged and skip, and only `start()` reseeds.
     ///
-    /// Seeded to `-1` on start so the first poll after the guest connects forwards
-    /// the *current* host clipboard. A change made while the guest is disconnected
-    /// is caught then too, since disconnected polls neither forward nor record.
-    private var lastPasteboardChangeCount = -1
+    /// Seeded to ``unobservedChangeCount`` on start so the first poll after the
+    /// guest connects forwards the *current* host clipboard. A change made while
+    /// the guest is disconnected is caught then too, since disconnected polls
+    /// neither forward nor record.
+    private var lastPasteboardChangeCount = ClipboardPassthroughCoordinator.unobservedChangeCount
+
+    /// `lastPasteboardChangeCount` before this session has forwarded anything.
+    ///
+    /// No real `changeCount` is negative, so the first poll of a session always
+    /// forwards — and knows it is looking at a copy it never watched arrive.
+    private static let unobservedChangeCount = -1
 
     /// The change count of the forward whose off-actor file resolve is still
     /// running.
@@ -66,9 +73,9 @@ final class ClipboardPassthroughCoordinator {
     ///
     /// A forward whose off-actor resolve outlives its session must not offer —
     /// passthrough was switched off — and must not record its change count
-    /// either: a restarted session reseeds to `-1` precisely so its first
-    /// connected poll forwards the current clipboard, which a stale record would
-    /// suppress.
+    /// either: a restarted session reseeds to ``unobservedChangeCount`` precisely
+    /// so its first connected poll forwards the current clipboard, which a stale
+    /// record would suppress.
     private var runGeneration = 0
 
     private var inboundObservation: ObservationLoop?
@@ -131,7 +138,7 @@ final class ClipboardPassthroughCoordinator {
         guard !isRunning else { return }
         isRunning = true
         // Force the first connected poll to forward the current host clipboard.
-        lastPasteboardChangeCount = -1
+        lastPasteboardChangeCount = Self.unobservedChangeCount
         resolvingChangeCount = nil
         lastInboundOfferSeq = instance?.clipboardService?.inboundOfferSeq ?? 0
         startPolling()
@@ -192,6 +199,12 @@ final class ClipboardPassthroughCoordinator {
     /// Runs the host pasteboard through the shared intake and offers the result to
     /// the guest, settling `changeCount` only once the copy needs no retry.
     private func forwardHostClipboard(_ changeCount: Int, to service: any ClipboardServicing) {
+        // Each copy is a gesture of its own, so the refusal this one raises is
+        // announced even when the copy before it raised the identical one — the
+        // offer's own reset doesn't fire for content the guest already holds.
+        // Not for the session's first forward: that poll re-reads a clipboard
+        // nobody just touched.
+        if lastPasteboardChangeCount != Self.unobservedChangeCount { reporter.gestureBegan() }
         let allowsBinary = service.supportsBinaryRepresentations
         switch ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary) {
         case .content(let content, let note):
