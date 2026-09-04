@@ -49,7 +49,11 @@ fixture="$FAKE_XCRESULT_FIXTURES/$(basename "$path")/$kind.json"
 sed "s#@ROOT@#$FAKE_ROOT#g" "$fixture"
 FAKE
 chmod +x "$tmp/bin"/*
+# A PATH with no xcodebuild at all: macOS keeps an xcode-select shim at
+# /usr/bin/xcodebuild, so the system directories cannot be on it. The script
+# needs only bash (for its shebang) and make before its preflight runs.
 cp "$tmp/bin/make" "$tmp/nox/make"
+ln -s "$(command -v bash)" "$tmp/nox/bash"
 
 export PATH="$tmp/bin:$PATH"
 export KERNOVA_CHECK_DIR="$tmp/out"
@@ -176,7 +180,7 @@ run "suite on a non-suite target" 5 check build KernovaTests/X
 expect_last '^check: verdict=setup-error reason=usage '
 run "missing log" 5 check --from-log "$tmp/logs/nope.log" test
 expect_last '^check: verdict=setup-error reason=no-log '
-run "xcodebuild missing" 5 env PATH="$tmp/nox:/usr/bin:/bin" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" Tools/check.sh build
+run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" Tools/check.sh build
 expect_last '^check: verdict=setup-error reason=xcodebuild-missing '
 run "help" 0 check --help
 expect_lines 0
