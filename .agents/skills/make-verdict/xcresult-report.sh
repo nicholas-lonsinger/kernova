@@ -2,11 +2,11 @@
 # Reads an .xcresult bundle and prints the test verdict: the counts from the
 # bundle's summary, each failing test with its failure messages — a case that
 # failed an attempt and passed on the retry included, marked as such — and one
-# verdict line. This is the repo's one xcresult parse: the make-verdict
-# skill's script and .github/workflows/xcodebuild-test.yml both call it.
+# verdict line. The make-verdict skill's parser: make-verdict.sh calls it for
+# every test run, and it answers follow-up questions about a run on its own.
 #
 # Usage:
-#   Tools/xcresult-report.sh [--path <bundle> | --from-log <log> | --latest] [--failures | --flaky]
+#   .agents/skills/make-verdict/xcresult-report.sh [--path <bundle> | --from-log <log> | --latest] [--failures | --flaky]
 #
 #   --path <bundle>  an explicit bundle, e.g. a downloaded CI artifact
 #   --from-log <log> the bundle an xcodebuild log names (its last `.xcresult`
@@ -35,7 +35,7 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 usage() {
     sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2

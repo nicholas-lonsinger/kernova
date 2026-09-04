@@ -22,4 +22,4 @@ It runs the raw target with the whole stream captured under `artifacts/make-verd
 - `lint-failed` — the `errors:` lines are the findings; `make format` fixes the Swift ones.
 - `setup-error` — the toolchain or a path is missing; the reason is on the line.
 
-Never run `make build`, `make test`, or `make lint` directly (they stream the whole log into context), never grep the log the verdict names, never poll the task's output file, and never re-run a target to change a filter. A different question about the same run is `Tools/xcresult-report.sh --from-log <log>`, or `--path <bundle>` for a downloaded CI artifact.
+Never run `make build`, `make test`, or `make lint` directly (they stream the whole log into context), never grep the log the verdict names, never poll the task's output file, and never re-run a target to change a filter. A different question about the same run is `.agents/skills/make-verdict/xcresult-report.sh --from-log <log>`, or `--path <bundle>` for a downloaded CI artifact.

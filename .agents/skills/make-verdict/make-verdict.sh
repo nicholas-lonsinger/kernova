@@ -191,7 +191,7 @@ case "$target" in
             fi
         else
             report="$(mktemp)"
-            "$ROOT/Tools/xcresult-report.sh" --from-log "$log" >"$report" 2>"$report.err"
+            "$(dirname "${BASH_SOURCE[0]}")/xcresult-report.sh" --from-log "$log" >"$report" 2>"$report.err"
             report_status=$?
             last="$(tail -n 1 "$report")"
             case "$report_status" in

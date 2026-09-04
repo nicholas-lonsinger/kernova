@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Fixture tests for the make-verdict skill's script and Tools/xcresult-report.sh. Replays the
-# recorded xcodebuild logs and result-bundle JSON under fixtures/ through fakes
-# of `make`, `xcrun`, and `xcodebuild` placed first on PATH, so every verdict
-# path is exercised without Xcode. `make test-tools` runs it; it takes under a second.
+# Fixture tests for the make-verdict skill: replays the recorded xcodebuild
+# logs and result-bundle JSON under fixtures/ through fakes of `make`, `xcrun`,
+# and `xcodebuild` placed first on PATH, so every verdict path of
+# make-verdict.sh and xcresult-report.sh is exercised without Xcode. Run it
+# after editing the skill; it takes under a second.
 #
 # Fixture placeholders: @ROOT@ is this checkout's root (the scripts rewrite it
 # repo-relative), @BUNDLE@ the directory holding the fake .xcresult bundles.
@@ -11,12 +12,13 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT" || exit 1
-FIX="$ROOT/Tools/tests/fixtures"
+SKILL=.agents/skills/make-verdict
+FIX="$ROOT/$SKILL/tests/fixtures"
 
-# shellcheck source=../lib/output.sh
-. "$ROOT/Tools/lib/output.sh"
+if [ -t 1 ]; then c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_green=''; c_red=''; c_reset=''; fi
+pass() { printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$1"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -84,8 +86,8 @@ expect_count() { [ "$(grep -cE -- "$1" "$tmp/last")" -eq "$2" ] || fail "$name: 
 expect_last()  { [ "$(tail -n 1 "$tmp/last" | grep -cE -- "$1")" -eq 1 ] || fail "$name: last line is not /$1/: $(tail -n 1 "$tmp/last")"; }
 expect_lines() { [ "$(grep -c . "$tmp/last")" -eq "$1" ] || fail "$name: expected $1 lines, got $(grep -c . "$tmp/last")"; }
 
-verdict() { .agents/skills/make-verdict/make-verdict.sh "$@"; }
-with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" .agents/skills/make-verdict/make-verdict.sh "${@:3}"; }
+verdict() { "$SKILL/make-verdict.sh" "$@"; }
+with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" "$SKILL/make-verdict.sh" "${@:3}"; }
 
 # ---- make-verdict.sh: build -------------------------------------------------------
 
@@ -182,14 +184,14 @@ run "suite on a non-suite target" 5 verdict build KernovaTests/X
 expect_last '^make-verdict: verdict=setup-error reason=usage '
 run "missing log" 5 verdict --from-log "$tmp/logs/nope.log" test
 expect_last '^make-verdict: verdict=setup-error reason=no-log '
-run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" .agents/skills/make-verdict/make-verdict.sh build
+run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" "$SKILL/make-verdict.sh" build
 expect_last '^make-verdict: verdict=setup-error reason=xcodebuild-missing '
 run "help" 0 verdict --help
 expect_lines 0
 
 # ---- xcresult-report.sh ----------------------------------------------------
 
-report() { Tools/xcresult-report.sh "$@"; }
+report() { "$SKILL/xcresult-report.sh" "$@"; }
 
 run "report failed bundle" 1 report --path "$tmp/bundles/failed.xcresult"
 expect '^result=Failed total=3948 passed=3945 failed=2 skipped=1 xfail=0$'
@@ -235,4 +237,4 @@ if [ "$failures" -gt 0 ]; then
     printf '\n%s of %s tool fixture checks failed\n' "$failures" "$count" >&2
     exit 1
 fi
-pass "tools: $count fixture checks (Tools/tests/run.sh)"
+pass "make-verdict: $count fixture checks"
