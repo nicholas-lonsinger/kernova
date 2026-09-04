@@ -318,7 +318,7 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Observation
 
-    func events() -> AsyncStream<VMLibraryEvent> {
+    func events() -> AsyncStream<[VMLibraryEvent]> {
         broadcaster.stream()
     }
 
@@ -364,7 +364,7 @@ final class VMCommandCore: VMCommanding {
         return states
     }
 
-    /// Emits one event per value that moved since the last pass.
+    /// Emits one batch carrying every value that moved since the last pass.
     ///
     /// A diff rather than per-site emission: every verb, every guest-driven
     /// transition, and every reconcile with disk lands in the same model, so
@@ -373,21 +373,22 @@ final class VMCommandCore: VMCommanding {
     /// two passes reports only where it ended up.
     private func emitLibraryChanges() {
         let current = currentObservedStates()
+        var batch: [VMLibraryEvent] = []
         for instance in library.instances {
             let id = instance.instanceID
             guard let now = current[id] else { continue }
             guard let before = lastObserved[id] else {
-                broadcaster.emit(
+                batch.append(
                     .added(VMSummary(id: id, name: now.name, status: wireStatus(for: now))))
                 continue
             }
             if before.status != now.status || before.isPreparing != now.isPreparing {
-                broadcaster.emit(
+                batch.append(
                     .statusChanged(
                         id: id, name: now.name, from: wireStatus(for: before),
                         to: wireStatus(for: now)))
                 if now.status == .error {
-                    broadcaster.emit(
+                    batch.append(
                         .failure(
                             id: id, name: now.name,
                             message: now.errorMessage
@@ -395,18 +396,19 @@ final class VMCommandCore: VMCommanding {
                 }
             }
             if before.agentStatus != now.agentStatus {
-                broadcaster.emit(
+                batch.append(
                     .agentStatusChanged(
                         id: id, name: now.name, status: now.agentStatus.wireName))
             }
             if before.name != now.name {
-                broadcaster.emit(.renamed(id: id, from: before.name, to: now.name))
+                batch.append(.renamed(id: id, from: before.name, to: now.name))
             }
         }
         for (id, before) in lastObserved where current[id] == nil {
-            broadcaster.emit(.removed(id: id, name: before.name))
+            batch.append(.removed(id: id, name: before.name))
         }
         lastObserved = current
+        broadcaster.emit(batch)
     }
 
     // MARK: - Failure Surfacing
@@ -424,8 +426,11 @@ final class VMCommandCore: VMCommanding {
     /// reaches no observable field and no diff can ever produce it, which is
     /// why it is emitted directly rather than left to the loop.
     func reportPreparingFailure(_ error: Error, verb: VMVerb, phantom: VMInstance) {
-        broadcaster.emit(
-            .failure(id: phantom.instanceID, name: phantom.name, message: error.localizedDescription))
+        broadcaster.emit([
+            .failure(
+                id: phantom.instanceID, name: phantom.name,
+                message: error.localizedDescription)
+        ])
         report(.operationFailed(verb: verb, message: error.localizedDescription), on: nil)
     }
 }

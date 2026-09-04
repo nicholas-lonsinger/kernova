@@ -25,6 +25,8 @@ final class VMIntentGateway {
     private let awaitReady: @Sendable () async -> Void
     /// Re-reads the VM names Siri matches spoken phrases against.
     private let refreshShortcutVocabulary: @MainActor () -> Void
+    /// Where the library is written for Spotlight to match a spoken name in.
+    private let index: any VMEntityIndexing
     /// Called on the main actor whenever the last intent in flight finishes.
     private let onIdle: @MainActor () -> Void
 
@@ -47,12 +49,9 @@ final class VMIntentGateway {
 
     /// The single readiness await, memoized so an intent storm waits on one task.
     private var readiness: Task<Void, Never>?
-    /// The library subscription that keeps Siri's VM vocabulary current.
+    /// The library subscription that keeps Siri's vocabulary and the Spotlight
+    /// index current.
     private var libraryEvents: Task<Void, Never>?
-    /// Set when an event changed which VMs exist or what they are called, and
-    /// drained on the next main-actor turn — a batch import emits one event per
-    /// VM and the vocabulary only needs rebuilding once.
-    private var isVocabularyStale = false
 
     init(
         commands: any VMCommanding,
@@ -60,22 +59,21 @@ final class VMIntentGateway {
         refreshShortcutVocabulary: @escaping @MainActor () -> Void = {
             KernovaShortcuts.updateAppShortcutParameters()
         },
+        index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         onIdle: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.awaitReady = awaitReady
         self.refreshShortcutVocabulary = refreshShortcutVocabulary
+        self.index = index
         self.onIdle = onIdle
+        // Weakly, one main-actor call at a time: an owner that goes away
+        // between two batches is what ends the subscription.
         libraryEvents = Task { [weak self] in
-            guard let stream = self?.commands.events() else { return }
-            for await event in stream {
-                guard let self else { return }
-                switch event {
-                case .added, .removed, .renamed:
-                    self.markVocabularyStale()
-                case .statusChanged, .agentStatusChanged, .failure:
-                    break
-                }
+            guard let batches = await self?.subscribeOnceReady() else { return }
+            await self?.syncWholeLibrary()
+            for await batch in batches {
+                await self?.apply(batch)
             }
         }
     }
@@ -340,16 +338,79 @@ final class VMIntentGateway {
         }
     }
 
-    // MARK: - Shortcut Vocabulary
+    // MARK: - Library Tracking
 
-    private func markVocabularyStale() {
-        guard !isVocabularyStale else { return }
-        isVocabularyStale = true
-        Task { @MainActor [weak self] in
-            guard let self, self.isVocabularyStale else { return }
-            self.isVocabularyStale = false
-            Self.logger.debug("Rebuilding App Shortcut parameter vocabulary")
-            self.refreshShortcutVocabulary()
+    /// Subscribes to library changes once the app's first read has landed.
+    ///
+    /// The subscription is taken on the turn readiness resolves on, with
+    /// nothing awaited in between: the core seeds its diff from the library as
+    /// it stands when the first subscriber arrives, so subscribing behind the
+    /// first read leaves the load itself emitting nothing — which is what
+    /// ``syncWholeLibrary()`` then covers.
+    private func subscribeOnceReady() async -> AsyncStream<[VMLibraryEvent]> {
+        await ready()
+        return commands.events()
+    }
+
+    /// Rebuilds Siri's vocabulary and rewrites every VM into the index,
+    /// replacing whatever an earlier run of the app left there.
+    private func syncWholeLibrary() async {
+        rebuildVocabulary()
+        let all = await vms()
+        await write("clearing the VM index") { try await self.index.removeAll() }
+        await write("indexing every VM") { try await self.index.index(all) }
+    }
+
+    /// Brings Siri's vocabulary and the index up to what one pass over the
+    /// library found, ignoring the changes neither surface shows.
+    ///
+    /// One batch is one rebuild and at most one write of each kind. A rebuild
+    /// spends one of the system's donation-rate tokens, so a library big
+    /// enough to spend them one VM at a time would leave Siri matching stale
+    /// names for the rest of the session.
+    private func apply(_ batch: [VMLibraryEvent]) async {
+        var present: [UUID] = []
+        var absent: [UUID] = []
+        for event in batch {
+            switch event {
+            case .added(let summary): present.append(summary.id)
+            case .renamed(let id, _, _): present.append(id)
+            case .removed(let id, _): absent.append(id)
+            case .statusChanged, .agentStatusChanged, .failure: break
+            }
+        }
+        guard !present.isEmpty || !absent.isEmpty else { return }
+        rebuildVocabulary()
+        if !absent.isEmpty {
+            await write("removing \(absent.count) VMs from the index") {
+                try await self.index.remove(absent)
+            }
+        }
+        if !present.isEmpty {
+            let entities = await vms(withIDs: present)
+            await write("indexing \(entities.count) VMs") {
+                try await self.index.index(entities)
+            }
+        }
+    }
+
+    private func rebuildVocabulary() {
+        Self.logger.debug("Rebuilding App Shortcut parameter vocabulary")
+        refreshShortcutVocabulary()
+    }
+
+    /// Runs one index write, logging and swallowing a refusal.
+    ///
+    /// Spotlight is how a spoken name is matched, never how a verb runs: a
+    /// refusal must neither fail an intent nor end the subscription that would
+    /// carry the next write.
+    private func write(_ operation: String, _ body: () async throws -> Void) async {
+        do {
+            try await body()
+        } catch {
+            Self.logger.warning(
+                "Spotlight failed \(operation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }

@@ -1413,7 +1413,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Watched")
 
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
         // A fresh subscriber is told what happens from here, not replayed the
         // library it can already list.
         instance.enter(.running(sessionID: UUID()))
@@ -1432,7 +1432,7 @@ struct VMCommandCoreTests {
     @Test("A VM joining and leaving the library is reported")
     func eventsReportMembership() async throws {
         let harness = makeHarness()
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
 
         let instance = makeInstance(in: harness, name: "Arrived")
         let added = try #require(await events.next())
@@ -1456,7 +1456,7 @@ struct VMCommandCoreTests {
     func eventsReportFailures() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Broken", phase: .running(sessionID: UUID()))
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
 
         instance.enter(.failed(message: "The disk went away"))
 
@@ -1494,7 +1494,7 @@ struct VMCommandCoreTests {
     func addedEventReportsPreparingStatus() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
 
         let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
 
@@ -1522,7 +1522,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Cloning")
         instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
 
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
         instance.preparingState = nil
 
         let event = try #require(await events.next())
@@ -1542,7 +1542,7 @@ struct VMCommandCoreTests {
         let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
         harness.storage.cloneVMBundleError = cloneError
         let instance = makeInstance(in: harness, name: "Source")
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
 
         let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
         let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
@@ -1579,7 +1579,7 @@ struct VMCommandCoreTests {
         let missing = StorageDisk(
             path: "AdditionalDisks/\(UUID().uuidString).asif", label: "Extra", isInternal: true)
         instance.configuration.storageDisks = [missing]
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
 
         let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
         let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
@@ -1629,7 +1629,7 @@ struct VMCommandCoreTests {
     func renameReportsChangeAndRefusesAPreparingRow() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Before")
-        var events = harness.core.events().makeAsyncIterator()
+        var events = VMLibraryEventReader(harness.core.events())
 
         try harness.core.rename(.id(instance.id), to: "After")
 
@@ -1854,5 +1854,28 @@ extension CommandError {
     fileprivate var isConflict: Bool {
         if case .conflict = self { return true }
         return false
+    }
+}
+
+/// The core's batched event stream, read one event at a time.
+///
+/// A pass over the library delivers every change it found as one element, so a
+/// case asserting on the order changes arrived in flattens the batches back
+/// out.
+private struct VMLibraryEventReader {
+    private var batches: AsyncStream<[VMLibraryEvent]>.AsyncIterator
+    private var pending: [VMLibraryEvent] = []
+
+    init(_ stream: AsyncStream<[VMLibraryEvent]>) {
+        batches = stream.makeAsyncIterator()
+    }
+
+    /// The next event, awaiting another batch once the current one is spent.
+    mutating func next() async -> VMLibraryEvent? {
+        while pending.isEmpty {
+            guard let batch = await batches.next() else { return nil }
+            pending = batch
+        }
+        return pending.removeFirst()
     }
 }

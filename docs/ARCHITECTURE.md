@@ -293,8 +293,8 @@ session down without that hook, so a suspended session survives to revert at its
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
   `surfaceDisplay` hook, an unawaited failure through `onFailure` — and `events()` vends an
-  `AsyncStream<VMLibraryEvent>` fed by one diffing observation plus the clone/import copy failures
-  no model field survives to hold, for callers that cannot observe the model. Whether a given VM
+  `AsyncStream<[VMLibraryEvent]>`, one element per diffing pass, plus the clone/import copy
+  failures no model field survives to hold, for callers that cannot observe the model. Whether a given VM
   admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's
   enablement reads it, and so does every verb guard in the core save two deliberate ones in `stop`
   — it leads with the preparing refusal, and its `.force` disposition takes no state gate at all,
@@ -312,7 +312,10 @@ session down without that hook, so a suspended session survives to revert at its
   `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
   gathered by re-issuing the verb with `confirmed: true`. It also counts intents in flight and
   reports the process idle to `AppResidencyController` when the last one finishes — the only signal a process
-  the system launched to service an intent, and which therefore has no window, can settle on.
+  the system launched to service an intent, and which therefore has no window, can settle on. It
+  follows `events()` from the first library read on: each batch rebuilds Siri's App Shortcut
+  vocabulary once and writes the VMs it added, renamed, or removed to the Spotlight index through
+  `VMEntityIndexing`, the index macOS resolves a spoken VM name against.
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommanding` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the
@@ -428,10 +431,11 @@ A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ 
 
 Siri / Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
                                               VMIntentGateway ──idle───→ AppResidencyController
+                                              VMIntentGateway ──writes─→ Spotlight index (VMEntityIndexing)
 
 VMCommandCore ──reads/writes──→ VMLibrary
               ──delegates────→ VMLifecycleCoordinator ──→ Services
-              ──emits────────→ AsyncStream<VMLibraryEvent>
+              ──emits────────→ AsyncStream<[VMLibraryEvent]>, one element per pass
 ```
 
 ### Utilities

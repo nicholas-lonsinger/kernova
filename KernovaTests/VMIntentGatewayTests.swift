@@ -26,11 +26,12 @@ struct VMIntentGatewayTests {
     /// A gateway whose library read has already landed, over a seeded mock.
     private func makeGateway(
         _ commands: MockVMCommanding,
-        refreshShortcutVocabulary: @escaping @MainActor () -> Void = {}
+        refreshShortcutVocabulary: @escaping @MainActor () -> Void = {},
+        index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, awaitReady: {},
-            refreshShortcutVocabulary: refreshShortcutVocabulary)
+            refreshShortcutVocabulary: refreshShortcutVocabulary, index: index)
     }
 
     // MARK: - Entity
@@ -65,6 +66,20 @@ struct VMIntentGatewayTests {
         #expect(VMStatus(rawValue: VMCommandCore.preparingWireStatus) == nil)
         #expect(VMEntity.statusDisplayName(VMCommandCore.preparingWireStatus) == "Preparing")
         #expect(VMEntity.statusDisplayName("initialBoot") == "Initial Boot")
+    }
+
+    @Test("The Spotlight record carries the name and the guest, and no runtime status")
+    func entityIndexesItsNameAndGuest() throws {
+        let mac = VMIntentFixtures.info(name: "Sonoma", status: "running", guestOS: "macOS")
+        let linux = VMIntentFixtures.info(name: "Ubuntu", guestOS: "linux")
+
+        let attributes = VMEntity(mac).attributeSet
+        #expect(attributes.displayName == "Sonoma")
+        #expect(attributes.contentDescription == "macOS virtual machine")
+        // A status change must cost no re-index, so none is written.
+        let described = try #require(attributes.contentDescription)
+        #expect(!described.contains("running"))
+        #expect(VMEntity(linux).attributeSet.contentDescription == "Linux virtual machine")
     }
 
     // MARK: - Stop Method
@@ -190,13 +205,14 @@ struct VMIntentGatewayTests {
         commands.library = [makeSummary(name: "Late")]
         let entered = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
+        let index = MockVMEntityIndex()
         let gateway = VMIntentGateway(
             commands: commands,
             awaitReady: {
                 entered.continuation.yield(())
                 for await _ in release.stream { break }
             },
-            refreshShortcutVocabulary: {})
+            refreshShortcutVocabulary: {}, index: index)
 
         let read = Task { await gateway.vms() }
         for await _ in entered.stream { break }
@@ -206,7 +222,9 @@ struct VMIntentGatewayTests {
         release.continuation.finish()
 
         #expect(await read.value.map(\.name) == ["Late"])
-        #expect(commands.listCallCount == 1)
+        // Two: this read, and the whole-library read the readiness sync makes.
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        #expect(commands.listCallCount == 2)
     }
 
     @Test("The library read is awaited once, however many intents pile onto it")
@@ -215,7 +233,7 @@ struct VMIntentGatewayTests {
         let awaits = Counter()
         let gateway = VMIntentGateway(
             commands: commands, awaitReady: { await awaits.increment() },
-            refreshShortcutVocabulary: {})
+            refreshShortcutVocabulary: {}, index: MockVMEntityIndex())
 
         _ = await gateway.vms()
         _ = await gateway.vms()
@@ -384,26 +402,136 @@ struct VMIntentGatewayTests {
         }
     }
 
-    // MARK: - Shortcut Vocabulary
+    // MARK: - Shortcut Vocabulary and Spotlight
 
-    @Test("A rename refreshes Siri's VM vocabulary; a status change leaves it alone")
+    /// A gateway reporting every vocabulary rebuild into `log`, over `index`.
+    private func makeTrackingGateway(
+        _ commands: MockVMCommanding, log: RefreshLog, index: MockVMEntityIndex
+    ) -> VMIntentGateway {
+        makeGateway(
+            commands,
+            refreshShortcutVocabulary: {
+                log.count += 1
+                log.gate.notify()
+            },
+            index: index)
+    }
+
+    /// The writes the readiness sync makes, which every batch assertion counts
+    /// from: one whole-library rewrite, preceded by one vocabulary rebuild.
+    private static let syncedOperations = 2
+
+    @Test("Readiness rebuilds Siri's vocabulary once and rewrites the whole library")
+    func readinessSyncsTheWholeLibrary() async throws {
+        let commands = MockVMCommanding()
+        let first = makeSummary(name: "First")
+        let second = makeSummary(name: "Second")
+        commands.library = [first, second]
+        let index = MockVMEntityIndex()
+        let log = RefreshLog()
+        let gateway = makeTrackingGateway(commands, log: log, index: index)
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+
+        #expect(index.operations == [.removeAll, .index([first.id, second.id])])
+        #expect(log.count == 1)
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A batch carrying a rename refreshes Siri's vocabulary; a status change alone does not")
     func vocabularyFollowsTheLibrary() async throws {
         let commands = MockVMCommanding()
-        let refreshes = AsyncStream<Void>.makeStream()
+        let vm = makeSummary(name: "New")
+        commands.library = [vm]
+        let index = MockVMEntityIndex()
         let log = RefreshLog()
-        let gateway = makeGateway(commands) {
-            log.count += 1
-            refreshes.continuation.yield(())
-        }
+        let gateway = makeTrackingGateway(commands, log: log, index: index)
 
-        // Ordered, so the count proves the status change contributed nothing:
-        // it is drained before the rename that produces the awaited refresh.
-        commands.emit(.statusChanged(id: UUID(), name: "Fresh", from: "stopped", to: "running"))
-        commands.emit(.renamed(id: UUID(), from: "Old", to: "New"))
-
-        for await _ in refreshes.stream { break }
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
         #expect(log.count == 1)
-        #expect(await gateway.vms().isEmpty)
+
+        // One batch, so the count proves the status change contributed nothing
+        // of its own to the rebuild the rename asks for.
+        commands.emit([
+            .statusChanged(id: vm.id, name: "New", from: "stopped", to: "running"),
+            .renamed(id: vm.id, from: "Old", to: "New"),
+        ])
+
+        try await log.gate.wait { log.count == 2 }
+        #expect(log.count == 2)
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A batch of additions rebuilds the vocabulary once, however many VMs arrived")
+    func aBatchOfAdditionsRebuildsTheVocabularyOnce() async throws {
+        let commands = MockVMCommanding()
+        let arriving = (1...6).map { makeSummary(name: "VM \($0)") }
+        let index = MockVMEntityIndex()
+        let log = RefreshLog()
+        let gateway = makeTrackingGateway(commands, log: log, index: index)
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        #expect(log.count == 1)
+
+        // The launch case: one pass over the library reports every VM it holds.
+        commands.library = arriving
+        commands.emit(arriving.map { .added($0) })
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
+        #expect(log.count == 2)
+        #expect(index.operations.last == .index(arriving.map(\.id)))
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A batch's removals are dropped and its renames re-indexed; status changes touch neither")
+    func indexFollowsTheLibrary() async throws {
+        let commands = MockVMCommanding()
+        let kept = makeSummary(name: "Kept")
+        commands.library = [kept]
+        let gone = UUID()
+        let index = MockVMEntityIndex()
+        let log = RefreshLog()
+        let gateway = makeTrackingGateway(commands, log: log, index: index)
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+
+        // Ordered through one stream: the status-only batch is drained before
+        // the batch whose writes are awaited, so both counts prove it wrote
+        // nothing and rebuilt nothing.
+        commands.emit([.statusChanged(id: kept.id, name: "Kept", from: "stopped", to: "running")])
+        commands.emit([
+            .removed(id: gone, name: "Gone"),
+            .renamed(id: kept.id, from: "Was", to: "Kept"),
+        ])
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
+        #expect(
+            index.operations == [
+                .removeAll, .index([kept.id]), .remove([gone]), .index([kept.id]),
+            ])
+        #expect(log.count == 2)
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A Spotlight refusal is swallowed, leaving the batch behind it indexed")
+    func indexRefusalsAreSwallowed() async throws {
+        let commands = MockVMCommanding()
+        let vm = makeSummary(name: "Wired")
+        commands.library = [vm]
+        let index = MockVMEntityIndex()
+        index.indexError = CocoaError(.fileWriteUnknown)
+        let gateway = makeGateway(commands, index: index)
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        commands.emit([.renamed(id: vm.id, from: "Was", to: "Wired")])
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
+
+        index.indexError = nil
+        commands.emit([.added(vm)])
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
+        #expect(Array(index.operations.suffix(2)) == [.index([vm.id]), .index([vm.id])])
+        withExtendedLifetime(gateway) {}
     }
 
     // MARK: - Idle Reporting
@@ -418,6 +546,7 @@ struct VMIntentGatewayTests {
             commands: commands,
             awaitReady: {},
             refreshShortcutVocabulary: {},
+            index: MockVMEntityIndex(),
             onIdle: {
                 if box.gateway?.hasIntentInFlight == true { log.reportedWhileBusy = true }
                 log.count += 1
@@ -526,4 +655,5 @@ private actor Counter {
 @MainActor
 private final class RefreshLog {
     var count = 0
+    let gate = AsyncGate()
 }

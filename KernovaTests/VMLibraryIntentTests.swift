@@ -14,7 +14,9 @@ import Testing
 @MainActor
 struct VMLibraryIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
-        VMIntentGateway(commands: commands, awaitReady: {}, refreshShortcutVocabulary: {})
+        VMIntentGateway(
+            commands: commands, awaitReady: {}, refreshShortcutVocabulary: {},
+            index: MockVMEntityIndex())
     }
 
     /// A library of one VM, which every verb here addresses.
