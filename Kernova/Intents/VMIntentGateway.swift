@@ -27,6 +27,8 @@ final class VMIntentGateway {
     private let refreshShortcutVocabulary: @MainActor () -> Void
     /// Where the library is written for Spotlight to match a spoken name in.
     private let index: any VMEntityIndexing
+    /// Holds the identifiers already written to the index, across launches.
+    private let defaults: UserDefaults
     /// Called on the main actor whenever the last intent in flight finishes.
     private let onIdle: @MainActor () -> Void
 
@@ -53,6 +55,11 @@ final class VMIntentGateway {
     /// index current.
     private var libraryEvents: Task<Void, Never>?
 
+    /// VMs a refused write left unindexed, re-attempted on the next batch.
+    private var pendingIndex: Set<UUID> = []
+    /// VMs a refused write left in the index, re-attempted on the next batch.
+    private var pendingRemove: Set<UUID> = []
+
     init(
         commands: any VMCommanding,
         awaitReady: @escaping @Sendable () async -> Void,
@@ -60,12 +67,14 @@ final class VMIntentGateway {
             KernovaShortcuts.updateAppShortcutParameters()
         },
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
+        defaults: UserDefaults = .standard,
         onIdle: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.awaitReady = awaitReady
         self.refreshShortcutVocabulary = refreshShortcutVocabulary
         self.index = index
+        self.defaults = defaults
         self.onIdle = onIdle
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
@@ -352,22 +361,37 @@ final class VMIntentGateway {
         return commands.events()
     }
 
-    /// Rebuilds Siri's vocabulary and rewrites every VM into the index,
-    /// replacing whatever an earlier run of the app left there.
+    /// Rebuilds Siri's vocabulary, writes every VM into the index, and then
+    /// drops the records of VMs the index still holds from an earlier run.
+    ///
+    /// The index is never emptied: writing first and pruning second, by
+    /// identifier, is what keeps the library findable through a process that
+    /// ends between the two — a launch made purely to service an intent is
+    /// terminated the moment that intent finishes. A refused write leaves both
+    /// the index and the recorded identifiers as they stand, so the previous
+    /// run's records answer until the retry lands.
     private func syncWholeLibrary() async {
         rebuildVocabulary()
         let all = await vms()
-        await write("clearing the VM index") { try await self.index.removeAll() }
-        await write("indexing every VM") { try await self.index.index(all) }
+        let current = all.map(\.id)
+        let stale = indexedVMIDs.subtracting(current)
+        guard await write("indexing every VM", { try await self.index.index(all) }) else {
+            pendingIndex.formUnion(current)
+            return
+        }
+        pendingIndex.subtract(current)
+        indexedVMIDs = Set(current)
+        if !stale.isEmpty { await removeFromIndex(Array(stale)) }
     }
 
     /// Brings Siri's vocabulary and the index up to what one pass over the
-    /// library found, ignoring the changes neither surface shows.
+    /// library found, re-attempting whatever an earlier write was refused.
     ///
     /// One batch is one rebuild and at most one write of each kind. A rebuild
     /// spends one of the system's donation-rate tokens, so a library big
     /// enough to spend them one VM at a time would leave Siri matching stale
-    /// names for the rest of the session.
+    /// names for the rest of the session — and a batch showing neither surface
+    /// anything new rebuilds nothing, while still being a moment to retry.
     private func apply(_ batch: [VMLibraryEvent]) async {
         var present: [UUID] = []
         var absent: [UUID] = []
@@ -379,19 +403,45 @@ final class VMIntentGateway {
             case .statusChanged, .agentStatusChanged, .failure: break
             }
         }
-        guard !present.isEmpty || !absent.isEmpty else { return }
-        rebuildVocabulary()
-        if !absent.isEmpty {
-            await write("removing \(absent.count) VMs from the index") {
-                try await self.index.remove(absent)
-            }
+        let changed = !present.isEmpty || !absent.isEmpty
+        guard changed || !pendingIndex.isEmpty || !pendingRemove.isEmpty else { return }
+        if changed { rebuildVocabulary() }
+        let removing = absent.appending(pendingRemove)
+        if !removing.isEmpty { await removeFromIndex(removing) }
+        let indexing = present.appending(pendingIndex)
+        if !indexing.isEmpty { await addToIndex(indexing) }
+    }
+
+    /// Writes the VMs `ids` names, dropping any that has since left the library.
+    private func addToIndex(_ ids: [UUID]) async {
+        let entities = await vms(withIDs: ids)
+        guard !entities.isEmpty else {
+            pendingIndex.subtract(ids)
+            return
         }
-        if !present.isEmpty {
-            let entities = await vms(withIDs: present)
-            await write("indexing \(entities.count) VMs") {
-                try await self.index.index(entities)
-            }
+        guard
+            await write(
+                "indexing \(entities.count) VMs", { try await self.index.index(entities) })
+        else {
+            pendingIndex.formUnion(ids)
+            return
         }
+        pendingIndex.subtract(ids)
+        indexedVMIDs.formUnion(entities.map(\.id))
+    }
+
+    /// Drops the records the VMs `ids` names.
+    private func removeFromIndex(_ ids: [UUID]) async {
+        guard
+            await write(
+                "removing \(ids.count) VMs from the index",
+                { try await self.index.remove(ids) })
+        else {
+            pendingRemove.formUnion(ids)
+            return
+        }
+        pendingRemove.subtract(ids)
+        indexedVMIDs.subtract(ids)
     }
 
     private func rebuildVocabulary() {
@@ -399,18 +449,51 @@ final class VMIntentGateway {
         refreshShortcutVocabulary()
     }
 
-    /// Runs one index write, logging and swallowing a refusal.
+    /// Runs one index write, logging a refusal and answering whether it landed.
     ///
     /// Spotlight is how a spoken name is matched, never how a verb runs: a
     /// refusal must neither fail an intent nor end the subscription that would
-    /// carry the next write.
-    private func write(_ operation: String, _ body: () async throws -> Void) async {
+    /// carry the next write. The caller keeps the identifiers a refused write
+    /// covered and the next batch re-attempts them, since this process stays up
+    /// for days and a relaunch is far too long to leave a name unmatchable.
+    private func write(_ operation: String, _ body: () async throws -> Void) async -> Bool {
         do {
             try await body()
+            return true
         } catch {
             Self.logger.warning(
                 "Spotlight failed \(operation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
+            return false
         }
+    }
+
+    // MARK: - Indexed Identifiers
+
+    /// The literal `UserDefaults` key the indexed identifiers are stored under.
+    static let indexedVMIDsKey = "SpotlightIndexedVMIDs"
+
+    /// Which VMs the index is believed to hold, as of the last write that
+    /// landed.
+    ///
+    /// Persisted because it is what a later launch prunes against: the index
+    /// outlives the process, so a VM deleted while Kernova was not running is
+    /// only findable-but-gone until some run notices it is no longer in the
+    /// library.
+    private var indexedVMIDs: Set<UUID> {
+        get {
+            Set(
+                (defaults.stringArray(forKey: Self.indexedVMIDsKey) ?? [])
+                    .compactMap(UUID.init(uuidString:)))
+        }
+        set { defaults.set(newValue.map(\.uuidString), forKey: Self.indexedVMIDsKey) }
+    }
+}
+
+extension Array where Element == UUID {
+    /// Self, followed by every element of `others` it does not already carry.
+    fileprivate func appending(_ others: Set<UUID>) -> [UUID] {
+        var seen = Set(self)
+        return self + others.filter { seen.insert($0).inserted }
     }
 }

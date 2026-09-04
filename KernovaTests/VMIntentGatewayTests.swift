@@ -26,12 +26,30 @@ struct VMIntentGatewayTests {
     /// A gateway whose library read has already landed, over a seeded mock.
     private func makeGateway(
         _ commands: MockVMCommanding,
+        defaults: UserDefaults,
         refreshShortcutVocabulary: @escaping @MainActor () -> Void = {},
         index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, awaitReady: {},
-            refreshShortcutVocabulary: refreshShortcutVocabulary, index: index)
+            refreshShortcutVocabulary: refreshShortcutVocabulary, index: index,
+            defaults: defaults)
+    }
+
+    /// An isolated defaults store named for one test.
+    ///
+    /// The gateway records there which VMs it has written to the index, and
+    /// prunes the index against what it reads back, so two tests sharing one
+    /// store would prune against each other's VMs.
+    private func makeStore(_ test: String) -> UserDefaults {
+        makeEphemeralDefaults(suiteName: "test.kernova.intentgateway.\(test)")
+    }
+
+    /// The VMs `defaults` records as written to the index.
+    private func indexedIDs(in defaults: UserDefaults) -> Set<UUID> {
+        Set(
+            (defaults.stringArray(forKey: VMIntentGateway.indexedVMIDsKey) ?? [])
+                .compactMap(UUID.init(uuidString:)))
     }
 
     // MARK: - Entity
@@ -102,7 +120,8 @@ struct VMIntentGatewayTests {
         let second = makeSummary(name: "Second")
         commands.library = [first, second]
 
-        let resolved = await makeGateway(commands).vms(withIDs: [second.id])
+        let gateway = makeGateway(commands, defaults: makeStore("lookup-ids"))
+        let resolved = await gateway.vms(withIDs: [second.id])
 
         #expect(resolved.map(\.name) == ["Second"])
     }
@@ -114,7 +133,7 @@ struct VMIntentGatewayTests {
             makeSummary(name: "Sonoma"), makeSummary(name: "Sonoma"), makeSummary(name: "Ubuntu"),
         ]
 
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("lookup-names"))
 
         let twins = await gateway.vms(matching: "sonoma")
         let byPrefix = await gateway.vms(matching: "UBUN")
@@ -130,7 +149,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         commands.library = [makeSummary(name: "First"), makeSummary(name: "Second")]
 
-        let all = await makeGateway(commands).vms()
+        let all = await makeGateway(commands, defaults: makeStore("lookup-all")).vms()
 
         #expect(all.map(\.name) == ["First", "Second"])
     }
@@ -212,7 +231,8 @@ struct VMIntentGatewayTests {
                 entered.continuation.yield(())
                 for await _ in release.stream { break }
             },
-            refreshShortcutVocabulary: {}, index: index)
+            refreshShortcutVocabulary: {}, index: index,
+            defaults: makeStore("readiness-wait"))
 
         let read = Task { await gateway.vms() }
         for await _ in entered.stream { break }
@@ -233,7 +253,8 @@ struct VMIntentGatewayTests {
         let awaits = Counter()
         let gateway = VMIntentGateway(
             commands: commands, awaitReady: { await awaits.increment() },
-            refreshShortcutVocabulary: {}, index: MockVMEntityIndex())
+            refreshShortcutVocabulary: {}, index: MockVMEntityIndex(),
+            defaults: makeStore("readiness-memoized"))
 
         _ = await gateway.vms()
         _ = await gateway.vms()
@@ -249,7 +270,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         let id = Self.stoppedID
         commands.library = [makeSummary(name: "Twin", id: id)]
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("verbs"))
 
         try await gateway.start(id, recovery: true)
         try await gateway.stop(id, disposition: .force, confirmed: true)
@@ -280,7 +301,7 @@ struct VMIntentGatewayTests {
     func refusalsPassThrough() async throws {
         let commands = MockVMCommanding()
         commands.startError = CommandError.busy(vm: makeSummary(), operation: "starting")
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("refusals"))
 
         await #expect(throws: CommandError.self) {
             try await gateway.start(UUID(), recovery: false)
@@ -299,7 +320,7 @@ struct VMIntentGatewayTests {
             message: "Unsaved guest state is lost.",
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel")
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("consent-retry"))
         var asked: [ConfirmationPrompt] = []
 
         try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
@@ -325,7 +346,7 @@ struct VMIntentGatewayTests {
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel",
             alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("consent-force-stop"))
         var asked = 0
 
         try await VMIntentConsent.run(prompting: { _ in asked += 1 }) { confirmed in
@@ -356,7 +377,7 @@ struct VMIntentGatewayTests {
             confirmTitle: "Resume and Shut Down",
             dismissTitle: "Cancel",
             alternatives: [ConfirmationAlternative(title: "Force Stop", disposition: .force)])
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("consent-alternatives"))
         var asked = 0
 
         await #expect(throws: CommandError.self) {
@@ -373,7 +394,7 @@ struct VMIntentGatewayTests {
     func consentLeavesOtherFailuresAlone() async throws {
         let commands = MockVMCommanding()
         commands.stopError = CommandError.busy(vm: makeSummary(), operation: "suspending")
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(commands, defaults: makeStore("consent-other-failures"))
         var asked = 0
 
         await #expect(throws: CommandError.self) {
@@ -406,10 +427,12 @@ struct VMIntentGatewayTests {
 
     /// A gateway reporting every vocabulary rebuild into `log`, over `index`.
     private func makeTrackingGateway(
-        _ commands: MockVMCommanding, log: RefreshLog, index: MockVMEntityIndex
+        _ commands: MockVMCommanding, defaults: UserDefaults, log: RefreshLog,
+        index: MockVMEntityIndex
     ) -> VMIntentGateway {
         makeGateway(
             commands,
+            defaults: defaults,
             refreshShortcutVocabulary: {
                 log.count += 1
                 log.gate.notify()
@@ -417,11 +440,12 @@ struct VMIntentGatewayTests {
             index: index)
     }
 
-    /// The writes the readiness sync makes, which every batch assertion counts
-    /// from: one whole-library rewrite, preceded by one vocabulary rebuild.
-    private static let syncedOperations = 2
+    /// The writes the readiness sync makes over an index holding nothing stale,
+    /// which every batch assertion counts from: one whole-library write,
+    /// preceded by one vocabulary rebuild.
+    private static let syncedOperations = 1
 
-    @Test("Readiness rebuilds Siri's vocabulary once and rewrites the whole library")
+    @Test("Readiness rebuilds Siri's vocabulary once and writes the whole library, emptying nothing")
     func readinessSyncsTheWholeLibrary() async throws {
         let commands = MockVMCommanding()
         let first = makeSummary(name: "First")
@@ -429,12 +453,92 @@ struct VMIntentGatewayTests {
         commands.library = [first, second]
         let index = MockVMEntityIndex()
         let log = RefreshLog()
-        let gateway = makeTrackingGateway(commands, log: log, index: index)
+        let defaults = makeStore("readiness-sync")
+        let gateway = makeTrackingGateway(commands, defaults: defaults, log: log, index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
 
-        #expect(index.operations == [.removeAll, .index([first.id, second.id])])
+        #expect(index.operations == [.index([first.id, second.id])])
+        #expect(indexedIDs(in: defaults) == [first.id, second.id])
         #expect(log.count == 1)
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("Readiness drops only the VMs it recorded indexing that the library no longer holds")
+    func readinessPrunesWhatLeftTheLibrary() async throws {
+        let commands = MockVMCommanding()
+        let kept = makeSummary(name: "Kept")
+        commands.library = [kept]
+        let gone = UUID()
+        let defaults = makeStore("readiness-prune")
+        defaults.set(
+            [gone.uuidString, kept.id.uuidString], forKey: VMIntentGateway.indexedVMIDsKey)
+        let index = MockVMEntityIndex()
+        let gateway = makeGateway(commands, defaults: defaults, index: index)
+
+        // The write lands before the prune, so a process ending between them
+        // leaves the library findable rather than nothing at all.
+        try await index.gate.wait { index.operations.count == 2 }
+
+        #expect(index.operations == [.index([kept.id]), .remove([gone])])
+        #expect(indexedIDs(in: defaults) == [kept.id])
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A refused whole-library write keeps the recorded VMs, and the next batch re-attempts it")
+    func refusedSyncIsRetriedOnTheNextBatch() async throws {
+        let commands = MockVMCommanding()
+        let vm = makeSummary(name: "Wired")
+        commands.library = [vm]
+        let stale = UUID()
+        let defaults = makeStore("sync-retry")
+        defaults.set([stale.uuidString], forKey: VMIntentGateway.indexedVMIDsKey)
+        let index = MockVMEntityIndex()
+        index.indexError = CocoaError(.fileWriteUnknown)
+        let gateway = makeGateway(commands, defaults: defaults, index: index)
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        #expect(index.operations == [.index([vm.id])])
+        #expect(indexedIDs(in: defaults) == [stale])
+
+        index.indexError = nil
+        // A status change shows neither surface anything new, and is still the
+        // moment the refused write is re-attempted.
+        commands.emit([.statusChanged(id: vm.id, name: "Wired", from: "stopped", to: "running")])
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
+        #expect(index.operations == [.index([vm.id]), .index([vm.id])])
+        #expect(indexedIDs(in: defaults) == [stale, vm.id])
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A refused removal is retried on the next batch, and forgotten only once it lands")
+    func refusedRemovalIsRetriedOnTheNextBatch() async throws {
+        let commands = MockVMCommanding()
+        let kept = makeSummary(name: "Kept")
+        let gone = makeSummary(name: "Gone")
+        commands.library = [kept, gone]
+        let defaults = makeStore("remove-retry")
+        let index = MockVMEntityIndex()
+        let gateway = makeGateway(commands, defaults: defaults, index: index)
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        #expect(indexedIDs(in: defaults) == [kept.id, gone.id])
+
+        index.removeError = CocoaError(.fileWriteUnknown)
+        commands.library = [kept]
+        commands.emit([.removed(id: gone.id, name: "Gone")])
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
+        #expect(index.operations.last == .remove([gone.id]))
+        #expect(indexedIDs(in: defaults) == [kept.id, gone.id])
+
+        index.removeError = nil
+        commands.emit([.statusChanged(id: kept.id, name: "Kept", from: "stopped", to: "running")])
+
+        try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
+        #expect(index.operations.last == .remove([gone.id]))
+        #expect(indexedIDs(in: defaults) == [kept.id])
         withExtendedLifetime(gateway) {}
     }
 
@@ -445,7 +549,8 @@ struct VMIntentGatewayTests {
         commands.library = [vm]
         let index = MockVMEntityIndex()
         let log = RefreshLog()
-        let gateway = makeTrackingGateway(commands, log: log, index: index)
+        let gateway = makeTrackingGateway(
+            commands, defaults: makeStore("vocabulary"), log: log, index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
         #expect(log.count == 1)
@@ -468,7 +573,8 @@ struct VMIntentGatewayTests {
         let arriving = (1...6).map { makeSummary(name: "VM \($0)") }
         let index = MockVMEntityIndex()
         let log = RefreshLog()
-        let gateway = makeTrackingGateway(commands, log: log, index: index)
+        let gateway = makeTrackingGateway(
+            commands, defaults: makeStore("batch-additions"), log: log, index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
         #expect(log.count == 1)
@@ -491,7 +597,8 @@ struct VMIntentGatewayTests {
         let gone = UUID()
         let index = MockVMEntityIndex()
         let log = RefreshLog()
-        let gateway = makeTrackingGateway(commands, log: log, index: index)
+        let gateway = makeTrackingGateway(
+            commands, defaults: makeStore("index-follows"), log: log, index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
 
@@ -506,9 +613,7 @@ struct VMIntentGatewayTests {
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
         #expect(
-            index.operations == [
-                .removeAll, .index([kept.id]), .remove([gone]), .index([kept.id]),
-            ])
+            index.operations == [.index([kept.id]), .remove([gone]), .index([kept.id])])
         #expect(log.count == 2)
         withExtendedLifetime(gateway) {}
     }
@@ -520,7 +625,8 @@ struct VMIntentGatewayTests {
         commands.library = [vm]
         let index = MockVMEntityIndex()
         index.indexError = CocoaError(.fileWriteUnknown)
-        let gateway = makeGateway(commands, index: index)
+        let defaults = makeStore("index-refusals")
+        let gateway = makeGateway(commands, defaults: defaults, index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
         commands.emit([.renamed(id: vm.id, from: "Was", to: "Wired")])
@@ -539,7 +645,7 @@ struct VMIntentGatewayTests {
     /// A ready gateway over a seeded mock, reporting every idle transition
     /// into `log` and noting any that arrived while work was outstanding.
     private func makeIdleReportingGateway(
-        _ commands: MockVMCommanding, log: IdleLog
+        _ commands: MockVMCommanding, store: String, log: IdleLog
     ) -> VMIntentGateway {
         let box = GatewayBox()
         let gateway = VMIntentGateway(
@@ -547,6 +653,7 @@ struct VMIntentGatewayTests {
             awaitReady: {},
             refreshShortcutVocabulary: {},
             index: MockVMEntityIndex(),
+            defaults: makeStore(store),
             onIdle: {
                 if box.gateway?.hasIntentInFlight == true { log.reportedWhileBusy = true }
                 log.count += 1
@@ -559,7 +666,7 @@ struct VMIntentGatewayTests {
     @Test("One intent reports the process idle once, and not before its result is built")
     func singleIntentReportsIdleOnce() async throws {
         let log = IdleLog()
-        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), store: "idle-single", log: log)
 
         gateway.beginIntent()
         #expect(gateway.hasIntentInFlight)
@@ -576,7 +683,7 @@ struct VMIntentGatewayTests {
     @Test("Overlapping intents report idle once, at the end of the last one")
     func overlappingIntentsReportIdleOnce() async throws {
         let log = IdleLog()
-        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), store: "idle-overlapping", log: log)
 
         gateway.beginIntent()
         gateway.beginIntent()
@@ -592,7 +699,7 @@ struct VMIntentGatewayTests {
     @Test("An intent arriving behind a finished one is never reported idle through")
     func reportIsCancelledByLaterIntent() async throws {
         let log = IdleLog()
-        let gateway = makeIdleReportingGateway(MockVMCommanding(), log: log)
+        let gateway = makeIdleReportingGateway(MockVMCommanding(), store: "idle-cancelled", log: log)
 
         // The second intent lands on the same turn the first one's report was
         // scheduled from; re-testing the count is what keeps it from firing.
@@ -611,7 +718,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         commands.library = [makeSummary(name: "Wired", id: vm)]
         let log = IdleLog()
-        let gateway = makeIdleReportingGateway(commands, log: log)
+        let gateway = makeIdleReportingGateway(commands, store: "idle-system-reads", log: log)
 
         // `VMEntityQuery` and `SnapshotEntityQuery` reach these to resolve a
         // parameter or refresh Siri's vocabulary. Both arrive unbidden, so

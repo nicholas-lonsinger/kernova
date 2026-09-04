@@ -9,9 +9,6 @@ protocol VMEntityIndexing: Sendable {
 
     /// Drops the records the VMs `ids` names.
     func remove(_ ids: [UUID]) async throws
-
-    /// Drops every VM record.
-    func removeAll() async throws
 }
 
 /// The system Spotlight index, which is what macOS resolves a spoken VM name
@@ -24,9 +21,5 @@ struct SpotlightVMEntityIndex: VMEntityIndexing {
     func remove(_ ids: [UUID]) async throws {
         try await CSSearchableIndex.default().deleteAppEntities(
             identifiedBy: ids, ofType: VMEntity.self)
-    }
-
-    func removeAll() async throws {
-        try await CSSearchableIndex.default().deleteAppEntities(ofType: VMEntity.self)
     }
 }

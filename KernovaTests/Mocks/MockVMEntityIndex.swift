@@ -13,7 +13,6 @@ final class MockVMEntityIndex: VMEntityIndexing {
     enum Operation: Equatable {
         case index([UUID])
         case remove([UUID])
-        case removeAll
     }
 
     /// Every write so far, oldest first.
@@ -26,8 +25,6 @@ final class MockVMEntityIndex: VMEntityIndexing {
     var indexError: Error?
     /// The same for `remove`.
     var removeError: Error?
-    /// The same for `removeAll`.
-    var removeAllError: Error?
 
     func index(_ vms: [VMEntity]) async throws {
         record(.index(vms.map(\.id)))
@@ -37,11 +34,6 @@ final class MockVMEntityIndex: VMEntityIndexing {
     func remove(_ ids: [UUID]) async throws {
         record(.remove(ids))
         if let removeError { throw removeError }
-    }
-
-    func removeAll() async throws {
-        record(.removeAll)
-        if let removeAllError { throw removeAllError }
     }
 
     private func record(_ operation: Operation) {
