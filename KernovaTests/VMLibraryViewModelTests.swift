@@ -5407,6 +5407,45 @@ struct VMLibraryViewModelTests {
         #expect(shared.isEmpty)
     }
 
+    @Test("A read for a VM the library no longer holds answers empty and raises nothing")
+    func readsForADepartedVMAnswerEmpty() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let sharedPath = "/Volumes/External/shared.img"
+        let departed = makeInstance(name: "Departed")
+        departed.configuration.storageDisks = [
+            StorageDisk(
+                path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
+        ]
+        departed.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Base")])
+        let sharer = makeInstance(name: "Sharer")
+        sharer.configuration.storageDisks = [
+            StorageDisk(
+                path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
+        ]
+        viewModel.instances = [sharer]
+
+        // Where a sheet is left when its VM leaves the library while it is still
+        // up: every read addresses the VM by id, and every one is refused.
+        #expect(await viewModel.snapshotOnDiskBytes(for: departed).isEmpty)
+        #expect(await viewModel.externalAttachments(for: departed).isEmpty)
+        #expect(
+            await viewModel.sharingVMNames(
+                forPath: sharedPath, bookmark: nil, excluding: departed
+            ).isEmpty)
+        // There is nothing left for the user to act on, so nothing is put in
+        // front of them.
+        #expect(!presenter.showError)
+
+        // Listed, the same three answer — so the emptiness above is the refusal
+        // rather than an empty subject.
+        viewModel.instances.append(departed)
+        #expect(await viewModel.snapshotOnDiskBytes(for: departed).count == 1)
+        #expect(await viewModel.externalAttachments(for: departed).count == 1)
+        #expect(
+            await viewModel.sharingVMNames(
+                forPath: sharedPath, bookmark: nil, excluding: departed) == ["Sharer"])
+    }
+
     // MARK: - Reconcile Rollback
 
     @Test("Reorder-only removableMedia change triggers no detach/attach")
