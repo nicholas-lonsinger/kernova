@@ -30,7 +30,10 @@
 #     CFBundleVersion (= squash-aware git commit count, see docs/BUILD.md "Build
 #     version"), so a ghost build can shadow the real app indefinitely even
 #     though version ordering can never favor the installed copy on its own
-#     (#454). Deregistration/eviction is the only lever.
+#     (#454). Deregistration/eviction is the only lever — and only for a copy
+#     no checkout still builds into: a live checkout's build is reported as
+#     the winner but never evicted, since its next build recreates and
+#     re-registers it, so trashing costs a rebuild and fixes nothing.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
 # Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]
@@ -569,7 +572,8 @@ loc_index() {
     loc_index_result=$(( ${#loc_paths[@]} - 1 ))
 }
 
-# add_item <path> <display-name> <meta> <mark>; mark is '', 'ok' or 'ghost'.
+# add_item <path> <display-name> <meta> <mark>; mark is '', 'ok', 'live' or
+# 'ghost'.
 add_item() {
     loc_index "$(location_of "$1")"
     item_loc+=("$loc_index_result")
@@ -613,6 +617,7 @@ else
 
     if [ "$blessed_known" -eq 1 ]; then
         ghost_count=0
+        live_count=0
         i=0
         for path in "${app_copies[@]}"; do
             ver=${copy_vers[$i]}
@@ -629,9 +634,24 @@ else
             # a tie-break — only a build that would actually outrank
             # /Applications is a ghost.
             if is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
-                add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election" 'ghost'
-                competing_copies+=("$path")
-                ghost_count=$((ghost_count + 1))
+                # A build some existing checkout still builds into is the
+                # ordinary state of a branch ahead of main, and eviction is
+                # no lever against it: the next build recreates and
+                # re-registers the copy. Report the shadowing, leave the
+                # bundle. The orphan scan above already evicts arenas whose
+                # checkout is gone, so `*-removed` and unattributable paths
+                # (Trash) are the ones eviction can actually settle.
+                case "$("$REPO_ROOT/Tools/arena-label.sh" --status "$path" 2>/dev/null)" in
+                    worktree-live | main | other)
+                        add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election; live checkout, not evicted" 'live'
+                        live_count=$((live_count + 1))
+                        ;;
+                    *)
+                        add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election" 'ghost'
+                        competing_copies+=("$path")
+                        ghost_count=$((ghost_count + 1))
+                        ;;
+                esac
             else
                 add_item "$path" "$(basename "$path")" "version $ver, $sign" ''
             fi
@@ -643,6 +663,13 @@ else
                 copies_verdict="$ghost_count on-disk copies outrank the installed /Applications build"
             fi
             copies_verdict_kind='ghost'
+        elif [ "$live_count" -gt 0 ]; then
+            if [ "$live_count" -eq 1 ]; then
+                copies_verdict="A live checkout's build outranks the installed /Applications build (not evicted: its next build recreates it)"
+            else
+                copies_verdict="$live_count live checkouts' builds outrank the installed /Applications build (not evicted: their next build recreates them)"
+            fi
+            copies_verdict_kind='warn'
         else
             copies_verdict='No on-disk copy outranks the installed /Applications build'
             copies_verdict_kind='clean'
@@ -718,6 +745,7 @@ for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
         # which fails under `set -u` on the first marked item.
         case "${item_mark[$j]}" in
             ghost) marker="${c_red}✗${c_reset} " ;;
+            live)  marker="${c_yellow}⚠${c_reset} " ;;
             ok)    marker="${c_green}✓${c_reset} " ;;
             *)     marker='  ' ;;
         esac
