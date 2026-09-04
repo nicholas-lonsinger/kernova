@@ -33,7 +33,7 @@ These bind every change in every subsystem — engineering and product decisions
 - **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: [NETWORKING.md](docs/NETWORKING.md) §8.
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: [NETWORKING.md](docs/NETWORKING.md) §7.
 - **Outcome names in the UI; vendor terms at the platform boundary.** Where Apple's own UI names the thing — a permission, an entitlement, a System Settings pane — keep Apple's term at that boundary and the outcome-describing domain term everywhere else. Worked case: [NETWORKING.md](docs/NETWORKING.md) §5.
-- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked cases: [CLIPBOARD.md](docs/CLIPBOARD.md) §4, [NETWORKING.md](docs/NETWORKING.md) §4.
+- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked cases: [CLIPBOARD.md](docs/CLIPBOARD.md) §4, [NETWORKING.md](docs/NETWORKING.md) §4, [BUILD.md](docs/BUILD.md) "Git hooks and worktree setup".
 
 ## Build & Test
 
