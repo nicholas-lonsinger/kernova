@@ -340,6 +340,32 @@ struct VirtualizationServiceTests {
         #expect(String(decoding: liveDisk, as: UTF8.self) == "live-disk")
     }
 
+    @Test("A restore that fails rests the VM rather than leaving it mid-revert, and reaches the caller")
+    func revertRestsTheVMWhenTheRestoreFails() async throws {
+        let fixture = try makeRevertFixture(phase: .running(sessionID: UUID()))
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        // Past the pre-flight, failing at the restore itself.
+        let store = MockVMSnapshotStore()
+        store.setCapturedConfiguration(fixture.capturedConfiguration, for: fixture.snapshot.id)
+        store.restoreError = VMSnapshotError.snapshotMissingFile("Disk.asif")
+
+        await #expect(throws: VMSnapshotError.self) {
+            try await service.revertToSnapshot(
+                fixture.instance, snapshot: fixture.snapshot, store: store)
+        }
+
+        // The teardown already happened, so the VM rests where a failed restore
+        // leaves it — stopped, the bundle holding no save file to resume from —
+        // never stuck at `.revertingToSnapshot`.
+        #expect(fixture.instance.status == .stopped)
+        #expect(!fixture.instance.hasLiveVirtualMachine)
+        #expect(fixture.instance.phase != .revertingToSnapshot)
+        // Nothing of the snapshot landed: the VM's own disk is as the live guest
+        // left it.
+        let liveDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
+        #expect(String(decoding: liveDisk, as: UTF8.self) == "live-disk")
+    }
+
     // MARK: - Disks-only snapshots
 
     @Test("A disks-only capture of a stopped VM writes the disks, no saved state, and rests stopped")

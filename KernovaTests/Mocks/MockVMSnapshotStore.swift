@@ -18,6 +18,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         var sizes: [UUID: UInt64] = [:]
         var saveManifestError: (any Error)?
         var captureError: (any Error)?
+        var restoreError: (any Error)?
         var discardError: (any Error)?
     }
 
@@ -62,6 +63,10 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     var captureError: (any Error)? {
         get { lock.withLock { state.captureError } }
         set { lock.withLock { state.captureError = newValue } }
+    }
+    var restoreError: (any Error)? {
+        get { lock.withLock { state.restoreError } }
+        set { lock.withLock { state.restoreError = newValue } }
     }
     var discardError: (any Error)? {
         get { lock.withLock { state.discardError } }
@@ -128,7 +133,11 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         }
     }
 
-    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {}
+    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
+        try lock.withLock {
+            if let error = state.restoreError { throw error }
+        }
+    }
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
         try lock.withLock {
