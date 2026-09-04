@@ -360,10 +360,9 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.status == .stopped)
         #expect(!fixture.instance.hasLiveVirtualMachine)
         #expect(fixture.instance.phase != .revertingToSnapshot)
-        // Nothing of the snapshot landed: the VM's own disk is as the live guest
-        // left it.
-        let liveDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
-        #expect(String(decoding: liveDisk, as: UTF8.self) == "live-disk")
+        // The captured configuration is only installed by a restore that
+        // succeeded, so the VM still holds its own 16 GB, not the snapshot's 8.
+        #expect(fixture.instance.configuration.memorySizeInGB == 16)
     }
 
     // MARK: - Disks-only snapshots
