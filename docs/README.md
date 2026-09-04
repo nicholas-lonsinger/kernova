@@ -17,4 +17,4 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 | [RELEASING.md](RELEASING.md) | Cutting a release — the notarized Developer ID release flow, one-time signing prerequisites, and verification checklist |
 | [research/](research/) | Dated research write-ups that ground design decisions (e.g. vsock transport throughput) |
 
-Also at the repo root: [README.md](../README.md) (project landing page), [CONTRIBUTING.md](../CONTRIBUTING.md) (contribution policy), [LICENSE](../LICENSE), and the agent entry points ([AGENTS.md](../AGENTS.md), imported by `CLAUDE.md`, pointed to by `GEMINI.md`). Tool-neutral project skills live in `.agents/skills/`.
+Also at the repo root: [README.md](../README.md) (project landing page), [CONTRIBUTING.md](../CONTRIBUTING.md) (contribution policy), [LICENSE](../LICENSE), and the agent entry points ([AGENTS.md](../AGENTS.md), imported by `CLAUDE.md`, pointed to by `GEMINI.md`). Agent-neutral project skills live in `.agents/skills/`.

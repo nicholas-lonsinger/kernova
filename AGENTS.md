@@ -1,6 +1,6 @@
 # AGENTS.md
 
-The tool-neutral operating guide for this repository. Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on demand.
+The agent-neutral operating guide for this repository. Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on demand.
 
 > Design philosophy and UI guidelines: [docs/DESIGN.md](docs/DESIGN.md).
 >
