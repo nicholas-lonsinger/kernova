@@ -39,8 +39,6 @@ These bind every change in every subsystem — engineering and product decisions
 
 Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#development-setup); machinery: [docs/BUILD.md](docs/BUILD.md).
 
-**Build, test, and lint go through the `make-verdict` skill** (`.agents/skills/make-verdict/`), never a raw `make build`/`test`/`lint`, which streams the whole xcodebuild log into context.
-
 The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64)` guards are unnecessary.
 
 Build settings live in `Config/` — `Base.xcconfig` for project-wide facts, `Config/Targets/<Target>.xcconfig` for per-target ones, each covering Debug and Release with `[config=…]` conditions. Every `buildSettings` block in `project.pbxproj` stays empty, and no signing identity, team, or entitlement path goes in an app or test-target xcconfig ([docs/BUILD.md](docs/BUILD.md)).
