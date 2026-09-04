@@ -1,0 +1,16 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination platform=macOS -configuration Debug test
+
+** TEST BUILD SUCCEEDED **
+
+Test Suite 'All tests' started at 2026-09-04 12:00:00.000.
+◇ Test "defaultsMatchTemplate()" started.
+✘ Test "defaultsMatchTemplate()" recorded an issue at VMConfigurationTests.swift:42:9: Expectation failed: (config.cpuCount → 2) == 4
+✘ Test "defaultsMatchTemplate()" failed after 0.021 seconds with 1 issue.
+✔ Test run with 3948 tests in 412 suites passed after 411.9 seconds.
+
+Test session results, code coverage, and logs:
+	@BUNDLE@/failed.xcresult
+
+** TEST FAILED **
+make: *** [Makefile:140: test] Error 65

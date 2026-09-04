@@ -1,0 +1,15 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination platform=macOS -configuration Debug test
+
+SwiftCompile normal arm64 Compiling\ VMConfigurationTests.swift @ROOT@/KernovaTests/VMConfigurationTests.swift (in target 'KernovaTests' from project 'Kernova')
+@ROOT@/KernovaTests/VMConfigurationTests.swift:18:22: error: value of type 'VMConfiguration' has no member 'cpuCoun'
+Testing failed:
+	value of type 'VMConfiguration' has no member 'cpuCoun'
+	Testing cancelled because the build failed.
+
+** TEST FAILED **
+
+The following build commands failed:
+	SwiftCompile normal arm64 Compiling\ VMConfigurationTests.swift @ROOT@/KernovaTests/VMConfigurationTests.swift (in target 'KernovaTests' from project 'Kernova')
+(1 failure)
+make: *** [Makefile:140: test] Error 65

@@ -1,0 +1,17 @@
+{
+  "testNodes": [
+    {
+      "name": "KernovaTests",
+      "nodeType": "Unit test bundle",
+      "result": "Passed",
+      "children": [
+        {
+          "name": "keepsDisplayName()",
+          "nodeIdentifier": "VMConfigurationTests/keepsDisplayName()",
+          "nodeType": "Test Case",
+          "result": "Passed"
+        }
+      ]
+    }
+  ]
+}

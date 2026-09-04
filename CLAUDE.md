@@ -6,6 +6,13 @@ The project's operating guide — build commands, architecture summary, and the 
 
 Deep-dive documentation is indexed in [docs/README.md](docs/README.md) — read those files on demand when AGENTS.md points at them. Everything below is Claude Code-specific.
 
+## Skills
+
+Project skills are tool-neutral and live in `.agents/skills/<name>/SKILL.md`;
+`.claude/skills/<name>` is a tracked symlink to each, which Claude Code follows.
+A new skill goes there with its symlink in the same change — never a copy under
+`.claude/`.
+
 ## Worktree branch naming and pushing
 
 Worktrees start on an auto-generated `worktree-<name>` branch (the harness also

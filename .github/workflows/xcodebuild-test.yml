@@ -89,38 +89,13 @@ jobs:
         run: make test-without-building 2>&1
 
       # xcodebuild's own stream interleaves parallel test hosts, so a failure's
-      # message can land far from the test that raised it. This pairs each
-      # failed case with every message it recorded, in one block.
+      # message can land far from the test that raised it. The report pairs
+      # each failed case with every message it recorded, in one block; it
+      # exits 0 whenever the bundle was readable and says why on stderr when
+      # it was not, so this step never fails the job.
       - name: Report failure messages
         if: always()
-        run: |
-          bundle="artifacts/TestResults.xcresult"
-          if [ ! -d "$bundle" ]; then
-            echo "No test result bundle at $bundle — skipping failure report."
-            exit 0
-          fi
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "jq not found — skipping failure report."
-            exit 0
-          fi
-          # Keep stderr: a rejected flag or an unreadable bundle otherwise
-          # degrades this step to a silent no-op with nothing to debug from.
-          if ! error="$(xcrun xcresulttool get test-results tests --path "$bundle" --format json 2>&1 >/tmp/tests.json)"; then
-            echo "Could not read test results at $bundle — skipping failure report. Output: $error"
-            exit 0
-          fi
-          # A retried case passes overall while one Repetition failed, so match
-          # on either: the masked attempt's message is the one worth reading.
-          jq -r '
-            [ .. | objects
-              | select(.nodeType? == "Test Case")
-              | select(.result == "Failed"
-                       or any(.children[]?; .nodeType == "Repetition" and .result == "Failed")) ]
-            | .[]
-            | "=== " + (.nodeIdentifier // .name) + "\n"
-              + ( [ .. | objects | select(.nodeType? == "Failure Message") | .name ]
-                  | unique | join("\n") )
-          ' /tmp/tests.json || echo "Could not parse test results — skipping failure report."
+        run: Tools/xcresult-report.sh --path artifacts/TestResults.xcresult --failures || true
 
       # `TestAdmission` resolves its width once per test-host process and logs
       # the outcome through `Logger`, which writes to the unified log rather
@@ -140,36 +115,14 @@ jobs:
       # it re-runs the whole bundle and lets a test that failed its first attempt
       # pass the job on a retry, silently masking the flake — a green run can hide
       # a ~35%-flaky test (which is exactly how #523 stayed green for a day). This
-      # step reads the result bundle and warns on any test with a failed attempt,
-      # so a passed-on-retry flake is visible instead of an invisible green. It is
-      # visibility-only and never fails the job (retryOnFailure still guards merges).
+      # step names every test with a failed attempt, so a passed-on-retry flake is
+      # visible instead of an invisible green. It is visibility-only and never
+      # fails the job (retryOnFailure still guards merges).
       - name: Report flaky (retried) tests
         if: always()
         run: |
-          bundle="artifacts/TestResults.xcresult"
-          if [ ! -d "$bundle" ]; then
-            echo "No test result bundle at $bundle — skipping flake report."
-            exit 0
-          fi
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "jq not found — skipping flake report."
-            exit 0
-          fi
-          # Each attempt is a "Repetition" node; a genuine flake failed at least
-          # one Repetition but still passed overall (a bundle-wide retry marks
-          # every passed test's repetitions "Passed", so this does not
-          # false-positive on the other tests dragged through the retry). A test
-          # that failed every repetition is broken, not flaky — it already fails
-          # the job on its own via xcodebuild's exit code, so `result == "Passed"`
-          # excludes it here to avoid mislabeling it as a mere flake. Dedup on
-          # `.nodeIdentifier` (suite-qualified) rather than `.name` (bare display
-          # name), since two unrelated suites can share a test's display name.
-          if ! flaky="$(xcrun xcresulttool get test-results tests --path "$bundle" 2>&1 | jq -r '
-                [ .. | objects
-                  | select(.nodeType? == "Test Case" and .result == "Passed")
-                  | select(any(.children[]?; .nodeType == "Repetition" and .result == "Failed"))
-                  | (.nodeIdentifier // .name) ] | unique[]' 2>&1)"; then
-            echo "Could not read/parse test results at $bundle — skipping flake report. Output: $flaky"
+          if ! flaky="$(Tools/xcresult-report.sh --path artifacts/TestResults.xcresult --flaky)"; then
+            echo "Could not read the result bundle — skipping flake report."
             exit 0
           fi
           if [ -z "$flaky" ]; then

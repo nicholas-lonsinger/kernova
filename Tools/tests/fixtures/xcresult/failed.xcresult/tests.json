@@ -1,0 +1,103 @@
+{
+  "devices": [],
+  "testNodes": [
+    {
+      "name": "KernovaTests",
+      "nodeType": "Unit test bundle",
+      "result": "Failed",
+      "children": [
+        {
+          "name": "VMConfigurationTests",
+          "nodeType": "Test Suite",
+          "result": "Failed",
+          "children": [
+            {
+              "name": "defaultsMatchTemplate()",
+              "nodeIdentifier": "VMConfigurationTests/defaultsMatchTemplate()",
+              "nodeType": "Test Case",
+              "result": "Failed",
+              "duration": "0.021s",
+              "children": [
+                {
+                  "name": "Repetition 1",
+                  "nodeType": "Repetition",
+                  "result": "Failed",
+                  "children": [
+                    {
+                      "name": "@ROOT@/KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4",
+                      "nodeType": "Failure Message"
+                    }
+                  ]
+                },
+                {
+                  "name": "Repetition 2",
+                  "nodeType": "Repetition",
+                  "result": "Failed",
+                  "children": [
+                    {
+                      "name": "@ROOT@/KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4",
+                      "nodeType": "Failure Message"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "rejectsZeroMemory()",
+              "nodeIdentifier": "VMConfigurationTests/rejectsZeroMemory()",
+              "nodeType": "Test Case",
+              "result": "Failed",
+              "duration": "0.003s",
+              "children": [
+                {
+                  "name": "@ROOT@/KernovaTests/VMConfigurationTests.swift:58: Expectation failed: error is nil",
+                  "nodeType": "Failure Message"
+                }
+              ]
+            },
+            {
+              "name": "keepsDisplayName()",
+              "nodeIdentifier": "VMConfigurationTests/keepsDisplayName()",
+              "nodeType": "Test Case",
+              "result": "Passed",
+              "duration": "0.001s"
+            }
+          ]
+        },
+        {
+          "name": "ClipboardTests",
+          "nodeType": "Test Suite",
+          "result": "Passed",
+          "children": [
+            {
+              "name": "roundTrip()",
+              "nodeIdentifier": "ClipboardTests/roundTrip()",
+              "nodeType": "Test Case",
+              "result": "Passed",
+              "duration": "1.204s",
+              "children": [
+                {
+                  "name": "Repetition 1",
+                  "nodeType": "Repetition",
+                  "result": "Failed",
+                  "children": [
+                    {
+                      "name": "@ROOT@/KernovaTests/ClipboardTests.swift:91: Expectation failed: received == sent",
+                      "nodeType": "Failure Message"
+                    }
+                  ]
+                },
+                {
+                  "name": "Repetition 2",
+                  "nodeType": "Repetition",
+                  "result": "Passed"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "testPlanConfigurations": []
+}

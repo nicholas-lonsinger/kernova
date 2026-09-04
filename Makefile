@@ -58,7 +58,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help check build build-for-testing test test-without-building test-suite test-package clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -67,6 +67,7 @@ help:
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-22s %s\n", $$1, $$2}'
 	@printf '\n'
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
+	@printf '  make check runs test, or WHAT=<target> (build, lint, ...), or SUITE=<Target/Suite>, and prints only the verdict\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
 
@@ -112,6 +113,14 @@ check-hooks:
 install-lsp: ## Install xcode-build-server and write this checkout's buildServer.json
 	@Tools/brew-install.sh xcode-build-server
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
+
+# The verdict-only front door for every build, test, and lint run: the target
+# runs with its whole output captured to artifacts/check/, and only counts,
+# compile errors, failing tests, and paths come back. WHAT names the target
+# (default test); a SUITE alone selects test-suite. Tools/check.sh owns the
+# parsing and the exit-code contract.
+check: ## Run build/test/lint and print only the verdict (WHAT=<target>, SUITE=<Target/Suite>)
+	@Tools/check.sh $(if $(WHAT),$(WHAT),$(if $(SUITE),test-suite,test)) $(SUITE)
 
 build: check-hooks ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
@@ -174,7 +183,10 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, and build-setting layering
+# The Tools/ fixture tests run last: they replay recorded xcodebuild output
+# through Tools/check.sh without Xcode, so a parsing regression fails the
+# same gate as a lint finding.
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering; run the Tools/ fixture tests
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -191,6 +203,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	@bash Tools/check-headless-core.sh
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-build-settings-layering.sh
+	@bash Tools/tests/run.sh
 
 # Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own
 # `-derivedDataPath`, `-quiet`, `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`,

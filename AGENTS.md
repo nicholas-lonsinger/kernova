@@ -39,7 +39,9 @@ These bind every change in every subsystem — engineering and product decisions
 
 Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#development-setup); machinery: [docs/BUILD.md](docs/BUILD.md).
 
-Run long targets (`build`, `test`, `test-suite`) as bare **background** shell commands — no pipes, no `tail`/`tee`, no watcher loops. The harness keeps the full output in the task's log file and notifies on exit: the exit code is the verdict, and nothing enters context during the run, so output-mangling saves no tokens — it only truncates the log. After exit, grep the log file for just the lines you need.
+**To build, test, or lint, run `make check`** (`WHAT=build|lint`; `SUITE=<Target/Suite>` for one suite) as a bare **background** shell command — no pipes, no `tail`/`tee`, no watcher loops; the harness notifies on exit. It runs the target with the whole xcodebuild stream captured to a file and prints only the verdict: counts from the result bundle, deduplicated compile errors, failing tests with their messages, and the log and bundle paths.
+
+Never grep a raw build log, never poll a task-output file, and never re-run a target to change a filter. Anything beyond the verdict — which tests failed, whether a `SUITE=` filter ran anything, a downloaded CI bundle — is `Tools/xcresult-report.sh`; never hand-write an xcresult walk.
 
 The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64)` guards are unnecessary.
 

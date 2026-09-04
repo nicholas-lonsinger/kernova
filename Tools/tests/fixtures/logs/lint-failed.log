@@ -1,0 +1,10 @@
+In Tools/check.sh line 12:
+echo $foo
+     ^--^ SC2086 (info): Double quote to prevent globbing and word splitting.
+
+xcrun swift-format lint --strict --recursive Kernova KernovaKit KernovaTests
+@ROOT@/Kernova/App/AppDelegate.swift:12:1: error: [Indentation] unindent by 4 spaces
+  ✗ docs/BUILD.md:40 — 91 words (cap 80)
+
+1 documentation violation(s)
+make: *** [Makefile:170: lint] Error 1

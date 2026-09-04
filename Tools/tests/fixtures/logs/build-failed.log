@@ -1,0 +1,17 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination platform=macOS -configuration Debug build
+
+SwiftCompile normal arm64 Compiling\ VMSession.swift @ROOT@/Kernova/Services/VMSession.swift (in target 'Kernova' from project 'Kernova')
+@ROOT@/Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
+        foo()
+        ^~~
+@ROOT@/Kernova/Services/VMSession.swift:50:5: warning: variable 'x' was never used; consider replacing with '_' or removing it
+@ROOT@/Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
+@ROOT@/KernovaKit/Sources/KernovaKit/Wire.swift:7:1: error: missing return in instance method expected to return 'Int'
+** BUILD FAILED **
+
+The following build commands failed:
+	SwiftCompile normal arm64 Compiling\ VMSession.swift @ROOT@/Kernova/Services/VMSession.swift (in target 'Kernova' from project 'Kernova')
+	SwiftCompile normal arm64 Compiling\ Wire.swift @ROOT@/KernovaKit/Sources/KernovaKit/Wire.swift (in target 'KernovaKit' from project 'KernovaKit')
+(2 failures)
+make: *** [Makefile:118: build] Error 65

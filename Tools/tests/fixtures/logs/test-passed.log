@@ -1,0 +1,11 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination platform=macOS -configuration Debug test
+
+** TEST BUILD SUCCEEDED **
+
+✔ Test run with 3948 tests in 412 suites passed after 398.2 seconds.
+
+Test session results, code coverage, and logs:
+	@BUNDLE@/passed.xcresult
+
+** TEST SUCCEEDED **
