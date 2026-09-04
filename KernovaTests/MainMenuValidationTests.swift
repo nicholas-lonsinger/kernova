@@ -94,7 +94,7 @@ struct MainMenuValidationTests {
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
         let model = GuestAgentDiskMenuItem.model(
             status: instance.agentStatus,
-            isInstallerMounted: fixture.viewModel.isGuestAgentInstallerMounted(on: instance))
+            isInstallerMounted: instance.hasGuestAgentInstallerMounted)
 
         #expect(fixture.controller.validate(item) == model.isEnabled)
         #expect(item.title == model.title)

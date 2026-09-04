@@ -563,6 +563,8 @@ struct VMSettingsOverviewTests {
     @Test("The snapshots' footprint is never claimed for a set it doesn't cover")
     func snapshotFootprintNeverOutlivesItsSnapshots() async throws {
         let (vc, instance, viewModel) = makeController()
+        // Listed, because the snapshot-size read addresses its VM by id.
+        viewModel.library.instances.append(instance)
         let first = VMSnapshot(name: "First")
         let second = VMSnapshot(name: "Second")
         instance.snapshotManifest = VMSnapshotManifest(
@@ -587,6 +589,7 @@ struct VMSettingsOverviewTests {
         // A switch to another VM drops the footprint outright: its count must
         // not land beside the previous VM's.
         let other = makeInstance(guestOS: .macOS)
+        viewModel.library.instances.append(other)
         let onlySnapshot = VMSnapshot(name: "Other")
         other.snapshotManifest = VMSnapshotManifest(
             snapshots: [onlySnapshot], currentID: onlySnapshot.id)

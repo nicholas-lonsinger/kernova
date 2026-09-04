@@ -25,7 +25,8 @@ struct VMCommandCoreTests {
     }
 
     private func makeHarness(
-        virtualization: MockVirtualizationService = MockVirtualizationService()
+        virtualization: MockVirtualizationService = MockVirtualizationService(),
+        diskImages: MockDiskImageService = MockDiskImageService()
     ) -> Harness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
@@ -54,7 +55,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             storageService: storage,
             snapshotStore: snapshots,
-            diskImageService: MockDiskImageService(),
+            diskImageService: diskImages,
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -1715,6 +1716,29 @@ struct VMCommandCoreTests {
 
         #expect(reported.count == 1)
         #expect(reported.first?.isOperationFailure == true)
+    }
+
+    @Test("A create whose disk image failed reports the failure typed as a create")
+    func failedCreateReportsThroughTheHookTyped() async throws {
+        let diskImages = MockDiskImageService()
+        diskImages.createDiskImageError = NSError(domain: "test", code: 1)
+        let harness = makeHarness(diskImages: diskImages)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+
+        // The write fails after the phantom row is registered, so the sheet
+        // that asked is long gone and the hook is all the failure has.
+        let summary = try harness.core.create(
+            configuration: VMConfiguration(name: "Disk Fail VM", guestOS: .linux, bootMode: .efi),
+            startAfterCreate: false)
+        await harness.library.instances.first { $0.id == summary.id }?.preparingState?.task.value
+
+        #expect(harness.library.instances.isEmpty)
+        guard case .operationFailed(let verb, _, _, _) = reported.first else {
+            Issue.record("Expected an operationFailed, got \(String(describing: reported.first))")
+            return
+        }
+        #expect(verb == .create)
     }
 
     @Test("A start failure that names its own heading carries it to the caller")

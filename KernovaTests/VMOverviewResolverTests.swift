@@ -19,19 +19,29 @@ struct VMOverviewResolverTests {
         return VMInstance(configuration: config, bundleURL: bundleURL)
     }
 
+    /// `inLibrary` lists the VM the resolver is bound to, which is what lets the
+    /// reads it issues — each addressing its VM by id — answer at all.
+    ///
+    /// Listed rather than registered: `wirePersistence` re-reads the snapshot
+    /// manifest these tests seed by hand, and claims a network slot the address
+    /// case asserts nothing takes.
     private func makeResolver(
         instance: VMInstance,
         viewModel: VMLibraryViewModel? = nil,
+        inLibrary: Bool = false,
         entitled: Bool = true,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         interfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
         micPermission: AVAuthorizationStatus = .authorized
     ) -> VMOverviewResolver {
-        VMOverviewResolver(
+        let model =
+            viewModel
+            ?? makeSettingsViewModel(
+                preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled)
+        if inLibrary { model.library.instances.append(instance) }
+        return VMOverviewResolver(
             instance: instance,
-            viewModel: viewModel
-                ?? makeSettingsViewModel(
-                    preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled),
+            viewModel: model,
             entitlements: EntitlementService(
                 reader: MockEntitlementReader(granted: entitled ? ["com.apple.vm.networking"] : [])),
             bridgedInterfaces: interfaces,
@@ -268,7 +278,7 @@ struct VMOverviewResolverTests {
         let snapshot = VMSnapshot(name: "Base")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
-        let resolver = makeResolver(instance: instance)
+        let resolver = makeResolver(instance: instance, inLibrary: true)
 
         resolver.refresh()
         #expect(resolver.resolved.snapshotTotalBytes == nil)
@@ -286,7 +296,7 @@ struct VMOverviewResolverTests {
         let instance = makeInstance()
         let first = VMSnapshot(name: "First")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [first], currentID: first.id)
-        let resolver = makeResolver(instance: instance)
+        let resolver = makeResolver(instance: instance, inLibrary: true)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         let measured = try #require(resolver.resolved.snapshotSizes[first.id])
@@ -315,7 +325,7 @@ struct VMOverviewResolverTests {
         let second = VMSnapshot(name: "Second")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second], currentID: second.id)
-        let resolver = makeResolver(instance: instance)
+        let resolver = makeResolver(instance: instance, inLibrary: true)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         #expect(resolver.resolved.snapshotSizes.count == 2)
@@ -337,7 +347,7 @@ struct VMOverviewResolverTests {
         let snapshot = VMSnapshot(name: "Base")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
-        let resolver = makeResolver(instance: instance, viewModel: viewModel)
+        let resolver = makeResolver(instance: instance, viewModel: viewModel, inLibrary: true)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         await resolver.bootDiskTaskForTesting?.value
@@ -359,7 +369,7 @@ struct VMOverviewResolverTests {
         let snapshot = VMSnapshot(name: "Base")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
-        let resolver = makeResolver(instance: instance)
+        let resolver = makeResolver(instance: instance, inLibrary: true)
         var reported: [VMSettingsCategory] = []
         resolver.onCategoryResolved = { reported.append($0) }
 

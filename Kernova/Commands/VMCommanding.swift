@@ -38,12 +38,41 @@ protocol VMCommanding: AnyObject {
     /// The VM's named restore points, newest first.
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary]
 
+    /// Bytes each of this VM's snapshots occupies on disk, read off the main
+    /// actor — the copies live on the same volume and can be many gigabytes.
+    func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64]
+
+    /// The external (non-bundle) files referenced by the VM that the delete
+    /// sheet offers to trash, each annotated with whether it is still there and
+    /// which other VMs name the same file.
+    func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment]
+
+    /// Names of other VMs in the library naming the same file as
+    /// `(path, bookmark)`.
+    ///
+    /// Only external paths count — a bundle-relative one is per-VM by
+    /// construction. The VM `selector` names is excluded, so a file is never
+    /// reported as shared with itself.
+    func sharingVMNames(_ selector: VMSelector, path: String, bookmark: Data?) async throws
+        -> [String]
+
     // MARK: - Lifecycle
 
     /// Starts the VM, running whatever guest setup it still owes first.
     ///
     /// `recovery` cold-boots a stopped macOS guest into macOS Recovery.
     func start(_ selector: VMSelector, recovery: Bool) async throws
+
+    /// Detaches the attachment a failed start named and starts again — the
+    /// confirmed action of the start-failed alert.
+    ///
+    /// The file behind the attachment is untouched. Refuses nothing and reports
+    /// nothing: the user already consented, and the confirmation can arrive long
+    /// after the failed start, so a VM that has left the library and an entry
+    /// already removed are both no-ops.
+    func removeStartFailedAttachmentAndStart(
+        _ selector: VMSelector, attachment: StartFailedAttachment
+    ) async
 
     /// Cancels the guest setup a first start is running — a macOS install, or a
     /// Linux installer image being fetched or verified.
@@ -98,7 +127,6 @@ protocol VMCommanding: AnyObject {
     ///
     /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
     /// write starts nothing.
-    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     @discardableResult
     func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary
 
@@ -132,7 +160,6 @@ protocol VMCommanding: AnyObject {
     /// Takes files rather than opening a panel: a pick carries a
     /// security-scoped bookmark only an in-process open panel can mint, which
     /// is why no wire verb offers this.
-    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func attachStorageDisks(_ selector: VMSelector, paths files: [PickedFile]) throws
 
     /// Writes a new sparse image inside the VM's bundle and appends it.
@@ -165,7 +192,6 @@ protocol VMCommanding: AnyObject {
     /// Appends the picked files to the VM's removable-media list, skipping
     /// paths it already carries — off the wire for the reason
     /// ``attachStorageDisks(_:paths:)`` states.
-    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func attachRemovableMedia(_ selector: VMSelector, paths files: [PickedFile]) throws
 
     /// Writes a new sparse image at a destination the user chose and attaches
@@ -173,7 +199,6 @@ protocol VMCommanding: AnyObject {
     ///
     /// Off the wire: the write rides a live save-panel grant, which is also
     /// what the entry's bookmark is minted from.
-    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func createRemovableMedia(
         _ selector: VMSelector, sizeInGB: Int, destinationURL: URL
     ) async throws
@@ -204,7 +229,6 @@ protocol VMCommanding: AnyObject {
     /// Appends the picked folders to the VM's shared-directory list, skipping
     /// paths it already carries — off the wire for the reason
     /// ``attachStorageDisks(_:paths:)`` states.
-    // periphery:ignore - an in-process verb: the UI calls it on the concrete core, and no wire verb routes it
     func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws
 
     /// Drops a shared directory's entry, leaving the folder itself alone.

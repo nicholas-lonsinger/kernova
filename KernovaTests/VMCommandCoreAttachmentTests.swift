@@ -1080,7 +1080,7 @@ struct VMCommandCoreAttachmentTests {
         instance.onAgentBecameCurrent?()
 
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
-        #expect(harness.core.isGuestAgentInstallerMounted(on: instance))
+        #expect(instance.hasGuestAgentInstallerMounted)
         #expect(harness.usbDevices.detachCallCount == 0)
 
         instance.enter(.running(sessionID: sessionID))
@@ -1124,9 +1124,9 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.core.capabilities.accepts(.editRemovableMedia, on: instance))
 
         await harness.core.removeStartFailedAttachmentAndStart(
-            StartFailedAttachment(
-                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"),
-            on: instance)
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"))
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         // The file the start could not open is left exactly where it is.
@@ -1139,9 +1139,9 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed."))
 
         await harness.core.removeStartFailedAttachmentAndStart(
-            StartFailedAttachment(
-                kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open"),
-            on: instance)
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open"))
 
         #expect(instance.status == .error)
     }

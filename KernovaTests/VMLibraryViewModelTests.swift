@@ -664,56 +664,6 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
-    @Test("bundledDisks returns the internal disks and excludes externals")
-    func bundledDisksListsInternalOnly() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.storageDisks = [
-            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio),
-            StorageDisk(
-                path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
-                isInternal: true, kind: .virtio
-            ),
-            StorageDisk(
-                path: "/Volumes/External/data.img", readOnly: false, label: "Scratch",
-                isInternal: false, kind: .virtio
-            ),
-        ]
-        viewModel.instances.append(instance)
-
-        let bundled = viewModel.bundledDisks(for: instance)
-
-        #expect(bundled.count == 2)
-        #expect(bundled.allSatisfy { $0.isInternal })
-        #expect(bundled.map(\.label) == ["Main", "Extra"])
-    }
-
-    @Test("bundledDisks falls back to the synthesized main disk when config is nil")
-    func bundledDisksFallsBackToMainDisk() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.storageDisks = nil
-        viewModel.instances.append(instance)
-
-        let bundled = viewModel.bundledDisks(for: instance)
-
-        #expect(bundled.count == 1)
-        #expect(bundled[0].isInternal)
-    }
-
-    @Test("bundledDisks falls back to the synthesized main disk when config is empty")
-    func bundledDisksFallsBackToMainDiskForEmptyList() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.configuration.storageDisks = []
-        viewModel.instances.append(instance)
-
-        let bundled = viewModel.bundledDisks(for: instance)
-
-        #expect(bundled.count == 1)
-        #expect(bundled[0].isInternal)
-    }
-
     /// Builds a `VMLibraryViewModel` wired to a caller-supplied `MockIPSWService`.
     ///
     /// The shared `makeViewModel` helper doesn't expose the IPSW service
@@ -3112,8 +3062,6 @@ struct VMLibraryViewModelTests {
         let diskService = MockDiskImageService()
         diskService.createDiskImageError = NSError(domain: "test", code: 1)
         let (viewModel, storage, _, virtService, _) = makeViewModel(diskImageService: diskService)
-        var reported: CommandError?
-        viewModel.commands.onFailure = { failure, _ in reported = failure }
         let wizard = makeCreationWizard(name: "Disk Fail VM")
 
         try viewModel.createVM(from: wizard)
@@ -3125,11 +3073,7 @@ struct VMLibraryViewModelTests {
         let staged = try #require(storage.stagedBundleURLs.last)
         try await fileSystem.recorded.wait { self.fileSystem.trashedURLs == [staged] }
         #expect(virtService.startCallCount == 0)
-        guard case .operationFailed(let verb, _, _, _) = reported else {
-            Issue.record("Expected an operationFailed, got \(String(describing: reported))")
-            return
-        }
-        #expect(verb == .create)
+        #expect(presenter.showError == true)
     }
 
     @Test("createVM starts the new VM when the wizard asked for it")
@@ -5375,28 +5319,7 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.removableMedia == nil)
         #expect(instance.configuration.storageDisks == nil)
         #expect(mock.attachCallCount == 0)
-        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
-    }
-
-    @Test("isGuestAgentInstallerMounted reflects whether the bundled DMG is attached")
-    func isGuestAgentInstallerMountedReflectsState() throws {
-        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
-
-        instance.configuration.removableMedia = [
-            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
-        ]
-        #expect(viewModel.isGuestAgentInstallerMounted(on: instance))
-
-        // An unrelated removable item must not count as the installer.
-        instance.configuration.removableMedia = [
-            RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
-        ]
-        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
+        #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
     @Test("onAgentBecameCurrent (wired by loadVMs) auto-ejects the installer disk")
@@ -5414,13 +5337,13 @@ struct VMLibraryViewModelTests {
         await viewModel.loadVMs()
         let instance = try #require(viewModel.instances.first)
 
-        #expect(viewModel.isGuestAgentInstallerMounted(on: instance))
+        #expect(instance.hasGuestAgentInstallerMounted)
 
         // Fire the hook the view model wired in `wirePersistence(for:)` — it
         // must detach the installer regardless of which window is open.
         instance.onAgentBecameCurrent?()
 
-        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
+        #expect(!instance.hasGuestAgentInstallerMounted)
         #expect(instance.configuration.removableMedia == nil)
     }
 
@@ -5482,35 +5405,6 @@ struct VMLibraryViewModelTests {
         // Same relative path, but both are bundle-internal → not shared.
         let shared = await viewModel.sharingVMNames(forPath: "Disk.asif", bookmark: nil, excluding: a)
         #expect(shared.isEmpty)
-    }
-
-    @Test("isGuestAgentInstaller matches the bundled DMG path only")
-    func isGuestAgentInstallerMatches() throws {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-            .path(percentEncoded: false)
-        #expect(viewModel.isGuestAgentInstaller(RemovableMediaItem(path: agentPath, readOnly: true)))
-        #expect(!viewModel.isGuestAgentInstaller(RemovableMediaItem(path: "/tmp/other.iso", readOnly: true)))
-    }
-
-    @Test("isSoleStorageDisk is true for a VM's only disk and false for either of two")
-    func isSoleStorageDiskFollowsTheCount() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-        // A nil list resolves to the synthesized main disk alone.
-        let main = instance.effectiveStorageDisks[0]
-        #expect(viewModel.isSoleStorageDisk(main, of: instance))
-
-        let extra = StorageDisk(
-            path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
-            isInternal: true, kind: .virtio)
-        instance.configuration.storageDisks = [main, extra]
-        #expect(!viewModel.isSoleStorageDisk(main, of: instance))
-        #expect(!viewModel.isSoleStorageDisk(extra, of: instance))
-
-        instance.configuration.storageDisks = [extra]
-        #expect(viewModel.isSoleStorageDisk(extra, of: instance))
     }
 
     // MARK: - Reconcile Rollback

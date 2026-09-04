@@ -26,6 +26,12 @@ final class MockVMCommanding: VMCommanding {
     var snapshotsByVM: [UUID: [SnapshotSummary]] = [:]
     /// The row `clone` answers with, synthesized from the source when unset.
     var cloneResult: VMSummary?
+    /// What `snapshotOnDiskBytes(of:)` answers with.
+    var snapshotBytes: [UUID: UInt64] = [:]
+    /// What `externalAttachments(of:)` answers with.
+    var externalAttachmentsToReturn: [ExternalAttachment] = []
+    /// What `sharingVMNames(_:path:bookmark:)` answers with.
+    var sharingVMNamesToReturn: [String] = []
 
     // MARK: - Recorded calls
 
@@ -33,6 +39,11 @@ final class MockVMCommanding: VMCommanding {
     private(set) var infoSelectors: [VMSelector] = []
     private(set) var ipAddressSelectors: [VMSelector] = []
     private(set) var snapshotsSelectors: [VMSelector] = []
+    private(set) var snapshotOnDiskBytesSelectors: [VMSelector] = []
+    private(set) var externalAttachmentsSelectors: [VMSelector] = []
+    private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
+        []
+    private(set) var removeStartFailedAttachmentCalls: [(selector: VMSelector, attachment: StartFailedAttachment)] = []
     private(set) var startCalls: [(selector: VMSelector, recovery: Bool)] = []
     private(set) var stopCalls: [(selector: VMSelector, disposition: StopDisposition, confirmed: Bool)] =
         []
@@ -84,6 +95,9 @@ final class MockVMCommanding: VMCommanding {
     var infoError: (any Error)?
     var ipAddressError: (any Error)?
     var snapshotsError: (any Error)?
+    var snapshotOnDiskBytesError: (any Error)?
+    var externalAttachmentsError: (any Error)?
+    var sharingVMNamesError: (any Error)?
     var startError: (any Error)?
     var stopError: (any Error)?
     var pauseError: (any Error)?
@@ -178,11 +192,40 @@ final class MockVMCommanding: VMCommanding {
         return snapshotsByVM[try resolve(selector).id] ?? []
     }
 
+    func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
+        snapshotOnDiskBytesSelectors.append(selector)
+        if let snapshotOnDiskBytesError { throw snapshotOnDiskBytesError }
+        _ = try resolve(selector)
+        return snapshotBytes
+    }
+
+    func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment] {
+        externalAttachmentsSelectors.append(selector)
+        if let externalAttachmentsError { throw externalAttachmentsError }
+        _ = try resolve(selector)
+        return externalAttachmentsToReturn
+    }
+
+    func sharingVMNames(_ selector: VMSelector, path: String, bookmark: Data?) async throws
+        -> [String]
+    {
+        sharingVMNamesCalls.append((selector, path, bookmark))
+        if let sharingVMNamesError { throw sharingVMNamesError }
+        _ = try resolve(selector)
+        return sharingVMNamesToReturn
+    }
+
     // MARK: - Lifecycle
 
     func start(_ selector: VMSelector, recovery: Bool) async throws {
         startCalls.append((selector, recovery))
         if let startError { throw startError }
+    }
+
+    func removeStartFailedAttachmentAndStart(
+        _ selector: VMSelector, attachment: StartFailedAttachment
+    ) async {
+        removeStartFailedAttachmentCalls.append((selector, attachment))
     }
 
     func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {

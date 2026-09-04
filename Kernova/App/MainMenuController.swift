@@ -349,7 +349,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             guard isAvailable, hasBundledGuestAgentDisk else { return false }
             let model = GuestAgentDiskMenuItem.model(
                 status: instance.agentStatus,
-                isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
+                isInstallerMounted: instance.hasGuestAgentInstallerMounted)
             menuItem.title = model.title
             return model.isEnabled
         case #selector(AppDelegate.togglePopOut(_:)):

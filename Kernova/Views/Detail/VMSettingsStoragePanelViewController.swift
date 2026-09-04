@@ -605,7 +605,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
                 notes: disk.notes, editable: canEditStorageDisks,
-                isSoleStorageDisk: viewModel.isSoleStorageDisk(disk, of: instance))
+                isSoleStorageDisk: instance.isSoleStorageDisk(disk))
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
@@ -859,7 +859,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         Task { [weak self] in
             guard let self, let item = currentRemovableMedia.first(where: { $0.id == id })
             else { return }
-            let isAgent = viewModel.isGuestAgentInstaller(item)
+            let isAgent = item.isBundledGuestAgentInstaller
             var shared: [String] = []
             if !isAgent {
                 shared = await viewModel.sharingVMNames(

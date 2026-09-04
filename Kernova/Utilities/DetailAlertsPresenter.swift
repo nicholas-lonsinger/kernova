@@ -331,7 +331,7 @@ final class DetailAlertsPresenter: NSObject {
         let token = deleteSheetToken
         let content = DeleteVMSheetContentViewController(
             vmName: request.instance.name,
-            bundledDisks: viewModel.bundledDisks(for: request.instance),
+            bundledDisks: request.instance.bundledStorageDisks,
             externals: resolved.externals,
             hasSavedState: request.instance.hasSaveFile,
             snapshotCount: request.instance.snapshotManifest.snapshots.count,

@@ -12,14 +12,7 @@ final class RevertOutcome {
 
 /// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.
 extension VMCommandCore {
-    // MARK: - Gates
-
-    /// Whether `snapshot` may be deleted: the manifest has to be editable, and
-    /// a VM's Ephemeral baseline is the restore point its every power-off needs.
-    func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        capabilities.isAvailable(.deleteSnapshot, on: instance)
-            && !instance.isEphemeralBaseline(snapshot)
-    }
+    // MARK: - Manifest
 
     /// Re-reads a bundle's snapshot manifest into its instance.
     ///
@@ -28,6 +21,10 @@ extension VMCommandCore {
     /// carries snapshots).
     func reloadSnapshots(for instance: VMInstance) {
         instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
+    }
+
+    func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
+        await snapshotOnDiskBytes(for: try resolve(selector))
     }
 
     /// Bytes each of this VM's snapshots occupies on disk, read off the main

@@ -25,6 +25,16 @@ struct StorageDiskTests {
                 != StorageDisk.mainDisk(layout: bLayout).id)
     }
 
+    @Test("isBundledGuestAgentInstaller matches the bundled DMG path only")
+    func bundledGuestAgentInstallerMatchesThePathOnly() throws {
+        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        #expect(RemovableMediaItem(path: agentPath, readOnly: true).isBundledGuestAgentInstaller)
+        #expect(
+            !RemovableMediaItem(path: "/tmp/other.iso", readOnly: true)
+                .isBundledGuestAgentInstaller)
+    }
+
     @Test("mainDisk is an internal virtio disk at the bundle's Disk.asif")
     func mainDiskShape() {
         let layout = VMBundleLayout(bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-shape.kernova"))

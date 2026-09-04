@@ -369,6 +369,33 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
     }
 
+    @Test("An Ephemeral baseline is undeletable, and every other snapshot is not")
+    func canDeleteSnapshotProtectsTheEphemeralBaseline() {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install")
+        let later = VMSnapshot(name: "Configured")
+        let instance = makeInstance(in: harness, snapshots: [baseline, later])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+
+        #expect(!harness.catalog.canDeleteSnapshot(baseline, on: instance))
+        #expect(harness.catalog.canDeleteSnapshot(later, on: instance))
+
+        // Turning the mode off releases the baseline: nothing needs it back.
+        instance.configuration.applyEphemeralMode(enabled: false, baseline: nil)
+        #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
+    }
+
+    @Test("No snapshot is deletable in a state the manifest cannot be edited in")
+    func canDeleteSnapshotFollowsTheCapability() {
+        let harness = makeHarness()
+        let snapshot = VMSnapshot(name: "Configured")
+        let instance = makeInstance(
+            in: harness, phase: .revertingToSnapshot, snapshots: [snapshot])
+
+        #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
+        #expect(!harness.catalog.canDeleteSnapshot(snapshot, on: instance))
+    }
+
     @Test("The clipboard window follows the VM's own sharing toggle")
     func clipboardFollowsTheSharingToggle() {
         let harness = makeHarness()
