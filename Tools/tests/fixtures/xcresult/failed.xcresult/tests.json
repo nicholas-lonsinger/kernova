@@ -24,8 +24,9 @@
                   "result": "Failed",
                   "children": [
                     {
-                      "name": "@ROOT@/KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4",
-                      "nodeType": "Failure Message"
+                      "name": "Expectation failed: (config.cpuCount → 2) == 4",
+                      "nodeType": "Failure Message",
+                      "sourceLocation": { "filePath": "@ROOT@/KernovaTests/VMConfigurationTests.swift", "lineNumber": 42 }
                     }
                   ]
                 },
@@ -35,8 +36,9 @@
                   "result": "Failed",
                   "children": [
                     {
-                      "name": "@ROOT@/KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4",
-                      "nodeType": "Failure Message"
+                      "name": "Expectation failed: (config.cpuCount → 2) == 4",
+                      "nodeType": "Failure Message",
+                      "sourceLocation": { "filePath": "@ROOT@/KernovaTests/VMConfigurationTests.swift", "lineNumber": 42 }
                     }
                   ]
                 }
@@ -50,8 +52,9 @@
               "duration": "0.003s",
               "children": [
                 {
-                  "name": "@ROOT@/KernovaTests/VMConfigurationTests.swift:58: Expectation failed: error is nil",
-                  "nodeType": "Failure Message"
+                  "name": "Expectation failed: error is nil\nerror → nil",
+                  "nodeType": "Failure Message",
+                  "sourceLocation": { "filePath": "@ROOT@/KernovaTests/VMConfigurationTests.swift", "lineNumber": 58 }
                 }
               ]
             },

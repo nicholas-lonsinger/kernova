@@ -15,7 +15,7 @@ Run `make check` in place of `make build`, `make test`, `make test-suite`, and `
 
 Run it as a bare background shell command — no pipes, `tail`, `tee`, or watcher loops — and act when the harness reports the exit. From a subagent, run it in the foreground with a generous timeout instead.
 
-The output is the whole answer. Its last line is `check: verdict=<token> …`:
+The output is the whole answer; read its `check: verdict=<token> …` line (make's own `*** [check] Error` line follows it on a failure and carries nothing):
 
 - `green` — done.
 - `test-failed` — each `=== <test>` block above it carries that failure's messages; fix those.

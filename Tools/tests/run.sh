@@ -114,6 +114,8 @@ expect '^result=Failed total=3948 passed=3945 failed=2 skipped=1 xfail=0$'
 expect '^=== VMConfigurationTests/defaultsMatchTemplate\(\)$'
 expect_count '^KernovaTests/VMConfigurationTests\.swift:42: Expectation failed: \(config\.cpuCount → 2\) == 4$' 1
 expect '^=== VMConfigurationTests/rejectsZeroMemory\(\)$'
+expect '^KernovaTests/VMConfigurationTests\.swift:58: Expectation failed: error is nil$'
+expect '^error → nil$'
 expect '^=== ClipboardTests/roundTrip\(\) \(passed on retry\)$'
 reject '^xcresult-report:'
 reject "$ROOT"

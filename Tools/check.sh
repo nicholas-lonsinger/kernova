@@ -26,7 +26,9 @@
 #     Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
 #   check: verdict=test-failed target=test suite=- total=3948 failed=3 flaky=0 log=… xcresult=…
 #
-# Verdict tokens and exit codes:
+# Verdict tokens and exit codes. The codes are this script's; `make check`
+# turns any failure into make's own exit 2 and appends its `*** [check]` line,
+# so the `check: verdict=` line is the contract to read either way.
 #   0  green         the target succeeded; a test target ran at least one test
 #   1  test-failed   tests ran and some failed (or the run died after testing)
 #   2  build-failed  xcodebuild did not complete the build

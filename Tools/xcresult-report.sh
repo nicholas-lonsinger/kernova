@@ -20,7 +20,7 @@
 # Output (default mode, stdout):
 #   result=Failed total=3948 passed=3945 failed=3 skipped=0 xfail=0
 #   === VMConfigurationTests/defaultsMatchTemplate()
-#   VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
+#   KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
 #   === ClipboardTests/roundTrip() (passed on retry)
 #   ...
 #   xcresult-report: verdict=failed total=3948 failed=3 flaky=1 path=<bundle>
@@ -116,7 +116,10 @@ failure_blocks() {
         | .[]
         | "=== " + (.nodeIdentifier // .name)
           + (if .result == "Passed" then " (passed on retry)" else "" end) + "\n"
-          + ( [ .. | objects | select(.nodeType? == "Failure Message") | .name ]
+          + ( [ .. | objects | select(.nodeType? == "Failure Message")
+                | ( .sourceLocation
+                    | if . then .filePath + ":" + (.lineNumber | tostring) + ": " else "" end )
+                  + .name ]
               | unique | join("\n") )
     ' "$tmp/tests.json" | sed "s#$ROOT/##g"
 }
