@@ -1,0 +1,16 @@
+{
+  "devicesAndConfigurations": [],
+  "environmentDescription": "Kernova · Built with macOS 26.0",
+  "expectedFailures": 0,
+  "failedTests": 2,
+  "finishTime": 1757000012.5,
+  "passedTests": 3945,
+  "result": "Failed",
+  "skippedTests": 1,
+  "startTime": 1756999600.1,
+  "statistics": [],
+  "testFailures": [],
+  "title": "Test - Kernova",
+  "topInsights": [],
+  "totalTestCount": 3948
+}

@@ -1,0 +1,9 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination platform=macOS -configuration Debug test
+
+** TEST BUILD SUCCEEDED **
+
+xcodebuild: error: Failed to write result bundle.
+
+** TEST FAILED **
+make: *** [Makefile:140: test] Error 70

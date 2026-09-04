@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-The project's operating guide — build commands, architecture summary, and the coding/testing/review/git conventions — is tool-neutral and lives in [AGENTS.md](AGENTS.md), imported here so it loads into context every session:
+The project's operating guide — build commands, architecture summary, and the coding/testing/review/git conventions — is agent-neutral and lives in [AGENTS.md](AGENTS.md), imported here so it loads into context every session:
 
 @AGENTS.md
 

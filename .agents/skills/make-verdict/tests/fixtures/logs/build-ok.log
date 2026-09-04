@@ -1,0 +1,8 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination platform=macOS -configuration Debug build
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+SwiftCompile normal arm64 Compiling\ VMSession.swift @ROOT@/Kernova/Services/VMSession.swift (in target 'Kernova' from project 'Kernova')
+@ROOT@/Kernova/Services/VMSession.swift:50:5: warning: variable 'x' was never used; consider replacing with '_' or removing it
+** BUILD SUCCEEDED **
