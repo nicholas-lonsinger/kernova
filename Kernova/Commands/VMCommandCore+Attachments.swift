@@ -183,7 +183,7 @@ extension VMCommandCore {
     }
 
     private func refuseSoleStorageDiskRemoval(of disk: StorageDisk, on instance: VMInstance) throws {
-        guard isSoleStorageDisk(disk, of: instance) else { return }
+        guard instance.isSoleStorageDisk(disk) else { return }
         Self.logger.debug(
             "Refusing to remove the only disk of '\(instance.name, privacy: .public)'")
         throw CommandError.operationFailed(
@@ -334,7 +334,7 @@ extension VMCommandCore {
         guard let item = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
-        let isAgentInstaller = isGuestAgentInstaller(item)
+        let isAgentInstaller = item.isBundledGuestAgentInstaller
         var shared: [String] = []
         if trashFile, !isAgentInstaller {
             shared = await sharingVMNames(
@@ -517,7 +517,7 @@ extension VMCommandCore {
             )
             return .alreadyPresent(delivery)
         }
-        guard !isGuestAgentInstallerMounted(on: instance) else {
+        guard !instance.hasGuestAgentInstallerMounted else {
             Self.logger.debug(
                 "Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
             return .alreadyPresent(delivery)
@@ -552,7 +552,7 @@ extension VMCommandCore {
     /// between the two could only strand the disk.
     func detachGuestAgentDisk(from instance: VMInstance) {
         guard let url = KernovaMacOSAgentInfo.installerDiskImageURL,
-            isGuestAgentInstallerMounted(on: instance)
+            instance.hasGuestAgentInstallerMounted
         else { return }
         let path = url.path(percentEncoded: false)
         Self.logger.notice(
@@ -570,20 +570,19 @@ extension VMCommandCore {
 
     // MARK: - Start-Failure Recovery
 
-    /// Confirmed action of the start-failed alert: detach the failing
-    /// attachment (the file is untouched) and start again.
+    /// The ``CommandRecovery/removeStartFailedAttachment(_:)`` a failed start
+    /// offered, performed.
     ///
-    /// Not a verb — it is the ``CommandRecovery/removeStartFailedAttachment(_:)``
-    /// a failed start offered, performed. No-ops when the VM is gone or the
-    /// entry has already been removed: alerts are serialized, so this
-    /// confirmation can arrive long after the failed start, and retrying after
-    /// a removal that found nothing would re-raise the same failure.
+    /// No-ops when the VM is gone or the entry has already been removed: alerts
+    /// are serialized, so this confirmation can arrive long after the failed
+    /// start, and retrying after a removal that found nothing would re-raise the
+    /// same failure.
     func removeStartFailedAttachmentAndStart(
-        _ failure: StartFailedAttachment, on instance: VMInstance
+        _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async {
-        guard library.instances.contains(where: { $0.id == instance.id }) else {
+        guard let instance = try? resolve(selector) else {
             Self.logger.debug(
-                "Ignoring start-failed removal for already-removed VM '\(instance.name, privacy: .public)'"
+                "Ignoring start-failed removal for already-removed VM '\(selector.displayText, privacy: .public)'"
             )
             return
         }

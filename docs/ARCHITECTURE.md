@@ -313,7 +313,7 @@ session down without that hook, so a suspended session survives to revert at its
   gathered by re-issuing the verb with `confirmed: true`. It also counts intents in flight and
   reports the process idle to `AppResidencyController` when the last one finishes — the only signal a process
   the system launched to service an intent, and which therefore has no window, can settle on.
-- `VMLibraryViewModel` — the AppKit adapter over `VMCommandCore` and `VMLibrary`. Runs no verb
+- `VMLibraryViewModel` — the AppKit adapter over `VMCommanding` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the
   settings edits the facade does not cover, forwards the library's reads so UI sees one

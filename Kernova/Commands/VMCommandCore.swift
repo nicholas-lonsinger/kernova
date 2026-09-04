@@ -29,7 +29,7 @@ final class VMCommandCore: VMCommanding {
 
     /// Where every per-VM capability predicate is derived — this core's verb
     /// guards and every surface's enablement read the same one.
-    let capabilities: VMCapabilityCatalog
+    var capabilities: VMCapabilityCatalog { library.capabilities }
 
     // MARK: - Adapter Hooks
 
@@ -51,9 +51,12 @@ final class VMCommandCore: VMCommanding {
     /// caller — the removable attachment a start failure names, above all.
     var onFailure: ((_ failure: CommandError, _ instance: VMInstance?) -> Void)?
 
-    /// Measures the window or screen a starting VM's display will occupy, for
-    /// `displaySizesToWindow`.
-    weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
+    /// Measures the window or screen a starting VM's display is about to occupy,
+    /// for `displaySizesToWindow` — `nil` when nothing can measure one.
+    ///
+    /// A hook rather than a call, for the reason ``surfaceDisplay`` states: what
+    /// a display will land on is an AppKit question.
+    var displayBootSurface: ((VMInstance) -> DisplayBootSurface?)?
 
     #if DEBUG
     /// Runs right after an attachment removal resolves sharing off-main — in
@@ -101,7 +104,6 @@ final class VMCommandCore: VMCommanding {
         self.diskImageService = diskImageService
         self.fileSystem = fileSystem
         self.preferences = preferences
-        self.capabilities = VMCapabilityCatalog(library: library)
 
         // An Ephemeral Mode VM goes back to its baseline on every power-off,
         // however it got there — so the handler belongs with the revert verb

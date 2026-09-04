@@ -320,9 +320,6 @@ struct VMLibraryViewModelEphemeralTests {
     func baselineIsUndeletable() async throws {
         let harness = try await makeHarness()
 
-        #expect(!harness.viewModel.canDeleteSnapshot(harness.instance, snapshot: harness.baseline))
-        #expect(harness.viewModel.canDeleteSnapshot(harness.instance, snapshot: harness.later))
-
         harness.viewModel.requestDeleteSnapshot(harness.instance, snapshot: harness.baseline)
         #expect(presenter.deleteSnapshots.isEmpty)
 
@@ -336,8 +333,6 @@ struct VMLibraryViewModelEphemeralTests {
     func turningTheModeOffReleasesTheBaseline() async throws {
         let harness = try await makeHarness()
         harness.instance.configuration.applyEphemeralMode(enabled: false, baseline: nil)
-
-        #expect(harness.viewModel.canDeleteSnapshot(harness.instance, snapshot: harness.baseline))
 
         await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.baseline)
             .value

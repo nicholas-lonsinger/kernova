@@ -442,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // action can never disagree with the title the user clicked.
         let model = GuestAgentDiskMenuItem.model(
             status: instance.agentStatus,
-            isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
+            isInstallerMounted: instance.hasGuestAgentInstallerMounted)
         switch model.action {
         case .eject:
             viewModel.unmountGuestAgentInstaller(from: instance)

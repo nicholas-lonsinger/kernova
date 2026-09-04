@@ -111,7 +111,7 @@ extension VMCommandCore {
     /// identical to the saved one, and a mismatch fails the restore.
     private func applyMatchWindowBootResolution(to instance: VMInstance) {
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
-        guard let surface = displayBootGeometryProvider?.displayBootSurface(for: instance) else {
+        guard let surface = displayBootSurface?(instance) else {
             Self.logger.notice(
                 "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
             )
@@ -175,7 +175,7 @@ extension VMCommandCore {
         switch builderError {
         case .storageDiskAttachFailed(let id, _, let label, _):
             guard let disk = storageDisk(id: id, on: instance),
-                !isSoleStorageDisk(disk, of: instance)
+                !instance.isSoleStorageDisk(disk)
             else { return nil }
             return StartFailedAttachment(
                 kind: .storageDisk, id: id, label: label,
@@ -609,12 +609,5 @@ extension VMCommandCore {
     /// when the VM has no explicit list.
     func storageDisk(id: UUID, on instance: VMInstance) -> StorageDisk? {
         instance.effectiveStorageDisks.first { $0.id == id }
-    }
-
-    /// `true` when `disk` is the only storage disk the VM has — the one a
-    /// removal refuses, whichever file backs it.
-    func isSoleStorageDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
-        let disks = instance.effectiveStorageDisks
-        return disks.count == 1 && disks[0].id == disk.id
     }
 }

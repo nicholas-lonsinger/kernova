@@ -358,6 +358,26 @@ final class VMInstance {
         configuration.effectiveStorageDisks(layout: bundleLayout)
     }
 
+    /// The in-bundle (internal) disks, shown read-only in the delete sheet's
+    /// "Removed with the VM" section.
+    var bundledStorageDisks: [StorageDisk] {
+        effectiveStorageDisks.filter(\.isInternal)
+    }
+
+    /// `true` when `disk` is the only storage disk this VM has — the one a
+    /// removal refuses, whichever file backs it.
+    func isSoleStorageDisk(_ disk: StorageDisk) -> Bool {
+        let disks = effectiveStorageDisks
+        return disks.count == 1 && disks[0].id == disk.id
+    }
+
+    /// `true` when the bundled Guest Agent installer DMG is in this VM's
+    /// `removableMedia` list (live-attached, pending attach, or cold).
+    var hasGuestAgentInstallerMounted: Bool {
+        guard let path = KernovaMacOSAgentInfo.installerPath else { return false }
+        return (configuration.removableMedia ?? []).contains { $0.path == path }
+    }
+
     var diskImageURL: URL { bundleLayout.diskImageURL }
     var auxiliaryStorageURL: URL { bundleLayout.auxiliaryStorageURL }
     var hardwareModelURL: URL { bundleLayout.hardwareModelURL }

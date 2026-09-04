@@ -3,7 +3,7 @@ import KernovaKit
 import Virtualization
 import os
 
-/// The AppKit adapter over ``VMCommandCore``: the sheets and alerts that gather
+/// The AppKit adapter over ``VMCommanding``: the sheets and alerts that gather
 /// consent for a verb, the routing of a refused verb to the right surface, and
 /// the inline-rename editing state.
 ///
@@ -25,7 +25,7 @@ final class VMLibraryViewModel {
     let library: VMLibrary
 
     /// Every VM verb, headless. The one path from this adapter to a VM.
-    let commands: VMCommandCore
+    let commands: any VMCommanding
 
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
@@ -111,49 +111,60 @@ final class VMLibraryViewModel {
     // MARK: - Command Forwarding
 
     // Headless reads and gates the UI enables its commands from, each
-    // documented on ``VMCommandCore``.
+    // documented on ``VMCommanding``.
+    //
+    // A read that resolves its VM refuses only with
+    // ``CommandError/notFound(_:)``, which a sheet still up while its VM left
+    // the library is the one way to reach: there is nothing for a user to act
+    // on, so it reads as empty and is logged.
 
     /// Every per-VM capability predicate the AppKit surfaces read.
-    var capabilities: VMCapabilityCatalog { commands.capabilities }
+    var capabilities: VMCapabilityCatalog { library.capabilities }
 
     func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        commands.canDeleteSnapshot(instance, snapshot: snapshot)
+        capabilities.canDeleteSnapshot(snapshot, on: instance)
     }
 
     func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
-        await commands.snapshotOnDiskBytes(for: instance)
-    }
-
-    func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
-        commands.bundledDisks(for: instance)
-    }
-
-    func isSoleStorageDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
-        commands.isSoleStorageDisk(disk, of: instance)
+        do {
+            return try await commands.snapshotOnDiskBytes(of: .id(instance.id))
+        } catch {
+            Self.logger.debug(
+                "No snapshot sizes for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return [:]
+        }
     }
 
     func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
-        await commands.externalAttachments(for: instance)
+        do {
+            return try await commands.externalAttachments(of: .id(instance.id))
+        } catch {
+            Self.logger.debug(
+                "No external attachments for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return []
+        }
     }
 
     func sharingVMNames(
         forPath path: String, bookmark: Data?, excluding instance: VMInstance
     ) async -> [String] {
-        await commands.sharingVMNames(forPath: path, bookmark: bookmark, excluding: instance)
-    }
-
-    func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
-        commands.isGuestAgentInstaller(item)
-    }
-
-    func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
-        commands.isGuestAgentInstallerMounted(on: instance)
+        do {
+            return try await commands.sharingVMNames(
+                .id(instance.id), path: path, bookmark: bookmark)
+        } catch {
+            Self.logger.debug(
+                "No sharing names for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return []
+        }
     }
 
     // MARK: - Attachment Forwarding
 
     // The settings pane's Storage and Sharing categories, one forward per
-    // verb, each documented on ``VMCommandCore``. The pane gathers the consent
+    // verb, each documented on ``VMCommanding``. The pane gathers the consent
     // a trashing removal asks for, so the storage and removable-media removals
     // arrive pre-confirmed; a share removal destroys nothing and asks none.
 
@@ -359,9 +370,7 @@ final class VMLibraryViewModel {
 
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
-    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)? {
-        didSet { commands.displayBootGeometryProvider = displayBootGeometryProvider }
-    }
+    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
 
     // MARK: - Initialization
 
@@ -412,7 +421,7 @@ final class VMLibraryViewModel {
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         self.sleepWake = sleepWake
-        self.commands = VMCommandCore(
+        let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
             storageService: storageService,
@@ -421,6 +430,7 @@ final class VMLibraryViewModel {
             fileSystem: fileSystem,
             preferences: preferences
         )
+        self.commands = core
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
@@ -430,11 +440,16 @@ final class VMLibraryViewModel {
         }
         // The same routing a call site gets, so a failure nobody awaited still
         // reaches the sheet or the recovery alert its type asks for.
-        commands.onFailure = { [weak self] failure, instance in
+        core.onFailure = { [weak self] failure, instance in
             self?.present(failure, for: instance)
         }
-        commands.surfaceDisplay = { [weak self] instance in
+        core.surfaceDisplay = { [weak self] instance in
             self?.surfaceDisplay(for: instance)
+        }
+        // Through this adapter rather than handed over, so the core retains
+        // neither the view model nor the app delegate behind it.
+        core.displayBootSurface = { [weak self] instance in
+            self?.displayBootGeometryProvider?.displayBootSurface(for: instance)
         }
     }
 
@@ -489,7 +504,7 @@ final class VMLibraryViewModel {
     func removeStartFailedAttachmentAndStart(
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
-        await commands.removeStartFailedAttachmentAndStart(failure, on: instance)
+        await commands.removeStartFailedAttachmentAndStart(.id(instance.id), attachment: failure)
     }
 
     func stop(_ instance: VMInstance) async {

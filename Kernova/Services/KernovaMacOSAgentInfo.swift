@@ -60,4 +60,12 @@ enum KernovaMacOSAgentInfo {
             withExtension: dmgResourceExtension
         )
     }
+
+    /// Filesystem path of the guest agent installer DMG, if present.
+    ///
+    /// Resolved at the call site (not cached) so it always reflects the running
+    /// app bundle's location.
+    static var installerPath: String? {
+        installerDiskImageURL?.path(percentEncoded: false)
+    }
 }

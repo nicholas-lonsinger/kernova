@@ -251,6 +251,12 @@ struct VMCapabilityCatalog {
         return !(capability.waitsForSettle && library.isBusy(instance))
     }
 
+    /// Whether `snapshot` may be deleted: the manifest has to be editable, and
+    /// a VM's Ephemeral baseline is the restore point its every power-off needs.
+    func canDeleteSnapshot(_ snapshot: VMSnapshot, on instance: VMInstance) -> Bool {
+        isAvailable(.deleteSnapshot, on: instance) && !instance.isEphemeralBaseline(snapshot)
+    }
+
     /// Whether a commit of `capability` is taken now — what a verb's own guard
     /// asks, and what a refusal names as accepted.
     ///

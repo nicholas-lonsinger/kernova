@@ -1833,6 +1833,78 @@ struct VMInstanceTests {
         #expect(instance.guestOSVersionDisplay == "macOS")
     }
 
+    // MARK: - Storage disks
+
+    @Test("bundledStorageDisks returns the internal disks and excludes externals")
+    func bundledStorageDisksListInternalOnly() {
+        let instance = makeInstance()
+        instance.configuration.storageDisks = [
+            StorageDisk(
+                path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio),
+            StorageDisk(
+                path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
+                isInternal: true, kind: .virtio
+            ),
+            StorageDisk(
+                path: "/Volumes/External/data.img", readOnly: false, label: "Scratch",
+                isInternal: false, kind: .virtio
+            ),
+        ]
+
+        let bundled = instance.bundledStorageDisks
+
+        #expect(bundled.count == 2)
+        #expect(bundled.allSatisfy { $0.isInternal })
+        #expect(bundled.map(\.label) == ["Main", "Extra"])
+    }
+
+    @Test("bundledStorageDisks falls back to the synthesized main disk for a nil or empty list")
+    func bundledStorageDisksFallBackToTheMainDisk() {
+        for disks in [nil, []] as [[StorageDisk]?] {
+            let instance = makeInstance()
+            instance.configuration.storageDisks = disks
+            #expect(instance.bundledStorageDisks.count == 1)
+            #expect(instance.bundledStorageDisks[0].isInternal)
+        }
+    }
+
+    @Test("isSoleStorageDisk is true for a VM's only disk and false for either of two")
+    func isSoleStorageDiskFollowsTheCount() {
+        let instance = makeInstance()
+        // A nil list resolves to the synthesized main disk alone.
+        let main = instance.effectiveStorageDisks[0]
+        #expect(instance.isSoleStorageDisk(main))
+
+        let extra = StorageDisk(
+            path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
+            isInternal: true, kind: .virtio)
+        instance.configuration.storageDisks = [main, extra]
+        #expect(!instance.isSoleStorageDisk(main))
+        #expect(!instance.isSoleStorageDisk(extra))
+
+        instance.configuration.storageDisks = [extra]
+        #expect(instance.isSoleStorageDisk(extra))
+    }
+
+    @Test("hasGuestAgentInstallerMounted reflects whether the bundled DMG is attached")
+    func hasGuestAgentInstallerMountedReflectsState() throws {
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        let instance = makeInstance()
+
+        #expect(!instance.hasGuestAgentInstallerMounted)
+
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+        ]
+        #expect(instance.hasGuestAgentInstallerMounted)
+
+        // An unrelated removable item must not count as the installer.
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
+        ]
+        #expect(!instance.hasGuestAgentInstallerMounted)
+    }
+
     @Test("guestOSVersionDisplay is nil for nil and empty values, so the row hides")
     func guestOSVersionDisplayUnknown() {
         #expect(makeMacOSInstanceWithAgentInstalled().guestOSVersionDisplay == nil)

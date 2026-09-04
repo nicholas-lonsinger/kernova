@@ -36,8 +36,15 @@ struct DetailAlertsPresenterTests {
     /// Selection/order persistence never touches the real `.standard` domain.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.detailalerts")
 
-    private func makeViewModel() -> VMLibraryViewModel {
-        VMLibraryViewModel(
+    /// A presenter and the library every VM below is listed in.
+    ///
+    /// The resolution a delete sheet runs addresses its VM by id, so a VM the
+    /// library never held resolves to nothing and answers no attachments — which
+    /// is the synchronous path, not the off-main probe these tests are about.
+    private func makePresenter() -> (
+        presenter: DetailAlertsPresenter, viewModel: VMLibraryViewModel
+    ) {
+        let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
@@ -46,36 +53,45 @@ struct DetailAlertsPresenterTests {
             usbDeviceService: MockUSBDeviceService(),
             preferences: preferences
         )
+        return (DetailAlertsPresenter(viewModel: viewModel), viewModel)
     }
 
     /// An attachment-free Linux VM: `externalAttachments` returns `[]` without
     /// the off-main probe, so resolution finishes fast.
-    private func makeInstance(name: String = "Test VM") -> VMInstance {
+    private func makeInstance(name: String = "Test VM", in viewModel: VMLibraryViewModel)
+        -> VMInstance
+    {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        viewModel.library.instances.append(instance)
+        return instance
     }
 
     /// A VM carrying an external (non-bundle) storage disk so
     /// `externalAttachments` actually runs its off-main `FileManager.fileExists`
     /// probe — exercising the real async resolve gap.
-    private func makeInstanceWithExternalDisk(name: String = "Ext VM") -> VMInstance {
+    private func makeInstanceWithExternalDisk(name: String = "Ext VM", in viewModel: VMLibraryViewModel)
+        -> VMInstance
+    {
         var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         config.storageDisks = [
             StorageDisk(path: "/tmp/does-not-exist-\(config.id.uuidString).img", isInternal: false)
         ]
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        viewModel.library.instances.append(instance)
+        return instance
     }
 
     // MARK: - Mode (last gesture wins, both directions)
 
     @Test("⌘⌫ then ⌥⌘⌫ on one VM yields a single sheet upgraded to Immediate")
     func dedupSameVMUpgradesMode() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
 
         // ⌘⌫ (Trash) starts the in-flight delete; ⌥⌘⌫ (Immediate) fires before
         // the first resolves and folds in — one sheet, latest gesture wins.
@@ -93,8 +109,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("⌥⌘⌫ then ⌘⌫ on one VM downgrades to Trash (last gesture wins both ways)")
     func dedupSameVMDowngradesMode() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA, permanently: true)
         let task = presenter.deleteResolutionTaskForTesting
@@ -110,9 +126,9 @@ struct DetailAlertsPresenterTests {
 
     @Test("A different-VM request during the resolve retargets the in-flight sheet")
     func differentVMRetargets() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
-        let vmB = makeInstance(name: "B")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
+        let vmB = makeInstance(name: "B", in: viewModel)
 
         // vmA starts the in-flight delete; a vmB request before it resolves wins
         // (last gesture) — still a single sheet, now targeting vmB (#364).
@@ -127,9 +143,9 @@ struct DetailAlertsPresenterTests {
 
     @Test("Retargeting to a different VM carries that VM's own disposition")
     func retargetCarriesNewVMMode() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
-        let vmB = makeInstance(name: "B")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
+        let vmB = makeInstance(name: "B", in: viewModel)
 
         // The request is a single {instance, permanently} unit, so retargeting
         // swaps both — vmA's Immediate intent does not leak onto vmB's Trash.
@@ -144,9 +160,9 @@ struct DetailAlertsPresenterTests {
 
     @Test("A retarget landing DURING the off-main resolve re-resolves the new VM")
     func retargetDuringResolveReResolves() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
-        let vmB = makeInstance(name: "B")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
+        let vmB = makeInstance(name: "B", in: viewModel)
 
         // Drive a one-shot vmB request into the gap right after vmA's externals
         // resolve but before the loop checks whether the request changed — this
@@ -167,13 +183,13 @@ struct DetailAlertsPresenterTests {
 
     @Test("A delete gesture while the sheet is shown is ignored, not dropped")
     func ignoreWhileSheetShown() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let (presenter, viewModel) = makePresenter()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
             styleMask: [.titled], backing: .buffered, defer: true)
         presenter.start(window: window)
-        let vmA = makeInstance(name: "A")
-        let vmB = makeInstance(name: "B")
+        let vmA = makeInstance(name: "A", in: viewModel)
+        let vmB = makeInstance(name: "B", in: viewModel)
 
         // With a window, the resolved delete actually shows a sheet.
         presenter.presentDeleteSheet(for: vmA)
@@ -191,13 +207,13 @@ struct DetailAlertsPresenterTests {
 
     @Test("A delete after teardown during a shown sheet is accepted, not blocked")
     func deleteAcceptedAfterStopDuringShownSheet() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let (presenter, viewModel) = makePresenter()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
             styleMask: [.titled], backing: .buffered, defer: true)
         presenter.start(window: window)
-        let vmA = makeInstance(name: "A")
-        let vmB = makeInstance(name: "B")
+        let vmA = makeInstance(name: "A", in: viewModel)
+        let vmB = makeInstance(name: "B", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
         await presenter.deleteResolutionTaskForTesting?.value  // vmA's sheet is shown
@@ -222,8 +238,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("stop() cancels the resolution Task and clears all in-flight state")
     func stopClearsInFlightState() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA, permanently: true)
         let task = presenter.deleteResolutionTaskForTesting
@@ -241,8 +257,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("stop() bumps the sheet token so a stale close is invalidated")
     func stopBumpsDeleteSheetToken() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
         let before = presenter.deleteSheetTokenForTesting
 
         presenter.presentDeleteSheet(for: vmA)
@@ -255,8 +271,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("A new delete is accepted after teardown clears the in-flight request")
     func dedupResetsAfterStop() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
         let firstTask = presenter.deleteResolutionTaskForTesting
@@ -275,8 +291,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("A close with the current token clears the in-flight delete")
     func currentTokenCloseClears() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
         await presenter.deleteResolutionTaskForTesting?.value
@@ -288,8 +304,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("A stale-token close does NOT clobber a newer delete (#362)")
     func staleTokenCloseDoesNotClobber() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vmA = makeInstance(name: "A")
+        let (presenter, viewModel) = makePresenter()
+        let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
         await presenter.deleteResolutionTaskForTesting?.value
@@ -305,8 +321,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("De-dup holds across the real off-main external-resolution probe")
     func dedupAcrossRealOffMainResolve() async {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstanceWithExternalDisk(name: "Ext")
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstanceWithExternalDisk(name: "Ext", in: viewModel)
 
         // This VM has an external disk, so resolution genuinely suspends on the
         // off-main `FileManager.fileExists` probe (not the synchronous []-return
@@ -325,8 +341,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("A second Take Snapshot gesture queued behind another alert is dropped")
     func takeSnapshotSheetDedupesWhileQueued() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.running(sessionID: UUID()))
 
         // No window, so nothing drains: both requests would otherwise sit in
@@ -340,8 +356,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("The revert alert on a suspended VM names the suspended session it replaces")
     func revertAlertNamesTheSuspendedSession() throws {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
         // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
         // needs one on disk, not just the status.
@@ -364,8 +380,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
         let baseline = VMSnapshot(name: "Clean install")
         vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
@@ -380,8 +396,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("Discarding a suspended VM that isn't ephemeral still names the deletion")
     func discardAlertOnAPlainVMIsUnchanged() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
 
         let alert = presenter.forceStopAlertForTesting(vm)
@@ -392,8 +408,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("The revert alert on a live VM offers the snapshot-first path instead")
     func revertAlertOnALiveVMOffersSnapshotFirst() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before the update")
 
@@ -405,8 +421,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("A stopped VM is offered the check-point path, now that it can be captured")
     func revertAlertOnAStoppedVMOffersSnapshotFirst() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.stopped)
         let snapshot = VMSnapshot(name: "Before the update", kind: .cold)
 
@@ -417,8 +433,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("Reverting a live VM to a disks-only snapshot says the session ends, powered off")
     func revertAlertOnAColdTargetNamesThePowerOff() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
 
@@ -430,8 +446,8 @@ struct DetailAlertsPresenterTests {
 
     @Test("Reverting a suspended VM to a disks-only snapshot says its saved session is discarded")
     func revertAlertOnAColdTargetFromColdPaused() {
-        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
-        let vm = makeInstance()
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
 

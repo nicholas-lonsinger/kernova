@@ -571,12 +571,6 @@ extension VMCommandCore {
 
     // MARK: - Attachment Projections
 
-    /// The VM's in-bundle (internal) disks, shown read-only in the delete
-    /// sheet's "Removed with the VM" section.
-    func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
-        instance.effectiveStorageDisks.filter(\.isInternal)
-    }
-
     /// The references behind ``externalAttachments(for:)`` — the kinds
     /// ``ExternalFileReference/Kind/isOfferedOnVMDelete`` admits, less the
     /// bundled Guest Agent installer DMG.
@@ -584,9 +578,13 @@ extension VMCommandCore {
     /// The DMG's path points *inside the app bundle*, so trashing it would
     /// corrupt the app for every VM.
     private func offeredExternalReferences(for instance: VMInstance) -> [ExternalFileReference] {
-        let agentPath = Self.guestAgentInstallerPath
+        let agentPath = KernovaMacOSAgentInfo.installerPath
         return instance.configuration.externalFileReferences
             .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
+    }
+
+    func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment] {
+        await externalAttachments(for: try resolve(selector))
     }
 
     /// The external (non-bundle) files referenced by `instance` that the delete
@@ -630,6 +628,12 @@ extension VMCommandCore {
             }
             return attachments
         }.value
+    }
+
+    func sharingVMNames(_ selector: VMSelector, path: String, bookmark: Data?) async throws
+        -> [String]
+    {
+        await sharingVMNames(forPath: path, bookmark: bookmark, excluding: try resolve(selector))
     }
 
     /// Names of other VMs in the library naming the same file as
@@ -682,29 +686,5 @@ extension VMCommandCore {
             return ExternalFileReference.SharingCandidate(
                 name: other.name, references: other.configuration.externalFileReferences)
         }
-    }
-
-    /// `true` when `item` is the bundled Guest Agent installer DMG.
-    ///
-    /// The installer lives *inside the app bundle*, so a "remove" of it must only
-    /// detach the entry and never trash the file.
-    func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
-        guard let agentPath = Self.guestAgentInstallerPath else { return false }
-        return item.path == agentPath
-    }
-
-    /// Filesystem path of the bundled Guest Agent installer DMG, if present.
-    ///
-    /// Resolved at the call site (not cached) so it always reflects the running app
-    /// bundle's location.
-    static var guestAgentInstallerPath: String? {
-        KernovaMacOSAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
-    }
-
-    /// `true` when the bundled Guest Agent installer DMG is currently in this
-    /// VM's `removableMedia` list (live-attached, pending attach, or cold).
-    func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
-        guard let path = Self.guestAgentInstallerPath else { return false }
-        return (instance.configuration.removableMedia ?? []).contains { $0.path == path }
     }
 }

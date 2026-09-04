@@ -180,6 +180,17 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     }
 }
 
+extension RemovableMediaItem {
+    /// `true` when this is the bundled Guest Agent installer DMG.
+    ///
+    /// The installer lives *inside the app bundle*, so a "remove" of it must
+    /// only detach the entry and never trash the file.
+    var isBundledGuestAgentInstaller: Bool {
+        guard let agentPath = KernovaMacOSAgentInfo.installerPath else { return false }
+        return path == agentPath
+    }
+}
+
 /// An external file a VM references that lives *outside* the VM bundle and is
 /// therefore not trashed automatically when the bundle is trashed.
 ///

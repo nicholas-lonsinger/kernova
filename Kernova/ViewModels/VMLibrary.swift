@@ -64,6 +64,12 @@ final class VMLibrary: VMInstanceRoster {
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
 
+    // MARK: - Capabilities
+
+    /// Every per-VM capability predicate, derived from this library — what a
+    /// verb's own guard asks and what each surface enables its controls from.
+    var capabilities: VMCapabilityCatalog { VMCapabilityCatalog(library: self) }
+
     // MARK: - State
 
     var instances: [VMInstance] = []
