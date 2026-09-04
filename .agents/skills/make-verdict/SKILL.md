@@ -1,5 +1,5 @@
 ---
-name: check
+name: make-verdict
 description: Build, test, or lint Kernova and get back only the verdict — counts, compile errors, and failing tests with their messages and source locations — instead of a raw xcodebuild log. Use for every build, test, or lint run.
 argument-hint: "[build|test|lint|test-suite <Target/Suite>]"
 ---
@@ -8,12 +8,12 @@ Run this skill's script in place of the raw make target, as a bare background sh
 
 | Ask | Command |
 |---|---|
-| Full test suite | `.agents/skills/check/check.sh test` |
-| One suite | `.agents/skills/check/check.sh test-suite KernovaTests/VMConfigurationTests` |
-| Build only | `.agents/skills/check/check.sh build` |
-| Lint | `.agents/skills/check/check.sh lint` |
+| Full test suite | `.agents/skills/make-verdict/make-verdict.sh test` |
+| One suite | `.agents/skills/make-verdict/make-verdict.sh test-suite KernovaTests/VMConfigurationTests` |
+| Build only | `.agents/skills/make-verdict/make-verdict.sh build` |
+| Lint | `.agents/skills/make-verdict/make-verdict.sh lint` |
 
-It runs the raw target with the whole stream captured under `artifacts/check/` and prints only the verdict. Read the `check: verdict=<token> …` line:
+It runs the raw target with the whole stream captured under `artifacts/make-verdict/` and prints only the verdict. Read the `make-verdict: verdict=<token> …` line:
 
 - `green` — done.
 - `test-failed` — each `=== <test>` block above it carries that failure's `path:line: message`; fix those.

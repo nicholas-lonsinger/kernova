@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixture tests for the check skill's script and Tools/xcresult-report.sh. Replays the
+# Fixture tests for the make-verdict skill's script and Tools/xcresult-report.sh. Replays the
 # recorded xcodebuild logs and result-bundle JSON under fixtures/ through fakes
 # of `make`, `xcrun`, and `xcodebuild` placed first on PATH, so every verdict
 # path is exercised without Xcode. `make lint` runs it; it takes under a second.
@@ -56,7 +56,7 @@ cp "$tmp/bin/make" "$tmp/nox/make"
 ln -s "$(command -v bash)" "$tmp/nox/bash"
 
 export PATH="$tmp/bin:$PATH"
-export KERNOVA_CHECK_DIR="$tmp/out"
+export KERNOVA_VERDICT_DIR="$tmp/out"
 export FAKE_XCRESULT_FIXTURES="$FIX/xcresult"
 export FAKE_ROOT="$ROOT"
 
@@ -84,14 +84,14 @@ expect_count() { [ "$(grep -cE -- "$1" "$tmp/last")" -eq "$2" ] || fail "$name: 
 expect_last()  { [ "$(tail -n 1 "$tmp/last" | grep -cE -- "$1")" -eq 1 ] || fail "$name: last line is not /$1/: $(tail -n 1 "$tmp/last")"; }
 expect_lines() { [ "$(grep -c . "$tmp/last")" -eq "$1" ] || fail "$name: expected $1 lines, got $(grep -c . "$tmp/last")"; }
 
-check() { .agents/skills/check/check.sh "$@"; }
-with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" .agents/skills/check/check.sh "${@:3}"; }
+verdict() { .agents/skills/make-verdict/make-verdict.sh "$@"; }
+with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" .agents/skills/make-verdict/make-verdict.sh "${@:3}"; }
 
-# ---- check.sh: build -------------------------------------------------------
+# ---- make-verdict.sh: build -------------------------------------------------------
 
 run "build green" 0 with_log build-ok.log 0 build
-expect '^check: target=build suite=- duration=[0-9]+s log=.*/build\.log$'
-expect_last '^check: verdict=green target=build suite=- log=.*/build\.log xcresult=-$'
+expect '^make-verdict: target=build suite=- duration=[0-9]+s log=.*/build\.log$'
+expect_last '^make-verdict: verdict=green target=build suite=- log=.*/build\.log xcresult=-$'
 expect_lines 2
 [ -f "$tmp/out/build.verdict" ] || fail "$name: no verdict file written"
 cmp -s "$tmp/out/build.verdict" "$tmp/last" || fail "$name: verdict file differs from stdout"
@@ -102,12 +102,12 @@ expect_count "^  Kernova/Services/VMSession\.swift:42:9: error: cannot find 'foo
 expect "^  KernovaKit/Sources/KernovaKit/Wire\.swift:7:1: error: missing return"
 reject 'warning:'
 reject "$ROOT"
-expect_last '^check: verdict=build-failed target=build suite=- log=.*/build\.log xcresult=-$'
+expect_last '^make-verdict: verdict=build-failed target=build suite=- log=.*/build\.log xcresult=-$'
 
 run "build-for-testing green" 0 with_log build-ok.log 0 build-for-testing
-expect_last '^check: verdict=green target=build-for-testing '
+expect_last '^make-verdict: verdict=green target=build-for-testing '
 
-# ---- check.sh: test --------------------------------------------------------
+# ---- make-verdict.sh: test --------------------------------------------------------
 
 run "test failed" 1 with_log test-failed.log 65 test
 expect '^result=Failed total=3948 passed=3945 failed=2 skipped=1 xfail=0$'
@@ -119,39 +119,39 @@ expect '^error → nil$'
 expect '^=== ClipboardTests/roundTrip\(\) \(passed on retry\)$'
 reject '^xcresult-report:'
 reject "$ROOT"
-expect_last "^check: verdict=test-failed target=test suite=- total=3948 failed=2 flaky=1 log=.*/test\.log xcresult=$tmp/bundles/failed\.xcresult$"
+expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 flaky=1 log=.*/test\.log xcresult=$tmp/bundles/failed\.xcresult$"
 
 run "test green" 0 with_log test-passed.log 0 test
 expect '^result=Passed total=3948 passed=3948 failed=0 skipped=0 xfail=0$'
-expect_last '^check: verdict=green target=test suite=- total=3948 failed=0 flaky=0 log=.* xcresult=.*/passed\.xcresult$'
+expect_last '^make-verdict: verdict=green target=test suite=- total=3948 failed=0 flaky=0 log=.* xcresult=.*/passed\.xcresult$'
 expect_lines 3
 
 run "suite matched nothing" 3 with_log test-none.log 0 test-suite KernovaTests/NoSuchSuite
-expect '^check: target=test-suite suite=KernovaTests/NoSuchSuite '
-expect_last '^check: verdict=no-tests-ran target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 flaky=0 '
+expect '^make-verdict: target=test-suite suite=KernovaTests/NoSuchSuite '
+expect_last '^make-verdict: verdict=no-tests-ran target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 flaky=0 '
 
 run "test build failed" 2 with_log test-build-failed.log 65 test
 expect '^errors:$'
 expect "^  KernovaTests/VMConfigurationTests\.swift:18:22: error: value of type"
 reject '^=== '
-expect_last '^check: verdict=build-failed target=test '
+expect_last '^make-verdict: verdict=build-failed target=test '
 
 run "test died before a bundle" 1 with_log test-died.log 70 test
 expect '^tail:$'
 expect '^  xcodebuild: error: Failed to write result bundle\.$'
-expect_last '^check: verdict=test-failed target=test suite=- reason=no-result-bundle '
+expect_last '^make-verdict: verdict=test-failed target=test suite=- reason=no-result-bundle '
 
 run "tests passed but make failed" 1 with_log test-passed.log 1 test
 expect '^tail:$'
-expect_last '^check: verdict=test-failed target=test suite=- total=3948 failed=0 flaky=0 reason=make-exit-1 '
+expect_last '^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=0 flaky=0 reason=make-exit-1 '
 
 run "test-without-building green" 0 with_log test-passed.log 0 test-without-building
-expect_last '^check: verdict=green target=test-without-building '
+expect_last '^make-verdict: verdict=green target=test-without-building '
 
-# ---- check.sh: lint --------------------------------------------------------
+# ---- make-verdict.sh: lint --------------------------------------------------------
 
 run "lint green" 0 with_log lint-ok.log 0 lint
-expect_last '^check: verdict=green target=lint suite=- log=.*/lint\.log xcresult=-$'
+expect_last '^make-verdict: verdict=green target=lint suite=- log=.*/lint\.log xcresult=-$'
 
 run "lint failed" 4 with_log lint-failed.log 2 lint
 expect '^errors:$'
@@ -160,31 +160,31 @@ expect 'SC2086'
 expect '^  Kernova/App/AppDelegate\.swift:12:1: error: \[Indentation\]'
 expect '^  .*✗ docs/BUILD\.md:40 — 91 words'
 reject 'make: \*\*\*'
-expect_last '^check: verdict=lint-failed target=lint '
+expect_last '^make-verdict: verdict=lint-failed target=lint '
 
-# ---- check.sh: --from-log and usage ----------------------------------------
+# ---- make-verdict.sh: --from-log and usage ----------------------------------------
 
-run "from-log reports without running" 1 check --from-log "$tmp/logs/test-failed.log" test
-expect '^check: target=test suite=- duration=- log='
-expect_last '^check: verdict=test-failed target=test suite=- total=3948 failed=2 flaky=1 '
+run "from-log reports without running" 1 verdict --from-log "$tmp/logs/test-failed.log" test
+expect '^make-verdict: target=test suite=- duration=- log='
+expect_last '^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 flaky=1 '
 
-run "from-log build" 2 check --from-log "$tmp/logs/build-failed.log" build
-expect_last '^check: verdict=build-failed '
+run "from-log build" 2 verdict --from-log "$tmp/logs/build-failed.log" build
+expect_last '^make-verdict: verdict=build-failed '
 
-run "from-log green" 0 check --from-log "$tmp/logs/build-ok.log" build
-expect_last '^check: verdict=green '
+run "from-log green" 0 verdict --from-log "$tmp/logs/build-ok.log" build
+expect_last '^make-verdict: verdict=green '
 
-run "unknown target" 5 check bogus
-expect_last '^check: verdict=setup-error reason=usage target=bogus suite=-$'
-run "test-suite without a suite" 5 check test-suite
-expect_last '^check: verdict=setup-error reason=usage '
-run "suite on a non-suite target" 5 check build KernovaTests/X
-expect_last '^check: verdict=setup-error reason=usage '
-run "missing log" 5 check --from-log "$tmp/logs/nope.log" test
-expect_last '^check: verdict=setup-error reason=no-log '
-run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" .agents/skills/check/check.sh build
-expect_last '^check: verdict=setup-error reason=xcodebuild-missing '
-run "help" 0 check --help
+run "unknown target" 5 verdict bogus
+expect_last '^make-verdict: verdict=setup-error reason=usage target=bogus suite=-$'
+run "test-suite without a suite" 5 verdict test-suite
+expect_last '^make-verdict: verdict=setup-error reason=usage '
+run "suite on a non-suite target" 5 verdict build KernovaTests/X
+expect_last '^make-verdict: verdict=setup-error reason=usage '
+run "missing log" 5 verdict --from-log "$tmp/logs/nope.log" test
+expect_last '^make-verdict: verdict=setup-error reason=no-log '
+run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" .agents/skills/make-verdict/make-verdict.sh build
+expect_last '^make-verdict: verdict=setup-error reason=xcodebuild-missing '
+run "help" 0 verdict --help
 expect_lines 0
 
 # ---- xcresult-report.sh ----------------------------------------------------

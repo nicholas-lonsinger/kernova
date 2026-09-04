@@ -175,7 +175,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
 # The fixture tests run last: they replay recorded xcodebuild output through
-# the check skill's script and Tools/xcresult-report.sh without Xcode, so a
+# the make-verdict skill's script and Tools/xcresult-report.sh without Xcode, so a
 # parsing regression fails the same gate as a lint finding.
 lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering; run the fixture tests
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done

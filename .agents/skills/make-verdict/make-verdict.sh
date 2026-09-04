@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The `check` skill's script: runs one raw Makefile target — build,
+# The `make-verdict` skill's script: runs one raw Makefile target — build,
 # build-for-testing, test, test-without-building, test-suite, or lint — with
 # the whole xcodebuild stream captured to a file, and prints only the verdict:
 # counts from the result bundle, deduplicated compile errors, failing tests
@@ -8,24 +8,24 @@
 # and CI.
 #
 # Usage:
-#   .agents/skills/check/check.sh build | build-for-testing | test | test-without-building | lint
-#   .agents/skills/check/check.sh test-suite <Target/Suite>
-#   .agents/skills/check/check.sh --from-log <file> <target> [<Target/Suite>]
+#   .agents/skills/make-verdict/make-verdict.sh build | build-for-testing | test | test-without-building | lint
+#   .agents/skills/make-verdict/make-verdict.sh test-suite <Target/Suite>
+#   .agents/skills/make-verdict/make-verdict.sh --from-log <file> <target> [<Target/Suite>]
 #
 # `--from-log` reports an existing log and runs nothing. Otherwise the target
 # runs synchronously in the foreground with no timeout, poll, or retry of its
 # own: run this script in the background and let the harness's exit
-# notification be the completion signal. The log lands in artifacts/check/
-# (KERNOVA_CHECK_DIR overrides) beside a copy of the verdict.
+# notification be the completion signal. The log lands in artifacts/make-verdict/
+# (KERNOVA_VERDICT_DIR overrides) beside a copy of the verdict.
 #
 # Output (stdout, nothing else):
-#   check: target=test suite=- duration=412s log=artifacts/check/test.log
+#   make-verdict: target=test suite=- duration=412s log=artifacts/make-verdict/test.log
 #   result=Failed total=3948 passed=3945 failed=3 skipped=0 xfail=0
 #   === VMConfigurationTests/defaultsMatchTemplate()
 #   VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
 #   errors:                            (build-failed and lint-failed only)
 #     Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
-#   check: verdict=test-failed target=test suite=- total=3948 failed=3 flaky=0 log=… xcresult=…
+#   make-verdict: verdict=test-failed target=test suite=- total=3948 failed=3 flaky=0 log=… xcresult=…
 #
 # Verdict tokens and exit codes:
 #   0  green         the target succeeded; a test target ran at least one test
@@ -60,8 +60,8 @@ target="${1:-}"
 suite="${2:-}"
 
 setup_error() {
-    echo "check.sh: $1" >&2
-    printf 'check: verdict=setup-error reason=%s target=%s suite=%s\n' "$2" "${target:--}" "${suite:--}"
+    echo "make-verdict.sh: $1" >&2
+    printf 'make-verdict: verdict=setup-error reason=%s target=%s suite=%s\n' "$2" "${target:--}" "${suite:--}"
     exit 5
 }
 
@@ -77,7 +77,7 @@ elif [ -n "$suite" ]; then
 fi
 [ $# -le 2 ] || setup_error "too many arguments" usage
 
-out_dir="${KERNOVA_CHECK_DIR:-artifacts/check}"
+out_dir="${KERNOVA_VERDICT_DIR:-artifacts/make-verdict}"
 
 # ---- run ------------------------------------------------------------------
 
@@ -232,9 +232,9 @@ esac
 # ---- report ---------------------------------------------------------------
 
 {
-    printf 'check: target=%s suite=%s duration=%s log=%s\n' "$target" "${suite:--}" "$duration" "$log"
+    printf 'make-verdict: target=%s suite=%s duration=%s log=%s\n' "$target" "${suite:--}" "$duration" "$log"
     cat "$body"
-    printf 'check: verdict=%s target=%s suite=%s%s log=%s xcresult=%s\n' \
+    printf 'make-verdict: verdict=%s target=%s suite=%s%s log=%s xcresult=%s\n' \
         "$verdict" "$target" "${suite:--}" "$extra" "$log" "$xcresult"
 } >"$body.out"
 if [ -z "$from_log" ]; then

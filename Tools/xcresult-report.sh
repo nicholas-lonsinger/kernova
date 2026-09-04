@@ -2,8 +2,8 @@
 # Reads an .xcresult bundle and prints the test verdict: the counts from the
 # bundle's summary, each failing test with its failure messages — a case that
 # failed an attempt and passed on the retry included, marked as such — and one
-# verdict line. This is the repo's one xcresult parse: `make check` and
-# .github/workflows/xcodebuild-test.yml both call it.
+# verdict line. This is the repo's one xcresult parse: the make-verdict
+# skill's script and .github/workflows/xcodebuild-test.yml both call it.
 #
 # Usage:
 #   Tools/xcresult-report.sh [--path <bundle> | --from-log <log> | --latest] [--failures | --flaky]

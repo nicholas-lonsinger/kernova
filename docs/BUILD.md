@@ -55,7 +55,7 @@ Three of the workflows in `.github/workflows/` are required status checks: `lint
 
 The `lint` job runs `make lint`, which is therefore what gates a merge; the Makefile's `lint` target is the list of what it covers, and shellcheck goes from optional to required once `$CI` is set. Each workflow's own header explains its trigger design; read it there before changing one.
 
-`Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step names those tests, which is where to look — a green conclusion on its own says nothing about flakes. It and the "Report failure messages" step run `Tools/xcresult-report.sh` on the result bundle, the same parse the `check` skill's script reports from a local run.
+`Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step names those tests, which is where to look — a green conclusion on its own says nothing about flakes. It and the "Report failure messages" step run `Tools/xcresult-report.sh` on the result bundle, the same parse the `make-verdict` skill's script reports from a local run.
 
 The dead-code scan runs weekly in CI, on demand with `gh workflow run dead-code.yml`, and locally with `make dead-code`. Every route installs the pinned Periphery release through `Tools/install-periphery.sh` and reads `.periphery.yml`, so a local scan and the job's scan are one scan.
 
