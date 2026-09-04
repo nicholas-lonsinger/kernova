@@ -208,8 +208,10 @@ struct VMCommandEnvelopeRouter {
         let events = commands.events()
         return AsyncStream { continuation in
             let task = Task {
-                for await event in events {
-                    continuation.yield(VMCommandResponse(result: .event(event)))
+                for await batch in events {
+                    for event in batch {
+                        continuation.yield(VMCommandResponse(result: .event(event)))
+                    }
                 }
                 continuation.finish()
             }

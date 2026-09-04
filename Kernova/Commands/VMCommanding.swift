@@ -254,6 +254,8 @@ protocol VMCommanding: AnyObject {
 
     /// A stream of library changes, for callers that cannot observe the model.
     ///
-    /// Each call returns its own stream; ending iteration drops it.
-    func events() -> AsyncStream<VMLibraryEvent>
+    /// Each element is every change one pass over the library found, in the
+    /// order found, so a launch or a batch import lands as one element. Each
+    /// call returns its own stream; ending iteration drops it.
+    func events() -> AsyncStream<[VMLibraryEvent]>
 }

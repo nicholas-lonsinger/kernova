@@ -142,11 +142,16 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Events
 
-    private let eventStream = AsyncStream<VMLibraryEvent>.makeStream()
+    private let eventStream = AsyncStream<[VMLibraryEvent]>.makeStream()
 
-    /// Publishes one library event to whoever is reading `events()`.
+    /// Publishes one batch of library events to whoever is reading `events()`.
+    func emit(_ events: [VMLibraryEvent]) {
+        eventStream.continuation.yield(events)
+    }
+
+    /// Publishes `event` as a batch of one.
     func emit(_ event: VMLibraryEvent) {
-        eventStream.continuation.yield(event)
+        emit([event])
     }
 
     // MARK: - Reads
@@ -480,7 +485,7 @@ final class MockVMCommanding: VMCommanding {
 
     /// One stream shared by every call, unlike the core's per-caller streams:
     /// the doubles here drive a single subscriber.
-    func events() -> AsyncStream<VMLibraryEvent> { eventStream.stream }
+    func events() -> AsyncStream<[VMLibraryEvent]> { eventStream.stream }
 
     // MARK: - Resolution
 

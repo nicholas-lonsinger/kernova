@@ -1,4 +1,5 @@
 import AppIntents
+import CoreSpotlight
 import Foundation
 import KernovaKit
 
@@ -8,7 +9,7 @@ import KernovaKit
 /// never drift from what the command core reads. Every field but the
 /// identifier is an entity property, which is what lets a Shortcut read a VM's
 /// configuration as variables and filter the library on it.
-struct VMEntity: AppEntity {
+struct VMEntity: IndexedEntity {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Virtual Machine")
 
     static let defaultQuery = VMEntityQuery()
@@ -17,8 +18,9 @@ struct VMEntity: AppEntity {
     /// it by, so a name shared by two VMs can never resolve ambiguously here.
     let id: UUID
 
-    /// The VM's display name, which is not unique.
-    @Property(title: "Name")
+    /// The VM's display name, which is not unique, and what the Spotlight
+    /// record is matched on.
+    @Property(title: "Name", indexingKey: \.displayName)
     var name: String
 
     /// The VM's runtime status, as its stable wire name — the same string every
@@ -85,6 +87,23 @@ struct VMEntity: AppEntity {
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(title: "\(name)", subtitle: "\(Self.statusDisplayName(status))")
+    }
+
+    /// What Spotlight holds for this VM: the name it is found by, and the
+    /// guest it runs.
+    ///
+    /// Carries nothing that moves while the VM is in the library — a status
+    /// that changed would otherwise cost a re-index on every transition.
+    var attributeSet: CSSearchableItemAttributeSet {
+        let attributes = defaultAttributeSet
+        attributes.displayName = name
+        attributes.contentDescription = "\(Self.guestOSDisplayName(guestOS)) virtual machine"
+        return attributes
+    }
+
+    /// A wire guest OS in the words a person reads.
+    static func guestOSDisplayName(_ guestOS: String) -> String {
+        VMGuestOS(rawValue: guestOS)?.displayName ?? guestOS
     }
 
     /// A wire status in the words a person reads.
