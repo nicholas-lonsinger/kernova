@@ -5,5 +5,4 @@
 # files. gitignore syntax, but keep entries literal paths: the hook does
 # not implement glob matching.
 CLAUDE.local.md
-.claude/settings.local.json
 Config/Local.xcconfig
