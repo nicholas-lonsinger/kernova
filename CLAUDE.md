@@ -8,10 +8,10 @@ Deep-dive documentation is indexed in [docs/README.md](docs/README.md) — read 
 
 ## Skills
 
-Project skills are tool-neutral and live in `.agents/skills/<name>/SKILL.md`;
-`.claude/skills/<name>` is a tracked symlink to each, which Claude Code follows.
-A new skill goes there with its symlink in the same change — never a copy under
-`.claude/`.
+Project skills are tool-neutral and live in `.agents/skills/<name>/SKILL.md`,
+with any script a skill runs beside it. `.claude/skills` is a tracked symlink to
+that directory, so a skill added there is discovered with no per-skill step and
+nothing under `.claude/` to keep in sync. `make doctor` verifies the link resolves.
 
 ## Worktree branch naming and pushing
 

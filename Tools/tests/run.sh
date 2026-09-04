@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check.sh and Tools/xcresult-report.sh. Replays the
+# Fixture tests for the check skill's script and Tools/xcresult-report.sh. Replays the
 # recorded xcodebuild logs and result-bundle JSON under fixtures/ through fakes
 # of `make`, `xcrun`, and `xcodebuild` placed first on PATH, so every verdict
 # path is exercised without Xcode. `make lint` runs it; it takes under a second.
@@ -84,8 +84,8 @@ expect_count() { [ "$(grep -cE -- "$1" "$tmp/last")" -eq "$2" ] || fail "$name: 
 expect_last()  { [ "$(tail -n 1 "$tmp/last" | grep -cE -- "$1")" -eq 1 ] || fail "$name: last line is not /$1/: $(tail -n 1 "$tmp/last")"; }
 expect_lines() { [ "$(grep -c . "$tmp/last")" -eq "$1" ] || fail "$name: expected $1 lines, got $(grep -c . "$tmp/last")"; }
 
-check() { Tools/check.sh "$@"; }
-with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" Tools/check.sh "${@:3}"; }
+check() { .agents/skills/check/check.sh "$@"; }
+with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" .agents/skills/check/check.sh "${@:3}"; }
 
 # ---- check.sh: build -------------------------------------------------------
 
@@ -155,7 +155,7 @@ expect_last '^check: verdict=green target=lint suite=- log=.*/lint\.log xcresult
 
 run "lint failed" 4 with_log lint-failed.log 2 lint
 expect '^errors:$'
-expect '^  In Tools/check\.sh line 12:$'
+expect '^  In Tools/lsp-config\.sh line 12:$'
 expect 'SC2086'
 expect '^  Kernova/App/AppDelegate\.swift:12:1: error: \[Indentation\]'
 expect '^  .*✗ docs/BUILD\.md:40 — 91 words'
@@ -182,7 +182,7 @@ run "suite on a non-suite target" 5 check build KernovaTests/X
 expect_last '^check: verdict=setup-error reason=usage '
 run "missing log" 5 check --from-log "$tmp/logs/nope.log" test
 expect_last '^check: verdict=setup-error reason=no-log '
-run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" Tools/check.sh build
+run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" .agents/skills/check/check.sh build
 expect_last '^check: verdict=setup-error reason=xcodebuild-missing '
 run "help" 0 check --help
 expect_lines 0

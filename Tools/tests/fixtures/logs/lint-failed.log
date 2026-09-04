@@ -1,4 +1,4 @@
-In Tools/check.sh line 12:
+In Tools/lsp-config.sh line 12:
 echo $foo
      ^--^ SC2086 (info): Double quote to prevent globbing and word splitting.
 

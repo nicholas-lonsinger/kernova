@@ -132,6 +132,16 @@ else
     warn "git hooks not installed — run 'make install-hooks' (one-time per clone)"
 fi
 
+# .claude/skills is a tracked symlink to the tool-neutral .agents/skills, so
+# Claude Code discovers the skills other harnesses read directly. A checkout
+# with core.symlinks=false materializes the link as a text file and every
+# skill silently vanishes; that is the case to catch here.
+if [ -L .claude/skills ] && [ -d .claude/skills/ ]; then
+    pass ".claude/skills resolves to $(readlink .claude/skills)"
+else
+    warn ".claude/skills is not a symlink to a directory — expected a link to ../.agents/skills (check core.symlinks)"
+fi
+
 # .worktreeinclude entries must be gitignored (Claude Code, other worktree
 # tools, and .githooks/post-checkout all refuse non-ignored entries) and
 # literal paths (the hook doesn't implement the glob matching the native

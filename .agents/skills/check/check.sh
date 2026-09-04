@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Runs one Makefile target — build, build-for-testing, test,
-# test-without-building, test-suite, or lint — with the whole xcodebuild
-# stream captured to a file, and prints only the verdict: counts from the
-# result bundle, deduplicated compile errors, failing tests with their
-# messages, and the log and bundle paths.
+# The `check` skill's script: runs one raw Makefile target — build,
+# build-for-testing, test, test-without-building, test-suite, or lint — with
+# the whole xcodebuild stream captured to a file, and prints only the verdict:
+# counts from the result bundle, deduplicated compile errors, failing tests
+# with their messages and source locations, and the log and bundle paths. The
+# make targets themselves stay as they are, streaming everything, for people
+# and CI.
 #
 # Usage:
-#   Tools/check.sh build | build-for-testing | test | test-without-building | lint
-#   Tools/check.sh test-suite <Target/Suite>
-#   Tools/check.sh --from-log <file> <target> [<Target/Suite>]
-#   make check [WHAT=<target>] [SUITE=<Target/Suite>]
+#   .agents/skills/check/check.sh build | build-for-testing | test | test-without-building | lint
+#   .agents/skills/check/check.sh test-suite <Target/Suite>
+#   .agents/skills/check/check.sh --from-log <file> <target> [<Target/Suite>]
 #
 # `--from-log` reports an existing log and runs nothing. Otherwise the target
 # runs synchronously in the foreground with no timeout, poll, or retry of its
@@ -26,9 +27,7 @@
 #     Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
 #   check: verdict=test-failed target=test suite=- total=3948 failed=3 flaky=0 log=… xcresult=…
 #
-# Verdict tokens and exit codes. The codes are this script's; `make check`
-# turns any failure into make's own exit 2 and appends its `*** [check]` line,
-# so the `check: verdict=` line is the contract to read either way.
+# Verdict tokens and exit codes:
 #   0  green         the target succeeded; a test target ran at least one test
 #   1  test-failed   tests ran and some failed (or the run died after testing)
 #   2  build-failed  xcodebuild did not complete the build
@@ -39,7 +38,7 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT" || exit 5
 
 usage() {
