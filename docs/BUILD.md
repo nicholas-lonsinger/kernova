@@ -8,7 +8,11 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 **pre-push** runs `make lint`. Bypass an individual push with `git push --no-verify`.
 
-**post-checkout** sets up a new worktree with no manual step: it copies the gitignored local files listed in `.worktreeinclude` from the main checkout, sweeps LaunchServices ghosts (below), and writes the worktree's own `buildServer.json` via `Tools/lsp-config.sh` when `xcode-build-server` is installed — that config pins an absolute build root, so it is written per checkout rather than copied, and `make install-lsp` is what installs the tool.
+**post-checkout** runs `Tools/worktree-setup.sh` for a new worktree, so it needs no manual step: the script copies the gitignored local files listed in `.worktreeinclude` from the main checkout, sweeps LaunchServices ghosts (below), and writes the worktree's own `buildServer.json` via `Tools/lsp-config.sh` when `xcode-build-server` is installed — that config pins an absolute build root, so it is written per checkout rather than copied, and `make install-lsp` is what installs the tool.
+
+The script is the only implementation of worktree setup. It runs once per checkout — a marker in the checkout's git directory records the run, and every later call returns at once — so entry points may overlap freely.
+
+A harness that creates worktrees with git hooks disabled gets a one-line adapter in its own config calling the same script: Claude Code's is the `SessionStart` and `EnterWorktree` hooks in `.claude/settings.json`. Add an adapter only for a harness shown to skip the git hook.
 
 `.worktreeinclude` is the definitive list of local files a worktree inherits. Claude Code and other worktree tools read it natively; the hook is what makes a plain `git worktree add` honor it too. **Literal paths only — no globs.**
 

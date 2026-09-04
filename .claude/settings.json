@@ -1,5 +1,32 @@
 {
   "enabledPlugins": {
     "swift-lsp@claude-plugins-official": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$root/Tools/worktree-setup.sh\" ] && \"$root/Tools/worktree-setup.sh\" >/dev/null 2>&1; true",
+            "async": true,
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$root/Tools/worktree-setup.sh\" ] && \"$root/Tools/worktree-setup.sh\" >/dev/null 2>&1; true",
+            "async": true,
+            "timeout": 120
+          }
+        ]
+      }
+    ]
   }
 }

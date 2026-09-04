@@ -1,64 +1,24 @@
 #!/usr/bin/env bash
 #
-# Set up fresh checkouts. Runs after `git worktree add` — the case that
-# matters: a new worktree starts without the repo's gitignored local files
-# (git only checks out tracked content), so without this hook they must be
-# copied by hand (Config/Local.xcconfig among them — the agent's Release
-# signing reads its team from it). Also fires on `git switch`/`git checkout`,
-# where the already-present guards below make it a no-op. It cannot fire on
-# a fresh `git clone`: hooks only activate once `make install-hooks` sets
-# core.hooksPath (git never auto-runs checked-in hooks) — see README
-# "Development setup".
+# Runs Tools/worktree-setup.sh on every branch checkout. The script sets a
+# checkout up once and returns immediately after that, so this covers a
+# fresh `git worktree add` and lets a worktree that predates
+# `make install-hooks` catch up on its next `git switch`. Hooks activate only
+# once `make install-hooks` sets core.hooksPath (git never auto-runs
+# checked-in hooks) — see README "Development setup".
 #
-# Git runs post-checkout from the working-tree root, so the relative paths
-# below resolve within whichever worktree was just created or switched.
+# Git runs post-checkout from the working-tree root, so the relative path
+# below resolves within whichever worktree was just created or switched.
 
 set -uo pipefail
 
 # $3 is 1 for a branch checkout, 0 for a file checkout (git checkout -- <path>),
-# which doesn't create a working tree and is skipped.
+# which creates no working tree.
 [ "${3:-0}" = "1" ] || exit 0
 
-# ---- 1. inherit .worktreeinclude files from the main checkout --------------
-
-# Only meaningful in a linked worktree — in the main checkout, source and
-# destination would be the same file. git-dir equals git-common-dir exactly
-# when this is the main checkout.
-git_dir=$(git rev-parse --git-dir 2>/dev/null || true)
-common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
-if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] && [ -f .worktreeinclude ]; then
-    main_root=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-    if [ -n "$main_root" ] && [ -d "$main_root" ]; then
-        while IFS= read -r path || [ -n "$path" ]; do
-            case "$path" in '' | '#'*) continue ;; esac
-            [ -e "$path" ] && continue            # never overwrite
-            [ -f "$main_root/$path" ] || continue # no source to copy
-            # Same safety rule the native consumers apply: only gitignored
-            # paths are eligible, so a tracked file can never be shadowed
-            # by a stale local copy.
-            git check-ignore -q -- "$path" || continue
-            mkdir -p "$(dirname "$path")" && cp "$main_root/$path" "$path"
-        done <.worktreeinclude
-    fi
-fi
-
-# ---- 2. sweep worktree debris ------------------------------------------------
-
-# Best-effort: a failed sweep must not fail the checkout; `make ghosts`
-# reports anything left behind.
-if [ "${1:-}" = "0000000000000000000000000000000000000000" ] && [ -x Tools/ghosts.sh ]; then
-    Tools/ghosts.sh --sweep || true
-fi
-
-# ---- 3. write this checkout's Swift language-server config -------------------
-
-# buildServer.json names an absolute build root, so it is written per checkout
-# rather than copied in step 1. The script prints a one-line `make install-lsp`
-# hint and succeeds when xcode-build-server is absent — installing software is
-# never a checkout's job, and a missing optional tool must not fail one.
-if [ "${1:-}" = "0000000000000000000000000000000000000000" ] &&
-    [ -z "${CI:-}" ] && [ ! -e buildServer.json ] && [ -x Tools/lsp-config.sh ]; then
-    Tools/lsp-config.sh || true
+# Best-effort: a failed setup must not fail the checkout.
+if [ -x Tools/worktree-setup.sh ]; then
+    Tools/worktree-setup.sh || true
 fi
 
 exit 0
