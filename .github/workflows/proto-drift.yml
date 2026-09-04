@@ -82,38 +82,17 @@ jobs:
       - name: Install protoc
         if: steps.filter.outputs.changed == 'true'
         run: |
-          brew install protobuf
+          Tools/brew-install.sh protoc:protobuf
           protoc --version
 
+      # Tools/regen-proto.sh builds protoc-gen-swift into KernovaKit/.build
+      # from the revision Package.resolved pins, so the key tracks that file.
       - name: Cache SwiftPM build for protoc-gen-swift
         if: steps.filter.outputs.changed == 'true'
         uses: actions/cache@v5
         with:
           path: KernovaKit/.build
           key: ${{ runner.os }}-proto-drift-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-
-      - name: Build protoc-gen-swift from resolved swift-protobuf
-        if: steps.filter.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          # Mirror the xcworkspace's Package.resolved into the SwiftPM
-          # package so `swift package resolve` honors the exact revision
-          # Kernova.app links against, rather than recomputing against
-          # the `from:` constraint in Package.swift (which could pick a
-          # newer minor). This is what makes the drift check stable: the
-          # generator is built from the same source tree as the runtime.
-          cp \
-            Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
-            KernovaKit/Package.resolved
-          swift package --package-path KernovaKit resolve
-          CHECKOUT="KernovaKit/.build/checkouts/swift-protobuf"
-          swift build \
-            --package-path "$CHECKOUT" \
-            -c release \
-            --product protoc-gen-swift
-          BIN_DIR="$GITHUB_WORKSPACE/$CHECKOUT/.build/release"
-          echo "$BIN_DIR" >> "$GITHUB_PATH"
-          "$BIN_DIR/protoc-gen-swift" --version || true
 
       - name: Regenerate Swift bindings
         if: steps.filter.outputs.changed == 'true'
@@ -124,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! git diff --quiet KernovaKit/Sources/KernovaKit/Generated; then
-            echo "::error::Generated Swift bindings are out of sync with kernova.proto and/or the pinned swift-protobuf version. Run 'Tools/regen-proto.sh' locally with swift-protobuf installed at the version pinned in Package.resolved, then commit the result."
+            echo "::error::Generated Swift bindings are out of sync with kernova.proto and/or the pinned swift-protobuf version. Run Tools/regen-proto.sh and commit the result."
             echo
             echo "--- Diff ---"
             git diff KernovaKit/Sources/KernovaKit/Generated

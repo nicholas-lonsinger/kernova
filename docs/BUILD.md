@@ -4,7 +4,7 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 ## Git hooks and worktree setup
 
-`make install-hooks` enables the checked-in `.githooks/`.
+`make install-hooks` enables the checked-in `.githooks/`, and is the first step `make setup` composes.
 
 **pre-push** runs `make lint`. Bypass an individual push with `git push --no-verify`.
 
@@ -57,7 +57,7 @@ The `lint` job runs `make lint`, which is therefore what gates a merge; the Make
 
 `Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step reads the result bundle and names those tests, which is where to look — a green conclusion on its own says nothing about flakes.
 
-The dead-code scan runs on a schedule and on demand with `gh workflow run dead-code.yml`. Periphery is configured in `.periphery.yml` for that job and is not installed locally.
+The dead-code scan runs weekly in CI, on demand with `gh workflow run dead-code.yml`, and locally with `make dead-code`. Every route installs the pinned Periphery release through `Tools/install-periphery.sh` and reads `.periphery.yml`, so a local scan and the job's scan are one scan.
 
 ## Derived data and build arenas
 

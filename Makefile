@@ -58,7 +58,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint install-hooks check-hooks install-lsp doctor ghosts clean-ghosts
+.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -69,6 +69,16 @@ help:
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
+
+# Everything a fresh clone needs beyond Xcode itself, composed from the
+# targets below so each piece is also runnable on its own. Every step is
+# idempotent, so rerun it whenever the environment drifts. It ends with
+# `doctor`, which reports the state the run produced.
+setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Periphery, then doctor
+	@Tools/brew-install.sh shellcheck gh protoc:protobuf xcode-build-server
+	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
+	@Tools/install-periphery.sh >/dev/null
+	@Tools/doctor.sh
 
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an
@@ -100,10 +110,7 @@ check-hooks:
 # writes its own, and .githooks/post-checkout writes a new worktree's when the
 # tool is already installed.
 install-lsp: ## Install xcode-build-server and write this checkout's buildServer.json
-	@if ! command -v xcode-build-server >/dev/null 2>&1; then \
-		command -v brew >/dev/null 2>&1 || { echo 'install-lsp: Homebrew is required to install xcode-build-server — see https://brew.sh' >&2; exit 1; }; \
-		brew install xcode-build-server; \
-	fi
+	@Tools/brew-install.sh xcode-build-server
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 
 build: check-hooks ## Build the app for macOS
@@ -185,12 +192,22 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-build-settings-layering.sh
 
+# Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own
+# `-derivedDataPath`, `-quiet`, `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`,
+# and `COMPILER_INDEX_STORE_ENABLE=YES` to xcodebuild; only
+# `-skipPackagePluginValidation` has to be appended, because the project
+# consumes SwiftPM packages. That build is Periphery's own, into its own arena,
+# so a scan takes minutes. Stdout carries Periphery's report and nothing else —
+# .github/workflows/dead-code.yml redirects it to a file and greps it.
+dead-code: ## Scan for unused code with Periphery (drives its own build; minutes)
+	@periphery=$$(Tools/install-periphery.sh) && "$$periphery" scan --disable-update-check -- -skipPackagePluginValidation
+
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
-# swift-format) and repo setup (git hooks, .worktreeinclude) match what Kernova
-# needs to build, lint, and push. A starting point — extend Tools/doctor.sh
-# with more checks over time. Exits non-zero if any required check fails, so
-# it's CI-usable too.
-doctor: ## Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup
+# swift-format), signing, optional tooling, and repo setup (git hooks,
+# .worktreeinclude) match what Kernova needs to build, lint, and push. A
+# starting point — extend Tools/doctor.sh with more checks over time. Exits
+# non-zero if any required check fails, so it's CI-usable too.
+doctor: ## Check the local toolchain, signing, optional tooling, and repo setup
 	@Tools/doctor.sh
 
 # Diagnoses ghost Launch Services registrations, orphaned DerivedData build

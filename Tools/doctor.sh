@@ -10,7 +10,8 @@
 # human sanity check and as a scriptable gate in CI.
 #
 # Requirements checked here mirror the toolchain the Makefile actually invokes
-# (e.g. `xcrun swift-format`).
+# (e.g. `xcrun swift-format`), plus the signing setup and the optional tooling
+# `make setup` installs — which is why `make setup` ends by running this.
 
 set -uo pipefail
 
@@ -253,11 +254,32 @@ section 'Optional tooling'
 
 # Only needed to regenerate kernova.pb.swift after editing the .proto; the
 # generated files are checked in, so a normal build/test loop doesn't need it.
-if command -v protoc >/dev/null 2>&1 && command -v protoc-gen-swift >/dev/null 2>&1; then
-    pass "proto toolchain present (protoc + protoc-gen-swift) — Tools/regen-proto.sh"
+# protoc is the whole requirement: Tools/regen-proto.sh builds the generator,
+# protoc-gen-swift, from the pinned swift-protobuf revision itself.
+if command -v protoc >/dev/null 2>&1; then
+    pass "protoc $(protoc --version 2>/dev/null | awk '{print $2}') — Tools/regen-proto.sh"
+    detail 'the script builds protoc-gen-swift from the swift-protobuf revision in Package.resolved'
 else
-    warn "proto toolchain absent — only needed to regenerate .pb.swift from kernova.proto"
-    detail "Install with: brew install protobuf swift-protobuf"
+    warn "protoc absent — only needed to regenerate .pb.swift from kernova.proto"
+    detail "Install with: make setup"
+fi
+
+# gh drives `gh workflow run`, issue filing, and PR merges throughout the docs.
+if command -v gh >/dev/null 2>&1; then
+    pass "gh $(gh --version 2>/dev/null | sed -n 's/^gh version \([0-9][0-9.]*\).*/\1/p') — workflow runs, issues, PR merges"
+else
+    warn "gh absent — 'gh workflow run', filing issues, and merging PRs go through it"
+    detail "Install with: make setup"
+fi
+
+# The dead-code scan's pinned Periphery, resolved through the same script
+# `make dead-code` and the workflow use.
+periphery_bin=$(Tools/install-periphery.sh --path 2>/dev/null || true)
+if [ -n "$periphery_bin" ] && [ -x "$periphery_bin" ]; then
+    pass "Periphery $(Tools/install-periphery.sh --version) — make dead-code"
+else
+    warn "Periphery absent — 'make dead-code' has no scanner"
+    detail "Install with: make setup"
 fi
 
 # Shell static analysis for Tools/ and .githooks/ — `make lint` uses it when
@@ -267,7 +289,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint runs full static analysis"
 else
     warn "shellcheck absent — make lint falls back to bash -n only (CI still enforces shellcheck)"
-    detail "Install with: brew install shellcheck"
+    detail "Install with: make setup"
 fi
 
 # Swift language-server context: sourcekit-lsp reads compiler flags from a
@@ -284,7 +306,7 @@ if command -v xcode-build-server >/dev/null 2>&1; then
     fi
 else
     warn "xcode-build-server absent — editors and Claude Code get no Swift build context"
-    detail "Install and configure with: make install-lsp"
+    detail "Install with: make setup"
 fi
 
 # ---- summary ----------------------------------------------------------------
