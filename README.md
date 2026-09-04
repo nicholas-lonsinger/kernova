@@ -86,7 +86,7 @@ make setup   # one-time per clone; rerun any time
 
 Every step is idempotent, so rerunning `setup` after the environment drifts is safe. What it does:
 
-- **Git hooks** — points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
+- **Git hooks** — points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` and `make test-tools` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
 - **Homebrew tools** — `shellcheck`, `gh`, `protoc`, and `xcode-build-server`, skipping any already installed. Without [Homebrew](https://brew.sh) the run names what it skipped and carries on; none of them is needed to build or test.
 - **`buildServer.json`** — this checkout's copy, which gives editors and Claude Code's Swift language server the project's real compiler flags. Build the checkout once for the flags to resolve.
 - **Periphery** — the pinned release `make dead-code` scans with.

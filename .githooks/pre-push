@@ -25,7 +25,7 @@ fi
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-echo "pre-push: running 'make lint' (bypass with git push --no-verify)"
+echo "pre-push: running 'make lint' and 'make test-tools' (bypass with git push --no-verify)"
 
 # Don't attribute the failure to swift-format: `make lint` covers the shell
 # scripts too, and a shellcheck or `bash -n` finding sent the reader to
@@ -36,5 +36,11 @@ if ! make lint; then
     echo "pre-push: 'make lint' failed — see the findings above."
     echo "          Swift findings:  run 'make format' to auto-fix, then commit and push again."
     echo "          Shell findings:  fix by hand; swift-format does not touch shell scripts."
+    exit 1
+fi
+
+if ! make test-tools; then
+    echo ""
+    echo "pre-push: 'make test-tools' failed — a shell tool's fixture test is red; see the findings above."
     exit 1
 fi

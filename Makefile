@@ -58,7 +58,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-for-testing test test-without-building test-suite test-package clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build build-for-testing test test-without-building test-suite test-package test-tools clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -88,7 +88,7 @@ setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Perip
 # core.hooksPath is shared by all worktrees of this repo.
 install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree setup)
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies).'
+	@echo 'Hooks installed. Pre-push runs `make lint` and `make test-tools`; post-checkout sets up new worktrees (.worktreeinclude copies).'
 
 # Silent when the hooks are wired up, or under CI (which has no hooks to
 # install); otherwise a one-line nudge. Runs as a prerequisite of the
@@ -174,10 +174,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-# The fixture tests run last: they replay recorded xcodebuild output through
-# the make-verdict skill's script and Tools/xcresult-report.sh without Xcode, so a
-# parsing regression fails the same gate as a lint finding.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering; run the fixture tests
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, and build-setting layering
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -194,6 +191,12 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	@bash Tools/check-headless-core.sh
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-build-settings-layering.sh
+
+# Replays recorded xcodebuild output and result-bundle JSON through the
+# make-verdict skill's script and Tools/xcresult-report.sh, so their parsing is
+# tested without Xcode. Under a second; the pre-push hook and the lint
+# workflow run it after `make lint`.
+test-tools: ## Run the fixture tests for the shell tooling (no Xcode needed)
 	@bash Tools/tests/run.sh
 
 # Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own

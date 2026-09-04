@@ -6,7 +6,7 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 `make install-hooks` enables the checked-in `.githooks/`, and is the first step `make setup` composes.
 
-**pre-push** runs `make lint`. Bypass an individual push with `git push --no-verify`.
+**pre-push** runs `make lint` and `make test-tools`. Bypass an individual push with `git push --no-verify`.
 
 **post-checkout** runs `Tools/worktree-setup.sh` for a new worktree, so it needs no manual step: the script copies the gitignored local files listed in `.worktreeinclude` from the main checkout, sweeps LaunchServices ghosts (below), and writes the worktree's own `buildServer.json` via `Tools/lsp-config.sh` when `xcode-build-server` is installed — that config pins an absolute build root, so it is written per checkout rather than copied, and `make install-lsp` is what installs the tool.
 
@@ -53,7 +53,7 @@ That works because `KernovaKit` is referenced as a top-level peer — a `PBXFile
 
 Three of the workflows in `.github/workflows/` are required status checks: `lint`, `build-and-test`, and `proto-drift`. The "Required actions" ruleset matches them **by job name**, and that ruleset lives in GitHub's settings rather than in this repo — so renaming a job means editing the ruleset in the same change, or every PR waits on a check that never reports.
 
-The `lint` job runs `make lint`, which is therefore what gates a merge; the Makefile's `lint` target is the list of what it covers, and shellcheck goes from optional to required once `$CI` is set. Each workflow's own header explains its trigger design; read it there before changing one.
+The `lint` job runs `make lint` and then `make test-tools`, which are therefore what gates a merge; the Makefile's `lint` target is the list of what it covers, and shellcheck goes from optional to required once `$CI` is set. Each workflow's own header explains its trigger design; read it there before changing one.
 
 `Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step names those tests, which is where to look — a green conclusion on its own says nothing about flakes. It and the "Report failure messages" step run `Tools/xcresult-report.sh` on the result bundle, the same parse the `make-verdict` skill's script reports from a local run.
 

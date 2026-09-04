@@ -2,7 +2,7 @@
 # Fixture tests for the make-verdict skill's script and Tools/xcresult-report.sh. Replays the
 # recorded xcodebuild logs and result-bundle JSON under fixtures/ through fakes
 # of `make`, `xcrun`, and `xcodebuild` placed first on PATH, so every verdict
-# path is exercised without Xcode. `make lint` runs it; it takes under a second.
+# path is exercised without Xcode. `make test-tools` runs it; it takes under a second.
 #
 # Fixture placeholders: @ROOT@ is this checkout's root (the scripts rewrite it
 # repo-relative), @BUNDLE@ the directory holding the fake .xcresult bundles.

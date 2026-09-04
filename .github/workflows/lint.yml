@@ -39,3 +39,6 @@ jobs:
 
       - name: make lint
         run: make lint
+
+      - name: make test-tools
+        run: make test-tools
