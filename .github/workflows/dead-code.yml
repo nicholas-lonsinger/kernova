@@ -29,52 +29,29 @@ jobs:
           xcodebuild -version
           echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
 
-      - name: Resolve latest Periphery release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Tools/install-periphery.sh owns the version and the install location,
+      # so this job and a developer's `make dead-code` scan alike.
+      - name: Resolve the pinned Periphery release
         run: |
           set -euo pipefail
-          TAG=$(gh release view --repo peripheryapp/periphery --json tagName -q .tagName)
-          if [ -z "$TAG" ]; then
-            echo "::error::Could not resolve the latest Periphery release tag"
-            exit 1
-          fi
-          echo "PERIPHERY_VERSION=$TAG" >> "$GITHUB_ENV"
-          echo "Resolved Periphery $TAG"
+          echo "PERIPHERY_VERSION=$(Tools/install-periphery.sh --version)" >> "$GITHUB_ENV"
+          echo "PERIPHERY_DIR=$(dirname "$(Tools/install-periphery.sh --path)")" >> "$GITHUB_ENV"
 
       - name: Cache Periphery binary
-        id: cache-periphery
         uses: actions/cache@v5
         with:
-          # The periphery binary uses @rpath/libIndexStore.dylib, so the dylib
-          # must live alongside it in /usr/local/bin/. Cache both files together.
-          path: |
-            /usr/local/bin/periphery
-            /usr/local/bin/libIndexStore.dylib
+          path: ${{ env.PERIPHERY_DIR }}
           key: periphery-${{ env.PERIPHERY_VERSION }}-${{ runner.os }}
 
       - name: Install Periphery
-        if: steps.cache-periphery.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          curl -fsSL "https://github.com/peripheryapp/periphery/releases/download/${PERIPHERY_VERSION}/periphery-${PERIPHERY_VERSION}.zip" -o /tmp/periphery.zip
-          unzip -o /tmp/periphery.zip -d /tmp/periphery-extract
-          sudo mv /tmp/periphery-extract/periphery /usr/local/bin/periphery
-          sudo mv /tmp/periphery-extract/libIndexStore.dylib /usr/local/bin/libIndexStore.dylib
-          sudo chmod +x /usr/local/bin/periphery
-          periphery version
+        run: Tools/install-periphery.sh
 
       - name: Run Periphery scan
         id: scan
         run: |
           set +e
-          # Periphery 3.x already passes its own `-derivedDataPath`, `-quiet`,
-          # `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`, and
-          # `COMPILER_INDEX_STORE_ENABLE=YES` to xcodebuild. We only need to
-          # append `-skipPackagePluginValidation` because the project consumes
-          # SwiftPM packages.
-          periphery scan --disable-update-check -- -skipPackagePluginValidation \
-            > scan-output.txt 2> scan-stderr.txt
+          # The same target a developer runs; the Makefile owns the flags.
+          make dead-code > scan-output.txt 2> scan-stderr.txt
           PERIPHERY_EXIT=$?
           set -e
 
@@ -89,10 +66,10 @@ jobs:
 
           findings=$(grep -cE ":[0-9]+:[0-9]+: warning:" scan-output.txt || true)
 
-          # An unpinned Periphery can change its output format without failing.
-          # A zero count is only trusted alongside the explicit clean verdict;
-          # otherwise the job fails rather than closing the tracker on a scan
-          # nobody could parse.
+          # This parse is the tracking issue's only input, so a zero count is
+          # trusted only alongside the explicit clean verdict; otherwise the
+          # job fails rather than closing the tracker on a scan nobody could
+          # parse.
           if [ "$findings" -eq 0 ] && ! grep -q "No unused code detected" scan-output.txt; then
             echo "::error::Periphery reported no findings and no clean verdict — output format unrecognised"
             cat scan-output.txt

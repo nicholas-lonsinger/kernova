@@ -1,7 +1,8 @@
 # Periphery dead-code scan configuration.
 # https://github.com/peripheryapp/periphery
 #
-# Consumed by the `.github/workflows/dead-code.yml` job — see docs/BUILD.md "CI".
+# Consumed by `make dead-code`, run locally and by the
+# `.github/workflows/dead-code.yml` job — see docs/BUILD.md "CI".
 
 project: Kernova.xcodeproj
 schemes:

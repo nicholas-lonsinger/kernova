@@ -35,7 +35,7 @@ jobs:
       # image drops it, so `make lint` never silently skips static analysis
       # here (it hard-fails on CI without it).
       - name: Ensure shellcheck
-        run: command -v shellcheck >/dev/null || brew install shellcheck
+        run: Tools/brew-install.sh shellcheck
 
       - name: make lint
         run: make lint

@@ -81,22 +81,21 @@ Everything below is for building and working on Kernova itself. You'll need Xcod
 After cloning:
 
 ```bash
-make install-hooks   # one-time per clone
+make setup   # one-time per clone; rerun any time
 ```
 
-`install-hooks` points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
+Every step is idempotent, so rerunning `setup` after the environment drifts is safe. What it does:
 
-Optionally, with [Homebrew](https://brew.sh) installed:
+- **Git hooks** — points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
+- **Homebrew tools** — `shellcheck`, `gh`, `protoc`, and `xcode-build-server`, skipping any already installed. Without [Homebrew](https://brew.sh) the run names what it skipped and carries on; none of them is needed to build or test.
+- **`buildServer.json`** — this checkout's copy, which gives editors and Claude Code's Swift language server the project's real compiler flags. Build the checkout once for the flags to resolve.
+- **Periphery** — the pinned release `make dead-code` scans with.
 
-```bash
-make install-lsp     # one-time per checkout
-```
-
-`install-lsp` installs `xcode-build-server` and writes this checkout's `buildServer.json`, which gives editors and Claude Code's Swift language server the project's real compiler flags. Build the checkout once for the flags to resolve.
+It ends with `make doctor`, which checks that your toolchain, signing, and hooks match what Kernova needs.
 
 Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration. Bridged and Host Only networking additionally need the restricted `com.apple.vm.networking` entitlement; a build signed without a provisioning profile omits those modes from the network picker and everything else still works.
 
-`make doctor` checks that your toolchain, signing, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
+`make` with no arguments lists every build, test, format, and lint target.
 
 **Debug needs no signing team or Apple account** — it signs ad-hoc ("Sign to Run Locally") by default, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it through a gitignored `Config/Local.xcconfig` off `Config/Local.xcconfig.example` so macOS privacy grants survive a rebuild ([docs/BUILD.md](docs/BUILD.md#signing-identity)). **Release** requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store); it matters only when cutting a distributable build ([docs/RELEASING.md](docs/RELEASING.md)).
 

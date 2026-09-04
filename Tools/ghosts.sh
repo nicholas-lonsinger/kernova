@@ -733,8 +733,6 @@ if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
     printf '\n'
     if [ ! -t 0 ]; then
         detail 'Not evicting competing copies: stdin is not a TTY, run interactively to confirm.'
-    elif ! command -v trash >/dev/null 2>&1; then
-        detail 'Not evicting competing copies: the `trash` CLI is not installed (brew install trash).'
     else
         for path in "${competing_copies[@]}"; do
             printf '  Trash and unregister %s? [y/N] ' "$path"
