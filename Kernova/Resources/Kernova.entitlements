@@ -43,5 +43,16 @@
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+	<!-- The container the app and its `kernova` command-line tool meet in: the
+	     command socket the tool connects to lives there, and file rules inside
+	     a group container are what admit binding it — no network entitlement is
+	     involved on either side. `$(TeamIdentifierPrefix)` is load-bearing:
+	     containermanagerd grants the container only to a signature whose team
+	     prefixes the group ID, and refuses an unprefixed one outright. See
+	     docs/research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(TeamIdentifierPrefix)app.kernova</string>
+	</array>
 </dict>
 </plist>
