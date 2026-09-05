@@ -131,10 +131,13 @@ struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, Ent
     /// is the same filtering the enumeration already supports.
     typealias ComparatorMappingType = @Sendable (VMEntity) -> Bool
 
-    /// Both query protocols this conforms to carry a default, which is
-    /// ambiguous where a type takes them both. The Find action this surface
-    /// offers is ``ListVMsIntent``, so there is none of its own to describe.
-    static let findIntentDescription: IntentDescription? = nil
+    /// Describes the Find action Shortcuts generates from this query. Both
+    /// query protocols this conforms to carry a default, which is ambiguous
+    /// where a type takes them both, so it is stated here.
+    static let findIntentDescription: IntentDescription? = IntentDescription(
+        "Finds virtual machines in the library, filtered and sorted by their properties.",
+        categoryName: "Virtual Machines",
+        resultValueName: "Virtual Machines")
 
     @Dependency private var gateway: VMIntentGateway
 
