@@ -52,6 +52,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var suspendSelectors: [VMSelector] = []
     private(set) var restartSelectors: [VMSelector] = []
     private(set) var openSelectors: [VMSelector] = []
+    private(set) var revealSelectors: [VMSelector] = []
     private(set) var cancelGuestSetupCalls: [(selector: VMSelector, confirmed: Bool)] = []
     private(set) var takeSnapshotCalls: [(selector: VMSelector, name: String, notes: String)] = []
     private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool)] = []
@@ -105,6 +106,7 @@ final class MockVMCommanding: VMCommanding {
     var suspendError: (any Error)?
     var restartError: (any Error)?
     var openError: (any Error)?
+    var revealError: (any Error)?
     var cancelGuestSetupError: (any Error)?
     var takeSnapshotError: (any Error)?
     var revertError: (any Error)?
@@ -274,6 +276,11 @@ final class MockVMCommanding: VMCommanding {
     func open(_ selector: VMSelector) throws {
         openSelectors.append(selector)
         if let openError { throw openError }
+    }
+
+    func reveal(_ selector: VMSelector) throws {
+        revealSelectors.append(selector)
+        if let revealError { throw revealError }
     }
 
     // MARK: - Snapshots

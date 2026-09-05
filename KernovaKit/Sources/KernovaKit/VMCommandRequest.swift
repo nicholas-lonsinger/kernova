@@ -37,6 +37,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case suspend(VMSelector)
         case restart(VMSelector)
         case open(VMSelector)
+        case reveal(VMSelector)
 
         case takeSnapshot(VMSelector, name: String, notes: String)
         case revertToSnapshot(
@@ -71,6 +72,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .suspend: .suspend
             case .restart: .restart
             case .open: .open
+            case .reveal: .reveal
             case .takeSnapshot: .takeSnapshot
             case .revertToSnapshot: .revertToSnapshot
             case .deleteSnapshot: .deleteSnapshot

@@ -608,6 +608,25 @@ extension VMCommandCore {
         surfaceDisplay?(instance)
     }
 
+    // MARK: - Reveal
+
+    /// Brings the VM in front of the user whatever state it is in.
+    ///
+    /// The branch is the ``VMCapability/open`` gate rather than a display test
+    /// of its own, so the one VM whose display is not the right thing to
+    /// surface — the phantom of an import still copying, resting `.paused` —
+    /// lands on its library row instead, and by the same predicate that refuses
+    /// it an ``open(_:)``.
+    func reveal(_ selector: VMSelector) throws {
+        let instance = try resolve(selector)
+        try require(.reveal, on: instance)
+        if capabilities.accepts(.open, on: instance) {
+            surfaceDisplay?(instance)
+        } else {
+            revealInLibrary?(instance)
+        }
+    }
+
     // MARK: - Storage Disk Lookup
 
     /// The storage disk `id` refers to, resolving the synthesized main disk

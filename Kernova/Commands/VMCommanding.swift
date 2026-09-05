@@ -118,6 +118,13 @@ protocol VMCommanding: AnyObject {
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
     func open(_ selector: VMSelector) throws
 
+    /// Brings the VM in front of the user whatever state it is in: its display
+    /// where ``open(_:)`` would surface one, else its row in the library.
+    ///
+    /// Refuses nothing but a selector no VM answers to — what Spotlight's Open
+    /// on a found VM needs, where the VM is stopped as often as not.
+    func reveal(_ selector: VMSelector) throws
+
     // MARK: - Snapshots
 
     @discardableResult

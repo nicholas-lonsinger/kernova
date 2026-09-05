@@ -40,6 +40,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case suspend
     case restart
     case open
+    case reveal
     case takeSnapshot
     case revertToSnapshot
     case deleteSnapshot
@@ -74,6 +75,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .suspend: "Suspend"
         case .restart: "Restart"
         case .open: "Open"
+        case .reveal: "Reveal"
         case .takeSnapshot: "Take Snapshot"
         case .revertToSnapshot: "Revert to Snapshot"
         case .deleteSnapshot: "Delete Snapshot"
@@ -92,13 +94,14 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         }
     }
 
-    /// Whether the verb only answers a question.
-    ///
-    /// A read is admitted in every state, so naming one among the verbs a VM
+    /// Whether every state admits the verb, so naming it among the verbs a VM
     /// "accepts now" tells a user nothing.
-    public var isRead: Bool {
+    ///
+    /// The reads, which only answer a question, and the reveal that brings a VM
+    /// in front of the user whatever state it is in.
+    public var isAdmittedInEveryState: Bool {
         switch self {
-        case .list, .info, .ipAddress, .snapshots: true
+        case .list, .info, .ipAddress, .snapshots, .reveal: true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,

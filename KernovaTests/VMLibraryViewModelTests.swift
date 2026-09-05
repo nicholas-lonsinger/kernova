@@ -1034,6 +1034,56 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
     }
 
+    @Test("Revealing a stopped VM selects it and asks for the library window")
+    func revealSelectsAndAsksForTheLibrary() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let onScreen = makeInstance(name: "OnScreen")
+        let wanted = makeInstance(name: "Wanted")
+        viewModel.instances.append(contentsOf: [onScreen, wanted])
+        viewModel.selectedID = onScreen.id
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        // A stopped VM has no display, which is the whole difference from open.
+        try viewModel.commands.reveal(.id(wanted.id))
+
+        #expect(viewModel.selectedID == wanted.id)
+        #expect(libraryRequests == 1)
+        #expect(presenter.focusGuestDisplayInstances.isEmpty)
+    }
+
+    @Test("Revealing a VM with a window already up still asks for the library")
+    func revealAsksForTheLibraryEvenWithAWindow() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = makeInstance(name: "Wanted")
+        viewModel.instances.append(wanted)
+        viewModel.presenter = presenter
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        // The window can be behind every other app's, which has not answered
+        // whoever asked for this VM from outside Kernova.
+        try viewModel.commands.reveal(.id(wanted.id))
+
+        #expect(libraryRequests == 1)
+    }
+
+    @Test("Revealing a running VM surfaces its display, not its library row")
+    func revealOfARunningVMSurfacesTheDisplay() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = makeInstance(name: "Wanted")
+        wanted.enter(.running(sessionID: UUID()))
+        viewModel.instances.append(wanted)
+        viewModel.presenter = presenter
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        try viewModel.commands.reveal(.id(wanted.id))
+
+        #expect(presenter.focusGuestDisplayInstances.last === wanted)
+        #expect(libraryRequests == 0)
+    }
+
     @Test("A buffered surface request is dropped when its VM leaves before the window arrives")
     func bufferedSurfaceRequestSurvivesAVanishedVM() throws {
         let (viewModel, _, _, _, _) = makeViewModel()

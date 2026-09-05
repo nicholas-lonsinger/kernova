@@ -29,6 +29,9 @@ final class VMIntentGateway {
     private let defaults: UserDefaults
     /// Called on the main actor whenever the last intent in flight finishes.
     private let onIdle: @MainActor () -> Void
+    /// Puts the library window in front of the user, for a search with no VM to
+    /// reveal.
+    private let surfaceLibrary: @MainActor () -> Void
 
     /// How many intents are executing.
     ///
@@ -61,13 +64,15 @@ final class VMIntentGateway {
         awaitReady: @escaping @Sendable () async -> Void,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         defaults: UserDefaults = .standard,
-        onIdle: @escaping @MainActor () -> Void = {}
+        onIdle: @escaping @MainActor () -> Void = {},
+        surfaceLibrary: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.awaitReady = awaitReady
         self.index = index
         self.defaults = defaults
         self.onIdle = onIdle
+        self.surfaceLibrary = surfaceLibrary
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
         libraryEvents = Task { [weak self] in
@@ -211,6 +216,29 @@ final class VMIntentGateway {
 
     func open(_ id: UUID) async throws {
         try await perform(.open, on: id) { try self.commands.open(.id(id)) }
+    }
+
+    /// Brings the VM in front of the user whatever state it is in — its display
+    /// where there is one, else its row in the library.
+    func reveal(_ id: UUID) async throws {
+        try await perform(.reveal, on: id) { try self.commands.reveal(.id(id)) }
+    }
+
+    /// Reveals the first VM whose name `term` matches, and brings the library
+    /// forward with nothing revealed when no name does.
+    ///
+    /// The whole of what a typed search can do here: the library has no search
+    /// field to fill, so a term is resolved the way the entity string query
+    /// resolves a typed name and the VM it names is what the search shows.
+    /// Surfacing the library takes an adapter closure rather than a verb — no
+    /// VM is being addressed, so there is nothing for ``VMCommanding`` to
+    /// resolve or refuse.
+    func revealSearchResult(matching term: String) async throws {
+        guard let first = await vms(matching: term).first else {
+            surfaceLibrary()
+            return
+        }
+        try await reveal(first.id)
     }
 
     func cancelGuestSetup(_ id: UUID, confirmed: Bool) async throws {

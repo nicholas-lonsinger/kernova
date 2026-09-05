@@ -26,6 +26,7 @@ enum VMCapability: CaseIterable, Hashable {
     case resume
     case suspend
     case open
+    case reveal
     case takeSnapshot
     case revertToSnapshot
     case deleteSnapshot
@@ -64,6 +65,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .resume: .resume
         case .suspend: .suspend
         case .open: .open
+        case .reveal: .reveal
         case .takeSnapshot: .takeSnapshot
         case .revertToSnapshot: .revertToSnapshot
         case .deleteSnapshot: .deleteSnapshot
@@ -94,7 +96,7 @@ enum VMCapability: CaseIterable, Hashable {
     /// side.
     var survivesPreparing: Bool {
         switch self {
-        case .info, .ipAddress, .snapshots, .cancelPreparing:
+        case .info, .ipAddress, .snapshots, .reveal, .cancelPreparing:
             true
         case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
             .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
@@ -121,7 +123,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .takeSnapshot, .revertToSnapshot, .deleteSnapshot:
             true
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia,
             .editSharedDirectories, .clone, .rename, .delete, .cancelPreparing, .showInFinder,
             .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
@@ -146,7 +148,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .start, .startInRecovery, .editStorageDisks, .delete, .revertToSnapshot:
             true
         case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editRemovableMedia, .editSharedDirectories, .clone, .rename, .cancelPreparing,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
@@ -178,7 +180,7 @@ struct VMCapabilityCatalog {
     /// here as well as in ``isAvailable(_:on:)`` and ``accepts(_:on:)``.
     func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch capability {
-        case .info, .ipAddress, .snapshots, .showInFinder,
+        case .info, .ipAddress, .snapshots, .reveal, .showInFinder,
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes:
             true
         case .start:
@@ -273,7 +275,7 @@ struct VMCapabilityCatalog {
             // (``VMLifecyclePhase/renamePersists``).
             return !instance.isPreparing && instance.renamePersists
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open,
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone, .delete,
             .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,

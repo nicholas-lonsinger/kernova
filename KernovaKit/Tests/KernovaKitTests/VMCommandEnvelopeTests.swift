@@ -75,6 +75,7 @@ struct VMCommandEnvelopeTests {
             .suspend(selector),
             .restart(selector),
             .open(selector),
+            .reveal(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
             .revertToSnapshot(
                 selector, snapshot: snapshotID, takingCheckpoint: true, confirmed: true),

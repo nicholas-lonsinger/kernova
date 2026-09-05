@@ -77,10 +77,10 @@ extension CommandError {
                 + "."
         case .invalidState(let vm, let current, let allowed):
             // Display names, never the raw values: those are the wire's
-            // vocabulary, and this sentence goes in front of a person. Reads are
-            // left out — every state admits them, so naming them says nothing.
+            // vocabulary, and this sentence goes in front of a person. A verb
+            // every state admits is left out, since naming it says nothing.
             {
-                let offered = allowed.filter { !$0.isRead }.map(\.displayName)
+                let offered = allowed.filter { !$0.isAdmittedInEveryState }.map(\.displayName)
                 return "\u{201C}\(vm.name)\u{201D} is \(current.displayName.lowercased()). "
                     + (offered.isEmpty
                         ? "Nothing can be done with it in that state."
