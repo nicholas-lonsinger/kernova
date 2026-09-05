@@ -3,7 +3,7 @@ import CoreSpotlight
 import Foundation
 import KernovaKit
 
-/// One virtual machine, as Siri, Shortcuts, and Spotlight name it.
+/// One virtual machine, as Shortcuts and Spotlight name it.
 ///
 /// Built from a ``VMInfo`` and nothing else, so what this surface shows can
 /// never drift from what the command core reads. Every field but the
@@ -116,12 +116,12 @@ struct VMEntity: IndexedEntity {
     }
 }
 
-/// How Shortcuts and Siri find the VM an intent acts on.
+/// How Shortcuts and Spotlight find the VM an intent acts on.
 ///
 /// Every method forwards to ``VMIntentGateway``, which owns the matching as
 /// well as the readiness await: the library is small and fully enumerable, so
 /// `allEntities()` gives Shortcuts a picker rather than a search field, and a
-/// spoken name resolves through a case-insensitive contains match.
+/// typed name resolves through a case-insensitive contains match.
 ///
 /// The property query filters and sorts in memory over that same enumeration,
 /// because the core answers the whole library in one main-actor read — there is

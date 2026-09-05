@@ -58,10 +58,9 @@ final class TestHostResidencyController: AppResidencyHosting {
         }
     }
 
-    /// Nothing to publish: the gateway rebuilds Siri's parameter vocabulary,
-    /// which writes to the developer's own Shortcuts database, and holds an
-    /// events subscription that would keep the core's observation loop armed for
-    /// every test.
+    /// Nothing to publish: the gateway writes to the developer's own Spotlight
+    /// index, and holds an events subscription that would keep the core's
+    /// observation loop armed for every test.
     func registerIntentGateway() {}
 
     // MARK: - Residency

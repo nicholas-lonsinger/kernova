@@ -6,7 +6,7 @@ import Testing
 
 @testable import Kernova
 
-/// The App Intents front door: what Siri, Shortcuts, and Spotlight see, how it
+/// The App Intents front door: what Shortcuts and Spotlight see, how it
 /// waits for the library, and how it addresses VMs.
 ///
 /// Driven through the gateway rather than through `VMEntityQuery`, which holds
@@ -27,13 +27,9 @@ struct VMIntentGatewayTests {
     private func makeGateway(
         _ commands: MockVMCommanding,
         defaults: UserDefaults,
-        refreshShortcutVocabulary: @escaping @MainActor () -> Void = {},
         index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
-        VMIntentGateway(
-            commands: commands, awaitReady: {},
-            refreshShortcutVocabulary: refreshShortcutVocabulary, index: index,
-            defaults: defaults)
+        VMIntentGateway(commands: commands, awaitReady: {}, index: index, defaults: defaults)
     }
 
     /// An isolated defaults store named for one test.
@@ -126,7 +122,7 @@ struct VMIntentGatewayTests {
         #expect(resolved.map(\.name) == ["Second"])
     }
 
-    @Test("A spoken name matches case-insensitively, and every VM that answers to it")
+    @Test("A typed name matches case-insensitively, and every VM that answers to it")
     func lookupMatchesNamesCaseInsensitively() async throws {
         let commands = MockVMCommanding()
         commands.library = [
@@ -208,7 +204,7 @@ struct VMIntentGatewayTests {
         let byNothingOffered = VMEntityQuery.sorted(
             mixedLibrary, by: \VMEntity.$bundlePath, ascending: true)
 
-        // Case-insensitive: a spoken library is not sorted by ASCII.
+        // Case-insensitive: a typed name is not matched by ASCII order.
         #expect(byName.map(\.name) == ["sonoma", "Tahoe", "Ubuntu"])
         #expect(byNameDescending.map(\.name) == ["Ubuntu", "Tahoe", "sonoma"])
         #expect(byStatus.map(\.status) == ["paused", "running", "stopped"])
@@ -231,8 +227,7 @@ struct VMIntentGatewayTests {
                 entered.continuation.yield(())
                 for await _ in release.stream { break }
             },
-            refreshShortcutVocabulary: {}, index: index,
-            defaults: makeStore("readiness-wait"))
+            index: index, defaults: makeStore("readiness-wait"))
 
         let read = Task { await gateway.vms() }
         for await _ in entered.stream { break }
@@ -253,8 +248,7 @@ struct VMIntentGatewayTests {
         let awaits = Counter()
         let gateway = VMIntentGateway(
             commands: commands, awaitReady: { await awaits.increment() },
-            refreshShortcutVocabulary: {}, index: MockVMEntityIndex(),
-            defaults: makeStore("readiness-memoized"))
+            index: MockVMEntityIndex(), defaults: makeStore("readiness-memoized"))
 
         _ = await gateway.vms()
         _ = await gateway.vms()
@@ -423,44 +417,26 @@ struct VMIntentGatewayTests {
         }
     }
 
-    // MARK: - Shortcut Vocabulary and Spotlight
-
-    /// A gateway reporting every vocabulary rebuild into `log`, over `index`.
-    private func makeTrackingGateway(
-        _ commands: MockVMCommanding, defaults: UserDefaults, log: RefreshLog,
-        index: MockVMEntityIndex
-    ) -> VMIntentGateway {
-        makeGateway(
-            commands,
-            defaults: defaults,
-            refreshShortcutVocabulary: {
-                log.count += 1
-                log.gate.notify()
-            },
-            index: index)
-    }
+    // MARK: - Spotlight
 
     /// The writes the readiness sync makes over an index holding nothing stale,
-    /// which every batch assertion counts from: one whole-library write,
-    /// preceded by one vocabulary rebuild.
+    /// which every batch assertion counts from: one whole-library write.
     private static let syncedOperations = 1
 
-    @Test("Readiness rebuilds Siri's vocabulary once and writes the whole library, emptying nothing")
+    @Test("Readiness writes the whole library, emptying nothing")
     func readinessSyncsTheWholeLibrary() async throws {
         let commands = MockVMCommanding()
         let first = makeSummary(name: "First")
         let second = makeSummary(name: "Second")
         commands.library = [first, second]
         let index = MockVMEntityIndex()
-        let log = RefreshLog()
         let defaults = makeStore("readiness-sync")
-        let gateway = makeTrackingGateway(commands, defaults: defaults, log: log, index: index)
+        let gateway = makeGateway(commands, defaults: defaults, index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
 
         #expect(index.operations == [.index([first.id, second.id])])
         #expect(indexedIDs(in: defaults) == [first.id, second.id])
-        #expect(log.count == 1)
         withExtendedLifetime(gateway) {}
     }
 
@@ -542,49 +518,20 @@ struct VMIntentGatewayTests {
         withExtendedLifetime(gateway) {}
     }
 
-    @Test("A batch carrying a rename refreshes Siri's vocabulary; a status change alone does not")
-    func vocabularyFollowsTheLibrary() async throws {
-        let commands = MockVMCommanding()
-        let vm = makeSummary(name: "New")
-        commands.library = [vm]
-        let index = MockVMEntityIndex()
-        let log = RefreshLog()
-        let gateway = makeTrackingGateway(
-            commands, defaults: makeStore("vocabulary"), log: log, index: index)
-
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
-        #expect(log.count == 1)
-
-        // One batch, so the count proves the status change contributed nothing
-        // of its own to the rebuild the rename asks for.
-        commands.emit([
-            .statusChanged(id: vm.id, name: "New", from: "stopped", to: "running"),
-            .renamed(id: vm.id, from: "Old", to: "New"),
-        ])
-
-        try await log.gate.wait { log.count == 2 }
-        #expect(log.count == 2)
-        withExtendedLifetime(gateway) {}
-    }
-
-    @Test("A batch of additions rebuilds the vocabulary once, however many VMs arrived")
-    func aBatchOfAdditionsRebuildsTheVocabularyOnce() async throws {
+    @Test("A batch of additions is written once, however many VMs arrived")
+    func aBatchOfAdditionsIsWrittenOnce() async throws {
         let commands = MockVMCommanding()
         let arriving = (1...6).map { makeSummary(name: "VM \($0)") }
         let index = MockVMEntityIndex()
-        let log = RefreshLog()
-        let gateway = makeTrackingGateway(
-            commands, defaults: makeStore("batch-additions"), log: log, index: index)
+        let gateway = makeGateway(commands, defaults: makeStore("batch-additions"), index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
-        #expect(log.count == 1)
 
         // The launch case: one pass over the library reports every VM it holds.
         commands.library = arriving
         commands.emit(arriving.map { .added($0) })
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
-        #expect(log.count == 2)
         #expect(index.operations.last == .index(arriving.map(\.id)))
         withExtendedLifetime(gateway) {}
     }
@@ -596,15 +543,13 @@ struct VMIntentGatewayTests {
         commands.library = [kept]
         let gone = UUID()
         let index = MockVMEntityIndex()
-        let log = RefreshLog()
-        let gateway = makeTrackingGateway(
-            commands, defaults: makeStore("index-follows"), log: log, index: index)
+        let gateway = makeGateway(commands, defaults: makeStore("index-follows"), index: index)
 
         try await index.gate.wait { index.operations.count == Self.syncedOperations }
 
         // Ordered through one stream: the status-only batch is drained before
-        // the batch whose writes are awaited, so both counts prove it wrote
-        // nothing and rebuilt nothing.
+        // the batch whose writes are awaited, so the count proves it wrote
+        // nothing.
         commands.emit([.statusChanged(id: kept.id, name: "Kept", from: "stopped", to: "running")])
         commands.emit([
             .removed(id: gone, name: "Gone"),
@@ -614,7 +559,6 @@ struct VMIntentGatewayTests {
         try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
         #expect(
             index.operations == [.index([kept.id]), .remove([gone]), .index([kept.id])])
-        #expect(log.count == 2)
         withExtendedLifetime(gateway) {}
     }
 
@@ -651,7 +595,6 @@ struct VMIntentGatewayTests {
         let gateway = VMIntentGateway(
             commands: commands,
             awaitReady: {},
-            refreshShortcutVocabulary: {},
             index: MockVMEntityIndex(),
             defaults: makeStore(store),
             onIdle: {
@@ -721,9 +664,9 @@ struct VMIntentGatewayTests {
         let gateway = makeIdleReportingGateway(commands, store: "idle-system-reads", log: log)
 
         // `VMEntityQuery` and `SnapshotEntityQuery` reach these to resolve a
-        // parameter or refresh Siri's vocabulary. Both arrive unbidden, so
-        // counting either would report the process idle before the intent being
-        // resolved for had been delivered.
+        // parameter. Those reads arrive unbidden, so counting one would report
+        // the process idle before the intent being resolved for had been
+        // delivered.
         #expect(await gateway.vms().count == 1)
         #expect(await gateway.vms(matching: "Wired").count == 1)
         #expect(await gateway.vms(withIDs: [vm]).count == 1)
@@ -756,11 +699,4 @@ private actor Counter {
     private(set) var value = 0
 
     func increment() { value += 1 }
-}
-
-/// How many times the gateway asked for Siri's vocabulary to be rebuilt.
-@MainActor
-private final class RefreshLog {
-    var count = 0
-    let gate = AsyncGate()
 }

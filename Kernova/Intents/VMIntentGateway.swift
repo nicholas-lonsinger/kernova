@@ -3,7 +3,7 @@ import Foundation
 import KernovaKit
 import os
 
-/// The App Intents front door: everything Siri, Shortcuts, and Spotlight ask of
+/// The App Intents front door: everything Shortcuts and Spotlight ask of
 /// Kernova passes through here and reaches ``VMCommanding``.
 ///
 /// Two things every intent needs, in one place. **Readiness:** an intent can be
@@ -23,9 +23,7 @@ final class VMIntentGateway {
     private let commands: any VMCommanding
     /// Awaits the app's first library read.
     private let awaitReady: @Sendable () async -> Void
-    /// Re-reads the VM names Siri matches spoken phrases against.
-    private let refreshShortcutVocabulary: @MainActor () -> Void
-    /// Where the library is written for Spotlight to match a spoken name in.
+    /// Where the library is written for Spotlight to match a searched name in.
     private let index: any VMEntityIndexing
     /// Holds the identifiers already written to the index, across launches.
     private let defaults: UserDefaults
@@ -40,8 +38,7 @@ final class VMIntentGateway {
     /// Counted at the ``AppIntent/perform()`` boundary and nowhere else, so it
     /// spans the whole of one intent — the consent round trip and the result
     /// the framework has yet to collect included — and so the reads the system
-    /// issues on its own, to resolve a parameter or refresh Siri's vocabulary,
-    /// are not counted at all. Those arrive unbidden, in volume, and counting
+    /// issues on its own to resolve a parameter are not counted at all. Those arrive unbidden, in volume, and counting
     /// one would report the process idle before the intent it was resolving for
     /// had been delivered.
     private var intentsInFlight = 0
@@ -51,8 +48,7 @@ final class VMIntentGateway {
 
     /// The single readiness await, memoized so an intent storm waits on one task.
     private var readiness: Task<Void, Never>?
-    /// The library subscription that keeps Siri's vocabulary and the Spotlight
-    /// index current.
+    /// The library subscription that keeps the Spotlight index current.
     private var libraryEvents: Task<Void, Never>?
 
     /// VMs a refused write left unindexed, re-attempted on the next batch.
@@ -63,16 +59,12 @@ final class VMIntentGateway {
     init(
         commands: any VMCommanding,
         awaitReady: @escaping @Sendable () async -> Void,
-        refreshShortcutVocabulary: @escaping @MainActor () -> Void = {
-            KernovaShortcuts.updateAppShortcutParameters()
-        },
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         defaults: UserDefaults = .standard,
         onIdle: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.awaitReady = awaitReady
-        self.refreshShortcutVocabulary = refreshShortcutVocabulary
         self.index = index
         self.defaults = defaults
         self.onIdle = onIdle
@@ -164,9 +156,9 @@ final class VMIntentGateway {
         return await vms().filter { wanted.contains($0.id) }
     }
 
-    /// Every VM whose name contains `text`, matched the way a person says it
-    /// rather than the way the core's `.name` selector matches — a spoken
-    /// "start sonoma" has neither the case nor the whole of the display name.
+    /// Every VM whose name contains `text`, matched the way a person types it
+    /// rather than the way the core's `.name` selector matches — a typed
+    /// "sonoma" has neither the case nor the whole of the display name.
     func vms(matching text: String) async -> [VMEntity] {
         await vms().filter { $0.name.localizedCaseInsensitiveContains(text) }
     }
@@ -361,8 +353,8 @@ final class VMIntentGateway {
         return commands.events()
     }
 
-    /// Rebuilds Siri's vocabulary, writes every VM into the index, and then
-    /// drops the records of VMs the index still holds from an earlier run.
+    /// Writes every VM into the index, then drops the records of VMs the index
+    /// still holds from an earlier run.
     ///
     /// The index is never emptied: writing first and pruning second, by
     /// identifier, is what keeps the library findable through a process that
@@ -371,7 +363,6 @@ final class VMIntentGateway {
     /// the index and the recorded identifiers as they stand, so the previous
     /// run's records answer until the retry lands.
     private func syncWholeLibrary() async {
-        rebuildVocabulary()
         let all = await vms()
         let current = all.map(\.id)
         let stale = indexedVMIDs.subtracting(current)
@@ -384,14 +375,11 @@ final class VMIntentGateway {
         if !stale.isEmpty { await removeFromIndex(Array(stale)) }
     }
 
-    /// Brings Siri's vocabulary and the index up to what one pass over the
-    /// library found, re-attempting whatever an earlier write was refused.
+    /// Brings the index up to what one pass over the library found,
+    /// re-attempting whatever an earlier write was refused.
     ///
-    /// One batch is one rebuild and at most one write of each kind. A rebuild
-    /// spends one of the system's donation-rate tokens, so a library big
-    /// enough to spend them one VM at a time would leave Siri matching stale
-    /// names for the rest of the session — and a batch showing neither surface
-    /// anything new rebuilds nothing, while still being a moment to retry.
+    /// One batch is at most one write of each kind, and a batch showing the
+    /// index nothing new is still a moment to retry.
     private func apply(_ batch: [VMLibraryEvent]) async {
         var present: [UUID] = []
         var absent: [UUID] = []
@@ -405,7 +393,6 @@ final class VMIntentGateway {
         }
         let changed = !present.isEmpty || !absent.isEmpty
         guard changed || !pendingIndex.isEmpty || !pendingRemove.isEmpty else { return }
-        if changed { rebuildVocabulary() }
         let removing = absent.appending(pendingRemove)
         if !removing.isEmpty { await removeFromIndex(removing) }
         let indexing = present.appending(pendingIndex)
@@ -444,14 +431,9 @@ final class VMIntentGateway {
         indexedVMIDs.subtract(ids)
     }
 
-    private func rebuildVocabulary() {
-        Self.logger.debug("Rebuilding App Shortcut parameter vocabulary")
-        refreshShortcutVocabulary()
-    }
-
     /// Runs one index write, logging a refusal and answering whether it landed.
     ///
-    /// Spotlight is how a spoken name is matched, never how a verb runs: a
+    /// Spotlight is how a searched name is matched, never how a verb runs: a
     /// refusal must neither fail an intent nor end the subscription that would
     /// carry the next write. The caller keeps the identifiers a refused write
     /// covered and the next batch re-attempts them, since this process stays up
