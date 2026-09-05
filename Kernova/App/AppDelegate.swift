@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// later one runs it a second time.
     private var hasArmedAutoStartPass = false
     /// Whether `applicationOpenUntitledFile(_:)` ran, latched before
-    /// `applicationDidFinishLaunching` reads it — see ``AppResidencyController/launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:isLoginItemLaunch:isDefaultLaunch:)``.
+    /// `applicationDidFinishLaunching` reads it — see ``AppResidencyController/launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:openEventIsDirect:isHiddenLaunch:isLoginItemLaunch:isDefaultLaunch:)``.
     private var didOpenUntitledFile = false
     /// Whether `application(_:open:)` ran with a launch document, latched the
     /// same way.
@@ -185,13 +185,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                         == keyAELaunchedAsLogInItem
             } ?? false
         // Absent means unknown, and unknown resolves to the interactive launch.
-        let isDefaultLaunch =
-            notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
+        let defaultLaunchKey = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool
+        let isDefaultLaunch = defaultLaunchKey ?? true
+
+        // The verdict alone cannot say which signal produced it, and a launch
+        // that arrives with an open event no person sent looks identical to a
+        // double-click in everything but these.
+        let eventID = event.map { String(describing: $0.eventID) } ?? "none"
+        let sender =
+            event?.attributeDescriptor(forKeyword: keySenderPIDAttr).map { String($0.int32Value) }
+            ?? "none"
+        // A launch the app itself asked Launch Services for is `kAEDirectCall`;
+        // a source that positively names another process sent the open event on
+        // someone else's behalf. An absent or unreadable source (`int32Value` is
+        // 0, `kAEUnknownSource`, on any coercion failure) is not evidence of
+        // either, and unknown resolves toward the person.
+        let eventSource = event?.attributeDescriptor(forKeyword: keyEventSourceAttr)?.int32Value
+        let isDirectOpen =
+            eventSource.map { $0 == Int32(kAEDirectCall) || $0 == Int32(kAEUnknownSource) }
+            ?? true
+        let source = eventSource.map { String($0) } ?? "none"
+        let isHiddenLaunch = NSApp.isHidden
+        Self.logger.notice(
+            "Launch signals — openEvent=\(isOpenEvent, privacy: .public) eventID=\(eventID, privacy: .public) senderPID=\(sender, privacy: .public) eventSource=\(source, privacy: .public) directOpen=\(isDirectOpen, privacy: .public) loginItem=\(isLoginItem, privacy: .public) defaultLaunchKey=\(defaultLaunchKey.map(String.init) ?? "absent", privacy: .public) untitled=\(self.didOpenUntitledFile, privacy: .public) documents=\(self.didOpenLaunchDocuments, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
+        )
 
         return AppResidencyController.launchProvenance(
             openedUntitledFile: didOpenUntitledFile,
             openedDocuments: didOpenLaunchDocuments,
             hasOpenAppleEvent: isOpenEvent,
+            openEventIsDirect: isDirectOpen,
+            isHiddenLaunch: isHiddenLaunch,
             isLoginItemLaunch: isLoginItem,
             isDefaultLaunch: isDefaultLaunch)
     }

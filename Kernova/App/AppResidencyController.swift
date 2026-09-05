@@ -162,7 +162,7 @@ final class AppResidencyController: AppResidencyHosting {
 
     // MARK: - Start
 
-    /// Who brought this process up, as decided by ``launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:isLoginItemLaunch:isDefaultLaunch:)``.
+    /// Who brought this process up, as decided by ``launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:openEventIsDirect:isHiddenLaunch:isLoginItemLaunch:isDefaultLaunch:)``.
     enum LaunchProvenance: Equatable {
         /// A person opened the app — a double-click, `open`, the Dock.
         case user
@@ -177,26 +177,39 @@ final class AppResidencyController: AppResidencyHosting {
     ///
     /// **Positive identification only.** A user launch that came up headless —
     /// no window for a double-click — is far worse than an automation launch
-    /// that showed one, so `.automation` is returned solely when *every* signal
-    /// of a person having asked is absent, and anything unrecognized resolves to
-    /// `.user`.
+    /// that showed one, so `.automation` is returned only for a launch that
+    /// shows no sign of a person at all or carries the pair below, and anything
+    /// unrecognized resolves to `.user`.
     ///
-    /// What makes that separable: an App Intents cold launch carries no open
-    /// Apple Event at all, opens no untitled file, and reports
-    /// `NSApplicationLaunchIsDefaultLaunchKey` as `false` (measured on macOS 27,
-    /// 2026-08-29), where every Launch Services open — foreground, backgrounded
-    /// with `open -g -j`, or a login item — carries `kAEOpenApplication`.
+    /// What makes that separable is the pair *hidden* and *foreign*, measured on
+    /// macOS 27 (26A5425a) on 2026-09-04: an App Intents launch comes up hidden,
+    /// and the open Apple Event the Shortcuts runner sends it — which the runner
+    /// sends on roughly one launch in four, so its absence carries no
+    /// information — has a `keyEventSourceAttr` of `kAELocalProcess` naming the
+    /// runner as sender. Each launch a person performs that was measured breaks
+    /// that pair: a Finder double-click and a Dock click carry a foreign open
+    /// event but come up unhidden, and `open -a`, `open -g -j -a` and a
+    /// Shortcuts *Open App* action all send `kAEDirectCall`. An opener that
+    /// asks for the app hidden has asked for no window, which is what the rule
+    /// answers.
+    ///
+    /// `openEventIsDirect` says nothing when `hasOpenAppleEvent` is `false`, and
+    /// a source that could not be read counts as direct. `openedDocuments`
+    /// outranks the hidden-and-foreign rule: opening a document is a request
+    /// to see it.
     nonisolated static func launchProvenance(
         openedUntitledFile: Bool,
         openedDocuments: Bool,
         hasOpenAppleEvent: Bool,
+        openEventIsDirect: Bool,
+        isHiddenLaunch: Bool,
         isLoginItemLaunch: Bool,
         isDefaultLaunch: Bool
     ) -> LaunchProvenance {
         if isLoginItemLaunch { return .loginItem }
-        if openedUntitledFile || openedDocuments || hasOpenAppleEvent || isDefaultLaunch {
-            return .user
-        }
+        if openedDocuments { return .user }
+        if isHiddenLaunch && hasOpenAppleEvent && !openEventIsDirect { return .automation }
+        if openedUntitledFile || hasOpenAppleEvent || isDefaultLaunch { return .user }
         return .automation
     }
 
