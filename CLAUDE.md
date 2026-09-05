@@ -42,9 +42,7 @@ AGENTS.md's post-merge steps assume the checkout that holds `main`. An
 checkout, so nothing run from here advances it, and the worktree isolation
 guard refuses ad-hoc `git -C <primary-checkout>` commands. After confirming
 the merge landed (`gh pr view <N> --json state -q .state` → `"MERGED"`),
-fast-forward `main` in that checkout rather than from this worktree — the
-`freshen-main` skill (`.agents/skills/freshen-main/freshen-main.sh`) does
-exactly this and reports a one-line verdict; prefer it over hand-rolling.
+fast-forward `main` in that checkout rather than from this worktree.
 
 Then, still inside this worktree, drop the branch's now-redundant commits:
 
