@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Where a VM is in its lifecycle — the one value ``VMInstance`` stores, and
 /// what its ``VMStatus``, its failure message and every liveness predicate

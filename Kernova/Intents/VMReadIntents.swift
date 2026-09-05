@@ -25,7 +25,7 @@ struct GetVMStateIntent: AppIntent {
         gateway.beginIntent()
         defer { gateway.endIntent() }
         let info = try await gateway.info(vm.id)
-        let spoken = VMEntity.statusDisplayName(info.status)
+        let spoken = VMStatus.displayName(forWireName: info.status)
         return .result(
             value: info.status,
             dialog: IntentDialog("\(info.name) is \(spoken.lowercased())."))

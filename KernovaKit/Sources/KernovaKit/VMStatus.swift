@@ -1,13 +1,13 @@
 import Foundation
 
 /// The vocabulary a VM's runtime state is named in — the projection every
-/// automation surface and every label reads off ``VMLifecyclePhase``.
+/// automation surface and every label reads off `VMLifecyclePhase`.
 ///
 /// The raw value is the name every automation surface reads and writes;
 /// ``displayName`` is what a person reads. Nothing is *decided* here: a
 /// predicate belongs to the phase, which distinguishes the cases a status
 /// deliberately conflates.
-enum VMStatus: String, Sendable {
+public enum VMStatus: String, Sendable {
     case stopped
     case starting
     case running
@@ -23,7 +23,15 @@ enum VMStatus: String, Sendable {
     case initialBoot
     case error
 
-    var displayName: String {
+    /// The wire name a VM whose bundle is still being written by a create,
+    /// clone or import reports.
+    ///
+    /// Deliberately not a case: it is not a runtime state a session can be in,
+    /// and nothing but a listing ever sees it.
+    public static let preparingWireName = "preparing"
+
+    /// What a person reads for this status.
+    public var displayName: String {
         switch self {
         case .stopped: "Stopped"
         case .starting: "Starting"
@@ -38,13 +46,13 @@ enum VMStatus: String, Sendable {
         }
     }
 
-    /// Overlay label for save/restore transitions, or `nil` for all other states.
-    var transitionLabel: String? {
-        switch self {
-        case .saving: "Suspending\u{2026}"
-        case .snapshotting: "Taking Snapshot\u{2026}"
-        case .restoring: "Restoring\u{2026}"
-        default: nil
-        }
+    /// A status read off the wire, in the words a person reads.
+    ///
+    /// Answers for ``preparingWireName``, which is no case of this type, and
+    /// falls back to the raw name for anything else — which only a peer from
+    /// another vocabulary could send.
+    public static func displayName(forWireName wireName: String) -> String {
+        if let known = VMStatus(rawValue: wireName) { return known.displayName }
+        return wireName == preparingWireName ? "Preparing" : wireName
     }
 }

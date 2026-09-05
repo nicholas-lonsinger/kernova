@@ -86,7 +86,7 @@ struct VMEntity: IndexedEntity {
     }
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(name)", subtitle: "\(Self.statusDisplayName(status))")
+        DisplayRepresentation(title: "\(name)", subtitle: "\(VMStatus.displayName(forWireName: status))")
     }
 
     /// What Spotlight holds for this VM: the name it is found by, and the
@@ -104,15 +104,6 @@ struct VMEntity: IndexedEntity {
     /// A wire guest OS in the words a person reads.
     static func guestOSDisplayName(_ guestOS: String) -> String {
         VMGuestOS(rawValue: guestOS)?.displayName ?? guestOS
-    }
-
-    /// A wire status in the words a person reads.
-    ///
-    /// A VM still copying into place reports ``VMCommandCore/preparingWireStatus``,
-    /// which is not a ``VMStatus`` value and so has no `displayName` of its own.
-    static func statusDisplayName(_ status: String) -> String {
-        if let known = VMStatus(rawValue: status) { return known.displayName }
-        return status == VMCommandCore.preparingWireStatus ? "Preparing" : status
     }
 }
 

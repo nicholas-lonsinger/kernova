@@ -161,20 +161,16 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    /// The wire status a VM being written into place by a create, clone or
-    /// import reports in place of its real ``VMStatus``.
-    nonisolated static let preparingWireStatus = "preparing"
-
-    /// `instance`'s status as it crosses the wire — ``preparingWireStatus``
-    /// while a create, clone or import is still writing its bundle, its real
-    /// ``VMStatus`` otherwise.
+    /// `instance`'s status as it crosses the wire —
+    /// ``VMStatus/preparingWireName`` while a create, clone or import is still
+    /// writing its bundle, its real `VMStatus` otherwise.
     func wireStatus(_ instance: VMInstance) -> String {
-        instance.isPreparing ? Self.preparingWireStatus : instance.status.rawValue
+        instance.isPreparing ? VMStatus.preparingWireName : instance.status.rawValue
     }
 
     /// ``ObservedState``'s wire status, by the same rule as ``wireStatus(_:)``.
     private func wireStatus(for state: ObservedState) -> String {
-        state.isPreparing ? Self.preparingWireStatus : state.status.rawValue
+        state.isPreparing ? VMStatus.preparingWireName : state.status.rawValue
     }
 
     func summary(_ instance: VMInstance) -> VMSummary {

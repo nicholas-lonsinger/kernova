@@ -333,7 +333,7 @@ final class MockVMCommanding: VMCommanding {
         // caller that reads it back on the same turn finds it.
         let created = VMSummary(
             id: configuration.id, name: configuration.name,
-            status: VMCommandCore.preparingWireStatus)
+            status: VMStatus.preparingWireName)
         library.append(created)
         return created
     }
