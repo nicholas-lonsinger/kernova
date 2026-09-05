@@ -101,6 +101,9 @@ struct VMCommandEnvelopeRouter {
         case .open(let selector):
             try commands.open(selector)
             return .ok
+        case .reveal(let selector):
+            try commands.reveal(selector)
+            return .ok
 
         case .takeSnapshot(let selector, let name, let notes):
             return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))

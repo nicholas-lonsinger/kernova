@@ -379,6 +379,67 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
+    @Test("reveal surfaces the display of a VM that has one")
+    func revealSurfacesTheDisplay() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        var surfaced: [UUID] = []
+        var revealed: [UUID] = []
+        harness.core.surfaceDisplay = { surfaced.append($0.id) }
+        harness.core.revealInLibrary = { revealed.append($0.id) }
+
+        try harness.core.reveal(.id(instance.id))
+
+        #expect(surfaced == [instance.id])
+        #expect(revealed.isEmpty)
+    }
+
+    @Test("reveal puts a VM with no display in the library instead of refusing")
+    func revealFallsBackToTheLibrary() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        var surfaced: [UUID] = []
+        var revealed: [UUID] = []
+        harness.core.surfaceDisplay = { surfaced.append($0.id) }
+        harness.core.revealInLibrary = { revealed.append($0.id) }
+
+        try harness.core.reveal(.id(instance.id))
+
+        #expect(revealed == [instance.id])
+        #expect(surfaced.isEmpty)
+    }
+
+    @Test("reveal of a phantom still being copied lands on its library row")
+    func revealOfAPreparingVMLandsInTheLibrary() throws {
+        let harness = makeHarness()
+        // The phantom of an import carrying a save file rests `.paused`, which
+        // reads as having a display the copy has not finished writing.
+        let instance = makeInstance(in: harness, name: "Copying", phase: .suspended)
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        var surfaced: [UUID] = []
+        var revealed: [UUID] = []
+        harness.core.surfaceDisplay = { surfaced.append($0.id) }
+        harness.core.revealInLibrary = { revealed.append($0.id) }
+
+        try harness.core.reveal(.id(instance.id))
+
+        #expect(revealed == [instance.id])
+        #expect(surfaced.isEmpty)
+        instance.preparingState = nil
+    }
+
+    @Test("reveal refuses a selector no VM answers to, as open does")
+    func revealRefusesAnUnknownSelector() throws {
+        let harness = makeHarness()
+        var revealed = 0
+        harness.core.revealInLibrary = { _ in revealed += 1 }
+
+        let error = try #require(commandError { try harness.core.reveal(.name("Nowhere")) })
+
+        #expect(error == .notFound(.name("Nowhere")))
+        #expect(revealed == 0)
+    }
+
     // MARK: - Allowed verbs
 
     @Test("allowedVerbs reads out in a fixed order, reads first")
@@ -390,7 +451,7 @@ struct VMCommandCoreTests {
         // "What it accepts now: Start, Take Snapshot, …".
         #expect(
             harness.core.allowedVerbs(for: stopped) == [
-                .info, .ipAddress, .snapshots, .start, .takeSnapshot, .deleteSnapshot,
+                .info, .ipAddress, .snapshots, .start, .reveal, .takeSnapshot, .deleteSnapshot,
                 .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
                 .editSharedDirectory, .clone, .rename, .delete,
             ])
@@ -399,7 +460,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Running", phase: .running(sessionID: UUID()))
         #expect(
             harness.core.allowedVerbs(for: running) == [
-                .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open,
+                .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
                 .editRemovableMedia, .rename,
             ])
@@ -416,7 +477,7 @@ struct VMCommandCoreTests {
         #expect(!instance.canForceStop)
         #expect(
             harness.core.allowedVerbs(for: instance) == [
-                .info, .ipAddress, .snapshots, .stop, .resume, .open, .deleteSnapshot,
+                .info, .ipAddress, .snapshots, .stop, .resume, .open, .reveal, .deleteSnapshot,
                 .renameSnapshot, .setSnapshotNotes, .rename, .delete,
             ])
     }
@@ -431,7 +492,7 @@ struct VMCommandCoreTests {
 
         #expect(
             harness.core.allowedVerbs(for: instance) == [
-                .info, .ipAddress, .snapshots, .cancelPreparing,
+                .info, .ipAddress, .snapshots, .reveal, .cancelPreparing,
             ])
     }
 

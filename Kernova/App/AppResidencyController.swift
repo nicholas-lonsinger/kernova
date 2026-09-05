@@ -152,7 +152,8 @@ final class AppResidencyController: AppResidencyHosting {
                 guard let self else { return }
                 await self.awaitLibraryReady()
             },
-            onIdle: { [weak self] in self?.reconcileIdleTermination() })
+            onIdle: { [weak self] in self?.reconcileIdleTermination() },
+            surfaceLibrary: { [weak self] in self?.presentSummonedInterface() })
         intentGateway = gateway
         AppDependencyManager.shared.add(dependency: gateway)
     }

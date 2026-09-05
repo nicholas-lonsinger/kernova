@@ -292,7 +292,8 @@ session down without that hook, so a suspended session survives to revert at its
   by `VMSelector` and refusals speak one `CommandError` vocabulary; consent is a non-defaulted
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
-  `surfaceDisplay` hook, an unawaited failure through `onFailure` — and `events()` vends an
+  `surfaceDisplay` hook, a VM with no display to surface through `revealInLibrary`, an unawaited
+  failure through `onFailure` — and `events()` vends an
   `AsyncStream<[VMLibraryEvent]>`, one element per diffing pass, plus the clone/import copy
   failures no model field survives to hold, for callers that cannot observe the model. Whether a given VM
   admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's

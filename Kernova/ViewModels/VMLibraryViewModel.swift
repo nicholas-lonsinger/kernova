@@ -446,6 +446,9 @@ final class VMLibraryViewModel {
         core.surfaceDisplay = { [weak self] instance in
             self?.surfaceDisplay(for: instance)
         }
+        core.revealInLibrary = { [weak self] instance in
+            self?.revealInLibrary(instance)
+        }
         // Through this adapter rather than handed over, so the core retains
         // neither the view model nor the app delegate behind it.
         core.displayBootSurface = { [weak self] instance in
@@ -491,6 +494,18 @@ final class VMLibraryViewModel {
             }
             presenter.focusGuestDisplay(for: instance)
         }
+    }
+
+    /// Selects the VM and asks for the library window — what a reveal lands on
+    /// when there is no display to surface.
+    ///
+    /// The library is asked for whether or not a window already exists, unlike
+    /// the inline branch of ``surfaceDisplay(for:)``: a reveal answers somebody
+    /// who asked for this VM from outside the app, and a window sitting behind
+    /// every other one has not answered them.
+    private func revealInLibrary(_ instance: VMInstance) {
+        selectedID = instance.id
+        onSurfaceLibrary?()
     }
 
     func start(

@@ -160,31 +160,35 @@ struct RestartVMIntent: AppIntent {
     }
 }
 
-/// Brings a VM's display to the front.
+/// Brings a VM in front of the user: its display when it has one, else its
+/// place in the library.
 ///
-/// The one intent that foregrounds Kernova, because putting a display in front
-/// of the user is the whole of what it does.
-struct OpenVMIntent: AppIntent {
+/// The one intent that foregrounds Kernova, because putting the VM in front of
+/// the user is the whole of what it does — and the `OpenIntent` Spotlight runs
+/// when somebody presses Return on an indexed VM, which is why it reveals
+/// rather than refusing every VM that is not running.
+struct OpenVMIntent: OpenIntent {
     static let title: LocalizedStringResource = "Open Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Brings a virtual machine's display to the front.", categoryName: "Virtual Machines")
+        "Shows a virtual machine — its display when it has one, else its place in the library.",
+        categoryName: "Virtual Machines")
 
     static let supportedModes: IntentModes = .foreground(.immediate)
 
     @Parameter(title: "Virtual Machine")
-    var vm: VMEntity
+    var target: VMEntity
 
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Open \(\.$vm)")
+        Summary("Open \(\.$target)")
     }
 
     @MainActor
     func perform() async throws -> some IntentResult {
         gateway.beginIntent()
         defer { gateway.endIntent() }
-        try await gateway.open(vm.id)
+        try await gateway.reveal(target.id)
         return .result()
     }
 }

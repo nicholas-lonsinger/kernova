@@ -12,7 +12,7 @@ import os
 /// It presents nothing and imports no AppKit. Anything a user has to see leaves
 /// as a thrown ``CommandError`` at the call that caused it, or through
 /// ``onFailure`` when no call is waiting; anything a user has to look at leaves
-/// through ``surfaceDisplay``.
+/// through ``surfaceDisplay`` or ``revealInLibrary``.
 @MainActor
 final class VMCommandCore: VMCommanding {
     nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMCommandCore")
@@ -40,6 +40,14 @@ final class VMCommandCore: VMCommanding {
     /// A hook rather than a call: which surface a display lands on is an AppKit
     /// question, and the core answers none.
     var surfaceDisplay: ((VMInstance) -> Void)?
+
+    /// Puts a VM with no display to surface in front of the user: its row in
+    /// the library, with the library itself brought forward.
+    ///
+    /// A hook rather than a call, for the reason ``surfaceDisplay`` states —
+    /// and a second hook rather than a flag on that one, because the two land
+    /// on different surfaces and only the adapter knows either.
+    var revealInLibrary: ((VMInstance) -> Void)?
 
     /// Receives every failure raised with no command call waiting on it — an
     /// Ephemeral baseline revert a power-off started, an external file that

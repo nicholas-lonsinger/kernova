@@ -273,6 +273,7 @@ struct VMIntentGatewayTests {
         try await gateway.suspend(id)
         try await gateway.restart(id)
         try await gateway.open(id)
+        try await gateway.reveal(id)
         _ = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")
         _ = try await gateway.ipAddress(of: id)
 
@@ -285,10 +286,81 @@ struct VMIntentGatewayTests {
         #expect(commands.suspendSelectors == [.id(id)])
         #expect(commands.restartSelectors == [.id(id)])
         #expect(commands.openSelectors == [.id(id)])
+        #expect(commands.revealSelectors == [.id(id)])
         #expect(commands.ipAddressSelectors == [.id(id)])
         #expect(commands.takeSnapshotCalls.map(\.selector) == [.id(id)])
         #expect(commands.takeSnapshotCalls.map(\.name) == ["Before"])
         #expect(commands.takeSnapshotCalls.map(\.notes) == ["a note"])
+    }
+
+    // MARK: - Search
+
+    /// A gateway that records every request for the library window, for the
+    /// search that has no VM to reveal.
+    private func makeSearchGateway(
+        _ commands: MockVMCommanding, defaults: UserDefaults,
+        surfaced: @escaping @MainActor () -> Void
+    ) -> VMIntentGateway {
+        VMIntentGateway(
+            commands: commands, awaitReady: {}, index: MockVMEntityIndex(),
+            defaults: defaults, surfaceLibrary: surfaced)
+    }
+
+    @Test("A search term reveals the first VM whose name carries it")
+    func searchRevealsTheFirstMatch() async throws {
+        let commands = MockVMCommanding()
+        let ubuntu = makeSummary(name: "Ubuntu")
+        let sonoma = makeSummary(name: "Sonoma Test")
+        commands.library = [ubuntu, sonoma]
+        var libraryRequests = 0
+        let gateway = makeSearchGateway(
+            commands, defaults: makeStore("searchmatch"), surfaced: { libraryRequests += 1 })
+
+        // Typed the way a person types it: neither the case nor the whole name.
+        try await gateway.revealSearchResult(matching: "sonoma")
+
+        #expect(commands.revealSelectors == [.id(sonoma.id)])
+        #expect(libraryRequests == 0)
+    }
+
+    @Test("A search term prefers the VM named exactly that, then one whose name it begins")
+    func searchPrefersTheClosestName() async throws {
+        let commands = MockVMCommanding()
+        let server = makeSummary(name: "Ubuntu Server")
+        let exact = makeSummary(name: "ubuntu")
+        let older = makeSummary(name: "Old Ubuntu")
+        commands.library = [older, server, exact]
+        let gateway = makeSearchGateway(
+            commands, defaults: makeStore("searchrank"), surfaced: {})
+
+        try await gateway.revealSearchResult(matching: "Ubuntu")
+        try await gateway.revealSearchResult(matching: "Ubuntu S")
+        try await gateway.revealSearchResult(matching: "buntu")
+
+        #expect(commands.revealSelectors == [.id(exact.id), .id(server.id), .id(older.id)])
+    }
+
+    @Test("A search term no VM answers to brings the library forward instead")
+    func searchWithNoMatchSurfacesTheLibrary() async throws {
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Ubuntu")]
+        var libraryRequests = 0
+        let gateway = makeSearchGateway(
+            commands, defaults: makeStore("searchmiss"), surfaced: { libraryRequests += 1 })
+
+        try await gateway.revealSearchResult(matching: "Sequoia")
+
+        #expect(commands.revealSelectors.isEmpty)
+        #expect(libraryRequests == 1)
+    }
+
+    @Test("Spotlight's Open on an indexed VM has an intent to run")
+    func openIntentIsDeclared() {
+        // Compiling is the assertion: Spotlight opens an indexed entity by
+        // running the app's `OpenIntent` for that entity type, and finds none
+        // when no intent declares the conformance.
+        let intent: any OpenIntent = OpenVMIntent()
+        #expect(intent is OpenVMIntent)
     }
 
     @Test("A refusal from the core reaches the caller unchanged")

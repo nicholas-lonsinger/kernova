@@ -622,6 +622,19 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.virtualization.startCallCount == 0)
     }
 
+    @Test("A reveal crosses the wire onto the facade's own verb")
+    func revealCrossesTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        double.library = [summary]
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+
+        #expect(try await transport.send(.reveal(.id(summary.id))).result == .ok)
+
+        #expect(double.revealSelectors == [.id(summary.id)])
+        #expect(double.openSelectors.isEmpty)
+    }
+
     @Test("The router drives anything that speaks the facade, not just the core")
     func routerDependsOnTheFacadeAlone() async throws {
         // Compiling at all is the assertion: the router takes `any VMCommanding`,
