@@ -1,0 +1,26 @@
+// The `kernova` command-line tool, both configurations.
+//
+// Modeled on KernovaRelaunchHelper.xcconfig; like it, this names no signing
+// identity outside the Release `-` pin, so Config/Local.xcconfig still reaches
+// the target.
+
+// Embedded at Contents/Helpers/kernova, never Contents/MacOS — docs/BUILD.md
+// "The bundled kernova tool" says what happens there and why.
+PRODUCT_NAME = kernova
+PRODUCT_MODULE_NAME = KernovaCLI
+PRODUCT_BUNDLE_IDENTIFIER = app.kernova.cli
+MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)
+CURRENT_PROJECT_VERSION = 1
+
+// A sandboxed standalone executable needs a CFBundleIdentifier in its own
+// signature or secinitd kills it before main — docs/SANDBOX.md.
+GENERATE_INFOPLIST_FILE = YES
+CREATE_INFOPLIST_SECTION_IN_BINARY = YES
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_ENTITLEMENTS = KernovaCLI/KernovaCLI.entitlements
+PROVISIONING_PROFILE_SPECIFIER =
+
+CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = -
+ENABLE_HARDENED_RUNTIME[config=Release] = YES
+SKIP_INSTALL[config=Release] = YES

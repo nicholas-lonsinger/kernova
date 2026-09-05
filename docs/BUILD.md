@@ -39,9 +39,21 @@ The app's entitlements resolve through the same override point. `com.apple.vm.ne
 
 With the capability enabled on the team's App ID, setting `KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements` in `Local.xcconfig` opts the app into the full set — automatic signing then embeds the authorizing Xcode-managed profile, and an archive cut this way carries the key ([RELEASING.md](RELEASING.md) owns the per-lane choice). Code asks which set it was signed with through `EntitlementService`, never `#if DEBUG`.
 
+## The bundled `kernova` tool
+
+`PRODUCT_NAME = kernova` is embedded at **`Contents/Helpers/kernova`**, not `Contents/MacOS/`, and moving it back breaks the app.
+
+macOS volumes are case-insensitive, so `Contents/MacOS/kernova` and the app's own `Contents/MacOS/Kernova` are one file. The copy phase overwrites the app executable with the tool, and the app's own signing pass then signs the tool with the app's full entitlement set — `com.apple.vm.networking` included, on a binary the user's shell runs. Observed 2026-09-05: both names reported one inode, and `CFBundleExecutable = Kernova` resolved to the tool.
+
+`Contents/Helpers` is a nested-code location `codesign` seals, and the tool there keeps its own entitlements through `CodeSignOnCopy`.
+
+Its parsing, rendering, exit codes and client live in `KernovaCLICore`, a target inside `KernovaKit` — which is why the tool needs no test target of its own. `KernovaCLI/main.swift` is one line.
+
+`swift-argument-parser` is the first remote package dependency; `KernovaCLICore` alone links it, and its pin is committed beside swift-protobuf's.
+
 ## One test invocation, three test targets
 
-A single `xcodebuild test -scheme Kernova` runs `KernovaTests`, `KernovaMacOSAgentTests`, and `KernovaKitTests` through `Kernova.xctestplan`.
+A single `xcodebuild test -scheme Kernova` runs `KernovaTests`, `KernovaMacOSAgentTests`, and `KernovaKitTests` through `Kernova.xctestplan`. The `kernova` tool's tests ride `KernovaKitTests`, because `KernovaCLICore` is a target in that same package.
 
 That works because `KernovaKit` is referenced as a top-level peer — a `PBXFileReference` in `Kernova.xcodeproj`'s main group — rather than as an `XCLocalSwiftPackageReference` under Package Dependencies. In the dependency form Xcode treats the package as upstream and hides its `.testTarget`s from the test-plan picker; in the peer form they appear in `Edit Scheme → Test → +` as first-class targets that can be added to the plan.
 
