@@ -6,12 +6,17 @@ import KernovaKit
 extension VMCommandCore {
     // MARK: - Start
 
-    func start(_ selector: VMSelector, recovery: Bool) async throws {
-        try await start(try resolve(selector), recovery: recovery)
+    func start(
+        _ selector: VMSelector, recovery: Bool, presentation: VMDisplayPresentation
+    ) async throws {
+        try await start(try resolve(selector), recovery: recovery, presentation: presentation)
     }
 
     /// The start every surface reaches, with the instance already resolved.
-    func start(_ instance: VMInstance, recovery: Bool = false) async throws {
+    func start(
+        _ instance: VMInstance, recovery: Bool = false,
+        presentation: VMDisplayPresentation = .surface
+    ) async throws {
         try require(.start, on: instance)
         if recovery, !capabilities.accepts(.startInRecovery, on: instance) {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
@@ -34,7 +39,7 @@ extension VMCommandCore {
             return
         }
 
-        surfaceDisplay?(instance)
+        if presentation == .surface { surfaceDisplay?(instance) }
         applyMatchWindowBootResolution(to: instance)
         do {
             try await lifecycle.start(instance, bootIntoRecovery: recovery)
@@ -518,7 +523,7 @@ extension VMCommandCore {
         }
     }
 
-    func resume(_ selector: VMSelector) async throws {
+    func resume(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
         let instance = try resolve(selector)
         try require(.resume, on: instance)
 
@@ -530,7 +535,7 @@ extension VMCommandCore {
             try refuseDuplicateIdentity(instance)
         }
 
-        surfaceDisplay?(instance)
+        if presentation == .surface { surfaceDisplay?(instance) }
         do {
             try await lifecycle.resume(instance)
         } catch {

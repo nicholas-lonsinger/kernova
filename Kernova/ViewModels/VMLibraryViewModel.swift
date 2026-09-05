@@ -493,9 +493,13 @@ final class VMLibraryViewModel {
         }
     }
 
-    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
+    func start(
+        _ instance: VMInstance, bootIntoRecovery: Bool = false,
+        presentation: VMDisplayPresentation = .surface
+    ) async {
         await run(on: instance) {
-            try await self.commands.start(.id(instance.id), recovery: bootIntoRecovery)
+            try await self.commands.start(
+                .id(instance.id), recovery: bootIntoRecovery, presentation: presentation)
         }
     }
 
@@ -546,8 +550,12 @@ final class VMLibraryViewModel {
         await run(on: instance) { try await self.commands.pause(.id(instance.id)) }
     }
 
-    func resume(_ instance: VMInstance) async {
-        await run(on: instance) { try await self.commands.resume(.id(instance.id)) }
+    func resume(
+        _ instance: VMInstance, presentation: VMDisplayPresentation = .surface
+    ) async {
+        await run(on: instance) {
+            try await self.commands.resume(.id(instance.id), presentation: presentation)
+        }
     }
 
     func save(_ instance: VMInstance) async {
@@ -913,7 +921,8 @@ final class VMLibraryViewModel {
     // MARK: - Launch Auto-Start
 
     /// Names of the macOS VMs marked to start automatically, in library order —
-    /// which is the order ``startAutomaticVMsForLaunch()`` reaches them in.
+    /// which is the order ``startAutomaticVMsForLaunch(surfacingDisplays:)``
+    /// reaches them in.
     ///
     /// Feeds the Startup section's capacity warning: macOS caps how many macOS
     /// guests run at once, so a longer list than that cap cannot come up whole.
@@ -967,7 +976,13 @@ final class VMLibraryViewModel {
     ///
     /// Cancelling stops it between VMs — a start already inside VZ is left to
     /// finish, since abandoning one mid-flight is worse than completing it.
-    func startAutomaticVMsForLaunch() async {
+    ///
+    /// `surfacingDisplays` is `false` for a launch that came up headless: a
+    /// login launch boots its marked VMs with no window, and surfacing one would
+    /// give the process the library window and Dock icon it was asked not to
+    /// have.
+    func startAutomaticVMsForLaunch(surfacingDisplays: Bool) async {
+        let presentation: VMDisplayPresentation = surfacingDisplays ? .surface : .headless
         let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
         guard !marked.isEmpty else {
             Self.logger.debug("Launch auto-start: no VMs are marked to start automatically")
@@ -1007,9 +1022,9 @@ final class VMLibraryViewModel {
                 phase: instance.phase)
             switch step {
             case .start:
-                await start(instance)
+                await start(instance, presentation: presentation)
             case .resume:
-                await resume(instance)
+                await resume(instance, presentation: presentation)
             case .skip:
                 Self.logger.debug(
                     "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"

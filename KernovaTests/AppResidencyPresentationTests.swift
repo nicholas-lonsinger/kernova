@@ -25,12 +25,15 @@ struct AppResidencyPresentationTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appresidency")
 
-    /// Counts the ``AppLaunchHosting/armAutoStartPass()`` seam the launch cluster
-    /// owns. Held alongside the controller, which references it weakly.
+    /// Records the ``AppLaunchHosting/armAutoStartPass(surfacingDisplays:)`` seam
+    /// the launch cluster owns. Held alongside the controller, which references
+    /// it weakly.
     private final class StubLaunchHost: AppLaunchHosting {
-        var count = 0
+        /// One entry per arming call, carrying the surfacing it asked for.
+        var armings: [Bool] = []
+        var count: Int { armings.count }
 
-        func armAutoStartPass() { count += 1 }
+        func armAutoStartPass(surfacingDisplays: Bool) { armings.append(surfacingDisplays) }
         func awaitLibraryReady() async {}
         func requestFullQuit() {}
     }
@@ -76,5 +79,18 @@ struct AppResidencyPresentationTests {
 
         #expect(controller.hasPresentedInterface)
         #expect(launchHost.count == 2)
+    }
+
+    /// A headless login launch arms the pass with no window, so the presentation
+    /// that may follow it must still ask for surfacing — the delegate's
+    /// once-per-process latch is what keeps the second arming from re-running
+    /// the pass, and this seam must not pre-empt that by lying about surfacing.
+    @Test("A presentation arms the auto-start pass asking for surfaced displays")
+    func presentationArmsTheSurfacingPass() {
+        let (controller, launchHost) = makeController()
+
+        controller.prepareToPresentWindow()
+
+        #expect(launchHost.armings == [true])
     }
 }

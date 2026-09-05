@@ -52,7 +52,10 @@ protocol AppResidencyHosting: WindowResidencyHosting {
 protocol AppLaunchHosting: AnyObject {
     /// Arms the pass that brings up the VMs marked to start automatically, once
     /// per process.
-    func armAutoStartPass()
+    ///
+    /// `surfacingDisplays` is `false` only where the pass runs with no GUI: a
+    /// headless login launch, whose guests must not drag a window on screen.
+    func armAutoStartPass(surfacingDisplays: Bool)
     /// Awaits the app's first library read.
     func awaitLibraryReady() async
     /// Terminates the app unconditionally, bypassing the keep-in-menu-bar
@@ -213,21 +216,60 @@ final class AppResidencyController: AppResidencyHosting {
         return .automation
     }
 
-    /// Brings the resident app up, presenting only for a launch a person asked
-    /// for.
+    /// How a launch brings the process up, as decided by
+    /// ``launchPosture(for:keepInMenuBar:)``.
+    enum LaunchPosture: Equatable {
+        /// Put the library on screen; the auto-start pass rides along with it.
+        case present
+        /// `.accessory`, no window. `armsAutoStart` says whether the pass runs
+        /// headless (a login launch) or is deferred to the first presentation
+        /// (an automation launch).
+        case headless(armsAutoStart: Bool)
+    }
+
+    /// Decides what a launch puts on screen and whether the auto-start pass runs
+    /// now.
+    ///
+    /// A person opening the app asked to see it. A login launch did not: marking
+    /// VMs to start automatically *and* asking for Kernova at login is a request
+    /// to have those guests running, not to be shown a window — so it comes up
+    /// as the status-item app and boots them there. With *Continue running in
+    /// Status Bar* off there is no status item to reach a headless process, so
+    /// that launch presents instead. An `.automation` launch presents nothing and
+    /// boots nothing: nobody asked for a window, and booting guests is not what
+    /// servicing a read verb means.
+    nonisolated static func launchPosture(
+        for provenance: LaunchProvenance, keepInMenuBar: Bool
+    ) -> LaunchPosture {
+        switch provenance {
+        case .user: .present
+        case .loginItem: keepInMenuBar ? .headless(armsAutoStart: true) : .present
+        case .automation: .headless(armsAutoStart: false)
+        }
+    }
+
+    /// Brings the resident app up in the posture
+    /// ``launchPosture(for:keepInMenuBar:)`` gives the launch.
     ///
     /// The status item, the residency observation and the window-close reconcile
     /// are set up for every provenance — they are what the process needs to be
-    /// reachable and to answer for itself, whoever started it.
+    /// reachable and to answer for itself, whoever started it. The three
+    /// postures then differ in what goes on screen and when the auto-start pass
+    /// runs:
     ///
-    /// A `.user` or `.loginItem` launch additionally puts the library on screen
-    /// and arms the auto-start pass, so VMs marked
-    /// `VMConfiguration.startsAutomaticallyOnLaunch` come up once the library
-    /// read lands. An `.automation` launch does neither: nobody asked for a
-    /// window, and booting guests is not what servicing a read verb means. It
-    /// drops straight to `.accessory` — deliberately *not* through
-    /// ``syncActivationPolicy()``, whose `.quit` branch would terminate the
-    /// process out from under the very intent that launched it whenever
+    /// - `.present` puts the library up, arming the pass with it, so VMs marked
+    ///   `VMConfiguration.startsAutomaticallyOnLaunch` come up once the library
+    ///   read lands.
+    /// - `.headless(armsAutoStart: true)` runs that pass with no window: the
+    ///   status item keeps the process reachable, and the residency preference
+    ///   that put it there is what keeps the process alive.
+    /// - `.headless(armsAutoStart: false)` presents and boots nothing, and takes
+    ///   the idle-termination observer that is the only thing able to reconcile
+    ///   a process that never opens a window.
+    ///
+    /// Both headless postures drop straight to `.accessory` — deliberately *not*
+    /// through ``syncActivationPolicy()``, whose `.quit` branch would terminate
+    /// the process out from under the very intent that launched it whenever
     /// *Continue running in Status Bar* is off.
     func start(provenance: LaunchProvenance) {
         launchProvenance = provenance
@@ -256,8 +298,10 @@ final class AppResidencyController: AppResidencyHosting {
             }
         }
 
-        switch provenance {
-        case .user, .loginItem:
+        switch Self.launchPosture(
+            for: provenance, keepInMenuBar: viewModel.keepInMenuBarOnQuit)
+        {
+        case .present:
             // Presentation only, not `summonUserInterface`: whoever launched the
             // process (Launch Services, a login-item start, Finder) already
             // requested activation, so a launch leg requests none of its own —
@@ -265,7 +309,14 @@ final class AppResidencyController: AppResidencyHosting {
             // this moment, since the app isn't active yet this early in launch.
             // Arming the auto-start pass rides along with it.
             presentSummonedInterface()
-        case .automation:
+        case .headless(armsAutoStart: true):
+            setActivationPolicy(.accessory)
+            // Not `markInterfacePresented`: nothing went on screen, so the
+            // process has not joined the window reconcile. A later summon
+            // latches it then, and its own arming call is a no-op behind the
+            // delegate's once-per-process latch.
+            host?.armAutoStartPass(surfacingDisplays: false)
+        case .headless(armsAutoStart: false):
             setActivationPolicy(.accessory)
             // Nothing else will reconcile a process that never opens a window:
             // this is what lets it leave once the guest an intent started stops.
@@ -590,7 +641,7 @@ final class AppResidencyController: AppResidencyHosting {
     /// silently cost the user *Start automatically on launch*.
     private func markInterfacePresented() {
         hasPresentedInterface = true
-        host?.armAutoStartPass()
+        host?.armAutoStartPass(surfacingDisplays: true)
     }
 
     /// Re-asserts `.regular` before a window is shown, so a window can never be

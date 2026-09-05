@@ -229,13 +229,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// a document open, a status-item summon — runs the pass it never got. The
     /// pass is safe to run late because `VMLibraryViewModel.autoStartStep`
     /// re-reads each instance when it acts and skips one already running.
-    func armAutoStartPass() {
+    ///
+    /// The latch also settles the surfacing question: whoever arms the pass
+    /// first decides it, and a headless login launch arms it before any window
+    /// exists to surface into.
+    func armAutoStartPass(surfacingDisplays: Bool) {
         guard !hasArmedAutoStartPass else { return }
         hasArmedAutoStartPass = true
         termination.registerLaunchWork(
             Task { @MainActor in
                 await self.libraryLoad?.value
-                await self.viewModel.startAutomaticVMsForLaunch()
+                await self.viewModel.startAutomaticVMsForLaunch(
+                    surfacingDisplays: surfacingDisplays)
             })
     }
 
