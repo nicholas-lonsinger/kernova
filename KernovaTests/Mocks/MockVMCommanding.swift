@@ -44,11 +44,11 @@ final class MockVMCommanding: VMCommanding {
     private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
         []
     private(set) var removeStartFailedAttachmentCalls: [(selector: VMSelector, attachment: StartFailedAttachment)] = []
-    private(set) var startCalls: [(selector: VMSelector, recovery: Bool)] = []
+    private(set) var startCalls: [(selector: VMSelector, recovery: Bool, presentation: VMDisplayPresentation)] = []
     private(set) var stopCalls: [(selector: VMSelector, disposition: StopDisposition, confirmed: Bool)] =
         []
     private(set) var pauseSelectors: [VMSelector] = []
-    private(set) var resumeSelectors: [VMSelector] = []
+    private(set) var resumeCalls: [(selector: VMSelector, presentation: VMDisplayPresentation)] = []
     private(set) var suspendSelectors: [VMSelector] = []
     private(set) var restartSelectors: [VMSelector] = []
     private(set) var openSelectors: [VMSelector] = []
@@ -222,8 +222,10 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Lifecycle
 
-    func start(_ selector: VMSelector, recovery: Bool) async throws {
-        startCalls.append((selector, recovery))
+    func start(
+        _ selector: VMSelector, recovery: Bool, presentation: VMDisplayPresentation
+    ) async throws {
+        startCalls.append((selector, recovery, presentation))
         if let startError { throw startError }
     }
 
@@ -254,8 +256,8 @@ final class MockVMCommanding: VMCommanding {
         if let pauseError { throw pauseError }
     }
 
-    func resume(_ selector: VMSelector) async throws {
-        resumeSelectors.append(selector)
+    func resume(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
+        resumeCalls.append((selector, presentation))
         if let resumeError { throw resumeError }
     }
 

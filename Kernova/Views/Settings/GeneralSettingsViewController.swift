@@ -45,7 +45,8 @@ final class GeneralSettingsViewController: NSViewController {
             makeGroupedFormCardRow("Open at Login", control: openAtLoginSwitch)
         ])
         let loginCaption = makeGroupedFormCaption(
-            "Open Kernova automatically when you log in.")
+            "Open Kernova automatically when you log in. With Continue running in "
+                + "Status Bar on, it opens in the Status Bar with no window.")
         let openLoginItemsButton = NSButton(
             title: "Open Login Items Settings…", target: self,
             action: #selector(openLoginItemsSettings))

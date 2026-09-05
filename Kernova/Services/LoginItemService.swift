@@ -12,11 +12,14 @@ protocol LoginItemRegistration {
 
 /// Registers the app itself to open at login through `SMAppService.mainApp`.
 ///
-/// A login launch is then an ordinary Launch Services open — the app comes up
-/// `.regular` with its library window, the same as a double-click. Registering
-/// the *main app* rather than a LaunchAgent is also what keeps the toggle away
-/// from this process's own lifecycle: `SMAppService.h` scopes both the
-/// kill-on-unregister behavior and the re-register-after-update requirement to
+/// A login launch is then an ordinary Launch Services open, which
+/// ``AppResidencyController/launchPosture(for:keepInMenuBar:)`` brings up
+/// headless with *Continue running in Status Bar* on, and `.regular` with its
+/// library window otherwise.
+///
+/// Registering the *main app* rather than a LaunchAgent is also what keeps the
+/// toggle away from this process's own lifecycle: `SMAppService.h` scopes both
+/// the kill-on-unregister behavior and the re-register-after-update requirement to
 /// LaunchItems, LaunchAgents, and LaunchDaemons (#801).
 struct MainAppRegistration: LoginItemRegistration {
     private var service: SMAppService { .mainApp }

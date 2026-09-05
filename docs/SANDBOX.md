@@ -29,7 +29,8 @@ The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, s
 
 ## Launch model
 
-Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper. A login launch is an ordinary Launch Services open, so the app comes up with its library window like any double-click.
+Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper. With *Continue running in Status Bar* on, a login launch comes up headless — status item, no window, no Dock icon — and boots the VMs marked to start automatically.
+With it off there is no status item to reach such a process, so the launch presents the library like a double-click.
 
 A launch the system performs to service an App Intent comes up headless — `.accessory`, no window, no auto-start pass — then stays resident or leaves per `AppResidencyController.automationIdleOutcome`.
 

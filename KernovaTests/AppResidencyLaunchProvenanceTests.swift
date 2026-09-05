@@ -2,10 +2,9 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `AppResidencyController.launchProvenance` and
-/// `AppResidencyController.automationIdleOutcome` — what decides that a launch nobody
-/// performed stays headless, and what decides whether the resulting process
-/// keeps running.
+/// Unit tests for `AppResidencyController.launchProvenance`, `launchPosture` and
+/// `automationIdleOutcome` — what classifies a launch, what that classification
+/// puts on screen, and what decides whether the resulting process keeps running.
 @Suite("AppResidencyController launch provenance", .admissionGated)
 struct AppResidencyLaunchProvenanceTests {
     /// The classifier, defaulted to a launch carrying no sign of a person: no
@@ -176,6 +175,62 @@ struct AppResidencyLaunchProvenanceTests {
             provenance(
                 openedDocuments: true, hasOpenAppleEvent: true, openEventIsDirect: false,
                 isHiddenLaunch: true) == .user)
+    }
+
+    // MARK: - launchPosture
+
+    private func posture(
+        _ provenance: AppResidencyController.LaunchProvenance, keepInMenuBar: Bool
+    ) -> AppResidencyController.LaunchPosture {
+        AppResidencyController.launchPosture(for: provenance, keepInMenuBar: keepInMenuBar)
+    }
+
+    @Test("A launch a person performed presents, whatever the residency preference")
+    func userLaunchPresents() {
+        #expect(posture(.user, keepInMenuBar: true) == .present)
+        #expect(posture(.user, keepInMenuBar: false) == .present)
+    }
+
+    @Test("A login launch with the status item on comes up headless and boots its VMs")
+    func loginLaunchWithStatusItemIsHeadless() {
+        #expect(posture(.loginItem, keepInMenuBar: true) == .headless(armsAutoStart: true))
+    }
+
+    /// Nothing would reach a headless process with the status item off, so the
+    /// window is what keeps it reachable.
+    @Test("A login launch with no status item presents instead")
+    func loginLaunchWithoutStatusItemPresents() {
+        #expect(posture(.loginItem, keepInMenuBar: false) == .present)
+    }
+
+    @Test("An automation launch presents nothing and defers the auto-start pass")
+    func automationLaunchDefersThePass() {
+        #expect(posture(.automation, keepInMenuBar: true) == .headless(armsAutoStart: false))
+        #expect(posture(.automation, keepInMenuBar: false) == .headless(armsAutoStart: false))
+    }
+
+    /// The whole matrix in one assertion, so a new provenance or a changed rule
+    /// cannot quietly take a window away from a launch that needs one — the
+    /// failure a headless start risks.
+    @Test("Only a login launch with the status item on, and automation, stay headless")
+    func headlessSetIsExhaustive() {
+        var headless: [String] = []
+        for provenance in [
+            AppResidencyController.LaunchProvenance.user, .loginItem, .automation,
+        ] {
+            for keepInMenuBar in [true, false] {
+                if case .headless = posture(provenance, keepInMenuBar: keepInMenuBar) {
+                    headless.append("\(provenance) keepInMenuBar=\(keepInMenuBar)")
+                }
+            }
+        }
+
+        #expect(
+            headless == [
+                "loginItem keepInMenuBar=true",
+                "automation keepInMenuBar=true",
+                "automation keepInMenuBar=false",
+            ])
     }
 
     // MARK: - automationIdleOutcome

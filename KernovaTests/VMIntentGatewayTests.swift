@@ -287,7 +287,7 @@ struct VMIntentGatewayTests {
         #expect(commands.stopCalls.map(\.selector) == [.id(id)])
         #expect(commands.stopCalls.map(\.disposition) == [.force])
         #expect(commands.pauseSelectors == [.id(id)])
-        #expect(commands.resumeSelectors == [.id(id)])
+        #expect(commands.resumeCalls.map(\.selector) == [.id(id)])
         #expect(commands.suspendSelectors == [.id(id)])
         #expect(commands.restartSelectors == [.id(id)])
         #expect(commands.openSelectors == [.id(id)])

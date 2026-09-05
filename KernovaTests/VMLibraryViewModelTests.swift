@@ -4130,7 +4130,7 @@ struct VMLibraryViewModelTests {
         let unmarked = makeInstance(name: "Unmarked")
         viewModel.instances = [marked1, marked2, unmarked]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.startCallCount == 2)
         #expect(marked1.status == .running)
@@ -4145,7 +4145,7 @@ struct VMLibraryViewModelTests {
         saved.enter(.suspended)
         viewModel.instances = [saved]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.resumeCallCount == 1)
         #expect(virtService.startCallCount == 0)
@@ -4159,7 +4159,7 @@ struct VMLibraryViewModelTests {
         fresh.enter(.initialBoot)
         viewModel.instances = [fresh]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.startCallCount == 0)
         #expect(fresh.status == .initialBoot)
@@ -4176,7 +4176,7 @@ struct VMLibraryViewModelTests {
         stalled.enter(.failed(message: "Test failure"))
         viewModel.instances = [stalled]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.startCallCount == 0)
         #expect(stalled.status == .error)
@@ -4191,7 +4191,7 @@ struct VMLibraryViewModelTests {
         let following = markAutoStart(makeInstance(name: "Following"))
         viewModel.instances = [failing, following]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.startCallCount == 2)
         #expect(presenter.showError == true)
@@ -4214,7 +4214,7 @@ struct VMLibraryViewModelTests {
         let following = markAutoStart(makeInstance(name: "Following"))
         viewModel.instances = [suspended, following]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.resumeCallCount == 1)
         #expect(virtService.startCallCount == 1)
@@ -4230,7 +4230,7 @@ struct VMLibraryViewModelTests {
         let second = markAutoStart(makeInstance(name: "Second"))
         viewModel.instances = [first, second]
 
-        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true) }
         // Suspended inside the first VM's start — the quit lands here.
         await suspending.waitUntilSuspended()
         pass.cancel()
@@ -4249,7 +4249,7 @@ struct VMLibraryViewModelTests {
         let second = markAutoStart(makeInstance(name: "Second"))
         viewModel.instances = [first, second]
 
-        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true) }
         // Deleted while the first VM is still booting, so the pass's snapshot
         // holds an instance the library no longer has.
         await suspending.waitUntilSuspended()
@@ -4267,10 +4267,56 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         viewModel.instances = [makeInstance(name: "Unmarked")]
 
-        await viewModel.startAutomaticVMsForLaunch()
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
 
         #expect(virtService.startCallCount == 0)
         #expect(virtService.resumeCallCount == 0)
+    }
+
+    /// A login launch runs this pass with no window and no Dock icon. Surfacing
+    /// any guest's display would undo both: a pop-out VM opens its own window,
+    /// and an inline one asks for the library.
+    @Test("startAutomaticVMsForLaunch without surfacing boots marked VMs and opens no window")
+    func autoStartHeadlessOpensNoWindow() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        // No window exists on a headless launch, which is what leaves the
+        // presenter nil — the state that routes an inline VM to the library.
+        viewModel.presenter = nil
+        let popOut = markAutoStart(makeInstance(name: "Pop Out"))
+        popOut.configuration.displayPreference = .popOut
+        let inline = markAutoStart(makeInstance(name: "Inline"))
+        let saved = markAutoStart(makeInstance(name: "Suspended"))
+        saved.enter(.suspended)
+        viewModel.instances = [popOut, inline, saved]
+        var displayWindows = 0
+        var libraryRequests = 0
+        viewModel.onOpenDisplayWindow = { _ in displayWindows += 1 }
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: false)
+
+        #expect(virtService.startCallCount == 2)
+        #expect(virtService.resumeCallCount == 1)
+        #expect(popOut.status == .running)
+        #expect(inline.status == .running)
+        #expect(saved.status == .running)
+        #expect(displayWindows == 0)
+        #expect(libraryRequests == 0)
+    }
+
+    @Test("startAutomaticVMsForLaunch with surfacing opens a pop-out VM's display window")
+    func autoStartSurfacingOpensTheDisplayWindow() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let popOut = markAutoStart(makeInstance(name: "Pop Out"))
+        popOut.configuration.displayPreference = .popOut
+        viewModel.instances = [popOut]
+        var displayWindows = 0
+        viewModel.onOpenDisplayWindow = { _ in displayWindows += 1 }
+
+        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+
+        #expect(displayWindows == 1)
+        #expect(popOut.status == .running)
     }
 
     // MARK: - Import
