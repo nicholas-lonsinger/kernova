@@ -2,27 +2,6 @@ import AppIntents
 import Foundation
 import KernovaKit
 
-struct ListVMsIntent: AppIntent {
-    static let title: LocalizedStringResource = "Find Virtual Machines"
-    static let description: IntentDescription? = IntentDescription(
-        "Answers with every virtual machine in the library.",
-        categoryName: "Virtual Machines",
-        resultValueName: "Virtual Machines")
-
-    @Dependency private var gateway: VMIntentGateway
-
-    static var parameterSummary: some ParameterSummary {
-        Summary("Find virtual machines")
-    }
-
-    @MainActor
-    func perform() async throws -> some IntentResult & ReturnsValue<[VMEntity]> {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
-        return .result(value: await gateway.vms())
-    }
-}
-
 /// Answers a VM's runtime state as the wire name every other front door
 /// reports, with the words a person reads carried in the spoken dialog.
 struct GetVMStateIntent: AppIntent {
