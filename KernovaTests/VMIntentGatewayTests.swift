@@ -323,6 +323,23 @@ struct VMIntentGatewayTests {
         #expect(libraryRequests == 0)
     }
 
+    @Test("A search term prefers the VM named exactly that, then one whose name it begins")
+    func searchPrefersTheClosestName() async throws {
+        let commands = MockVMCommanding()
+        let server = makeSummary(name: "Ubuntu Server")
+        let exact = makeSummary(name: "ubuntu")
+        let older = makeSummary(name: "Old Ubuntu")
+        commands.library = [older, server, exact]
+        let gateway = makeSearchGateway(
+            commands, defaults: makeStore("searchrank"), surfaced: {})
+
+        try await gateway.revealSearchResult(matching: "Ubuntu")
+        try await gateway.revealSearchResult(matching: "Ubuntu S")
+        try await gateway.revealSearchResult(matching: "buntu")
+
+        #expect(commands.revealSelectors == [.id(exact.id), .id(server.id), .id(older.id)])
+    }
+
     @Test("A search term no VM answers to brings the library forward instead")
     func searchWithNoMatchSurfacesTheLibrary() async throws {
         let commands = MockVMCommanding()

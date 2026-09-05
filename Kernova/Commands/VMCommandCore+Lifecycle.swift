@@ -603,7 +603,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         // An imported bundle carrying a save file rests its phantom `.paused`,
         // which reads as having a display while the copy is still writing —
-        // and `allowedVerbs` offers a preparing row nothing but its cancel.
+        // and a preparing row admits no verb that would surface one.
         try require(.open, on: instance)
         surfaceDisplay?(instance)
     }

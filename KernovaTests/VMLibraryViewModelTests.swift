@@ -1052,19 +1052,19 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.isEmpty)
     }
 
-    @Test("Revealing a VM with a window already up still asks for the library")
-    func revealAsksForTheLibraryEvenWithAWindow() throws {
+    @Test("Revealing a VM with no window yet asks for the library the same way")
+    func revealWithNoWindowAsksForTheLibrary() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = makeInstance(name: "Wanted")
         viewModel.instances.append(wanted)
-        viewModel.presenter = presenter
+        // No main window has been created, which is what leaves `presenter` nil.
+        viewModel.presenter = nil
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        // The window can be behind every other app's, which has not answered
-        // whoever asked for this VM from outside Kernova.
         try viewModel.commands.reveal(.id(wanted.id))
 
+        #expect(viewModel.selectedID == wanted.id)
         #expect(libraryRequests == 1)
     }
 
@@ -1074,7 +1074,6 @@ struct VMLibraryViewModelTests {
         let wanted = makeInstance(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         viewModel.instances.append(wanted)
-        viewModel.presenter = presenter
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
