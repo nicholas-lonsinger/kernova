@@ -328,17 +328,13 @@ final class VMLibraryViewModel {
 
     /// Presentation delegate for alerts, sheets, and the creation wizard.
     ///
-    /// Errors raised before a presenter is attached — the library read starts in
-    /// `applicationWillFinishLaunching`, ahead of any window — are buffered and
-    /// flushed when one is set.
+    /// Presentations raised before a presenter is attached — the library read
+    /// starts in `applicationWillFinishLaunching`, ahead of any window — are
+    /// buffered and flushed when one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
             guard presenter != nil else { return }
-            if !bufferedErrors.isEmpty {
-                let buffered = bufferedErrors
-                bufferedErrors.removeAll()
-                buffered.forEach { presenter?.presentError($0.message, title: $0.title) }
-            }
+            drainBufferedPresentations()
             if let id = bufferedDisplayFocus {
                 bufferedDisplayFocus = nil
                 if let instance = instances.first(where: { $0.id == id }) {
@@ -348,11 +344,52 @@ final class VMLibraryViewModel {
         }
     }
 
-    @ObservationIgnored private var bufferedErrors: [(title: String, message: String)] = []
+    /// A presentation raised with no presenter attached, held as what it is
+    /// rather than as the text an alert would have shown: the drain re-runs the
+    /// same branch the live call took, so a failure keeps the recovery it
+    /// offered.
+    private enum BufferedPresentation {
+        case error(title: String, message: String)
+        /// A start that failed, whatever it failed with. The VM is named by id
+        /// and re-resolved on the drain — one that left the library meanwhile
+        /// leaves nothing to act on or report.
+        case startFailure(StartFailure, vmID: UUID)
+
+        var isStartFailure: Bool {
+            if case .startFailure = self { return true }
+            return false
+        }
+    }
+
+    /// How a start failed: with an attachment the alert can offer to detach,
+    /// or with only a message to show.
+    ///
+    /// One case for every start failure, so the status item reports each of
+    /// them — a guest cap or a duplicate identity refuses a start as surely as
+    /// a missing disk image, and a headless launch has no other way to say so.
+    private enum StartFailure {
+        case attachment(StartFailedAttachment)
+        case message(title: String, message: String)
+    }
+
+    /// What is waiting for a presenter, in the order it was raised.
+    ///
+    /// Observed — unlike `bufferedDisplayFocus` — because the status item
+    /// renders ``bufferedStartFailureCount`` from it.
+    private var bufferedPresentations: [BufferedPresentation] = []
+
+    /// How many failed starts are waiting for a window to present them in.
+    ///
+    /// Non-zero only for a launch that came up headless: the status item is the
+    /// one surface such a process has, and clicking its line opens the library,
+    /// which attaches the presenter and drains these back to zero.
+    var bufferedStartFailureCount: Int {
+        bufferedPresentations.lazy.filter(\.isStartFailure).count
+    }
 
     /// The VM an inline surface was asked for before any window existed, focused
-    /// when the presenter attaches — the same buffering `bufferedErrors` does,
-    /// for the same reason.
+    /// when the presenter attaches — the same buffering `bufferedPresentations`
+    /// does, for the same reason.
     @ObservationIgnored private var bufferedDisplayFocus: UUID?
 
     var activeRename: RenameTarget?
@@ -1127,11 +1164,12 @@ final class VMLibraryViewModel {
         switch command {
         case .confirmationRequired(let prompt):
             presentConfirmation(prompt, for: instance)
-        case .operationFailed(_, _, let message, let recovery):
-            if case .removeStartFailedAttachment(let failure) = recovery, let presenter,
-                let instance
-            {
-                presenter.presentStartFailedAttachment(failure, for: instance)
+        case .operationFailed(let verb, _, let message, let recovery):
+            if case .removeStartFailedAttachment(let failure) = recovery, let instance {
+                surfaceStartFailure(.attachment(failure), for: instance)
+            } else if verb == .start, let instance {
+                surfaceStartFailure(
+                    .message(title: command.alertTitle, message: message), for: instance)
             } else {
                 surfaceError(message, title: command.alertTitle)
             }
@@ -1169,7 +1207,46 @@ final class VMLibraryViewModel {
         if let presenter {
             presenter.presentError(message, title: title)
         } else {
-            bufferedErrors.append((title: title, message: message))
+            bufferedPresentations.append(.error(title: title, message: message))
+        }
+    }
+
+    /// Routes a start failure to the presenter, buffering the failure itself
+    /// when none is attached yet — a headless launch's auto-start pass runs
+    /// with no window, and the alert it earns is the one carrying whatever the
+    /// failure offered, the detach-and-start-again action included.
+    private func surfaceStartFailure(_ failure: StartFailure, for instance: VMInstance) {
+        guard let presenter else {
+            bufferedPresentations.append(.startFailure(failure, vmID: instance.id))
+            return
+        }
+        switch failure {
+        case .attachment(let attachment):
+            presenter.presentStartFailedAttachment(attachment, for: instance)
+        case .message(let title, let message):
+            presenter.presentError(message, title: title)
+        }
+    }
+
+    /// Re-dispatches everything raised before the presenter attached, through
+    /// the same routing a live presentation takes.
+    private func drainBufferedPresentations() {
+        guard !bufferedPresentations.isEmpty else { return }
+        let buffered = bufferedPresentations
+        bufferedPresentations.removeAll()
+        for presentation in buffered {
+            switch presentation {
+            case .error(let title, let message):
+                surfaceError(message, title: title)
+            case .startFailure(let failure, let vmID):
+                guard let instance = instances.first(where: { $0.id == vmID }) else {
+                    Self.logger.debug(
+                        "Dropped a buffered start failure — its VM left the library before a window arrived"
+                    )
+                    continue
+                }
+                surfaceStartFailure(failure, for: instance)
+            }
         }
     }
 }

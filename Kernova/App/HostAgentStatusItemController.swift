@@ -12,13 +12,29 @@ import os
 @MainActor
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostAgentStatusItem")
-    private static let iconSymbol = "macwindow"
+    private static let idleIconSymbol = "macwindow"
+    /// SF Symbols draws no badged variant of `macwindow`, so the failure state
+    /// takes the badged screen glyph — a symbol the set already draws for
+    /// menu-bar sizes — rather than a composited badge.
+    private static let startFailureIconSymbol = "display.trianglebadge.exclamationmark"
+
+    /// The glyph the status item shows, which reports a failed start no window
+    /// was there to present.
+    static func iconSymbol(hasStartFailures: Bool) -> String {
+        hasStartFailures ? startFailureIconSymbol : idleIconSymbol
+    }
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     /// The dropdown's VM rows, edited in place while the menu is on screen.
     private lazy var vmSection = StatusMenuVMSection(
         menu: menu, rowTarget: self, rowAction: #selector(openVMTapped(_:)))
+    /// The dropdown's failed-start line, edited in place the same way.
+    private lazy var startFailureSection = StatusMenuStartFailureSection(
+        menu: menu, target: self, action: #selector(startFailuresTapped))
+    /// The item the failed-start line sits under, so an in-place insertion has
+    /// an anchor while the dropdown is open.
+    private var openItem: NSMenuItem?
     /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
     /// expose; gates the live row sync.
     private var isMenuOpen = false
@@ -58,6 +74,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// The readout last handed to the presenter, so a library change that leaves
     /// it alone doesn't re-run the automatic-open decision.
     private var lastAppliedReadout: ClipboardTransferReport = .idle
+
+    /// The failed-start count the icon was last drawn for, so a library change
+    /// that leaves it alone doesn't redraw the button.
+    private var lastStartFailureCount = 0
 
     /// When each VM's last presented refusal was raised.
     ///
@@ -102,10 +122,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 for instance in self.viewModel.instances {
                     _ = instance.clipboardTransferReport
                 }
+                _ = self.viewModel.bufferedStartFailureCount
             },
             apply: { [weak self] in
                 guard let self else { return }
                 self.transferReportsChanged()
+                self.startFailuresChanged()
                 self.syncMenuIfOpen()
                 self.presentPendingNotices()
             }
@@ -150,6 +172,17 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             setIcon()
         }
         updateTooltip()
+    }
+
+    // MARK: - Failed starts
+
+    /// Re-draws the icon when the number of failed starts waiting for a window
+    /// changes — the resident app's only way to report one.
+    private func startFailuresChanged() {
+        let count = viewModel.bufferedStartFailureCount
+        guard count != lastStartFailureCount else { return }
+        lastStartFailureCount = count
+        setIcon()
     }
 
     // MARK: - Clipboard notice
@@ -209,17 +242,21 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Icon / tooltip
 
     private func setIcon() {
+        let hasStartFailures = viewModel.bufferedStartFailureCount > 0
+        let symbol = Self.iconSymbol(hasStartFailures: hasStartFailures)
+        // The glyph is the whole signal for a sighted user; the description is
+        // the whole of it for VoiceOver, so it changes with the glyph.
+        let description = hasStartFailures ? "Kernova, a virtual machine failed to start" : "Kernova"
         // RATIONALE: deliberately not the shared `NSImage.systemSymbol(_:…)` helper.
         // Its release fallback is a zero-size `NSImage()`, which would render the
         // status-item button invisible — and the status item is the *only* way to
         // find (or quit) the headless agent.
         guard
-            let image = NSImage(
-                systemSymbolName: Self.iconSymbol, accessibilityDescription: "Kernova")
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         else {
             Self.logger.fault(
-                "Missing SF Symbol '\(Self.iconSymbol, privacy: .public)' for status item")
-            assertionFailure("Missing SF Symbol '\(Self.iconSymbol)'")
+                "Missing SF Symbol '\(symbol, privacy: .public)' for status item")
+            assertionFailure("Missing SF Symbol '\(symbol)'")
             statusItem.button?.title = "K"
             return
         }
@@ -234,9 +271,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Updates the tooltip.
     ///
-    /// A materializing paste appends a further line rather than replacing the
-    /// running-count line, so headless users never lose the at-a-glance view of
-    /// how many VMs are running.
+    /// A materializing paste and a failed start each append a further line
+    /// rather than replacing the running-count line, so headless users never
+    /// lose the at-a-glance view of how many VMs are running.
     private func updateTooltip() {
         let count = viewModel.instances.lazy.filter(\.isKeepingAppAlive).count
         var lines: [String]
@@ -247,6 +284,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         }
         if let snapshot = transferProgressPresenter.snapshot {
             lines.append(ClipboardProgressFormat.summary(snapshot))
+        }
+        switch viewModel.bufferedStartFailureCount {
+        case ..<1: break
+        case 1: lines.append("1 virtual machine failed to start")
+        case let failures: lines.append("\(failures) virtual machines failed to start")
         }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
     }
@@ -265,6 +307,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         let open = NSMenuItem(title: "Open Kernova", action: #selector(openTapped), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
+        openItem = open
+
+        startFailureSection.rebuild(count: viewModel.bufferedStartFailureCount)
 
         menu.addItem(.separator())
 
@@ -287,16 +332,24 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         transferProgressPresenter.menuDidClose()
     }
 
-    /// Re-syncs the dropdown's VM rows if it is on screen; a closed menu is
-    /// rebuilt by `menuNeedsUpdate` when it next opens.
+    /// Re-syncs the dropdown's VM rows and failed-start line if it is on screen;
+    /// a closed menu is rebuilt by `menuNeedsUpdate` when it next opens.
     private func syncMenuIfOpen() {
         guard isMenuOpen else { return }
         vmSection.sync(to: currentRows())
+        if let openItem {
+            startFailureSection.sync(
+                to: viewModel.bufferedStartFailureCount, after: openItem)
+        }
     }
 
     // MARK: - Actions
 
     @objc private func openTapped() { onOpen(nil) }
+
+    /// Opens the library, which attaches the presenter the buffered failures
+    /// are waiting for — the alerts they carry follow from that.
+    @objc private func startFailuresTapped() { onOpen(nil) }
 
     @objc private func openVMTapped(_ sender: NSMenuItem) {
         onOpen(sender.representedObject as? UUID)

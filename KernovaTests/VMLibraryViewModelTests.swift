@@ -1909,6 +1909,104 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
+    /// A launch that came up headless runs its auto-start pass with no window,
+    /// so a failure's recovery has to survive the wait for one instead of
+    /// flattening into a message no alert can act on.
+    @Test("A start failure raised with no window buffers the failure, not its text")
+    func startFailureWithNoWindowBuffersTheRecovery() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: item.id, path: item.path, label: item.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+        // No main window has been created, which is what leaves `presenter` nil.
+        viewModel.presenter = nil
+
+        await viewModel.start(instance)
+
+        #expect(viewModel.bufferedStartFailureCount == 1)
+        #expect(presenter.startFailedAttachments.isEmpty)
+
+        // Attaching the presenter is what the window does on arrival.
+        viewModel.presenter = presenter
+
+        #expect(presenter.startFailedAttachments.count == 1)
+        #expect(presenter.startFailedAttachments.first?.kind == .removableMedia)
+        #expect(presenter.startFailedAttachments.first?.id == item.id)
+        #expect(presenter.startFailedAttachmentInstances.last === instance)
+        #expect(presenter.errors.isEmpty)
+        #expect(viewModel.bufferedStartFailureCount == 0)
+    }
+
+    @Test("A buffered start failure is dropped when its VM leaves before the window arrives")
+    func bufferedStartFailureIsDroppedWhenItsVMLeaves() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: item.id, path: item.path, label: item.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+        viewModel.presenter = nil
+
+        await viewModel.start(instance)
+        viewModel.instances.removeAll()
+        viewModel.presenter = presenter
+
+        // Nothing is left for the recovery to detach from.
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.errors.isEmpty)
+        #expect(viewModel.bufferedStartFailureCount == 0)
+    }
+
+    /// A guest cap or a duplicate identity refuses a start with only a message,
+    /// and a headless launch has to report that as surely as a missing disk.
+    @Test("A start failure carrying no recovery is counted, then drains as a plain alert")
+    func plainStartFailureWithNoWindowIsCountedAndDrainsAsAnAlert() async {
+        let virtService = MockVirtualizationService()
+        virtService.startError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        viewModel.presenter = nil
+
+        await viewModel.start(instance)
+
+        #expect(presenter.errors.isEmpty)
+        #expect(viewModel.bufferedStartFailureCount == 1)
+
+        viewModel.presenter = presenter
+
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(viewModel.bufferedStartFailureCount == 0)
+    }
+
+    @Test("A failure raised by something other than a start is buffered but not counted")
+    func nonStartFailureWithNoWindowIsNotCounted() async {
+        let virtService = MockVirtualizationService()
+        virtService.stopError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        viewModel.instances.append(instance)
+        viewModel.presenter = nil
+
+        await viewModel.stop(instance)
+
+        #expect(viewModel.bufferedStartFailureCount == 0)
+
+        viewModel.presenter = presenter
+
+        #expect(presenter.errors.count == 1)
+    }
+
     @Test("removeStartFailedAttachmentAndStart detaches the item and retries the start")
     func removeStartFailedAttachmentAndStartRetries() async {
         let virtService = MockVirtualizationService()
