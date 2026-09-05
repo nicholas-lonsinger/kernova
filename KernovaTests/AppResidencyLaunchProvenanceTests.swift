@@ -243,7 +243,7 @@ struct AppResidencyLaunchProvenanceTests {
         keepInMenuBar: Bool = false,
         hasUninterruptibleWork: Bool = false,
         hasLiveGuest: Bool = false,
-        hasIntentInFlight: Bool = false
+        hasAutomationWorkInFlight: Bool = false
     ) -> AppResidencyController.AutomationIdleOutcome {
         AppResidencyController.automationIdleOutcome(
             isAutomationLaunch: isAutomationLaunch,
@@ -252,7 +252,7 @@ struct AppResidencyLaunchProvenanceTests {
             keepInMenuBar: keepInMenuBar,
             hasUninterruptibleWork: hasUninterruptibleWork,
             hasLiveGuest: hasLiveGuest,
-            hasIntentInFlight: hasIntentInFlight)
+            hasAutomationWorkInFlight: hasAutomationWorkInFlight)
     }
 
     @Test("A headless automation launch with nothing left to run and no status item quits")
@@ -296,7 +296,7 @@ struct AppResidencyLaunchProvenanceTests {
         // The decision has three triggers and only the gateway's idle report
         // knows an intent is running, so in-flight state has to be a condition
         // of the answer rather than merely the reason it was asked.
-        #expect(idleOutcome(hasIntentInFlight: true) == .stayResident)
+        #expect(idleOutcome(hasAutomationWorkInFlight: true) == .stayResident)
     }
 
     @Test("The library read landing mid-intent cannot quit the process it launched")
@@ -305,7 +305,7 @@ struct AppResidencyLaunchProvenanceTests {
         // `instances`, so it wakes while the launching intent is still awaiting
         // readiness: no guest yet, no work yet, and residency off.
         #expect(
-            idleOutcome(keepInMenuBar: false, hasLiveGuest: false, hasIntentInFlight: true)
+            idleOutcome(keepInMenuBar: false, hasLiveGuest: false, hasAutomationWorkInFlight: true)
                 == .stayResident)
     }
 }

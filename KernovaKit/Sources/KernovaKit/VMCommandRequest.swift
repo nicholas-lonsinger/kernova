@@ -28,12 +28,14 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case info(VMSelector)
         case ipAddress(VMSelector)
         case snapshots(VMSelector)
+        /// Subscribe: a snapshot frame, then one frame per library event.
+        case events
 
-        case start(VMSelector, recovery: Bool)
+        case start(VMSelector, recovery: Bool, presentation: VMDisplayPresentation)
         case cancelGuestSetup(VMSelector, confirmed: Bool)
         case stop(VMSelector, disposition: StopDisposition, confirmed: Bool)
         case pause(VMSelector)
-        case resume(VMSelector)
+        case resume(VMSelector, presentation: VMDisplayPresentation)
         case suspend(VMSelector)
         case restart(VMSelector)
         case open(VMSelector)
@@ -64,6 +66,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .info: .info
             case .ipAddress: .ipAddress
             case .snapshots: .snapshots
+            case .events: .events
             case .start: .start
             case .cancelGuestSetup: .cancelGuestSetup
             case .stop: .stop

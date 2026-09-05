@@ -1,0 +1,281 @@
+import Darwin
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
+
+@testable import Kernova
+
+/// The command socket driven end to end over a real `AF_UNIX` socket: a client
+/// connects, frames a request, and reads the framed answer back.
+///
+/// The transport is what is under test — the verbs behind it are
+/// `MockVMCommanding`, which the router tests already drive against the real
+/// core.
+@MainActor
+@Suite("VM Command Socket Listener", .admissionGated)
+struct VMCommandSocketListenerTests {
+    // MARK: - Harness
+
+    private struct Harness {
+        let listener: VMCommandSocketListener
+        let commands: MockVMCommanding
+        let authorizer: MockPeerAuthorizer
+        let idle: AsyncGate
+        let path: String
+    }
+
+    /// A short path: `sockaddr_un.sun_path` holds 104 bytes and the container's
+    /// own path already spends most of them in production.
+    private func temporarySocketPath() -> String {
+        let short = UUID().uuidString.prefix(8).lowercased()
+        return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-c-\(short).sock")
+    }
+
+    private func makeHarness(
+        authorized: Bool = true,
+        library: [VMSummary] = []
+    ) -> Harness {
+        let commands = MockVMCommanding()
+        commands.library = library
+        let authorizer = MockPeerAuthorizer(isAuthorizedResult: authorized)
+        let idle = AsyncGate()
+        let path = temporarySocketPath()
+        let listener = VMCommandSocketListener(
+            router: VMCommandEnvelopeRouter(commands: commands),
+            authorizer: authorizer,
+            socketPath: path,
+            onIdle: { idle.notify() })
+        return Harness(
+            listener: listener, commands: commands, authorizer: authorizer, idle: idle, path: path)
+    }
+
+    // MARK: - Reads
+
+    @Test("A read verb round-trips over the socket")
+    func unaryReadRoundTrips() async throws {
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let harness = makeHarness(library: [alpha])
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.send(VMCommandRequest(verb: .list))
+        let response = try await client.nextResponse()
+
+        #expect(response?.result == .summaries([alpha]))
+        #expect(harness.authorizer.checkCount == 1)
+    }
+
+    @Test("A connected client holds the process, and releases it at EOF")
+    func connectionCountRisesAndFalls() async throws {
+        let harness = makeHarness()
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        try client.send(VMCommandRequest(verb: .list))
+        // The answer proves the connection was adopted on the main actor: the
+        // count is written in the same hop that starts reading.
+        _ = try await client.nextResponse()
+        #expect(harness.listener.hasWorkInFlight)
+
+        client.close()
+        try await harness.idle.wait { !harness.listener.hasWorkInFlight }
+        #expect(!harness.listener.hasWorkInFlight)
+    }
+
+    // MARK: - Envelope refusals
+
+    @Test("An unauthorized peer is told so, then disconnected")
+    func unauthorizedPeerIsRefusedAndClosed() async throws {
+        let harness = makeHarness(authorized: false)
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        let response = try await client.nextResponse()
+        guard case .refused(.authorizationRefused) = response?.result else {
+            Issue.record("expected an authorization refusal, got \(String(describing: response))")
+            return
+        }
+        // The refusal ends the connection, so the next read is end-of-stream.
+        #expect(try await client.nextResponse() == nil)
+        // Nothing reached the verbs, and no connection was ever adopted.
+        #expect(harness.commands.library.isEmpty)
+        #expect(!harness.listener.hasWorkInFlight)
+    }
+
+    @Test("A peer speaking another protocol version is refused before any verb runs")
+    func foreignProtocolVersionIsRefused() async throws {
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let harness = makeHarness(library: [alpha])
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        var request = VMCommandRequest(verb: .list)
+        request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
+        try client.send(request)
+
+        let response = try await client.nextResponse()
+        #expect(
+            response?.result
+                == .refused(
+                    .unsupportedProtocolVersion(
+                        peer: VMCommandRequest.currentProtocolVersion + 1,
+                        expected: VMCommandRequest.currentProtocolVersion)))
+        #expect(harness.commands.listCallCount == 0)
+    }
+
+    @Test("Bytes that are not a request are refused, and end the connection")
+    func undecodableBytesAreRefused() async throws {
+        let harness = makeHarness()
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.sendRaw(Data("not a request".utf8))
+
+        let response = try await client.nextResponse()
+        guard case .refused(.undecodableRequest) = response?.result else {
+            Issue.record("expected an undecodable-request refusal, got \(String(describing: response))")
+            return
+        }
+        #expect(try await client.nextResponse() == nil)
+    }
+
+    // MARK: - Subscription
+
+    @Test("A subscription answers with the library, then with each change")
+    func subscriptionDeliversSnapshotThenEvents() async throws {
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let harness = makeHarness(library: [alpha])
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.send(VMCommandRequest(verb: .events))
+        #expect(try await client.nextResponse()?.result == .summaries([alpha]))
+
+        let change = VMLibraryEvent.statusChanged(
+            id: alpha.id, name: "Alpha", from: "stopped", to: "running")
+        harness.commands.emit(change)
+
+        #expect(try await client.nextResponse()?.result == .event(change))
+    }
+
+    // MARK: - Degraded builds
+
+    @Test("A build with no group container publishes no socket")
+    func noContainerBindsNothing() {
+        let listener = VMCommandSocketListener(
+            router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
+            authorizer: MockPeerAuthorizer(),
+            socketPath: nil,
+            onIdle: {})
+        listener.start()
+        #expect(!listener.hasWorkInFlight)
+        listener.stop()
+    }
+
+    @Test("A build whose signature names no team publishes no socket")
+    func noAuthorizerBindsNothing() {
+        let path = temporarySocketPath()
+        let listener = VMCommandSocketListener(
+            router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
+            authorizer: nil,
+            socketPath: path,
+            onIdle: {})
+        listener.start()
+        #expect(!FileManager.default.fileExists(atPath: path))
+        listener.stop()
+    }
+}
+
+/// A client on the command socket, for driving the transport from a test.
+///
+/// The socket is blocking with a receive deadline, so `nextResponse()` returns
+/// the moment bytes land rather than polling for them, and a stuck transport
+/// fails the read instead of hanging the suite.
+private final class TestCommandClient: @unchecked Sendable {
+    private let fd: Int32
+    private var decoder = StreamFrameDecoder()
+    private var isClosed = false
+
+    init(connectingTo path: String) throws {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw TestFailure("client socket() failed: errno \(errno)") }
+
+        var address = try UnixSocketAddress.make(path: path)
+        let connected = UnixSocketAddress.withSockaddr(&address) { socketAddress, length in
+            connect(descriptor, socketAddress, length)
+        }
+        guard connected == 0 else {
+            Darwin.close(descriptor)
+            throw TestFailure("client connect() failed: errno \(errno)")
+        }
+
+        var deadline = timeval(tv_sec: Int(testWaitBackstop), tv_usec: 0)
+        _ = setsockopt(
+            descriptor, SOL_SOCKET, SO_RCVTIMEO, &deadline,
+            socklen_t(MemoryLayout<timeval>.size))
+        fd = descriptor
+    }
+
+    func send(_ request: VMCommandRequest) throws {
+        try sendRaw(try JSONEncoder().encode(request))
+    }
+
+    func sendRaw(_ payload: Data) throws {
+        let framed = try StreamFrame.encode(payload)
+        var offset = 0
+        try framed.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            while offset < raw.count {
+                let written = write(fd, base + offset, raw.count - offset)
+                guard written > 0 else {
+                    if errno == EINTR { continue }
+                    throw TestFailure("client write() failed: errno \(errno)")
+                }
+                offset += written
+            }
+        }
+    }
+
+    /// The next framed response, or `nil` at end of stream.
+    func nextResponse() async throws -> VMCommandResponse? {
+        while true {
+            if let payload = try decoder.nextFrame() {
+                return try JSONDecoder().decode(VMCommandResponse.self, from: Data(payload))
+            }
+            let descriptor = fd
+            let chunk = await offCooperativePool { () -> Data? in
+                var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+                let count = buffer.withUnsafeMutableBytes {
+                    read(descriptor, $0.baseAddress, $0.count)
+                }
+                guard count > 0 else { return nil }
+                return Data(buffer[0..<count])
+            }
+            guard let chunk else { return nil }  // EOF, error, or the deadline
+            decoder.feed(chunk)
+        }
+    }
+
+    func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        Darwin.close(fd)
+    }
+}

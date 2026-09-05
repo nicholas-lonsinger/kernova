@@ -124,8 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillFinishLaunching(_ notification: Notification) {
         libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
         // Before `lifecycle.start(provenance:)`, so an intent delivered during
-        // launch resolves against a published gateway.
-        lifecycle.registerIntentGateway()
+        // launch resolves against a published gateway, and the command socket
+        // is bound before a client that just launched the app dials it.
+        lifecycle.registerAutomationFrontDoors()
     }
 
     /// Records that Launch Services asked for the app's default surface.

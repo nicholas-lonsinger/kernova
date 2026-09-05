@@ -1,16 +1,6 @@
 import Foundation
 import KernovaKit
 
-/// Whether a verb that brings a guest up puts its display in front of the user.
-enum VMDisplayPresentation: Equatable {
-    /// Surface the VM's display — the detached window for a pop-out or
-    /// fullscreen VM, keyboard focus in the inline display otherwise.
-    case surface
-    /// Bring the guest up with nothing put on screen, for a process that has no
-    /// window and is not asking for one.
-    case headless
-}
-
 /// Every VM verb Kernova offers, typed end to end.
 ///
 /// One method per verb, addressing VMs by ``VMSelector`` and refusing with
@@ -285,10 +275,11 @@ protocol VMCommanding: AnyObject {
 
 /// The surfacing spellings of the two verbs that can come up headless.
 ///
-/// Bringing a guest up puts its display in front of the user everywhere but the
-/// launch auto-start pass, so every other front door — the wire router, the
-/// intents, the AppKit UI — spells the verb without a presentation and gets
-/// ``VMDisplayPresentation/surface``.
+/// An in-process front door is a GUI by construction, so the AppKit UI and the
+/// App Intents spell the verb without a presentation and get
+/// ``VMDisplayPresentation/surface``. The launch auto-start pass and the wire
+/// router are the callers that say which they want, because they are the ones
+/// that can be running with nowhere to present.
 extension VMCommanding {
     func start(_ selector: VMSelector, recovery: Bool) async throws {
         try await start(selector, recovery: recovery, presentation: .surface)

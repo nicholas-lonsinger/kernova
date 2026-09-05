@@ -32,6 +32,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case info
     case ipAddress
     case snapshots
+    case events
     case start
     case cancelGuestSetup
     case stop
@@ -67,6 +68,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .info: "Get Info"
         case .ipAddress: "Get IP Address"
         case .snapshots: "List Snapshots"
+        case .events: "Watch Events"
         case .start: "Start"
         case .cancelGuestSetup: "Cancel Setup"
         case .stop: "Stop"
@@ -101,7 +103,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// in front of the user whatever state it is in.
     public var isAdmittedInEveryState: Bool {
         switch self {
-        case .list, .info, .ipAddress, .snapshots, .reveal: true
+        case .list, .info, .ipAddress, .snapshots, .events, .reveal: true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,

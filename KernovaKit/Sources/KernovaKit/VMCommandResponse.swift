@@ -36,6 +36,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.
         case failure(CommandErrorDTO)
+        /// The request was refused by the envelope, before any verb ran.
+        case refused(VMCommandTransportRefusal)
     }
 
     /// The refusal this response carries, or `nil` when the verb succeeded.

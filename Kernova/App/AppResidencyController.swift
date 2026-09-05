@@ -1,6 +1,18 @@
 import AppIntents
 import Cocoa
+import KernovaKit
 import os
+
+/// An automation front door that can be mid-request, and therefore holds a
+/// process nobody asked to see open until it isn't.
+///
+/// Every such door answers this and nothing else: the residency counts work,
+/// not doors, so adding one changes no decision.
+@MainActor
+protocol AutomationWorkCounting: AnyObject {
+    /// Whether this door has a request in flight.
+    var hasWorkInFlight: Bool { get }
+}
 
 /// The residency decisions a window owner needs but cannot make.
 @MainActor
@@ -27,9 +39,9 @@ protocol AppResidencyHosting: WindowResidencyHosting {
     /// headless state to downgrade into — which is what makes every quit there a
     /// real one.
     var softQuit: (any SoftQuitHosting)? { get }
-    /// Publishes the App Intents front door, before any launch presentation, so
-    /// an intent delivered during launch resolves it.
-    func registerIntentGateway()
+    /// Opens every automation front door, before any launch presentation, so a
+    /// request delivered during launch is answered rather than dropped.
+    func registerAutomationFrontDoors()
     /// Brings the process up for the launch it was given.
     func start(provenance: AppResidencyController.LaunchProvenance)
     /// The answer to `applicationShouldTerminateAfterLastWindowClosed(_:)`.
@@ -80,11 +92,11 @@ final class AppResidencyController: AppResidencyHosting {
     private let windows: AppWindowRegistry
     weak var host: (any AppLaunchHosting)?
 
-    /// The App Intents front door, retained so the aliveness decision can ask
-    /// whether an intent is still running — which is what holds an otherwise-idle
-    /// automation launch open. `AppDependencyManager` owns the copy intents
-    /// resolve.
-    private var intentGateway: VMIntentGateway?
+    /// Every automation front door this process opened, retained so the
+    /// aliveness decision can ask whether any of them is still running a
+    /// request — which is what holds an otherwise-idle automation launch open.
+    /// `AppDependencyManager` owns the gateway copy intents resolve.
+    private var automationFrontDoors: [any AutomationWorkCounting] = []
 
     /// How this process was brought up, decided once by ``start(provenance:)``.
     private var launchProvenance: LaunchProvenance = .user
@@ -136,16 +148,21 @@ final class AppResidencyController: AppResidencyHosting {
         self.windows = windows
     }
 
-    // MARK: - Intents
+    // MARK: - Automation front doors
 
-    /// Publishes the App Intents front door, so an intent delivered during
-    /// launch resolves it rather than failing for a missing dependency.
+    /// Opens both out-of-process front doors, so a request delivered during
+    /// launch is answered rather than failing for a door that isn't there yet.
     ///
-    /// The gateway is retained by the dependency manager and lives as long as
-    /// the process. It takes the app's first library read as its readiness
-    /// await: an intent can arrive while that read is still in flight, and a verb
-    /// run against a library that has not landed yet finds no VM to address.
-    func registerIntentGateway() {
+    /// The App Intents gateway is retained by the dependency manager and lives
+    /// as long as the process. It takes the app's first library read as its
+    /// readiness await: an intent can arrive while that read is still in
+    /// flight, and a verb run against a library that has not landed yet finds
+    /// no VM to address.
+    ///
+    /// The command socket binds in the app-group container, admitting peers
+    /// this build's own team signed. A build resolving neither a container nor
+    /// a team publishes no socket and the CLI finds nothing to connect to.
+    func registerAutomationFrontDoors() {
         let gateway = VMIntentGateway(
             commands: viewModel.commands,
             awaitReady: { [weak self] in
@@ -154,8 +171,16 @@ final class AppResidencyController: AppResidencyHosting {
             },
             onIdle: { [weak self] in self?.reconcileIdleTermination() },
             surfaceLibrary: { [weak self] in self?.presentSummonedInterface() })
-        intentGateway = gateway
         AppDependencyManager.shared.add(dependency: gateway)
+
+        let socket = VMCommandSocketListener(
+            router: VMCommandEnvelopeRouter(commands: viewModel.commands),
+            authorizer: SameTeamPeerAuthorizer(),
+            socketPath: KernovaAppGroup.socketURL()?.path(percentEncoded: false),
+            onIdle: { [weak self] in self?.reconcileIdleTermination() })
+        socket.start()
+
+        automationFrontDoors = [gateway, socket]
     }
 
     /// Awaits the app's first library read on the main actor, so the gateway's
@@ -841,8 +866,8 @@ final class AppResidencyController: AppResidencyHosting {
     /// to the window reconcile by answering `.stayResident`.
     ///
     /// A live guest or work in flight always holds the process, whatever the
-    /// residency preference: an intent that started a VM must not have it
-    /// save-suspended the moment the intent returns. With *Continue running in
+    /// residency preference: a request that started a VM must not have it
+    /// save-suspended the moment that request returns. With *Continue running in
     /// Status Bar* on, the process stays as the user asked; with it off there is
     /// neither Dock icon nor status item, so a process that keeps running would
     /// be unreachable — it leaves instead.
@@ -853,12 +878,14 @@ final class AppResidencyController: AppResidencyHosting {
         keepInMenuBar: Bool,
         hasUninterruptibleWork: Bool,
         hasLiveGuest: Bool,
-        hasIntentInFlight: Bool
+        hasAutomationWorkInFlight: Bool
     ) -> AutomationIdleOutcome {
         guard isAutomationLaunch, !hasPresentedInterface, !hasVisibleUserWindow else {
             return .stayResident
         }
-        if hasIntentInFlight || hasLiveGuest || hasUninterruptibleWork { return .stayResident }
+        if hasAutomationWorkInFlight || hasLiveGuest || hasUninterruptibleWork {
+            return .stayResident
+        }
         return keepInMenuBar ? .stayResident : .quit
     }
 
@@ -885,7 +912,7 @@ final class AppResidencyController: AppResidencyHosting {
             keepInMenuBar: viewModel.keepInMenuBarOnQuit,
             hasUninterruptibleWork: viewModel.hasUninterruptibleWork,
             hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive),
-            hasIntentInFlight: intentGateway?.hasIntentInFlight ?? false
+            hasAutomationWorkInFlight: automationFrontDoors.contains { $0.hasWorkInFlight }
         ) {
         case .stayResident:
             break

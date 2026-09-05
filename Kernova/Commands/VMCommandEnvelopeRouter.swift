@@ -19,28 +19,72 @@ struct VMCommandEnvelopeRouter {
         self.commands = commands
     }
 
-    /// Why a payload could not be turned into a command at all.
-    enum EnvelopeError: Error, Equatable {
-        /// The bytes are not a request this build can read.
-        case undecodable(String)
-        /// The peer speaks a different version of the vocabulary.
-        case unsupportedProtocolVersion(Int)
-    }
-
     // MARK: - Bytes
 
-    /// Answers one encoded request with one encoded response.
-    func handle(_ data: Data) async throws -> Data {
+    /// Reads one encoded request, or the refusal a transport delivers in its
+    /// place.
+    ///
+    /// An envelope refusal is a frame, not a thrown error: the peer asked a
+    /// question and is owed an answer, and only the transport can send one.
+    nonisolated func decode(_ data: Data) -> Result<VMCommandRequest, VMCommandTransportRefusal> {
         let request: VMCommandRequest
         do {
             request = try JSONDecoder().decode(VMCommandRequest.self, from: data)
         } catch {
-            throw EnvelopeError.undecodable(error.localizedDescription)
+            return .failure(.undecodableRequest(error.localizedDescription))
         }
         guard request.protocolVersion == VMCommandRequest.currentProtocolVersion else {
-            throw EnvelopeError.unsupportedProtocolVersion(request.protocolVersion)
+            return .failure(
+                .unsupportedProtocolVersion(
+                    peer: request.protocolVersion,
+                    expected: VMCommandRequest.currentProtocolVersion))
         }
-        return try JSONEncoder().encode(await respond(to: request))
+        return .success(request)
+    }
+
+    /// Serializes one response for the wire.
+    nonisolated func encode(_ response: VMCommandResponse) -> Data {
+        do {
+            return try JSONEncoder().encode(response)
+        } catch {
+            // Every payload is a `Codable` value this module owns, so nothing
+            // here has an encodable shape that can fail at runtime.
+            Self.logger.fault(
+                "A response could not be encoded: \(error.localizedDescription, privacy: .public)")
+            assertionFailure("A response could not be encoded: \(error)")
+            let fallback = VMCommandResponse(
+                result: .failure(
+                    .operationFailed(
+                        verb: .list, title: nil,
+                        message: "The answer could not be encoded.", recovery: nil)))
+            return (try? JSONEncoder().encode(fallback)) ?? Data()
+        }
+    }
+
+    /// Answers one encoded request with one encoded response.
+    ///
+    /// The unary round trip, for a caller holding whole payloads rather than a
+    /// stream. A subscription goes through ``snapshotAndEvents()`` instead.
+    func handle(_ data: Data) async -> Data {
+        switch decode(data) {
+        case .failure(let refusal):
+            return encode(VMCommandResponse(result: .refused(refusal)))
+        case .success(let request):
+            return encode(await respond(to: request))
+        }
+    }
+
+    // MARK: - Subscription
+
+    /// The library as it stands, and every change from that instant on.
+    ///
+    /// Subscribes *before* it lists, both inside this one main-actor call, so
+    /// no event can land between the two and be lost. That is what makes a
+    /// client waiting for a state race-free against a VM already in it.
+    func snapshotAndEvents() -> (VMCommandResponse, AsyncStream<VMCommandResponse>) {
+        let events = eventResponses()
+        let snapshot = VMCommandResponse(result: .summaries(commands.list()))
+        return (snapshot, events)
     }
 
     // MARK: - Dispatch
@@ -76,9 +120,18 @@ struct VMCommandEnvelopeRouter {
             return .ipAddress(try commands.ipAddress(of: selector))
         case .snapshots(let selector):
             return .snapshots(try commands.snapshots(of: selector))
+        case .events:
+            // Streaming, not unary: a transport answers `.events` through
+            // `snapshotAndEvents()` and never reaches here.
+            assertionFailure("The events verb was dispatched as a unary request")
+            return .failure(
+                .operationFailed(
+                    verb: .events, title: nil,
+                    message: "This transport does not deliver event subscriptions.",
+                    recovery: nil))
 
-        case .start(let selector, let recovery):
-            try await commands.start(selector, recovery: recovery)
+        case .start(let selector, let recovery, let presentation):
+            try await commands.start(selector, recovery: recovery, presentation: presentation)
             return .ok
         case .cancelGuestSetup(let selector, let confirmed):
             try commands.cancelGuestSetup(selector, confirmed: confirmed)
@@ -89,8 +142,8 @@ struct VMCommandEnvelopeRouter {
         case .pause(let selector):
             try await commands.pause(selector)
             return .ok
-        case .resume(let selector):
-            try await commands.resume(selector)
+        case .resume(let selector, let presentation):
+            try await commands.resume(selector, presentation: presentation)
             return .ok
         case .suspend(let selector):
             try await commands.suspend(selector)

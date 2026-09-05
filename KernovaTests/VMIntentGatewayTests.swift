@@ -670,7 +670,7 @@ struct VMIntentGatewayTests {
             index: MockVMEntityIndex(),
             defaults: makeStore(store),
             onIdle: {
-                if box.gateway?.hasIntentInFlight == true { log.reportedWhileBusy = true }
+                if box.gateway?.hasWorkInFlight == true { log.reportedWhileBusy = true }
                 log.count += 1
                 log.gate.notify()
             })
@@ -684,12 +684,12 @@ struct VMIntentGatewayTests {
         let gateway = makeIdleReportingGateway(MockVMCommanding(), store: "idle-single", log: log)
 
         gateway.beginIntent()
-        #expect(gateway.hasIntentInFlight)
+        #expect(gateway.hasWorkInFlight)
         gateway.endIntent()
         // Deferred, so the value the intent has just built reaches the framework
         // before anything can act on the process being idle.
         #expect(log.count == 0)
-        #expect(!gateway.hasIntentInFlight)
+        #expect(!gateway.hasWorkInFlight)
 
         try await log.gate.wait { log.count == 1 }
         #expect(!log.reportedWhileBusy)
@@ -703,7 +703,7 @@ struct VMIntentGatewayTests {
         gateway.beginIntent()
         gateway.beginIntent()
         gateway.endIntent()
-        #expect(gateway.hasIntentInFlight)
+        #expect(gateway.hasWorkInFlight)
 
         gateway.endIntent()
         try await log.gate.wait { log.count == 1 }
@@ -745,7 +745,7 @@ struct VMIntentGatewayTests {
         #expect(try await gateway.snapshots(ofVM: vm).isEmpty)
 
         #expect(log.count == 0)
-        #expect(!gateway.hasIntentInFlight)
+        #expect(!gateway.hasWorkInFlight)
     }
 }
 

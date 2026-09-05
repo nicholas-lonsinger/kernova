@@ -24,16 +24,18 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   mode is branched on; every delegate method below it forwards without forking. It answers the
   residency's `AppLaunchHosting` seam — the auto-start pass, the first library read, the true quit.
 - `AppResidencyHosting` — everything the delegate asks of the process's residency: the launch, the
-  reopen, the summon, the quit-after-last-window answer, and the App Intents front door. Two peer
+  reopen, the summon, the quit-after-last-window answer, and the automation front doors. Two peer
   implementations, `AppResidencyController` and `TestHostResidencyController`. It refines
   `WindowResidencyHosting`, which is the narrower seam the window layer holds.
 - `AppResidencyController` — the resident app's residency: the activation policy, the menu-bar
-  status item, the GUI summon, the idle quit an automation launch settles into, and the
-  `VMIntentGateway` it publishes and then reads for intents in flight.
+  status item, the GUI summon, the idle quit an automation launch settles into, and the automation
+  front doors it opens and then reads for work in flight. Both doors answer `AutomationWorkCounting`
+  and nothing else, so the aliveness decision counts work rather than doors and a third one would
+  change no decision.
 - `TestHostResidencyController` — the test host's residency, built only under XCTest: a plain
   foreground `.regular` app that shows the library at launch and idle-quits once no window is on
-  screen, the app is not hidden, and no guest is live. It publishes no intent gateway and offers no
-  soft quit.
+  screen, the app is not hidden, and no guest is live. It opens no automation front door and offers
+  no soft quit.
 - `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
   rather than downgrade to a GUI close, the save pass that suspends every live guest before the
   process exits, and the relaunch a TCC revocation needs. It reaches the GUI close through
@@ -261,8 +263,20 @@ Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the log
 `EntitlementService` (what this build's signature authorizes, so feature UI can degrade in builds
 signed without a restricted entitlement), `AttachmentFileMonitor` (existence watching for the
 settings pane's disk, removable-media and shared-directory rows, held by the panel context they
-share), `RuntimeFileAccess` (per-boot security-scoped access, released once in
-`VMSessionContext.tearDown`), and `SerialSocketRelay` (below).
+share), and `RuntimeFileAccess` (per-boot security-scoped access, released once in
+`VMSessionContext.tearDown`).
+
+Two AF_UNIX listeners share `UnixSocketListener`, which owns the bind/listen/accept plumbing and
+hands each accepted descriptor to its owner on the listener's queue with no lock held:
+`SerialSocketRelay` (below) and `VMCommandSocketListener`.
+
+`VMCommandSocketListener` is the out-of-process front door — the socket in the app-group container
+the `kernova` tool connects to. It admits a peer only when `SameTeamPeerAuthorizer` matches the
+peer's audit token against a requirement naming this build's own team, then gives each connection a
+`VMCommandConnection` confined to the listener's private queue: framing and JSON stay off the main
+actor, and only the verb itself hops to it through `VMCommandEnvelopeRouter`. A build resolving no
+group container or no team binds nothing and the tool finds no socket. The container's ID is
+resolved from the process's own signature by `KernovaAppGroup`, never spelled in code.
 
 **Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
 rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through
@@ -304,7 +318,13 @@ session down without that hook, so a suspended session survives to revert at its
   what reserves the destination atomically on the MainActor, so overlapping imports and clones
   cannot claim the same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
-  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
+  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core. `decode` and
+  `encode` are `nonisolated` so a transport parses and serializes on its own queue; only the verb
+  crosses to main. `snapshotAndEvents()` subscribes *then* lists inside one main-actor call, so a
+  subscriber can never miss an event between the two — that is what makes a client waiting for a
+  state race-free against a VM already in it. An envelope-level refusal is a
+  `VMCommandTransportRefusal` delivered as a frame, not a thrown error: the peer asked and is owed
+  an answer.
 - `VMIntentGateway` — the App Intents boundary, built and published through `AppDependencyManager`
   by `AppResidencyController` so every
   intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity
@@ -428,7 +448,9 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
                           VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
 
-A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
+kernova (CLI) ──bytes over the app-group AF_UNIX socket──→ VMCommandSocketListener
+                                       VMCommandSocketListener ──idle──→ AppResidencyController
+                       VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
 
 Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
                                        VMIntentGateway ──idle───→ AppResidencyController

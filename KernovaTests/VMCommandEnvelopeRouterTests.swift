@@ -14,12 +14,12 @@ private struct TestTransport {
 
     func send(_ verb: VMCommandRequest.Verb) async throws -> VMCommandResponse {
         let request = try JSONEncoder().encode(VMCommandRequest(verb: verb))
-        let response = try await router.handle(request)
+        let response = await router.handle(request)
         return try JSONDecoder().decode(VMCommandResponse.self, from: response)
     }
 
     func sendRaw(_ bytes: Data) async throws -> VMCommandResponse {
-        try JSONDecoder().decode(VMCommandResponse.self, from: try await router.handle(bytes))
+        try JSONDecoder().decode(VMCommandResponse.self, from: await router.handle(bytes))
     }
 }
 
@@ -134,7 +134,8 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
 
-        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let response = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
 
         #expect(response.result == .ok)
         #expect(harness.virtualization.startCallCount == 1)
@@ -187,7 +188,8 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
-        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let response = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
 
         guard case .invalidState(_, let current, let allowed)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -230,7 +232,8 @@ struct VMCommandEnvelopeRouterTests {
             code: VZError.Code.virtualMachineLimitExceeded.rawValue)
         let instance = makeInstance(in: harness, name: "Capped")
 
-        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let response = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
 
         guard case .operationFailed(_, let title, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -312,7 +315,8 @@ struct VMCommandEnvelopeRouterTests {
         harness.library.instances.append(instance)
         harness.storage.bundles[bundleURL] = config
 
-        let started = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let started = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
         #expect(started.result == .ok)
         for await _ in installService.installStartedStream { break }
 
@@ -378,7 +382,7 @@ struct VMCommandEnvelopeRouterTests {
         library.instances.append(instance)
         storage.bundles[bundleURL] = config
 
-        let started = try await transport.send(.start(.id(instance.id), recovery: false))
+        let started = try await transport.send(.start(.id(instance.id), recovery: false, presentation: .surface))
         #expect(started.result == .ok)
 
         // The install completes synchronously (`MockMacOSInstallService` has no
@@ -599,8 +603,11 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         makeInstance(in: harness)
 
-        await #expect(throws: VMCommandEnvelopeRouter.EnvelopeError.self) {
-            _ = try await harness.transport.sendRaw(Data("not a request".utf8))
+        let response = try await harness.transport.sendRaw(Data("not a request".utf8))
+
+        guard case .refused(.undecodableRequest) = response.result else {
+            Issue.record("expected an undecodable-request refusal, got \(response.result)")
+            return
         }
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -609,16 +616,17 @@ struct VMCommandEnvelopeRouterTests {
     func foreignProtocolVersionIsRefused() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false))
+        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false, presentation: .surface))
         request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
 
-        let error = await #expect(throws: VMCommandEnvelopeRouter.EnvelopeError.self) {
-            _ = try await harness.transport.sendRaw(try JSONEncoder().encode(request))
-        }
+        let response = try await harness.transport.sendRaw(try JSONEncoder().encode(request))
 
         #expect(
-            error
-                == .unsupportedProtocolVersion(VMCommandRequest.currentProtocolVersion + 1))
+            response.result
+                == .refused(
+                    .unsupportedProtocolVersion(
+                        peer: VMCommandRequest.currentProtocolVersion + 1,
+                        expected: VMCommandRequest.currentProtocolVersion)))
         #expect(harness.virtualization.startCallCount == 0)
     }
 
