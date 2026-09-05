@@ -196,9 +196,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             event?.attributeDescriptor(forKeyword: keySenderPIDAttr).map { String($0.int32Value) }
             ?? "none"
         // A launch the app itself asked Launch Services for is `kAEDirectCall`;
-        // anything else sent the open event on someone else's behalf.
+        // a source that positively names another process sent the open event on
+        // someone else's behalf. An absent or unreadable source (`int32Value` is
+        // 0, `kAEUnknownSource`, on any coercion failure) is not evidence of
+        // either, and unknown resolves toward the person.
         let eventSource = event?.attributeDescriptor(forKeyword: keyEventSourceAttr)?.int32Value
-        let isDirectOpen = eventSource == Int32(kAEDirectCall)
+        let isDirectOpen =
+            eventSource.map { $0 == Int32(kAEDirectCall) || $0 == Int32(kAEUnknownSource) }
+            ?? true
         let source = eventSource.map { String($0) } ?? "none"
         let isHiddenLaunch = NSApp.isHidden
         Self.logger.notice(

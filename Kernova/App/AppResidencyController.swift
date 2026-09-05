@@ -186,14 +186,17 @@ final class AppResidencyController: AppResidencyHosting {
     /// and the open Apple Event the Shortcuts runner sends it — which the runner
     /// sends on roughly one launch in four, so its absence carries no
     /// information — has a `keyEventSourceAttr` of `kAELocalProcess` naming the
-    /// runner as sender. Every launch a person performs breaks that pair: a
-    /// Finder double-click and a Dock click carry a foreign open event but come
-    /// up unhidden, and `open -a`, `open -g -j -a` and a Shortcuts *Open App*
-    /// action all send `kAEDirectCall`.
+    /// runner as sender. Each launch a person performs that was measured breaks
+    /// that pair: a Finder double-click and a Dock click carry a foreign open
+    /// event but come up unhidden, and `open -a`, `open -g -j -a` and a
+    /// Shortcuts *Open App* action all send `kAEDirectCall`. An opener that
+    /// asks for the app hidden has asked for no window, which is what the rule
+    /// answers.
     ///
-    /// `openEventIsDirect` says nothing when `hasOpenAppleEvent` is `false`.
-    /// `openedDocuments` outranks the hidden-and-foreign rule: opening a
-    /// document is a request to see it.
+    /// `openEventIsDirect` says nothing when `hasOpenAppleEvent` is `false`, and
+    /// a source that could not be read counts as direct. `openedDocuments`
+    /// outranks the hidden-and-foreign rule: opening a document is a request
+    /// to see it.
     nonisolated static func launchProvenance(
         openedUntitledFile: Bool,
         openedDocuments: Bool,
