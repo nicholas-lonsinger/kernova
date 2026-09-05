@@ -242,14 +242,17 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Icon / tooltip
 
     private func setIcon() {
-        let symbol = Self.iconSymbol(
-            hasStartFailures: viewModel.bufferedStartFailureCount > 0)
+        let hasStartFailures = viewModel.bufferedStartFailureCount > 0
+        let symbol = Self.iconSymbol(hasStartFailures: hasStartFailures)
+        // The glyph is the whole signal for a sighted user; the description is
+        // the whole of it for VoiceOver, so it changes with the glyph.
+        let description = hasStartFailures ? "Kernova, a virtual machine failed to start" : "Kernova"
         // RATIONALE: deliberately not the shared `NSImage.systemSymbol(_:…)` helper.
         // Its release fallback is a zero-size `NSImage()`, which would render the
         // status-item button invisible — and the status item is the *only* way to
         // find (or quit) the headless agent.
         guard
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Kernova")
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         else {
             Self.logger.fault(
                 "Missing SF Symbol '\(symbol, privacy: .public)' for status item")

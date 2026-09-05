@@ -1965,8 +1965,10 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.bufferedStartFailureCount == 0)
     }
 
-    @Test("A failure carrying no recovery still buffers and drains as a plain alert")
-    func plainFailureWithNoWindowDrainsAsAnAlert() async {
+    /// A guest cap or a duplicate identity refuses a start with only a message,
+    /// and a headless launch has to report that as surely as a missing disk.
+    @Test("A start failure carrying no recovery is counted, then drains as a plain alert")
+    func plainStartFailureWithNoWindowIsCountedAndDrainsAsAnAlert() async {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -1977,13 +1979,32 @@ struct VMLibraryViewModelTests {
         await viewModel.start(instance)
 
         #expect(presenter.errors.isEmpty)
-        #expect(viewModel.bufferedStartFailureCount == 0)
+        #expect(viewModel.bufferedStartFailureCount == 1)
 
         viewModel.presenter = presenter
 
         #expect(presenter.errors.count == 1)
         #expect(presenter.startFailedAttachments.isEmpty)
         #expect(viewModel.bufferedStartFailureCount == 0)
+    }
+
+    @Test("A failure raised by something other than a start is buffered but not counted")
+    func nonStartFailureWithNoWindowIsNotCounted() async {
+        let virtService = MockVirtualizationService()
+        virtService.stopError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        instance.enter(.running(sessionID: UUID()))
+        viewModel.instances.append(instance)
+        viewModel.presenter = nil
+
+        await viewModel.stop(instance)
+
+        #expect(viewModel.bufferedStartFailureCount == 0)
+
+        viewModel.presenter = presenter
+
+        #expect(presenter.errors.count == 1)
     }
 
     @Test("removeStartFailedAttachmentAndStart detaches the item and retries the start")

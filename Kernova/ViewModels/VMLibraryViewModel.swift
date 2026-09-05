@@ -350,14 +350,26 @@ final class VMLibraryViewModel {
     /// offered.
     private enum BufferedPresentation {
         case error(title: String, message: String)
-        /// The VM is named by id and re-resolved on the drain — one that left
-        /// the library meanwhile leaves the recovery nothing to act on.
-        case startFailedAttachment(StartFailedAttachment, vmID: UUID)
+        /// A start that failed, whatever it failed with. The VM is named by id
+        /// and re-resolved on the drain — one that left the library meanwhile
+        /// leaves nothing to act on or report.
+        case startFailure(StartFailure, vmID: UUID)
 
         var isStartFailure: Bool {
-            if case .startFailedAttachment = self { return true }
+            if case .startFailure = self { return true }
             return false
         }
+    }
+
+    /// How a start failed: with an attachment the alert can offer to detach,
+    /// or with only a message to show.
+    ///
+    /// One case for every start failure, so the status item reports each of
+    /// them — a guest cap or a duplicate identity refuses a start as surely as
+    /// a missing disk image, and a headless launch has no other way to say so.
+    private enum StartFailure {
+        case attachment(StartFailedAttachment)
+        case message(title: String, message: String)
     }
 
     /// What is waiting for a presenter, in the order it was raised.
@@ -1152,9 +1164,12 @@ final class VMLibraryViewModel {
         switch command {
         case .confirmationRequired(let prompt):
             presentConfirmation(prompt, for: instance)
-        case .operationFailed(_, _, let message, let recovery):
+        case .operationFailed(let verb, _, let message, let recovery):
             if case .removeStartFailedAttachment(let failure) = recovery, let instance {
-                surfaceStartFailedAttachment(failure, for: instance)
+                surfaceStartFailure(.attachment(failure), for: instance)
+            } else if verb == .start, let instance {
+                surfaceStartFailure(
+                    .message(title: command.alertTitle, message: message), for: instance)
             } else {
                 surfaceError(message, title: command.alertTitle)
             }
@@ -1196,17 +1211,20 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Routes the start-failed alert to the presenter, buffering the failure
-    /// itself when none is attached yet — a headless launch's auto-start pass
-    /// runs with no window, and the alert it earns is the one carrying the
-    /// detach-and-start-again action.
-    private func surfaceStartFailedAttachment(
-        _ failure: StartFailedAttachment, for instance: VMInstance
-    ) {
-        if let presenter {
-            presenter.presentStartFailedAttachment(failure, for: instance)
-        } else {
-            bufferedPresentations.append(.startFailedAttachment(failure, vmID: instance.id))
+    /// Routes a start failure to the presenter, buffering the failure itself
+    /// when none is attached yet — a headless launch's auto-start pass runs
+    /// with no window, and the alert it earns is the one carrying whatever the
+    /// failure offered, the detach-and-start-again action included.
+    private func surfaceStartFailure(_ failure: StartFailure, for instance: VMInstance) {
+        guard let presenter else {
+            bufferedPresentations.append(.startFailure(failure, vmID: instance.id))
+            return
+        }
+        switch failure {
+        case .attachment(let attachment):
+            presenter.presentStartFailedAttachment(attachment, for: instance)
+        case .message(let title, let message):
+            presenter.presentError(message, title: title)
         }
     }
 
@@ -1220,14 +1238,14 @@ final class VMLibraryViewModel {
             switch presentation {
             case .error(let title, let message):
                 surfaceError(message, title: title)
-            case .startFailedAttachment(let failure, let vmID):
+            case .startFailure(let failure, let vmID):
                 guard let instance = instances.first(where: { $0.id == vmID }) else {
                     Self.logger.debug(
                         "Dropped a buffered start failure — its VM left the library before a window arrived"
                     )
                     continue
                 }
-                surfaceStartFailedAttachment(failure, for: instance)
+                surfaceStartFailure(failure, for: instance)
             }
         }
     }
