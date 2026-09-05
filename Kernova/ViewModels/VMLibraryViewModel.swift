@@ -947,7 +947,7 @@ final class VMLibraryViewModel {
     /// A VM that has yet to finish setup is skipped: its start runs the macOS
     /// install or the Linux image download, neither of which may begin
     /// unattended. ``VMConfiguration/hasPendingSetup`` is what decides that, not
-    /// the phase — ``VMCommandCore/start(_:recovery:)`` dispatches on the
+    /// the phase — ``VMCommandCore/start(_:recovery:presentation:)`` dispatches on the
     /// surviving install context too, so a failed install sitting at `.failed`
     /// still routes into the installer, and `.failed` otherwise means "retry the
     /// boot".

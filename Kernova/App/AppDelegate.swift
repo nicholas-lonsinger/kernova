@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
     private var libraryLoad: Task<Void, Never>?
-    /// Latched once ``armAutoStartPass()`` has armed the pass, so the first
+    /// Latched once ``armAutoStartPass(surfacingDisplays:)`` has armed the pass, so the first
     /// interactive bring-up of an automation-launched process runs it and no
     /// later one runs it a second time.
     private var hasArmedAutoStartPass = false
