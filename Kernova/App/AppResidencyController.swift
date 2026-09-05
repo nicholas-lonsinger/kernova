@@ -176,7 +176,7 @@ final class AppResidencyController: AppResidencyHosting {
         let socket = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
-            socketPath: KernovaAppGroup.socketURL()?.path(percentEncoded: false),
+            socketPath: KernovaAppGroup.socketPath(),
             onIdle: { [weak self] in self?.reconcileIdleTermination() })
         socket.start()
 

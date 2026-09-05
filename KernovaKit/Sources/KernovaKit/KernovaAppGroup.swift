@@ -53,6 +53,17 @@ public enum KernovaAppGroup {
         containerURL()?.appendingPathComponent(socketFileName, isDirectory: false)
     }
 
+    /// The command socket's filesystem path, which is the form the socket calls
+    /// take.
+    ///
+    /// Both ends read it here, so neither can bind or dial a path the other
+    /// spelled differently.
+    public static func socketPath() -> String? {
+        socketURL()?.withUnsafeFileSystemRepresentation { representation in
+            representation.map { String(cString: $0) }
+        }
+    }
+
     private static let resolved: String? = {
         guard let task = SecTaskCreateFromSelf(nil),
             let value = SecTaskCopyValueForEntitlement(task, entitlementKey as CFString, nil),

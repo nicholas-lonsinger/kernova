@@ -12,7 +12,9 @@ public struct KernovaCommand: ParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "kernova",
         abstract: "Drive Kernova's virtual machines from the command line.",
-        version: toolVersion
+        version: toolVersion,
+        subcommands: [List.self, Info.self, IP.self, Version.self],
+        defaultSubcommand: List.self
     )
 
     /// What `kernova --version` prints.
