@@ -29,7 +29,7 @@ struct ObservedAgentInfo: Equatable, Sendable {
     /// Ceiling, in UTF-8 bytes, on either version field.
     ///
     /// `Hello.agent_info` is peer-supplied and bounded on the wire only by
-    /// `VsockFrame.maxPayloadSize`, while the host persists both fields to
+    /// `StreamFrame.maxPayloadSize`, while the host persists both fields to
     /// `config.json`, renders them in its UI, interpolates them into its log,
     /// and scans `os_version` with an `NSRegularExpression` on the main actor.
     /// A dotted-decimal version — with room for a build suffix — needs nothing

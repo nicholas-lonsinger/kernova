@@ -44,7 +44,7 @@ public final class VsockChannel: @unchecked Sendable {
     /// Fed and drained only from `handleChunk`, which always runs on the
     /// `FileHandle`'s own serial readability GCD queue — reader-confined, no
     /// lock needed.
-    private var decoder = VsockFrameDecoder()
+    private var decoder = StreamFrameDecoder()
 
     /// Ignores `SIGPIPE` process-wide so a write to a peer whose read side has
     /// closed surfaces as `EPIPE` rather than killing the process.
@@ -117,10 +117,10 @@ public final class VsockChannel: @unchecked Sendable {
     /// a large payload can run this O(payload) work on a background executor.
     ///
     /// - Throws: a serialization error from `Frame.serializedData()`, or
-    ///   `VsockFrameError.frameTooLarge` if the encoded payload exceeds
-    ///   `VsockFrame.maxPayloadSize`.
+    ///   `StreamFrameError.frameTooLarge` if the encoded payload exceeds
+    ///   `StreamFrame.maxPayloadSize`.
     public static func serializeFramed(_ frame: Frame) throws -> Data {
-        try VsockFrame.encode(frame.serializedData())
+        try StreamFrame.encode(frame.serializedData())
     }
 
     /// Writes already-framed bytes to the wire.
