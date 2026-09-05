@@ -31,20 +31,15 @@ git push origin HEAD:<type>/<short-description>      # every later push: same re
 Pass `--head <type>/<short-description>` to `gh pr create`, and verify after
 each push with `git status -sb` — no `[ahead N]` means the push landed.
 **Never push the `worktree-` scratch name to origin** (no bare
-`git push -u origin HEAD`); a PR's head branch is always the clean name.
-**Always push before exiting the worktree**: `ExitWorktree(remove)` drops
-*unpushed* commits silently.
+`git push -u origin HEAD`). **Always push before exiting the worktree**:
+`ExitWorktree(remove)` drops *unpushed* commits silently.
 
 ## Post-merge cleanup in an `EnterWorktree` session
 
-AGENTS.md's post-merge steps assume the checkout that holds `main`. An
-`EnterWorktree` session is not it: `main` is checked out in the primary
-checkout, so nothing run from here advances it, and the worktree isolation
-guard refuses ad-hoc `git -C <primary-checkout>` commands. After confirming
-the merge landed (`gh pr view <N> --json state -q .state` → `"MERGED"`),
-fast-forward `main` in that checkout rather than from this worktree.
-
-Then, still inside this worktree, drop the branch's now-redundant commits:
+AGENTS.md's post-merge steps hold from an `EnterWorktree` session up to the
+branch deletion: confirm the merge and fast-forward the default branch as
+written, but keep this worktree's branch — `ExitWorktree(remove)` deletes
+it — and first drop its now-redundant commits, still inside this worktree:
 
 ```bash
 git fetch origin main && git reset --hard origin/main
