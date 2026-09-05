@@ -7,13 +7,14 @@ import os
 ///
 /// Strictly best-effort: a slow, absent, or vanished client never blocks or
 /// breaks the authoritative `serial.log` path that owns the same output stream.
-/// Single-client — a second connection supersedes the first. All
+/// Single-client — a second connection supersedes the first. All client
 /// file-descriptor state is guarded by one `NSLock`, so `forwardOutput(_:)` is
-/// safe to call from the background queue that drives serial output.
+/// safe to call from the background queue that drives serial output; the socket
+/// itself belongs to a ``UnixSocketListener``.
 final class SerialSocketRelay: @unchecked Sendable {
     /// Filesystem path of the bound socket, for UI display — `nil` until
     /// `start()` binds successfully, and again after `stop()`.
-    private(set) var socketPath: String?
+    var socketPath: String? { listener.boundPath }
 
     private let path: String
     /// Write end of the guest's serial input pipe.
@@ -25,33 +26,23 @@ final class SerialSocketRelay: @unchecked Sendable {
 
     private let queue: DispatchQueue
     private let lock = NSLock()
+    private let listener: UnixSocketListener
 
-    // All fields below are guarded by `lock`; an fd of `-1` means inactive. The
-    // relay is re-startable — stop() then start() re-binds the same instance.
-    private var listenFd: Int32 = -1
-    private var listenSource: DispatchSourceRead?
+    // The fields below are guarded by `lock`; an fd of `-1` means no client.
     private var clientFd: Int32 = -1
     private var clientSource: DispatchSourceRead?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "SerialSocketRelay")
 
-    /// Process-wide `SIGPIPE` suppression so a write to a client whose read
-    /// side has vanished surfaces as `EPIPE` from `write(2)` instead of killing
-    /// the process.
-    private static let suppressSIGPIPEOnce: Void = {
-        signal(SIGPIPE, SIG_IGN)
-    }()
-
-    /// Largest AF_UNIX path that fits in `sockaddr_un.sun_path` (including the
-    /// NUL terminator) — 104 on Darwin.
-    private static let maxPathLength = MemoryLayout.size(ofValue: sockaddr_un().sun_path)
-
     init(path: String, guestInputWriteHandle: FileHandle, label: String) {
+        let queue = DispatchQueue(label: "app.kernova.serial-relay")
         self.path = path
         self.guestInput = guestInputWriteHandle
         self.label = label
-        self.queue = DispatchQueue(label: "app.kernova.serial-relay")
-        _ = Self.suppressSIGPIPEOnce
+        self.queue = queue
+        // Owner-only: only the same user may connect to the serial socket.
+        self.listener = UnixSocketListener(
+            path: path, queue: queue, backlog: 1, fileMode: mode_t(S_IRUSR | S_IWUSR))
     }
 
     deinit {
@@ -62,97 +53,38 @@ final class SerialSocketRelay: @unchecked Sendable {
 
     /// Binds + listens on the AF_UNIX path and begins accepting a client.
     ///
-    /// Idempotent. If the path can't fit `sockaddr_un.sun_path`, logs `.fault`
-    /// and stays disabled (`socketPath` remains `nil`) — the VM is unaffected.
+    /// Idempotent. A path that can't fit `sockaddr_un.sun_path`, or a socket the
+    /// app cannot bind, leaves the relay disabled (`socketPath` stays `nil`) —
+    /// the VM is unaffected.
     func start() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard listenFd < 0 else { return }
-
-        let pathBytes = Array(path.utf8)
-        guard pathBytes.count + 1 <= Self.maxPathLength else {
+        do {
+            try listener.start { [weak self] fd in self?.adoptClient(fd) }
+        } catch .address(let failure) {
+            // A path the app derived itself, so one that does not fit is a bug
+            // in how it was derived rather than a condition to recover from.
             Self.logger.fault(
-                "Serial relay socket path too long (\(pathBytes.count + 1, privacy: .public) > \(Self.maxPathLength, privacy: .public)) for '\(self.label, privacy: .public)'; relay disabled: \(self.path, privacy: .public)"
+                "Serial relay socket path unusable for '\(self.label, privacy: .public)' — \(String(describing: failure), privacy: .public): \(self.path, privacy: .public)"
+            )
+            return
+        } catch {
+            Self.logger.error(
+                "Serial relay could not bind for '\(self.label, privacy: .public)' — \(String(describing: error), privacy: .public): \(self.path, privacy: .public)"
             )
             return
         }
-
-        // Clear any stale socket file left by a prior crash before binding.
-        unlink(path)
-
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else {
-            Self.logger.error(
-                "Serial relay socket() failed for '\(self.label, privacy: .public)': errno \(errno, privacy: .public)")
-            return
-        }
-
-        Self.setNoSIGPIPE(fd)
-        Self.setNonBlocking(fd)
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        withUnsafeMutablePointer(to: &addr.sun_path) { rawPtr in
-            rawPtr.withMemoryRebound(to: CChar.self, capacity: Self.maxPathLength) { dst in
-                for i in 0..<pathBytes.count { dst[i] = CChar(bitPattern: pathBytes[i]) }
-                dst[pathBytes.count] = 0
-            }
-        }
-
-        let bindResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                bind(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard bindResult == 0 else {
-            Self.logger.error(
-                "Serial relay bind() failed for '\(self.label, privacy: .public)': errno \(errno, privacy: .public)")
-            close(fd)
-            return
-        }
-
-        // Owner-only: only the same user may connect to the serial socket.
-        chmod(path, mode_t(S_IRUSR | S_IWUSR))
-
-        guard listen(fd, 1) == 0 else {
-            Self.logger.error(
-                "Serial relay listen() failed for '\(self.label, privacy: .public)': errno \(errno, privacy: .public)")
-            close(fd)
-            unlink(path)
-            return
-        }
-
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        source.setEventHandler { [weak self] in self?.acceptClient() }
-        source.setCancelHandler { close(fd) }
-        listenFd = fd
-        listenSource = source
-        socketPath = path
-        source.resume()
-
         Self.logger.notice(
             "Serial relay listening for '\(self.label, privacy: .public)' at \(self.path, privacy: .public)")
     }
 
-    /// Closes the client + listener, cancels both dispatch sources, and unlinks
-    /// the socket file.
+    /// Closes the client, stops the listener, and unlinks the socket file.
     ///
     /// Idempotent.
     func stop() {
         lock.lock()
-        defer { lock.unlock() }
-
         tearDownClientLocked()
+        lock.unlock()
 
-        listenSource?.cancel()  // cancel handler closes listenFd
-        listenSource = nil
-        listenFd = -1
-
-        if socketPath != nil {
-            unlink(path)
-            socketPath = nil
-        }
+        listener.stop()
         Self.logger.notice("Serial relay stopped for '\(self.label, privacy: .public)'")
     }
 
@@ -194,16 +126,11 @@ final class SerialSocketRelay: @unchecked Sendable {
 
     // MARK: - Accept / read (client → guest)
 
-    private func acceptClient() {
+    /// Takes ownership of a newly accepted connection, superseding any client
+    /// already on the wire.
+    private func adoptClient(_ newFd: Int32) {
         lock.lock()
         defer { lock.unlock() }
-        guard listenFd >= 0 else { return }
-
-        let newFd = accept(listenFd, nil, nil)
-        guard newFd >= 0 else { return }  // EWOULDBLOCK / transient — source will refire
-
-        Self.setNoSIGPIPE(newFd)
-        Self.setNonBlocking(newFd)
 
         // Single-client semantics: supersede any existing client.
         if clientFd >= 0 {
@@ -280,17 +207,4 @@ final class SerialSocketRelay: @unchecked Sendable {
         return clientFd >= 0
     }
     #endif
-
-    // MARK: - Socket options
-
-    private static func setNoSIGPIPE(_ fd: Int32) {
-        var on: Int32 = 1
-        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-    }
-
-    private static func setNonBlocking(_ fd: Int32) {
-        let flags = fcntl(fd, F_GETFL, 0)
-        guard flags >= 0 else { return }
-        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-    }
 }
