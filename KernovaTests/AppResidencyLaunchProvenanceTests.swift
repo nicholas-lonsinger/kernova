@@ -8,36 +8,54 @@ import Testing
 /// keeps running.
 @Suite("AppResidencyController launch provenance", .admissionGated)
 struct AppResidencyLaunchProvenanceTests {
-    /// The signals an App Intents cold launch presents: no open Apple Event, no
-    /// untitled open, no document, and `isDefaultLaunch` false.
-    private func automationSignals() -> AppResidencyController.LaunchProvenance {
+    /// The classifier, defaulted to a launch carrying no sign of a person: no
+    /// open Apple Event, no untitled open, no document, not hidden, and
+    /// `isDefaultLaunch` false.
+    ///
+    /// `openEventIsDirect` defaults to `true` — what the classifier reads when
+    /// an open event is present and nothing says otherwise.
+    private func provenance(
+        openedUntitledFile: Bool = false,
+        openedDocuments: Bool = false,
+        hasOpenAppleEvent: Bool = false,
+        openEventIsDirect: Bool = true,
+        isHiddenLaunch: Bool = false,
+        isLoginItemLaunch: Bool = false,
+        isDefaultLaunch: Bool = false
+    ) -> AppResidencyController.LaunchProvenance {
         AppResidencyController.launchProvenance(
-            openedUntitledFile: false,
-            openedDocuments: false,
-            hasOpenAppleEvent: false,
-            isLoginItemLaunch: false,
-            isDefaultLaunch: false)
+            openedUntitledFile: openedUntitledFile,
+            openedDocuments: openedDocuments,
+            hasOpenAppleEvent: hasOpenAppleEvent,
+            openEventIsDirect: openEventIsDirect,
+            isHiddenLaunch: isHiddenLaunch,
+            isLoginItemLaunch: isLoginItemLaunch,
+            isDefaultLaunch: isDefaultLaunch)
     }
 
     // MARK: - launchProvenance
 
     @Test("A launch with no sign of a person asking is automation")
     func noSignalsIsAutomation() {
-        #expect(automationSignals() == .automation)
+        #expect(provenance() == .automation)
     }
 
     @Test("A login-item launch outranks every other signal")
     func loginItemWins() {
         for untitled in [true, false] {
             for documents in [true, false] {
-                for isDefault in [true, false] {
-                    #expect(
-                        AppResidencyController.launchProvenance(
-                            openedUntitledFile: untitled,
-                            openedDocuments: documents,
-                            hasOpenAppleEvent: true,
-                            isLoginItemLaunch: true,
-                            isDefaultLaunch: isDefault) == .loginItem)
+                for hidden in [true, false] {
+                    for isDefault in [true, false] {
+                        #expect(
+                            provenance(
+                                openedUntitledFile: untitled,
+                                openedDocuments: documents,
+                                hasOpenAppleEvent: true,
+                                openEventIsDirect: false,
+                                isHiddenLaunch: hidden,
+                                isLoginItemLaunch: true,
+                                isDefaultLaunch: isDefault) == .loginItem)
+                    }
                 }
             }
         }
@@ -45,61 +63,119 @@ struct AppResidencyLaunchProvenanceTests {
 
     @Test("Any single sign of a person asking resolves to a user launch")
     func anyInteractiveSignalIsUser() {
-        #expect(
-            AppResidencyController.launchProvenance(
-                openedUntitledFile: true, openedDocuments: false, hasOpenAppleEvent: false,
-                isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
-        #expect(
-            AppResidencyController.launchProvenance(
-                openedUntitledFile: false, openedDocuments: true, hasOpenAppleEvent: false,
-                isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
-        #expect(
-            AppResidencyController.launchProvenance(
-                openedUntitledFile: false, openedDocuments: false, hasOpenAppleEvent: true,
-                isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
-        #expect(
-            AppResidencyController.launchProvenance(
-                openedUntitledFile: false, openedDocuments: false, hasOpenAppleEvent: false,
-                isLoginItemLaunch: false, isDefaultLaunch: true) == .user)
+        #expect(provenance(openedUntitledFile: true) == .user)
+        #expect(provenance(openedDocuments: true) == .user)
+        #expect(provenance(hasOpenAppleEvent: true) == .user)
+        #expect(provenance(isDefaultLaunch: true) == .user)
     }
 
-    @Test("Automation is the only combination of the four that is not a user launch")
+    @Test("Exactly two families of signals classify as automation")
     func automationIsTheSoleHeadlessCombination() {
-        var headless = 0
+        var headless: Set<String> = []
         for untitled in [true, false] {
             for documents in [true, false] {
                 for openEvent in [true, false] {
-                    for isDefault in [true, false] {
-                        let provenance = AppResidencyController.launchProvenance(
-                            openedUntitledFile: untitled,
-                            openedDocuments: documents,
-                            hasOpenAppleEvent: openEvent,
-                            isLoginItemLaunch: false,
-                            isDefaultLaunch: isDefault)
-                        if provenance == .automation { headless += 1 }
+                    for direct in [true, false] {
+                        for hidden in [true, false] {
+                            for isDefault in [true, false] {
+                                let verdict = provenance(
+                                    openedUntitledFile: untitled,
+                                    openedDocuments: documents,
+                                    hasOpenAppleEvent: openEvent,
+                                    openEventIsDirect: direct,
+                                    isHiddenLaunch: hidden,
+                                    isDefaultLaunch: isDefault)
+                                guard verdict == .automation else { continue }
+                                headless.insert(
+                                    Self.signalDescription(
+                                        untitled: untitled, documents: documents, openEvent: openEvent,
+                                        direct: direct, hidden: hidden, isDefault: isDefault))
+                            }
+                        }
                     }
                 }
             }
         }
-        #expect(headless == 1)
+        // The hidden launch whose open event another process sent, whatever else
+        // it claims, and the launch carrying no signal at all.
+        #expect(
+            headless == [
+                "untitled=false documents=false openEvent=true direct=false hidden=true default=false",
+                "untitled=false documents=false openEvent=true direct=false hidden=true default=true",
+                "untitled=true documents=false openEvent=true direct=false hidden=true default=false",
+                "untitled=true documents=false openEvent=true direct=false hidden=true default=true",
+                "untitled=false documents=false openEvent=false direct=false hidden=false default=false",
+                "untitled=false documents=false openEvent=false direct=false hidden=true default=false",
+                "untitled=false documents=false openEvent=false direct=true hidden=false default=false",
+                "untitled=false documents=false openEvent=false direct=true hidden=true default=false",
+            ])
+    }
+
+    /// Names one point in the signal space, so the exhaustive sweep can state
+    /// the headless set rather than count it.
+    private static func signalDescription(
+        untitled: Bool, documents: Bool, openEvent: Bool, direct: Bool, hidden: Bool, isDefault: Bool
+    ) -> String {
+        "untitled=\(untitled) documents=\(documents) openEvent=\(openEvent) "
+            + "direct=\(direct) hidden=\(hidden) default=\(isDefault)"
+    }
+
+    @Test("A Finder double-click or a Dock click presents")
+    func finderOrDockLaunchIsUser() {
+        // Measured identically apart from the sender PID, which the classifier
+        // does not read: a foreign `kAELocalProcess` open event, an untitled
+        // open, a default launch, and not hidden.
+        #expect(
+            provenance(
+                openedUntitledFile: true, hasOpenAppleEvent: true, openEventIsDirect: false,
+                isDefaultLaunch: true) == .user)
+    }
+
+    @Test("A Shortcuts Open App action or `open -a` presents")
+    func directOpenLaunchIsUser() {
+        // Both arrive as `kAEDirectCall` with the app itself as sender.
+        #expect(
+            provenance(openedUntitledFile: true, hasOpenAppleEvent: true, isDefaultLaunch: true) == .user)
     }
 
     @Test("An ordinary Launch Services open presents, foregrounded or not")
     func launchServicesOpenIsUser() {
-        // Both `open <app>` and `open -g -j <app>` measured identically:
-        // `kAEOpenApplication`, an untitled open, and a default launch.
+        // `open -g -j <app>` comes up hidden, but its open event is the app's
+        // own `kAEDirectCall` — a person asked for the app, just not for the
+        // front. Presenting is the decided behavior.
         #expect(
-            AppResidencyController.launchProvenance(
-                openedUntitledFile: true, openedDocuments: false, hasOpenAppleEvent: true,
-                isLoginItemLaunch: false, isDefaultLaunch: true) == .user)
+            provenance(
+                openedUntitledFile: true, hasOpenAppleEvent: true, isHiddenLaunch: true,
+                isDefaultLaunch: true) == .user)
+    }
+
+    @Test("An App Intents launch with no open event is automation")
+    func cleanAppIntentsLaunchIsAutomation() {
+        #expect(provenance(isHiddenLaunch: true) == .automation)
+    }
+
+    @Test("An App Intents launch the runner also sent an open event is automation")
+    func appIntentsLaunchWithRunnerOpenEventIsAutomation() {
+        // The runner sends `kAEOpenApplication` on roughly one launch in four,
+        // with an untitled open and a default launch behind it — every signal
+        // the interactive rule reads. Hidden and foreign outranks all of them.
+        #expect(
+            provenance(
+                openedUntitledFile: true, hasOpenAppleEvent: true, openEventIsDirect: false,
+                isHiddenLaunch: true, isDefaultLaunch: true) == .automation)
     }
 
     @Test("A document launch presents even though it is not a default launch")
     func documentLaunchIsUser() {
+        #expect(provenance(openedDocuments: true, hasOpenAppleEvent: true) == .user)
+    }
+
+    @Test("A hidden document open presents, outranking the hidden-and-foreign rule")
+    func hiddenDocumentLaunchIsUser() {
         #expect(
-            AppResidencyController.launchProvenance(
-                openedUntitledFile: false, openedDocuments: true, hasOpenAppleEvent: true,
-                isLoginItemLaunch: false, isDefaultLaunch: false) == .user)
+            provenance(
+                openedDocuments: true, hasOpenAppleEvent: true, openEventIsDirect: false,
+                isHiddenLaunch: true) == .user)
     }
 
     // MARK: - automationIdleOutcome
