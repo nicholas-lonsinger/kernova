@@ -4,7 +4,7 @@ description: Build, test, or lint Kernova and get back only the verdict — coun
 argument-hint: "[build|test|lint|test-suite <Target/Suite>]"
 ---
 
-Run this skill's script in place of the raw make target, as a bare background shell command — no pipes, `tail`, `tee`, or watcher loops — and act when the harness reports the exit. From a subagent, run it in the foreground with a generous timeout instead.
+Run this skill's script in place of the raw make target, as a bare background shell command — no pipes, `tail`, `tee`, or watcher loops — and act when the harness reports the exit. Only if your instructions forbid ending the turn before you have a result, run it in the foreground at the Bash call's maximum timeout: a run has no resume, so that covers only runs that finish within it.
 
 | Ask | Command |
 |---|---|

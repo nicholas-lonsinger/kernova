@@ -21,9 +21,24 @@
 # rulesets and legacy branch protection); if none are configured, it gates
 # on ALL reported checks.
 #
-# Exit codes:
+# Usage:
+#   .agents/skills/wait-github-ci/wait-github-ci.sh [<pr-number>] [--sha <sha>] [--timeout <seconds>]
+#                                                   [--repo <owner/repo>] [--remote <name>]
+#
+#   <pr-number>   PR to watch. Default: the PR for the current branch.
+#   --sha         Head SHA the PR must be at. Default: git rev-parse HEAD,
+#                 which is only right in the checkout the push came from; with
+#                 an explicit <pr-number>, a checkout whose upstream is not the
+#                 PR's head branch is refused rather than guessed at.
+#   --timeout     Overall deadline in seconds (default 3600). On expiry the
+#                 script exits 3; re-run it to keep waiting.
+#   --repo        owner/repo (default: inferred from the working directory).
+#   --remote      Git remote the PR's head branch lives on, used to verify the
+#                 push actually landed (default origin).
+#
+# Exit codes (merge only on 0):
 #   0  verified green on the expected head SHA — safe to merge
-#   1  usage or environment error
+#   1  usage or environment error (verdict=setup-error)
 #   2  definitively not green (failed / cancelled / timed-out check)
 #   3  deadline expired with checks still pending — re-run to keep waiting
 #   4  the push never landed on the remote (or the PR head never became the
@@ -40,25 +55,17 @@
 set -u
 
 usage() {
-  cat <<'EOF'
-Usage: wait-github-ci.sh [<pr-number>] [--sha <sha>] [--timeout <seconds>]
-                      [--repo <owner/repo>] [--remote <name>]
+  sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+}
 
-  <pr-number>   PR to watch. Default: the PR for the current branch.
-  --sha         Head SHA the PR must be at. Default: git rev-parse HEAD,
-                which is only right in the checkout the push came from; with
-                an explicit <pr-number>, a checkout whose upstream is not the
-                PR's head branch is refused rather than guessed at.
-  --timeout     Overall deadline in seconds (default 3600). On expiry the
-                script exits 3; re-run it to keep waiting.
-  --repo        owner/repo (default: inferred from the working directory).
-  --remote      Git remote the PR's head branch lives on, used to verify the
-                push actually landed (default origin).
+say() { printf 'wait-github-ci: %s\n' "$*" >&2; }
 
-Exit codes: 0 green | 1 usage | 2 failed | 3 still pending | 4 push never
-landed | 5 head moved | 6 PR not open | 7 conflicts with base. Merge only on
-exit 0. See the header of this script for details.
-EOF
+finish() { # <exit-code> <verdict-word> [message]
+  code="$1"; verdict="$2"; shift 2
+  [ $# -gt 0 ] && say "$*"
+  printf 'wait-github-ci: verdict=%s pr=%s sha=%s elapsed=%ss\n' \
+    "$verdict" "${PR:-?}" "${EXPECTED_SHA:-?}" "$SECONDS"
+  exit "$code"
 }
 
 PR=""
@@ -76,20 +83,10 @@ while [ $# -gt 0 ]; do
     --repo) REPO="${2:?--repo needs a value}"; shift 2 ;;
     --remote) REMOTE="${2:?--remote needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
-    -*) printf 'wait-github-ci: unknown option: %s\n' "$1" >&2; usage >&2; exit 1 ;;
+    -*) usage; finish 1 setup-error "unknown option: $1" ;;
     *) PR="$1"; PR_GIVEN=1; shift ;;
   esac
 done
-
-say() { printf 'wait-github-ci: %s\n' "$*" >&2; }
-
-finish() { # <exit-code> <verdict-word> [message]
-  code="$1"; verdict="$2"; shift 2
-  [ $# -gt 0 ] && say "$*"
-  printf 'wait-github-ci: verdict=%s pr=%s sha=%s elapsed=%ss\n' \
-    "$verdict" "${PR:-?}" "${EXPECTED_SHA:-?}" "$SECONDS"
-  exit "$code"
-}
 
 # Retry transient gh/network failures a few times before giving up.
 ghq() {
@@ -105,17 +102,17 @@ ghq() {
 # Join a newline-separated list into "a, b, c".
 oneline() { printf '%s\n' "$1" | grep . | paste -sd ',' - | sed 's/,/, /g'; }
 
-command -v gh >/dev/null 2>&1 || { say "gh CLI not found"; exit 1; }
+command -v gh >/dev/null 2>&1 || finish 1 setup-error "gh CLI not found"
 [ -n "$REPO" ] && export GH_REPO="$REPO"
 
 if [ -z "$PR" ]; then
   PR=$(ghq pr view --json number --jq .number) \
-    || { say "no PR number given and none resolvable from the current branch"; exit 1; }
+    || finish 1 setup-error "no PR number given and none resolvable from the current branch"
 fi
 
 if [ -z "$EXPECTED_SHA" ]; then
   EXPECTED_SHA=$(git rev-parse HEAD 2>/dev/null) \
-    || { say "not inside a git repository — pass --sha explicitly"; exit 1; }
+    || finish 1 setup-error "not inside a git repository — pass --sha explicitly"
   SHA_DEFAULTED=1
 else
   # Expand a short SHA when a repo is available; otherwise take it as-is.
@@ -139,8 +136,7 @@ confirm_defaulted_sha() {
   _upstream=$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null) || return 0
   [ "$_upstream" = "$REMOTE/$_branch" ] && return 0
   say "refusing to default the expected SHA: this checkout tracks $_upstream, but PR #$PR's head branch is $_branch"
-  say "pass --sha explicitly: the commit you pushed ($(printf '%.8s' "$EXPECTED_SHA") if that really is this checkout's HEAD), or the PR's reported head — gh pr view $PR --json headRefOid --jq .headRefOid — to verify the PR as it stands"
-  exit 1
+  finish 1 setup-error "pass --sha explicitly: the commit you pushed ($(printf '%.8s' "$EXPECTED_SHA") if that really is this checkout's HEAD), or the PR's reported head — gh pr view $PR --json headRefOid --jq .headRefOid — to verify the PR as it stands"
 }
 [ "$PR_GIVEN" -eq 1 ] && [ "$SHA_DEFAULTED" -eq 1 ] && confirm_defaulted_sha
 
@@ -316,7 +312,7 @@ HEAD_BARRIER=$((SECONDS + 180))
 PUSH_CONFIRMED=0
 GIT_CHECKED=0
 while :; do
-  snapshot || { say "could not query PR #$PR"; exit 1; }
+  snapshot || finish 1 setup-error "could not query PR #$PR"
   case "$SNAP_STATE" in
     OPEN) ;;
     MERGED) finish 6 already-merged "PR #$PR is already merged" ;;
@@ -361,7 +357,7 @@ fi
 # --- stage 3+4: barrier, watch, verify — loop until a definitive verdict ----
 PREV_COUNT=-1
 while :; do
-  snapshot || { say "could not query PR #$PR"; exit 1; }
+  snapshot || finish 1 setup-error "could not query PR #$PR"
   case "$SNAP_STATE" in
     OPEN) ;;
     MERGED) finish 6 already-merged "PR #$PR was merged while waiting" ;;
