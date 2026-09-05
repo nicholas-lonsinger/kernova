@@ -26,8 +26,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case summary(VMSummary)
         /// One VM's full description.
         case info(VMInfo)
-        /// A VM's reserved address, `nil` when it has none.
-        case ipAddress(String?)
+        /// What a VM's address resolves to on the network its mode joins.
+        case ipAddress(GuestIPAddress)
         /// A VM's restore points.
         case snapshots([SnapshotSummary])
         /// One restore point a capture produced.

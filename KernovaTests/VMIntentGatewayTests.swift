@@ -64,7 +64,7 @@ struct VMIntentGatewayTests {
         #expect(entity.diskSizeInGB == info.diskSizeInGB)
         #expect(entity.networkMode == info.networkMode)
         #expect(entity.macAddress == info.macAddress)
-        #expect(entity.ipAddress == info.ipAddress)
+        #expect(entity.ipAddress == info.ipAddress.reservedAddress)
         #expect(entity.agentStatus == info.agentStatus)
         #expect(entity.hasSavedState == info.hasSavedState)
         #expect(entity.isEphemeral == info.isEphemeral)

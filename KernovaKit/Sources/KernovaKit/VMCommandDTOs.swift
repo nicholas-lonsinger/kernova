@@ -45,10 +45,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let networkMode: String?
     /// The address the guest presents on that network.
     public let macAddress: String?
-    /// The address the app reserved for this guest, `nil` when it has none to
-    /// report — networking off, an externally addressed bridge, or a build
-    /// whose reservation machinery is absent.
-    public let ipAddress: String?
+    /// What the guest's address resolves to on the network its mode joins.
+    public let ipAddress: GuestIPAddress
     /// The guest agent's install and connectivity state, as its wire name.
     public let agentStatus: String
     /// Whether the bundle holds a suspended session.
@@ -71,7 +69,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         diskSizeInGB: Int,
         networkMode: String?,
         macAddress: String?,
-        ipAddress: String?,
+        ipAddress: GuestIPAddress,
         agentStatus: String,
         hasSavedState: Bool,
         isEphemeral: Bool,

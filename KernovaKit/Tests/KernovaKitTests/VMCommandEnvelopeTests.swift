@@ -23,7 +23,8 @@ struct VMCommandEnvelopeTests {
         VMInfo(
             id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "shared",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: "192.168.66.2", agentStatus: "current",
+            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .reserved("192.168.66.2"),
+            agentStatus: "current",
             hasSavedState: true, isEphemeral: false, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova")
     }
@@ -176,8 +177,10 @@ struct VMCommandEnvelopeTests {
             .summaries([summary]),
             .summary(summary),
             .info(info),
-            .ipAddress("192.168.66.2"),
-            .ipAddress(nil),
+            .ipAddress(.reserved("192.168.66.2")),
+            .ipAddress(.unavailable),
+            .ipAddress(.externallyAssigned),
+            .ipAddress(.pending),
             .snapshots([snapshot]),
             .snapshot(snapshot),
             .event(.added(summary)),

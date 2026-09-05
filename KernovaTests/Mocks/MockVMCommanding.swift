@@ -15,7 +15,7 @@ final class MockVMCommanding: VMCommanding {
     /// The library `list()` answers with, and what the recorded verbs address.
     var library: [VMSummary] = []
     /// The address `ipAddress(of:)` answers with.
-    var reservedAddress: String?
+    var reservedAddress: GuestIPAddress = .unavailable
     /// The snapshot `takeSnapshot` answers with, built from its arguments when
     /// left unset.
     var snapshotToReturn: SnapshotSummary?
@@ -186,7 +186,7 @@ final class MockVMCommanding: VMCommanding {
             bundlePath: "/tmp/\(summary.id.uuidString).kernova")
     }
 
-    func ipAddress(of selector: VMSelector) throws -> String? {
+    func ipAddress(of selector: VMSelector) throws -> GuestIPAddress {
         ipAddressSelectors.append(selector)
         if let ipAddressError { throw ipAddressError }
         _ = try resolve(selector)

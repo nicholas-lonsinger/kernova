@@ -1,26 +1,6 @@
 import Foundation
+import KernovaKit
 import os
-
-/// What the guest's IPv4 address resolves to for the mode it is on — the one
-/// answer every surface states, whether it renders prose or reports the bare
-/// address.
-enum GuestIPAddress: Equatable, Sendable {
-    /// Nothing assigns the guest an address the app can state — the row is
-    /// absent rather than empty.
-    case unavailable
-    /// Bridged: the guest asks the network, so there is nothing deterministic.
-    case externallyAssigned
-    /// A reservation exists but the network's addressing is not known yet.
-    case pending
-    case reserved(String)
-
-    /// The address itself, `nil` unless the app reserved one — what a headless
-    /// surface answers with, where the other cases are prose rather than data.
-    var reservedAddress: String? {
-        guard case .reserved(let address) = self else { return nil }
-        return address
-    }
-}
 
 /// The slots a VM holds on the app-managed networks: its DHCP address
 /// reservation, its port-forwarding rules, and the uniqueness of the MAC

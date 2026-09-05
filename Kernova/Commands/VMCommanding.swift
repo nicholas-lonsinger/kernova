@@ -42,8 +42,8 @@ protocol VMCommanding: AnyObject {
 
     func info(_ selector: VMSelector) throws -> VMInfo
 
-    /// The address the app reserved for this guest, `nil` when it has none.
-    func ipAddress(of selector: VMSelector) throws -> String?
+    /// What the guest's address resolves to on the network its mode joins.
+    func ipAddress(of selector: VMSelector) throws -> GuestIPAddress
 
     /// The VM's named restore points, newest first.
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary]
