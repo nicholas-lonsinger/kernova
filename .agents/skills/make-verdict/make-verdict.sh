@@ -58,10 +58,21 @@ if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then
 fi
 target="${1:-}"
 suite="${2:-}"
+out_dir="${KERNOVA_VERDICT_DIR:-artifacts/make-verdict}"
+
+# <target>.verdict is the completion signal for a caller that launched the
+# script in the background: removed before a run starts, written on every
+# exit — setup errors included — so a wait on it always ends.
+verdict_file="$out_dir/${target:-setup}.verdict"
+[ -n "$from_log" ] || rm -f "$verdict_file"
 
 setup_error() {
     echo "make-verdict.sh: $1" >&2
-    printf 'make-verdict: verdict=setup-error reason=%s target=%s suite=%s\n' "$2" "${target:--}" "${suite:--}"
+    _line="$(printf 'make-verdict: verdict=setup-error reason=%s target=%s suite=%s' "$2" "${target:--}" "${suite:--}")"
+    printf '%s\n' "$_line"
+    if [ -z "$from_log" ] && mkdir -p "$out_dir" 2>/dev/null; then
+        printf '%s\n' "$_line" >"$verdict_file"
+    fi
     exit 5
 }
 
@@ -76,8 +87,6 @@ elif [ -n "$suite" ]; then
     setup_error "a suite applies to test-suite only" usage
 fi
 [ $# -le 2 ] || setup_error "too many arguments" usage
-
-out_dir="${KERNOVA_VERDICT_DIR:-artifacts/make-verdict}"
 
 # ---- run ------------------------------------------------------------------
 
@@ -238,7 +247,7 @@ esac
         "$verdict" "$target" "${suite:--}" "$extra" "$log" "$xcresult"
 } >"$body.out"
 if [ -z "$from_log" ]; then
-    cp "$body.out" "$out_dir/$target.verdict" 2>/dev/null || true
+    cp "$body.out" "$verdict_file" 2>/dev/null || true
 fi
 cat "$body.out"
 rm -f "$body.out"
