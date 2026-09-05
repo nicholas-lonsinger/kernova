@@ -16,7 +16,7 @@ import Testing
 struct VMSnapshotIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, awaitReady: {}, refreshShortcutVocabulary: {},
+            commands: commands, awaitReady: {},
             index: MockVMEntityIndex(),
             defaults: makeEphemeralDefaults(suiteName: "test.kernova.intents.snapshot"))
     }
