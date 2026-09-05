@@ -24,6 +24,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/nox" "$tmp/logs" "$tmp/out" \
     "$tmp/bundles/failed.xcresult" "$tmp/bundles/passed.xcresult" "$tmp/bundles/empty.xcresult"
+# nox is a PATH with no xcodebuild; the script clears and writes its verdict
+# file before it looks for xcodebuild, so give it just those two tools.
+ln -s /bin/rm /bin/mkdir "$tmp/nox/"
 
 for f in "$FIX"/logs/*.log; do
     sed "s#@ROOT@#$ROOT#g; s#@BUNDLE@#$tmp/bundles#g" "$f" >"$tmp/logs/$(basename "$f")"
@@ -178,6 +181,7 @@ expect_last '^make-verdict: verdict=green '
 
 run "unknown target" 5 verdict bogus
 expect_last '^make-verdict: verdict=setup-error reason=usage target=bogus suite=-$'
+cmp -s "$tmp/out/bogus.verdict" "$tmp/last" || fail "$name: setup error wrote no verdict file"
 run "test-suite without a suite" 5 verdict test-suite
 expect_last '^make-verdict: verdict=setup-error reason=usage '
 run "suite on a non-suite target" 5 verdict build KernovaTests/X
@@ -186,6 +190,7 @@ run "missing log" 5 verdict --from-log "$tmp/logs/nope.log" test
 expect_last '^make-verdict: verdict=setup-error reason=no-log '
 run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" "$SKILL/make-verdict.sh" build
 expect_last '^make-verdict: verdict=setup-error reason=xcodebuild-missing '
+cmp -s "$tmp/out/build.verdict" "$tmp/last" || fail "$name: setup error left a stale or missing verdict file"
 run "help" 0 verdict --help
 expect_lines 0
 
