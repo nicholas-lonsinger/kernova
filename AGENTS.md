@@ -278,7 +278,7 @@ EOF
 
 #### Post-merge cleanup
 
-Confirm `gh pr view <N> --json state -q .state` reports `"MERGED"` first. Then leave the branch (`git switch main`, or `git checkout --detach` in a manual worktree), `git branch -D <merged-branch>` (force `-D`; the squash commit makes `-d` refuse), `git branch -d -r origin/<merged-branch>` for the stale remote-tracking ref, and `git pull --ff-only`.
+Confirm `gh pr view <N> --json state -q .state` reports `"MERGED"` first. Then leave the branch (`git switch main`, or `git checkout --detach` in a manual worktree), `git branch -D <merged-branch>` (force `-D`; the squash commit makes `-d` refuse), `git branch -d -r origin/<merged-branch>` for the stale remote-tracking ref, and fast-forward the default branch with the `freshen-main` skill (`.agents/skills/freshen-main/freshen-main.sh`), which works from any checkout or worktree and reports a one-line verdict.
 
 ## Change Protocol
 
