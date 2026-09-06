@@ -95,6 +95,11 @@ final class TestHostResidencyController: AppResidencyHosting {
         }
     }
 
+    /// Nothing to reconcile: the process is `.regular` throughout, and its idle
+    /// decision reads `NSApp.isHidden` live on each window close and guest
+    /// settle.
+    func noteDidUnhide() {}
+
     func handleReopen(hasVisibleWindows flag: Bool) {
         let justActivated = wasJustActivated
         wasJustActivated = false  // Synchronous clear — see wasJustActivated doc comment

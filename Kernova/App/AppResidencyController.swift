@@ -58,6 +58,9 @@ protocol AppResidencyHosting: WindowResidencyHosting {
     /// follow can tell a dock click that activated the app from one on an
     /// already-active app.
     func noteWillBecomeActive()
+    /// The unhide leg — every window is back on screen after a ⌘H, so whatever
+    /// the app's windows did meanwhile is now legible to a reconcile.
+    func noteDidUnhide()
     /// The reopen leg — a Dock click, `open`, a Launch Services self-open.
     func handleReopen(hasVisibleWindows: Bool)
     /// Puts the summoned interface on screen, without requesting activation.
@@ -143,6 +146,10 @@ final class AppResidencyController: AppResidencyHosting {
     /// tracked or not (e.g. the standard About panel) — the only closes that can
     /// change ``hasVisibleUserWindow`` (``windowCloseAffectsActivationPolicy(_:)``).
     private var globalWindowCloseObserver: Any?
+
+    /// The unhide reconcile deferred to the next runloop tick, carrying the
+    /// outcome it applied.
+    private var pendingUnhideReconcile: Task<UnhideOutcome, Never>?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppResidency")
 
@@ -730,16 +737,23 @@ final class AppResidencyController: AppResidencyHosting {
     /// activation that may precede it was the reopen's own.
     func noteWillBecomeActive() {}
 
-    /// Closes the GUI, settles the activation policy, then anchors the soft-quit
+    /// Closes the GUI, drops to the status item, then anchors the soft-quit
     /// reminder — in that order.
+    ///
+    /// `.accessory` is asserted rather than reconciled: this path has just
+    /// closed every window and is only reached with *Continue running in Status
+    /// Bar* on (``AppTerminationController/shouldTerminateOnQuit``), so it knows
+    /// the answer the reconcile would have to infer — and while the app is
+    /// hidden the reconcile deliberately infers nothing, which would leave a
+    /// window-less app holding a Dock icon that only an unhide could clear.
     func closeGUIForSoftQuit() {
         windows.closeAll()
-        // Settle the Dock-presence policy BEFORE anchoring the reminder. Left to
-        // the deferred per-window reconciles, the popover is shown first and the
+        // Drop the Dock presence BEFORE anchoring the reminder. Left to the
+        // deferred per-window reconciles, the popover is shown first and the
         // `.regular` → `.accessory` flip lands 20–75ms later, which re-hosts the
         // menu-bar status item and tears the just-anchored popover down with it
         // (observed: the reminder flashed for a frame and vanished).
-        syncActivationPolicy()
+        setActivationPolicy(.accessory)
         statusItemController?.showSoftQuitReminder()
     }
 
@@ -748,7 +762,9 @@ final class AppResidencyController: AppResidencyHosting {
     /// Whether any user-facing Kernova window is currently on screen, counting a
     /// miniaturized one as present.
     ///
-    /// The Dock icon (`.regular`) must be present iff this is `true`.
+    /// The Dock icon (`.regular`) must be present iff this is `true` — except
+    /// while the app is hidden, where every window reads `false` and the
+    /// reconcile leaves the policy the app already had (``ResidencyOutcome/waitForUnhide``).
     private var hasVisibleUserWindow: Bool {
         windows.hasUserWindow(countingMiniaturized: true)
     }
@@ -787,6 +803,10 @@ final class AppResidencyController: AppResidencyHosting {
         case goHeadless
         /// Quit through `applicationShouldTerminate`, save-suspending running VMs.
         case quit
+        /// Leave the app as it is — hidden, it is not the app's windows the
+        /// reconcile would be reading. ``noteDidUnhide()`` decides once they are
+        /// legible again.
+        case waitForUnhide
     }
 
     /// Decides the reconcile's outcome.
@@ -795,13 +815,16 @@ final class AppResidencyController: AppResidencyHosting {
     /// a status item, so a headless app would be unreachable — the last window
     /// close quits instead of demoting.
     ///
-    /// Two things hold that quit back:
+    /// Two things hold that off:
     ///
     /// - **Hiding.** ⌘H makes every window report `isVisible == false` without
-    ///   closing any of them, so a background close landing mid-hide (a VM
-    ///   shutting down empties its display window) reads as "no windows" while
-    ///   the library is still open. Quitting there would discard windows the user
-    ///   never closed.
+    ///   closing any of them, so a hidden app's windows are open windows the
+    ///   reconcile simply cannot see, and it reads the same as an app whose last
+    ///   window closed. It decides nothing there — a hidden app keeps the Dock
+    ///   icon a presented one had, and a background close landing mid-hide (a VM
+    ///   shutting down empties its display window) is answered by
+    ///   ``unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)``. What *Continue
+    ///   running in Status Bar* governs is the last close, not a hide.
     /// - **Work in flight.** Termination trashes partial bundles
     ///   (`cancelAndCleanupPreparingInstances`) and hard-aborts a VM that is
     ///   mid-save, mid-restore, mid-start or mid-install — `applicationShouldTerminate`
@@ -819,7 +842,8 @@ final class AppResidencyController: AppResidencyHosting {
         hasUninterruptibleWork: Bool
     ) -> ResidencyOutcome {
         if hasVisibleUserWindow { return .showDockIcon }
-        if keepInMenuBar || isHidden { return .goHeadless }
+        if isHidden { return .waitForUnhide }
+        if keepInMenuBar { return .goHeadless }
         if hasUninterruptibleWork { return .showDockIcon }
         return .quit
     }
@@ -829,7 +853,8 @@ final class AppResidencyController: AppResidencyHosting {
     /// (status-item only) or a quit — see
     /// ``residencyOutcome(hasVisibleUserWindow:isHidden:keepInMenuBar:hasUninterruptibleWork:)``.
     ///
-    /// Re-run on every window open and close so a partial close can never strand
+    /// Re-run on every window open and close, and on the unhide that makes a
+    /// hidden app's windows legible again, so a partial close can never strand
     /// the policy.
     ///
     /// An unpresented automation launch is routed away from `residencyOutcome`
@@ -852,6 +877,8 @@ final class AppResidencyController: AppResidencyHosting {
             setActivationPolicy(.regular)
         case .goHeadless:
             setActivationPolicy(.accessory)
+        case .waitForUnhide:
+            break
         case .quit:
             // Latched: `applicationShouldTerminate` replies `.terminateLater` while
             // VMs save, and a window closing during that window would otherwise
@@ -863,11 +890,74 @@ final class AppResidencyController: AppResidencyHosting {
         }
     }
 
+    /// What an unhide does with the resident app.
+    enum UnhideOutcome: Equatable {
+        /// Show the Dock icon — windows came back with the app.
+        case showDockIcon
+        /// Drop to a status-item-only app: the last window closed during the
+        /// hide, which is the close *Continue running in Status Bar* answers.
+        case goHeadless
+        /// Put the library back on screen — nothing survived the hide, and with
+        /// no status item a headless app would be unreachable.
+        case presentLibrary
+    }
+
+    /// Decides what the unhide does, which is never a quit.
+    ///
+    /// Unhiding is a request for the app, so the close that landed mid-hide is
+    /// answered by making the app reachable — never by terminating under the
+    /// person who just asked for it. A window close is what quits this app, and
+    /// no close is observable from here: the hide swallowed whichever one
+    /// happened, and AppKit's unhide restores the windows that are left.
+    nonisolated static func unhideOutcome(
+        hasVisibleUserWindow: Bool, keepInMenuBar: Bool
+    ) -> UnhideOutcome {
+        if hasVisibleUserWindow { return .showDockIcon }
+        return keepInMenuBar ? .goHeadless : .presentLibrary
+    }
+
+    /// Runs the decision a hide deferred: every window a hidden app has reports
+    /// `isVisible == false`, so a close landing meanwhile is only legible once
+    /// the app is back on screen.
+    ///
+    /// Deliberately not ``syncActivationPolicy()``: that one quits an app whose
+    /// last window closed, and an unhide is the one moment where a person has
+    /// just asked for the app — on either arm, the window reconcile's or the
+    /// unpresented automation launch's idle reconcile.
+    func noteDidUnhide() {
+        pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }
+    }
+
+    /// Applies ``unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)`` to the app
+    /// AppKit has just brought back, and reports what it applied.
+    private func reconcileUnhide() -> UnhideOutcome {
+        let outcome = Self.unhideOutcome(
+            hasVisibleUserWindow: hasVisibleUserWindow,
+            keepInMenuBar: viewModel.keepInMenuBarOnQuit)
+        switch outcome {
+        case .showDockIcon:
+            setActivationPolicy(.regular)
+        case .goHeadless:
+            Self.logger.notice("Unhidden with no window left — dropping to the status item")
+            setActivationPolicy(.accessory)
+        case .presentLibrary:
+            Self.logger.notice("Unhidden with no window left — showing the library")
+            presentSummonedInterface()
+        }
+        return outcome
+    }
+
     /// Re-runs ``syncActivationPolicy()`` on the next runloop tick — after a
     /// closing window has left the window list — so the window count is accurate.
     private func scheduleActivationPolicySync() {
         Task { @MainActor in self.syncActivationPolicy() }
     }
+
+    #if DEBUG
+    /// The deferred unhide reconcile, which a test awaits for the outcome it
+    /// applied rather than polling for that outcome's effect.
+    var pendingUnhideReconcileForTesting: Task<UnhideOutcome, Never>? { pendingUnhideReconcile }
+    #endif
 
     /// Sets the activation policy, logging the transition.
     ///
