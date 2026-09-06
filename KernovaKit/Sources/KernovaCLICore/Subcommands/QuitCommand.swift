@@ -32,10 +32,32 @@ extension KernovaCommand {
             // reach the dying instance, or spend the whole connect deadline
             // against one on its way out.
             if answer != nil { try Self.awaitExit(of: client) }
-            // A copy of the tool outside an app bundle starts no app, so it has
-            // no registration to collide with.
-            if let bundle = AppLaunch.enclosingBundle {
-                try AppRegistryWait.awaitDeregistration(ofBundleAt: bundle)
+            try Self.awaitDeregistration()
+        }
+
+        /// Blocks until Launch Services has released the app this tool is
+        /// embedded in.
+        ///
+        /// Another verb of this tool would wait here on its own way in, so this
+        /// is not what makes `kernova quit && kernova start x` safe. What it
+        /// buys is the promise the verb's *return* carries: a script is free to
+        /// reach for `open -a Kernova`, or anything else that asks Launch
+        /// Services to open the app, on the line after this one.
+        ///
+        /// A copy of the tool outside an app bundle names no app, so it has
+        /// nothing to wait on.
+        ///
+        /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when the
+        ///   registration outlives the wait — the quit itself succeeded, and
+        ///   the code says the promise did not.
+        static func awaitDeregistration() throws {
+            guard let bundle = AppLaunch.enclosingBundle else { return }
+            guard AppRegistryWait.awaitDeregistration(ofBundleAt: bundle, scope: .all) else {
+                throw CLIFailure(
+                    .timedOut,
+                    "Kernova has quit, but macOS still had it registered "
+                        + "\(Int(AppRegistryWait.defaultDeadline)) seconds later. Starting it "
+                        + "again now may fail.")
             }
         }
 

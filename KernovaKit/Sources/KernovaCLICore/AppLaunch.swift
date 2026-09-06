@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaKit
 
 /// The app bundle a helper executable is embedded in.
 enum EnclosingAppBundle {
@@ -52,6 +53,14 @@ enum AppLaunch {
     /// Sandbox drops `arguments`, `environment` and a custom `appleEvent` from
     /// `NSWorkspace.OpenConfiguration` before they reach the app; `hides`
     /// arrives.
+    ///
+    /// The wait ahead of it is what keeps the open off a registration Launch
+    /// Services has not released yet. Only an instance whose process is already
+    /// gone is waited out: this path is reached because the socket did not
+    /// answer, which an app still coming up explains just as well, and the
+    /// connect retry is what waits for that one. An expired wait still opens —
+    /// the open is the right next move either way, and its own refusal is what
+    /// the caller hears.
     static func launchEnclosingApp() -> Result<Void, CLIFailure> {
         guard let bundle = enclosingBundle else {
             return .failure(
@@ -60,6 +69,8 @@ enum AppLaunch {
                     "This copy of kernova is not inside a Kernova.app, so it cannot start the "
                         + "app. Install the tool from Kernova's Settings \u{2192} Advanced."))
         }
+
+        AppRegistryWait.awaitDeregistration(ofBundleAt: bundle, scope: .exitedProcesses)
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.hides = true

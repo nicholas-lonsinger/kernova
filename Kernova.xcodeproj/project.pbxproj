@@ -16,6 +16,7 @@
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A200000C /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000D /* KernovaTestSupport */; };
 		A200000E /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000F /* KernovaTestSupport */; };
+		A2000010 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000011 /* KernovaKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -192,6 +193,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2000010 /* KernovaKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -347,6 +349,7 @@
 			);
 			name = KernovaRelaunchHelper;
 			packageProductDependencies = (
+				A2000011 /* KernovaKit */,
 			);
 			productName = KernovaRelaunchHelper;
 			productReference = A1000100 /* KernovaRelaunchHelper */;
@@ -848,6 +851,10 @@
 		A200000F /* KernovaTestSupport */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaTestSupport;
+		};
+		A2000011 /* KernovaKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import os
 
 // A watchdog that monitors the main Kernova process and relaunches it after
@@ -28,36 +29,31 @@ guard FileManager.default.fileExists(atPath: appPath) else {
 
 // MARK: - Relaunch
 
+/// Waits for Launch Services to release the app's registration, then opens it.
+///
+/// Must run from a run-loop callout, which is what lets the wait service the
+/// main run loop.
 @MainActor
-func relaunchApp() async {
-    // Let LaunchServices finish cleaning up the terminated process: without this,
-    // NSWorkspace fails with "0 items" while the old registration lingers.
-    try? await Task.sleep(for: .seconds(1))
+func relaunchApp() {
+    AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all)
 
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = true
 
-    // LaunchServices may need more time to update after process exit.
-    for attempt in 1...4 {
-        do {
-            try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
-            logger.notice("Relaunched Kernova successfully (attempt \(attempt, privacy: .public))")
+    NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+        guard let error else {
+            logger.notice("Relaunched Kernova successfully")
             exit(0)
-        } catch {
-            logger.warning(
-                "Relaunch attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            if attempt < 4 {
-                try? await Task.sleep(for: .seconds(2))
-            }
         }
+        // RATIONALE: the helper is app-sandbox + inherit
+        // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open`
+        // inherits that sandbox and reaches LaunchServices through the same
+        // mediated path `NSWorkspace` already took — it adds no capability this
+        // open lacks.
+        logger.error(
+            "Failed to relaunch Kernova: \(error.localizedDescription, privacy: .public)")
+        exit(1)
     }
-
-    // RATIONALE: the helper is app-sandbox + inherit
-    // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open` inherits
-    // that sandbox and reaches LaunchServices through the same mediated path
-    // `NSWorkspace` already took — it adds no capability this loop lacks.
-    logger.error("Failed to relaunch Kernova after 4 attempts, giving up")
-    exit(1)
 }
 
 // MARK: - PID monitoring
@@ -71,9 +67,10 @@ let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit,
 source.setEventHandler {
     logger.notice("PID \(pid, privacy: .public) exited, relaunching Kernova")
     source.cancel()
-    Task { @MainActor in
-        await relaunchApp()
-    }
+    // A run-loop callout, never a main-queue job: the relaunch waits on a
+    // nested run loop, and one entered from inside a main-queue job cannot
+    // drain that queue.
+    RunLoop.main.perform { MainActor.assumeIsolated { relaunchApp() } }
 }
 
 source.resume()
@@ -82,9 +79,10 @@ source.resume()
 if kill(pid, 0) != 0, errno == ESRCH {
     logger.notice("PID \(pid, privacy: .public) already exited, relaunching immediately")
     source.cancel()
-    Task { @MainActor in
-        await relaunchApp()
-    }
+    // A run-loop callout, never a main-queue job: the relaunch waits on a
+    // nested run loop, and one entered from inside a main-queue job cannot
+    // drain that queue.
+    RunLoop.main.perform { MainActor.assumeIsolated { relaunchApp() } }
 }
 
 // Safety timeout: relaunchApp() calls exit(0) on success, so this fires only if
