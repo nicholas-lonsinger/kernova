@@ -16,7 +16,8 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
-        /// Quits the app, or reports success when there is none to quit.
+        /// Quits the app and returns once it has gone, or reports success when
+        /// there is none to quit.
         ///
         /// The one verb that never starts Kernova: quitting an app that is not
         /// running has already happened.
@@ -24,7 +25,13 @@ extension KernovaCommand {
             guard let client = try CommandConnection.openIfRunning() else { return }
             defer { client.close() }
             try client.post(.quit)
-            try Self.outcome(for: try client.nextFrame())
+            let answer = try client.nextFrame()
+            try Self.outcome(for: answer)
+            // `ok` only means the quit was accepted — the save pass still has to
+            // run. Exiting here would let `kernova quit && kernova start x`
+            // reach the dying instance, or spend the whole connect deadline
+            // against one on its way out.
+            if answer != nil { try Self.awaitExit(of: client) }
         }
 
         /// Reads the answer a quit gets, treating end-of-stream as success.
@@ -35,6 +42,16 @@ extension KernovaCommand {
         static func outcome(for answer: VMCommandResponse?) throws {
             guard let answer else { return }
             _ = try answer.payload()
+        }
+
+        /// Blocks until the app closes the connection, which the kernel does
+        /// when the process exits.
+        ///
+        /// Anything the app says in the meantime is read and dropped: the quit
+        /// has been accepted, and the only thing left to wait for is the socket
+        /// going away.
+        static func awaitExit(of client: VMCommandClient) throws {
+            while try client.nextFrame() != nil {}
         }
     }
 }

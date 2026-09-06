@@ -94,11 +94,6 @@ final class AppResidencyController: AppResidencyHosting {
     /// `AppDependencyManager` owns the intent gateway copy intents resolve.
     private var commandSocket: VMCommandSocketListener?
 
-    /// Latched once a reconcile has asked to terminate for want of anything to
-    /// do, so a second one — a window closing during the async save — can't
-    /// request a second termination.
-    private var hasRequestedIdleTermination = false
-
     /// The menu-bar status item — the "Kernova is running" affordance and the way
     /// to summon the GUI while headless.
     ///
@@ -801,11 +796,6 @@ final class AppResidencyController: AppResidencyHosting {
         case .waitForUnhide:
             break
         case .quit:
-            // Latched: `applicationShouldTerminate` replies `.terminateLater` while
-            // VMs save, and a window closing during that window would otherwise
-            // re-enter with a reply already outstanding.
-            guard !hasRequestedIdleTermination else { return }
-            hasRequestedIdleTermination = true
             Self.logger.notice("Last window closed with the app set to quit — terminating")
             host?.requestFullQuit()
         }

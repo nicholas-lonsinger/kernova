@@ -1,4 +1,7 @@
+import Darwin
 import Foundation
+import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaCLICore
@@ -28,9 +31,44 @@ struct CLIAppLaunchTests {
     }
 
     @Test("A tool outside any app resolves nothing, rather than guessing")
-    func looseToolResolvesNothing() {
-        #expect(locate("/usr/local/bin/kernova") == nil)
+    func looseToolResolvesNothing() throws {
+        let scratch = try makeScratch()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        #expect(locate(scratch.appendingPathComponent("bin/kernova").path) == nil)
         #expect(locate("/kernova") == nil)
+    }
+
+    /// The shape Settings → Advanced installs: a link on `PATH` pointing into
+    /// the bundle. `Bundle.main.executableURL` answers the path the tool was
+    /// invoked through, so without resolving it the installed tool finds no app
+    /// to start.
+    @Test("The installed tool resolves through its symlink into the app it links at")
+    func installedSymlinkResolvesItsApp() throws {
+        let scratch = try makeScratch()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let bundle = scratch.appendingPathComponent("Kernova.app", isDirectory: true)
+        let helpers = bundle.appendingPathComponent("Contents/Helpers", isDirectory: true)
+        let binaries = scratch.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: binaries, withIntermediateDirectories: true)
+        let tool = helpers.appendingPathComponent("kernova")
+        try Data().write(to: tool)
+        let link = binaries.appendingPathComponent("kernova")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: tool)
+
+        let located = try #require(EnclosingAppBundle.locate(executable: link))
+
+        #expect(located.path == bundle.resolvingSymlinksInPath().path)
+    }
+
+    /// A scratch directory under the temporary directory, resolved so the
+    /// `/var` → `/private/var` link is not what a comparison trips on.
+    private func makeScratch() throws -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .resolvingSymlinksInPath()
+            .appendingPathComponent("knv-launch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     /// An executable is a file, so its own name says nothing about a bundle to

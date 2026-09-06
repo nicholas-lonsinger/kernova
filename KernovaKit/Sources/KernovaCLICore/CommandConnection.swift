@@ -28,8 +28,13 @@ public enum CommandConnection {
     /// A client connected to a Kernova that is already running, or `nil` when
     /// none is — for the one verb that has nothing to ask of an app that is not
     /// there.
+    ///
+    /// A build that resolves no app-group container still throws: it cannot
+    /// reach an app whether or not one is running, which is a different answer
+    /// from "there is nothing to talk to".
     public static func openIfRunning() throws -> VMCommandClient? {
-        try? VMCommandClient(socketPath: try socketPath())
+        let socketPath = try socketPath()
+        return try? VMCommandClient(socketPath: socketPath)
     }
 
     /// Runs one verb that answers with nothing, reporting whatever refusal it
