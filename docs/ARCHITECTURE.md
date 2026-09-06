@@ -318,13 +318,7 @@ session down without that hook, so a suspended session survives to revert at its
   what reserves the destination atomically on the MainActor, so overlapping imports and clones
   cannot claim the same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
-  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core. `decode` and
-  `encode` are `nonisolated` so a transport parses and serializes on its own queue; only the verb
-  crosses to main. `snapshotAndEvents()` subscribes *then* lists inside one main-actor call, so a
-  subscriber can never miss an event between the two — that is what makes a client waiting for a
-  state race-free against a VM already in it. An envelope-level refusal is a
-  `VMCommandTransportRefusal` delivered as a frame, not a thrown error: the peer asked and is owed
-  an answer.
+  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
 - `VMIntentGateway` — the App Intents boundary, built and published through `AppDependencyManager`
   by `AppResidencyController` so every
   intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity
@@ -487,8 +481,7 @@ and the `VMCommandRequest`/`VMCommandResponse` envelope — so an out-of-process
 declarations the app throws and returns, rather than a mirror of them.
 
 It also vends `KernovaCLICore` — the `kernova` tool's parsing, rendering, exit-code mapping and
-socket client. Living here rather than in the executable target is what puts its tests in
-`KernovaKitTests`, already in the test plan, instead of needing a fourth test target.
+socket client.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
@@ -546,8 +539,7 @@ context) and one release point (`VMSessionContext.tearDown`).
   says why not `Contents/MacOS`) and installed as a symlink from Settings → Advanced by
   `CommandLineToolInstaller`. It is sandboxed with `app-sandbox` plus the app group and nothing
   else — deliberately not `inherit`, which is for a child the app spawns, where this is started by
-  the user's shell. `KernovaCLI/main.swift` is one line; everything the tool does lives in
-  `KernovaCLICore`.
+  the user's shell. Everything the tool does lives in `KernovaCLICore`.
 
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding four long-lived vsock connections to the host (control, log forwarding,

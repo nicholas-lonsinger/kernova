@@ -18,7 +18,7 @@ Everything `Kernova/Resources/Kernova.entitlements` claims:
 | `com.apple.security.virtualization` | Running guests — compatible with the sandbox on the store: UTM ships exactly this combination there, macOS guests included |
 | `com.apple.vm.networking` | Guest networking beyond NAT — vmnet requires it for all API use, and a bridged attachment fails VZ configuration validation without it. Granted by Apple as a managed capability on the App ID; compatible with the sandbox on the store — UTM's store build carries it |
 | `com.apple.security.device.audio-input` | Opt-in per-VM microphone passthrough |
-| `com.apple.security.application-groups` | The container the app and the bundled `kernova` tool meet in, holding the command socket. `$(TeamIdentifierPrefix)` is load-bearing — `containermanagerd` grants a group container only to a signature whose team prefixes the group ID, so an ad-hoc build resolves no group and offers no socket |
+| `com.apple.security.application-groups` | The container the app and the bundled `kernova` tool meet in, holding the command socket. `$(TeamIdentifierPrefix)` is load-bearing, so an ad-hoc build resolves no group and offers no socket ([research note](research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md)) |
 
 `com.apple.vm.networking` is restricted — it must be authorized by the embedded provisioning profile — so the default build signs with `Kernova/Resources/Kernova.Development.entitlements`, the same set minus that key. [BUILD.md](BUILD.md) "Signing identity" owns the selection mechanics and the per-machine opt-in. The sandbox profile needs nothing further: `application.sb` grants the `com.apple.NetworkSharing` mach-lookup exactly when the entitlement is present.
 

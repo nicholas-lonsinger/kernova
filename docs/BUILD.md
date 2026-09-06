@@ -47,13 +47,11 @@ macOS volumes are case-insensitive, so `Contents/MacOS/kernova` and the app's ow
 
 `Contents/Helpers` is a nested-code location `codesign` seals, and the tool there keeps its own entitlements through `CodeSignOnCopy`.
 
-Its parsing, rendering, exit codes and client live in `KernovaCLICore`, a target inside `KernovaKit` — which is why the tool needs no test target of its own. `KernovaCLI/main.swift` is one line.
-
-`swift-argument-parser` is the first remote package dependency; `KernovaCLICore` alone links it, and its pin is committed beside swift-protobuf's.
+Its parsing, rendering, exit codes and client live in `KernovaCLICore`, a target inside `KernovaKit` — which is why the tool needs no test target of its own.
 
 ## One test invocation, three test targets
 
-A single `xcodebuild test -scheme Kernova` runs `KernovaTests`, `KernovaMacOSAgentTests`, and `KernovaKitTests` through `Kernova.xctestplan`. The `kernova` tool's tests ride `KernovaKitTests`, because `KernovaCLICore` is a target in that same package.
+A single `xcodebuild test -scheme Kernova` runs `KernovaTests`, `KernovaMacOSAgentTests`, and `KernovaKitTests` through `Kernova.xctestplan`.
 
 That works because `KernovaKit` is referenced as a top-level peer — a `PBXFileReference` in `Kernova.xcodeproj`'s main group — rather than as an `XCLocalSwiftPackageReference` under Package Dependencies. In the dependency form Xcode treats the package as upstream and hides its `.testTarget`s from the test-plan picker; in the peer form they appear in `Edit Scheme → Test → +` as first-class targets that can be added to the plan.
 

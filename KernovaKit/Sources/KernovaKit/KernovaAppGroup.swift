@@ -4,13 +4,11 @@ import Security
 /// The app group the app and its command-line tool share, resolved from the
 /// running process's own signature.
 ///
-/// The group ID is team-prefixed (`<team>.app.kernova`) because
-/// `containermanagerd` grants a group container only to a signature whose team
-/// prefixes the ID. Neither side spells the prefix: each reads the
-/// `com.apple.security.application-groups` array its own signature carries, so
-/// the value follows whatever identity the build was signed with and a build
-/// signed with none resolves `nil` — the capability is then absent rather than
-/// broken.
+/// The group ID is team-prefixed (`<team>.app.kernova`), and neither side
+/// spells the prefix: each reads the `com.apple.security.application-groups`
+/// array its own signature carries, so the value follows whatever identity the
+/// build was signed with and a build signed with none resolves `nil` — the
+/// capability is then absent rather than broken.
 public enum KernovaAppGroup {
     /// What both entitlement files claim behind `$(TeamIdentifierPrefix)`.
     public static let identifierSuffix = "app.kernova"
