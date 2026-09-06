@@ -36,12 +36,27 @@ struct AppResidencyOutcomeTests {
 
     // MARK: - Hiding
 
-    @Test("a hidden app never quits, whatever the toggle says", arguments: [true, false])
-    func hiddenAppNeverQuits(keepInMenuBar: Bool) {
+    @Test("a hidden app is left as it is, whatever the toggle says", arguments: [true, false])
+    func hiddenAppWaitsForUnhide(keepInMenuBar: Bool) {
         // ⌘H makes every window report `isVisible == false` without closing any,
-        // so a background close landing mid-hide must not read as "no windows
-        // left" and discard windows the user never closed.
-        #expect(outcome(isHidden: true, keepInMenuBar: keepInMenuBar) == .goHeadless)
+        // so the windows a hidden app has are ones this cannot see: it decides
+        // nothing, leaving a presented app its Dock icon and a headless one its
+        // absence until the unhide reconcile can read the windows.
+        #expect(outcome(isHidden: true, keepInMenuBar: keepInMenuBar) == .waitForUnhide)
+    }
+
+    @Test("a window on screen outranks a hide", arguments: [true, false])
+    func hiddenWithAVisibleWindowShowsDockIcon(keepInMenuBar: Bool) {
+        // ⌘H leaves a miniaturized window miniaturized, and the reconcile counts
+        // one as present — so the window term is answerable even while hidden.
+        #expect(
+            outcome(hasVisibleUserWindow: true, isHidden: true, keepInMenuBar: keepInMenuBar)
+                == .showDockIcon)
+    }
+
+    @Test("work in flight does not lift the hide's hold")
+    func hiddenWithWorkInFlightWaitsForUnhide() {
+        #expect(outcome(isHidden: true, hasUninterruptibleWork: true) == .waitForUnhide)
     }
 
     // MARK: - Work in flight

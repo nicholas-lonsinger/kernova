@@ -258,6 +258,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         lifecycle.noteWillBecomeActive()
     }
 
+    func applicationDidUnhide(_ notification: Notification) {
+        lifecycle.noteDidUnhide()
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool)
         -> Bool
     {

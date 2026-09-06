@@ -149,11 +149,10 @@ final class AppWindowRegistry {
     /// Whether any user-facing Kernova window is currently on screen, optionally
     /// counting a miniaturized one as present.
     ///
-    /// Deliberately does NOT special-case `NSApp.isHidden`: plain ⌘H closes no
-    /// window, so no reconcile fires and the Dock icon persists. Forcing
-    /// `.regular` while hidden strands the agent with a Dock icon and zero
-    /// windows when a background close (a VM shutting down empties the last
-    /// display window mid-hide) fires the reconcile.
+    /// Deliberately does NOT special-case `NSApp.isHidden`, which turns every
+    /// window's `isVisible` false without closing one: this answers what is on
+    /// screen, and hiding is a term of the residency decision instead — see
+    /// ``AppResidencyController/residencyOutcome(hasVisibleUserWindow:isHidden:keepInMenuBar:hasUninterruptibleWork:)``.
     func hasUserWindow(countingMiniaturized: Bool) -> Bool {
         if hasTrackedUserWindow(countingMiniaturized: countingMiniaturized) { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
