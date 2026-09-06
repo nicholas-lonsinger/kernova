@@ -81,6 +81,34 @@ struct ClipboardPassthroughCoordinatorTests {
         }
     }
 
+    /// Every forward resolve the coordinator has completed, in completion
+    /// order, each as the session generation it was launched in.
+    ///
+    /// A wait names the resolve it sequences against — the n-th completion, or
+    /// a given session's — never "any resolve": a stopped session's resolve and
+    /// the fresh session's timer-driven first forward can be in flight together,
+    /// and a wait on either completing resumes on whichever finishes first.
+    @MainActor
+    final class ForwardResolveLog {
+        private(set) var generations: [Int] = []
+        private let completed = AsyncGate()
+
+        func record(_ generation: Int) {
+            generations.append(generation)
+            completed.notify()
+        }
+
+        /// Suspends until `count` resolves have completed.
+        func wait(untilCompleted count: Int) async throws {
+            try await completed.wait { generations.count == count }
+        }
+
+        /// Suspends until a resolve launched in session `generation` has completed.
+        func wait(untilSessionResolved generation: Int) async throws {
+            try await completed.wait { generations.contains(generation) }
+        }
+    }
+
     private struct Harness {
         let coordinator: ClipboardPassthroughCoordinator
         let instance: VMInstance
@@ -89,6 +117,9 @@ struct ClipboardPassthroughCoordinatorTests {
         let publisher: HostClipboardPublisher
         /// This VM's transfer report, as every surface reads it.
         let reports: ClipboardTransferReports
+        /// The coordinator's completed file resolves, the event a wait on the
+        /// poll's off-actor resolve resolves on.
+        let resolves: ForwardResolveLog
     }
 
     private func makeHarness(preferences: AppPreferences? = nil) -> Harness {
@@ -112,9 +143,11 @@ struct ClipboardPassthroughCoordinatorTests {
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: reports.reporter,
             pasteboard: pasteboard)
+        let resolves = ForwardResolveLog()
+        coordinator.onForwardResolvedForTesting = { resolves.record($0) }
         return Harness(
             coordinator: coordinator, instance: instance, service: service,
-            pasteboard: pasteboard, publisher: publisher, reports: reports)
+            pasteboard: pasteboard, publisher: publisher, reports: reports, resolves: resolves)
     }
 
     /// Places a plain-text item on `pasteboard`.
@@ -363,24 +396,17 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("doomed".utf8).write(to: doomed)
         try FileManager.default.removeItem(at: doomed)
 
-        var resolves = 0
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolves += 1
-            resolved.notify()
-        }
-
         // Two copies of the same partial selection: the second forwards content
         // the guest already holds, so nothing on the offer path resets what the
         // first left standing. Each is still a gesture the user made, and each
         // is owed its own message.
         writeFileURLs([kept, doomed], to: h.pasteboard)
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolves == 1 }
+        try await h.resolves.wait(untilCompleted: 1)
 
         writeFileURLs([kept, doomed], to: h.pasteboard)
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolves == 2 }
+        try await h.resolves.wait(untilCompleted: 2)
 
         #expect(h.reports.refusals.count == 2)
         #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
@@ -402,14 +428,8 @@ struct ClipboardPassthroughCoordinatorTests {
         // branch runs on an unstructured Task, so a sleep that outruns a loaded
         // scheduler would assert "no issue" before the branch that could raise
         // one had run, and pass for the wrong reason.
-        var resolveCompleted = false
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolveCompleted = true
-            resolved.notify()
-        }
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 1)
 
         // A Linux guest rejects every file copy by design, so reporting here
         // would fire on each one rather than on anything the user can act on.
@@ -428,28 +448,20 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
-        var resolveCompleted = false
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolveCompleted = true
-            resolved.notify()
-        }
-
         // The resolve's continuation needs the main actor this test holds, so the
         // channel dies strictly between the poll's read and the offer it leads
         // to — the window the change count used to be consumed in.
         h.coordinator.pollHostClipboard()
         h.service.isConnected = false
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 1)
         #expect(h.service.grabbed.isEmpty)
 
         // The redial installs a fresh service, and the copy is still outstanding.
         let reconnected = FakePassthroughService()
         reconnected.reporter = h.reports.reporter
         h.instance.sessionContext?.clipboardService = reconnected
-        resolveCompleted = false
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 2)
 
         #expect(reconnected.grabbed.map { $0.representations.map(\.filename) } == [["notes.txt"]])
     }
@@ -465,19 +477,12 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
-        var resolveCompleted = false
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolveCompleted = true
-            resolved.notify()
-        }
-
         // Both polls run before the resolve's Task can start: leaving the copy
         // retryable must not turn every tick of a multi-second folder walk into
         // another walk.
         h.coordinator.pollHostClipboard()
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 1)
         #expect(h.service.grabbed.count == 1)
 
         // And once it has settled, the copy is not offered a second time.
@@ -496,17 +501,10 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
-        var resolveCompleted = false
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolveCompleted = true
-            resolved.notify()
-        }
-
         // The user copies something else while the folder walk is still running.
         h.coordinator.pollHostClipboard()
         writeText("copied over the folder", to: h.pasteboard)
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 1)
 
         // Offering the walk's result now would put content nobody holds on the
         // guest's clipboard.
@@ -529,29 +527,27 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
-        var resolveCompleted = false
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolveCompleted = true
-            resolved.notify()
-        }
-
         // Passthrough switched off and back on while the walk runs, so its
         // resolve lands in a session that has already reseeded to `-1`.
         h.coordinator.start()
+        let stopped = h.coordinator.runGeneration
         h.coordinator.pollHostClipboard()
         h.coordinator.stop()
         h.coordinator.start()
         defer { h.coordinator.stop() }
+        let live = h.coordinator.runGeneration
 
-        try await resolved.wait { resolveCompleted }
-        #expect(h.service.grabbed.isEmpty)
+        // The fresh session's poll timer forwards the same file on its own
+        // schedule, so either session's resolve can complete first: every grab
+        // so far must be the live session's.
+        try await h.resolves.wait(untilSessionResolved: stopped)
+        #expect(h.service.grabbed.count == h.resolves.generations.filter { $0 == live }.count)
 
-        // Nothing was recorded either: the fresh session's first poll still
-        // forwards the current clipboard, which a stale record would suppress.
-        resolveCompleted = false
+        // Nothing was recorded either: the fresh session's first poll — its
+        // timer's or this one — forwards the current clipboard, which a stale
+        // record would suppress.
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilSessionResolved: live)
         #expect(h.service.grabbed.map { $0.representations.map(\.filename) } == [["notes.txt"]])
     }
 
@@ -568,17 +564,10 @@ struct ClipboardPassthroughCoordinatorTests {
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([kept, doomed], to: h.pasteboard)
 
-        var resolveCompleted = false
-        let resolved = AsyncGate()
-        h.coordinator.onForwardResolvedForTesting = {
-            resolveCompleted = true
-            resolved.notify()
-        }
-
         h.service.grabOutcome = .undelivered
         h.coordinator.pollHostClipboard()
         try FileManager.default.removeItem(at: doomed)
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 1)
 
         // Nothing reached the guest, so nothing partial did either — reporting
         // here would file one refusal per poll until the retry lands.
@@ -586,9 +575,8 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.reports.refusals.isEmpty)
 
         h.service.grabOutcome = .settled
-        resolveCompleted = false
         h.coordinator.pollHostClipboard()
-        try await resolved.wait { resolveCompleted }
+        try await h.resolves.wait(untilCompleted: 2)
 
         #expect(h.reports.refusals.count == 1)
         #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
