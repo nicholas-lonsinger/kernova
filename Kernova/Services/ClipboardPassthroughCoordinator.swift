@@ -76,7 +76,7 @@ final class ClipboardPassthroughCoordinator {
     /// either: a restarted session reseeds to ``unobservedChangeCount`` precisely
     /// so its first connected poll forwards the current clipboard, which a stale
     /// record would suppress.
-    private var runGeneration = 0
+    private(set) var runGeneration = 0
 
     private var inboundObservation: ObservationLoop?
 
@@ -110,9 +110,11 @@ final class ClipboardPassthroughCoordinator {
     var onInboundPublishedForTesting: (@MainActor () -> Void)?
 
     /// Fires once the poll's off-actor file resolve has been handled, on every
-    /// outcome — the seam a test needs to observe that a forward produced
-    /// *nothing*, which no other signal announces.
-    var onForwardResolvedForTesting: (@MainActor () -> Void)?
+    /// outcome, with the `runGeneration` the resolve was launched in — the seam
+    /// a test needs to observe that a forward produced *nothing*, which no
+    /// other signal announces, and to tell a stopped session's resolve from the
+    /// live session's when both are in flight.
+    var onForwardResolvedForTesting: (@MainActor (_ generation: Int) -> Void)?
     #endif
 
     private static let logger = Logger(
@@ -240,7 +242,7 @@ final class ClipboardPassthroughCoordinator {
                 filesAt: urls, unresolved: unresolved, allowsBinary: allowsBinary)
             guard let self else { return }
             #if DEBUG
-            defer { self.onForwardResolvedForTesting?() }
+            defer { self.onForwardResolvedForTesting?(generation) }
             #endif
             guard self.runGeneration == generation else { return }
             // Below the session guard, so a resolve outliving its session cannot
