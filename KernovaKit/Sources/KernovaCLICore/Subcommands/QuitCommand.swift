@@ -52,7 +52,11 @@ extension KernovaCommand {
         ///   the code says the promise did not.
         static func awaitDeregistration() throws {
             guard let bundle = AppLaunch.enclosingBundle else { return }
-            guard AppRegistryWait.awaitDeregistration(ofBundleAt: bundle, scope: .all) else {
+            let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
+            guard
+                AppRegistryWait.awaitDeregistration(
+                    ofBundleAt: bundle, scope: .all, by: deadline)
+            else {
                 throw CLIFailure(
                     .timedOut,
                     "Kernova has quit, but macOS still had it registered "

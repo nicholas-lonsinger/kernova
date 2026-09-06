@@ -2,6 +2,27 @@ import AppKit
 import Darwin
 import Foundation
 
+// MARK: - Process liveness
+
+/// Whether the kernel still has a process under `identifier`.
+///
+/// `ESRCH` is the one answer that means gone: success and `EPERM` both name a
+/// process that is there, and any other errno is a question the probe could not
+/// answer. Everything it cannot tell counts as running, `identifier` values of
+/// zero and below included — those name no process to ask about, and a caller
+/// waiting for something to disappear must not read "no pid yet" as "gone".
+///
+/// A process that has exited and not yet been reaped answers as running.
+///
+/// The App Sandbox permits the probe: `kill(_:0)` reaches the kernel's process
+/// table rather than the target (verified 2026-09-06 against an ad-hoc
+/// `com.apple.security.app-sandbox` signature on macOS 27).
+public func processIsRunning(_ identifier: pid_t) -> Bool {
+    guard identifier > 0 else { return true }
+    errno = 0
+    return !(kill(identifier, 0) == -1 && errno == ESRCH)
+}
+
 // MARK: - Scope
 
 /// Which of a bundle's registered instances a deregistration wait is about.
@@ -16,7 +37,9 @@ public enum RegisteredInstanceScope: Sendable {
     /// Only instances whose process is already gone.
     ///
     /// For a caller that did not watch it exit, so an app that is merely slow
-    /// to answer is left alone rather than waited out to the deadline.
+    /// to answer is left alone rather than waited out to the deadline. The
+    /// scope opens once the kernel has reaped the process: one that has exited
+    /// and not yet been reaped still answers as running.
     case exitedProcesses
 }
 
@@ -56,6 +79,12 @@ protocol AppRegistry: Sendable {
 }
 
 /// Launch Services itself, read through `NSRunningApplication`.
+///
+/// **Main thread only, and a wait over this registry has to service the main
+/// run loop.** `NSRunningApplication`'s time-varying properties "persist until
+/// the next turn of the main run loop in a common mode" (AppKit's
+/// `NSRunningApplication` class documentation), so an instance read here reports
+/// the same `hasTerminated` forever unless that loop turns.
 struct LaunchServicesRegistry: AppRegistry {
     /// The registered instances of that exact copy of the app.
     ///
@@ -63,6 +92,7 @@ struct LaunchServicesRegistry: AppRegistry {
     /// bundle it wants, so another Kernova elsewhere on disk is not what it
     /// collides with.
     func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance] {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard let identifier = Bundle(url: bundleURL)?.bundleIdentifier else { return [] }
         let wanted = bundleURL.resolvingSymlinksInPath().path
         return NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
@@ -77,21 +107,12 @@ private struct RunningAppInstance: RegisteredAppInstance {
 
     var hasTerminated: Bool { application.isTerminated }
 
-    /// `ESRCH` is the one answer that means gone: success and `EPERM` both name
-    /// a process that is there, and any other errno is a question the probe
-    /// could not answer, which leaves the instance alone.
-    ///
-    /// The App Sandbox permits this probe — `kill(_:0)` reaches the kernel's
-    /// process table, not the target (verified 2026-09-06 against an ad-hoc
-    /// `com.apple.security.app-sandbox` signature on macOS 27).
-    var processHasExited: Bool {
-        let identifier = application.processIdentifier
-        guard identifier > 0 else { return true }
-        errno = 0
-        return kill(identifier, 0) == -1 && errno == ESRCH
-    }
+    /// An instance Launch Services has registered without a process identifier
+    /// yet reads as running, which is what keeps a wait off an app mid-launch.
+    var processHasExited: Bool { !processIsRunning(application.processIdentifier) }
 
     func observeTermination(_ notify: @escaping @Sendable () -> Void) -> TerminationObservation {
+        dispatchPrecondition(condition: .onQueue(.main))
         let token = application.observe(\.isTerminated) { _, _ in notify() }
         return TerminationObservation { token.invalidate() }
     }
@@ -117,7 +138,8 @@ extension RegisteredInstanceScope {
 /// `NSWorkspace` error and macOS puts a "not open anymore" alert on screen, so
 /// anything that opens an app it may have just watched exit waits here first.
 public enum AppRegistryWait {
-    /// How long a wait gives Launch Services before giving up, in seconds.
+    /// How long a wait gives Launch Services before giving up, in seconds, for
+    /// a caller with no budget of its own to spend.
     ///
     /// A stuck-state backstop rather than a sizing of the lag: the wait ends on
     /// the registry's own signal, and a release that has not arrived by here is
@@ -125,36 +147,33 @@ public enum AppRegistryWait {
     public static let defaultDeadline: TimeInterval = 20
 
     /// Blocks until the registry holds no instance of the bundle at
-    /// `bundleURL` that `scope` admits, or `deadline` seconds pass.
+    /// `bundleURL` that `scope` admits, or `expiry` passes.
     ///
-    /// Runs the calling thread's run loop rather than parking it, and must be
-    /// called from the main thread, at the run loop's base or from a
-    /// `RunLoop.main.perform` callout: `NSRunningApplication`'s time-varying
-    /// properties advance only on a turn of the main run loop in a common mode
-    /// (AppKit's `NSRunningApplication` class documentation), so a parked
-    /// thread would never see the registration it is waiting on change. Nested
-    /// from inside a main-queue job it would not drain that queue, which is
-    /// what the callout avoids.
+    /// Services the calling thread's run loop rather than parking it, so a
+    /// registry whose readings only advance on a turn of that loop — every one
+    /// backed by `NSRunningApplication`, see ``LaunchServicesRegistry`` — can
+    /// report the change this is waiting for. Reach it from the run loop's base
+    /// or a `RunLoop.main.perform` callout: nested inside a main-queue job the
+    /// loop cannot drain that queue.
     ///
-    /// - Returns: `true` once the registry has let go, `false` when the
-    ///   deadline passed with an admitted instance still registered.
+    /// - Returns: `true` once the registry has let go, `false` when `expiry`
+    ///   passed with an admitted instance still registered.
     @discardableResult
     public static func awaitDeregistration(
         ofBundleAt bundleURL: URL,
         scope: RegisteredInstanceScope,
-        within deadline: TimeInterval = defaultDeadline
+        by expiry: Date = Date(timeIntervalSinceNow: defaultDeadline)
     ) -> Bool {
         awaitDeregistration(
-            ofBundleAt: bundleURL, scope: scope, within: deadline,
+            ofBundleAt: bundleURL, scope: scope, by: expiry,
             registry: LaunchServicesRegistry())
     }
 
-    /// ``awaitDeregistration(ofBundleAt:scope:within:)`` against a given
-    /// registry.
+    /// ``awaitDeregistration(ofBundleAt:scope:by:)`` against a given registry.
     static func awaitDeregistration(
         ofBundleAt bundleURL: URL,
         scope: RegisteredInstanceScope,
-        within deadline: TimeInterval,
+        by expiry: Date,
         registry: any AppRegistry
     ) -> Bool {
         let instances = registry.instances(ofBundleAt: bundleURL).filter { scope.admits($0) }
@@ -163,7 +182,6 @@ public enum AppRegistryWait {
 
         let waker = RunLoopWaker(CFRunLoopGetCurrent())
         let observations = instances.map { $0.observeTermination { waker.wake() } }
-        let expiry = Date(timeIntervalSinceNow: deadline)
         return withExtendedLifetime(observations) { () -> Bool in
             runCurrentLoop(until: expiry, while: { !settled() })
             return settled()

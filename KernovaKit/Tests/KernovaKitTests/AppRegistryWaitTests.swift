@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import KernovaTestSupport
 import Testing
@@ -76,6 +77,24 @@ struct AppRegistryWaitTests {
         #expect(released)
     }
 
+    // MARK: - Process liveness
+
+    /// Launch Services registers an instance before it has a process
+    /// identifier for it. Reading that as "gone" would put `.exitedProcesses`
+    /// on a healthy app mid-launch and hold it to the deadline.
+    @Test("An identifier naming no process reads as running, not as gone")
+    func identifierWithoutAProcessReadsAsRunning() {
+        #expect(processIsRunning(0))
+        #expect(processIsRunning(-1))
+    }
+
+    @Test("A live process reads as running and a pid the kernel cannot hold does not")
+    func liveProcessReadsAsRunning() {
+        // Above `PID_MAX`, so no process can ever carry it.
+        #expect(processIsRunning(getpid()))
+        #expect(!processIsRunning(999_999))
+    }
+
     /// Runs the wait on a GCD thread, the way production runs it on a main
     /// thread whose run loop it services rather than parks — so it must not
     /// hold a cooperative-pool thread (docs/TESTING.md, "Blocking bridge
@@ -86,7 +105,8 @@ struct AppRegistryWaitTests {
         let bundle = bundle
         return await offCooperativePool {
             AppRegistryWait.awaitDeregistration(
-                ofBundleAt: bundle, scope: scope, within: deadline, registry: registry)
+                ofBundleAt: bundle, scope: scope,
+                by: Date(timeIntervalSinceNow: deadline), registry: registry)
         }
     }
 }

@@ -61,7 +61,10 @@ enum AppLaunch {
     /// connect retry is what waits for that one. An expired wait still opens —
     /// the open is the right next move either way, and its own refusal is what
     /// the caller hears.
-    static func launchEnclosingApp() -> Result<Void, CLIFailure> {
+    ///
+    /// `deadline` is the caller's whole budget, shared with the connect that
+    /// follows, so what the two spend together is what the caller was told.
+    static func launchEnclosingApp(by deadline: Date) -> Result<Void, CLIFailure> {
         guard let bundle = enclosingBundle else {
             return .failure(
                 CLIFailure(
@@ -70,7 +73,8 @@ enum AppLaunch {
                         + "app. Install the tool from Kernova's Settings \u{2192} Advanced."))
         }
 
-        AppRegistryWait.awaitDeregistration(ofBundleAt: bundle, scope: .exitedProcesses)
+        AppRegistryWait.awaitDeregistration(
+            ofBundleAt: bundle, scope: .exitedProcesses, by: deadline)
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.hides = true

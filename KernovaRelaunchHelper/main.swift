@@ -35,7 +35,12 @@ guard FileManager.default.fileExists(atPath: appPath) else {
 /// main run loop.
 @MainActor
 func relaunchApp() {
-    AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all)
+    let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
+    if !AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all, by: deadline) {
+        logger.warning(
+            "Launch Services still had Kernova registered after \(Int(AppRegistryWait.defaultDeadline), privacy: .public) s; opening anyway"
+        )
+    }
 
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = true
@@ -60,37 +65,48 @@ func relaunchApp() {
 
 logger.notice("Watching PID \(pid, privacy: .public) for exit, will relaunch \(appPath, privacy: .private)")
 
+/// How long the app is given to exit, in seconds.
+///
+/// It bounds that wait alone. The relaunch behind it carries its own deadline,
+/// so no two of these run at once and each says what it waited on.
+let exitWatchSeconds: TimeInterval = 15
+
 // Set up the watcher FIRST to close the TOCTOU race window: a death during setup
-// is caught by the source, an earlier one by the kill check below.
+// is caught by the source, an earlier one by the liveness check below.
 let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+
+let exitWatchTimeout = DispatchWorkItem {
+    logger.warning(
+        "PID \(pid, privacy: .public) had not exited after \(Int(exitWatchSeconds), privacy: .public) s; not relaunching"
+    )
+    source.cancel()
+    exit(1)
+}
+
+/// Ends the exit watch and hands the relaunch to a run-loop callout, never a
+/// main-queue job: the relaunch waits on a nested run loop, and one entered
+/// from inside a main-queue job cannot drain that queue.
+@MainActor
+func beginRelaunch() {
+    exitWatchTimeout.cancel()
+    source.cancel()
+    RunLoop.main.perform { MainActor.assumeIsolated { relaunchApp() } }
+}
 
 source.setEventHandler {
     logger.notice("PID \(pid, privacy: .public) exited, relaunching Kernova")
-    source.cancel()
-    // A run-loop callout, never a main-queue job: the relaunch waits on a
-    // nested run loop, and one entered from inside a main-queue job cannot
-    // drain that queue.
-    RunLoop.main.perform { MainActor.assumeIsolated { relaunchApp() } }
+    // The source's queue is the main queue, so this is already the main thread.
+    MainActor.assumeIsolated { beginRelaunch() }
 }
 
 source.resume()
 
 // NOW check if the PID exited before the watcher was attached.
-if kill(pid, 0) != 0, errno == ESRCH {
+if !processIsRunning(pid) {
     logger.notice("PID \(pid, privacy: .public) already exited, relaunching immediately")
-    source.cancel()
-    // A run-loop callout, never a main-queue job: the relaunch waits on a
-    // nested run loop, and one entered from inside a main-queue job cannot
-    // drain that queue.
-    RunLoop.main.perform { MainActor.assumeIsolated { relaunchApp() } }
+    beginRelaunch()
 }
 
-// Safety timeout: relaunchApp() calls exit(0) on success, so this fires only if
-// the relaunch never completes.
-DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
-    logger.warning("Timeout waiting for PID \(pid, privacy: .public) to exit, giving up")
-    source.cancel()
-    exit(1)
-}
+DispatchQueue.main.asyncAfter(deadline: .now() + exitWatchSeconds, execute: exitWatchTimeout)
 
 RunLoop.main.run()

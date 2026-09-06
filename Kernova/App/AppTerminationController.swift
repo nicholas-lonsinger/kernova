@@ -1,5 +1,6 @@
 import Cocoa
 import Darwin
+import KernovaKit
 import os
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.
@@ -206,7 +207,7 @@ final class AppTerminationController: NSObject {
         // sender like `osascript` as dead, and the Dock's stay-resident outcome
         // depends on being seen as alive *and* identifiable.
         let attributablePID: pid_t? = senderPID.flatMap { pid in
-            guard pid > 0, kill(pid, 0) == 0 || errno != ESRCH else { return nil }
+            guard pid > 0, processIsRunning(pid) else { return nil }
             return pid
         }
         let bundleID = attributablePID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
