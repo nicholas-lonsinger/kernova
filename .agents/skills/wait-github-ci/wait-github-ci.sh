@@ -23,7 +23,7 @@
 #
 # Usage:
 #   .agents/skills/wait-github-ci/wait-github-ci.sh [<pr-number>] [--sha <sha>] [--timeout <seconds>]
-#                                                   [--repo <owner/repo>] [--remote <name>]
+#                                                   [--repo <owner/repo>] [--remote <name>] [--verbose]
 #
 #   <pr-number>   PR to watch. Default: the PR for the current branch.
 #   --sha         Head SHA the PR must be at. Default: git rev-parse HEAD,
@@ -35,6 +35,8 @@
 #   --repo        owner/repo (default: inferred from the working directory).
 #   --remote      Git remote the PR's head branch lives on, used to verify the
 #                 push actually landed (default origin).
+#   --verbose     Also print the progress lines, for a person watching the
+#                 script run in a terminal.
 #
 # Exit codes (merge only on 0):
 #   0  verified green on the expected head SHA — safe to merge
@@ -49,7 +51,9 @@
 #      and pull_request-triggered checks will never register — rebase or
 #      merge the base into the head branch, push, and re-run
 #
-# Progress goes to stderr; the last stdout line is machine-readable:
+# stderr carries the final `check status:` table, any `failing:` or `note:`
+# lines, and the verdict message; --verbose adds the progress lines. The last
+# stdout line is machine-readable:
 #   wait-github-ci: verdict=<green|failed|pending|push-missing|...> pr=N sha=... elapsed=Ns
 
 set -u
@@ -59,6 +63,9 @@ usage() {
 }
 
 say() { printf 'wait-github-ci: %s\n' "$*" >&2; }
+
+# Progress lines: printed only under --verbose.
+progress() { [ "$VERBOSE" -eq 1 ] && say "$*"; return 0; }
 
 finish() { # <exit-code> <verdict-word> [message]
   code="$1"; verdict="$2"; shift 2
@@ -75,6 +82,7 @@ SHA_DEFAULTED=0
 TIMEOUT=3600
 REPO=""
 REMOTE="origin"
+VERBOSE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -82,6 +90,7 @@ while [ $# -gt 0 ]; do
     --timeout) TIMEOUT="${2:?--timeout needs a value}"; shift 2 ;;
     --repo) REPO="${2:?--repo needs a value}"; shift 2 ;;
     --remote) REMOTE="${2:?--remote needs a value}"; shift 2 ;;
+    --verbose) VERBOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) usage; finish 1 setup-error "unknown option: $1" ;;
     *) PR="$1"; PR_GIVEN=1; shift ;;
@@ -222,7 +231,7 @@ conflict_check() {
   if [ "$SNAP_MERGEABLE" = "CONFLICTING" ]; then
     if [ -z "$CONFLICT_SINCE" ]; then
       CONFLICT_SINCE=$SECONDS
-      say "PR #$PR is CONFLICTING with its base — pull_request-triggered checks cannot start without a merge commit"
+      progress "PR #$PR is CONFLICTING with its base — pull_request-triggered checks cannot start without a merge commit"
     elif [ $((SECONDS - CONFLICT_SINCE)) -ge "$CONFLICT_GRACE" ]; then
       finish 7 conflicting "no checks registering and PR #$PR conflicts with its base — its merge commit cannot be built, so pull_request-triggered workflows will never run; rebase or merge the base branch into the head branch, push, and re-run"
     fi
@@ -278,11 +287,11 @@ verify_remote_ref() {
   _branch=${_info%%"$(printf '\t')"*}
   _cross=${_info##*"$(printf '\t')"}
   if [ "$_cross" = "true" ]; then
-    say "cross-repository PR — cannot verify the push via '$REMOTE'; relying on the API head"
+    progress "cross-repository PR — cannot verify the push via '$REMOTE'; relying on the API head"
     return 0
   fi
   git rev-parse --git-dir >/dev/null 2>&1 \
-    || { say "not inside a git repository — skipping direct remote verification"; return 0; }
+    || { progress "not inside a git repository — skipping direct remote verification"; return 0; }
   _remote_sha=""
   _tries=0
   while [ "$_tries" -lt 4 ]; do
@@ -290,11 +299,11 @@ verify_remote_ref() {
       _remote_sha=$(printf '%s\n' "$_ls" | awk 'NR == 1 {print $1}')
       if [ "$_remote_sha" = "$EXPECTED_SHA" ]; then
         PUSH_CONFIRMED=1
-        say "push confirmed on $REMOTE/$_branch — waiting for the API to catch up"
+        progress "push confirmed on $REMOTE/$_branch — waiting for the API to catch up"
         return 0
       fi
     else
-      say "git ls-remote $REMOTE failed — skipping direct remote verification"
+      progress "git ls-remote $REMOTE failed — skipping direct remote verification"
       return 0
     fi
     _tries=$((_tries + 1))
@@ -307,7 +316,7 @@ verify_remote_ref() {
 }
 
 # --- stage 1: confirm the PR is open and its head is the expected SHA -------
-say "watching PR #$PR for head $(printf '%.8s' "$EXPECTED_SHA") (timeout ${TIMEOUT}s)"
+progress "watching PR #$PR for head $(printf '%.8s' "$EXPECTED_SHA") (timeout ${TIMEOUT}s)"
 HEAD_BARRIER=$((SECONDS + 180))
 PUSH_CONFIRMED=0
 GIT_CHECKED=0
@@ -329,10 +338,10 @@ while :; do
     fi
     finish 4 head-mismatch "PR head is $(printf '%.8s' "$SNAP_HEAD"), expected $(printf '%.8s' "$EXPECTED_SHA") — did the push land? (a bare 'git push' with mismatched local/remote branch names silently no-ops; push with an explicit refspec and re-run)$(sha_hint)"
   fi
-  say "PR head is $(printf '%.8s' "$SNAP_HEAD"), waiting for the push to land…"
+  progress "PR head is $(printf '%.8s' "$SNAP_HEAD"), waiting for the push to land…"
   sleep 5
 done
-say "head SHA confirmed on PR #$PR"
+progress "head SHA confirmed on PR #$PR"
 
 # --- stage 2: discover the base branch's required checks --------------------
 BASE=$(ghq pr view "$PR" --json baseRefName --jq .baseRefName) || BASE=""
@@ -349,9 +358,9 @@ if [ -n "$BASE" ]; then
   REQUIRED=$(printf '%s\n%s\n' "$RULESET_REQ" "$LEGACY_REQ" | sort -u | grep . || true)
 fi
 if [ -n "$REQUIRED" ]; then
-  say "required checks on $BASE: $(oneline "$REQUIRED")"
+  progress "required checks on $BASE: $(oneline "$REQUIRED")"
 else
-  say "no required-check list found for $BASE — gating on ALL reported checks"
+  progress "no required-check list found for $BASE — gating on ALL reported checks"
 fi
 
 # --- stage 3+4: barrier, watch, verify — loop until a definitive verdict ----
@@ -374,7 +383,7 @@ while :; do
     if [ -n "$MISSING" ]; then
       conflict_check
       deadline_check "required check(s) never registered: $(oneline "$MISSING")"
-      say "waiting for required check(s) to register: $(oneline "$MISSING")"
+      progress "waiting for required check(s) to register: $(oneline "$MISSING")"
       sleep 10
       continue
     fi
@@ -383,7 +392,7 @@ while :; do
     if [ "$COUNT" -eq 0 ] || [ "$COUNT" != "$PREV_COUNT" ]; then
       conflict_check
       deadline_check "checks still registering ($COUNT reported)"
-      say "waiting for the reported check set to settle ($COUNT so far)…"
+      progress "waiting for the reported check set to settle ($COUNT so far)…"
       PREV_COUNT=$COUNT
       sleep 15
       continue
@@ -399,7 +408,7 @@ while :; do
   fi
 
   if [ -n "$PENDING_LIST" ]; then
-    say "$(printf '%s\n' "$PENDING_LIST" | grep -c .) check(s) pending (elapsed ${SECONDS}s) — watching…"
+    progress "$(printf '%s\n' "$PENDING_LIST" | grep -c .) check(s) pending (elapsed ${SECONDS}s) — watching…"
     bounded_watch
     deadline_check "still pending: $(oneline "$PENDING_LIST")"
     sleep 5

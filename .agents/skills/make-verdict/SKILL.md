@@ -1,13 +1,10 @@
 ---
 name: make-verdict
-description: Build, test, or lint Kernova and get back only the verdict — counts, compile errors, and failing tests with their messages and source locations — never a raw xcodebuild log. Use for every build, test, or lint run in place of make; it runs in its own subagent and returns the verdict when the run finishes.
+description: Build, test, or lint Kernova and get back only the verdict — counts, compile errors, and failing tests with their messages and source locations — never a raw xcodebuild log. Use for every build, test, or lint run in place of make; run the script as a background shell call and the verdict arrives when it exits.
 argument-hint: "[build|test|lint|test-suite <Target/Suite>]"
-context: fork
-background: true
-agent: skill-runner
 ---
 
-Run the make target named by the arguments through this skill's script and return its verdict. Arguments: $ARGUMENTS
+Run the make target named by the arguments through this skill's script. Arguments: $ARGUMENTS
 
 | Ask | Command |
 |---|---|
@@ -16,13 +13,11 @@ Run the make target named by the arguments through this skill's script and retur
 | Build only | `.agents/skills/make-verdict/make-verdict.sh build` |
 | Lint | `.agents/skills/make-verdict/make-verdict.sh lint` |
 
-From the repository root, run the command exactly as written in the table, in the foreground, with the shell call's timeout at its maximum. The script's stdout is the verdict; it also writes the same lines to `artifacts/make-verdict/<target>.verdict`, with `<target>` the first argument, on every exit — setup errors included.
+From the repository root, run the command exactly as written in the table, as a background shell call — in Claude Code, the Bash tool with `run_in_background`, which has no timeout — then act on the completion notification.
 
-If the shell call times out before the script exits, the run is still going: do not start the script again, since that would begin a second build. Wait for the verdict file instead, in the foreground: `until [ -f artifacts/make-verdict/<target>.verdict ]; do sleep 10; done`.
+The script's stdout is the verdict. It also writes the same lines to `artifacts/make-verdict/<target>.verdict`, with `<target>` the first argument, on every exit — setup errors included; that file is the pickup path when the completion notification never arrives, as when a session ended mid-run. Check for the file, and check `pgrep -f make-verdict.sh` before ever starting the script again: a second start begins a second build.
 
-If that wait times out too and `pgrep -f make-verdict.sh` finds the script still running, wait again. If the script is gone and the file never appeared, the run was killed with the shell call — run the command once more.
-
-Return `cat artifacts/make-verdict/<target>.verdict` verbatim — every line, nothing added, nothing summarized — followed by one line giving the verdict's meaning from this table:
+The verdict's last line names one of these tokens:
 
 - `green` — done.
 - `test-failed` — each `=== <test>` block carries that failure's `path:line: message`; fix those.

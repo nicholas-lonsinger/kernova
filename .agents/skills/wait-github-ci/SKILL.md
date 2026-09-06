@@ -5,12 +5,9 @@ description: >-
   building on it. Use after pushing to a PR branch — it confirms the push
   actually landed on the remote, waits for the checks to register and finish,
   and returns a trustworthy verdict naming any failing checks, where a bare
-  `gh pr checks --watch` can race a fresh push and return a false green. It
-  runs in its own subagent and returns when CI has a verdict.
-argument-hint: "[<pr-number>] [--sha <sha>]"
-context: fork
-background: true
-agent: skill-runner
+  `gh pr checks --watch` can race a fresh push and return a false green. Run
+  the script as a background shell call; the verdict arrives when it exits.
+argument-hint: "[<pr-number>] [--sha <sha>] [--verbose]"
 ---
 
 # Wait for a PR's CI
@@ -28,17 +25,19 @@ the deadline.
 
 Arguments: $ARGUMENTS
 
-From the repository root, in the foreground, with the shell call's timeout at
-its maximum and the script's own deadline just under it:
+From the repository root, as a background shell call — in Claude Code, the
+Bash tool with `run_in_background`, which has no timeout — then act on the
+completion notification:
 
 ```bash
 .agents/skills/wait-github-ci/wait-github-ci.sh --timeout 540 $ARGUMENTS
 ```
 
 Run the same command again on exit 3 (deadline expired, checks still
-pending) and after a shell-call timeout, until it exits with any other code:
-one invocation is bounded by `--timeout`, and re-running against the same
-SHA is safe. Never substitute `gh pr checks --watch` or a sleep loop.
+pending), until it exits with any other code: one invocation is bounded by
+`--timeout`, and re-running against the same SHA is safe. Never substitute
+`gh pr checks --watch` or a sleep loop. `--verbose` adds progress lines for
+a person watching the script in a terminal; leave it off for an agent run.
 
 The PR number defaults to the current branch's PR, and the expected head SHA
 to `git rev-parse HEAD` — right only in the checkout the push came from. From
@@ -50,8 +49,10 @@ wrong commit.
 
 ## Reading the result
 
-Progress goes to stderr; the last stdout line is machine-readable
-(`wait-github-ci: verdict=... pr=... sha=...`). The exit code is the verdict:
+The output is the final `check status:` table, any `failing:` or `note:`
+lines, and the last stdout line, which is machine-readable
+(`wait-github-ci: verdict=... pr=... sha=...`). Merge only on exit 0. The
+exit code is the verdict:
 
 | Exit | Meaning | Next action |
 |---|---|---|
@@ -63,10 +64,3 @@ Progress goes to stderr; the last stdout line is machine-readable
 | 5 | PR head moved mid-wait (a new push happened) | Re-run against the new head |
 | 6 | PR is not open (merged or closed) | Stop — nothing to wait for |
 | 7 | PR conflicts with its base — no merge commit, so pull_request-triggered checks can never register | Rebase or merge the base into the head branch, push, re-run |
-
-## Report
-
-Return, and nothing else: the final run's `check status:` table and any
-`failing:` or `note:` lines from its stderr, its last stdout line verbatim,
-the exit code, and the matching "Next action" from the table. Merge only on
-exit 0.
