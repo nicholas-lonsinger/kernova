@@ -166,7 +166,7 @@ final class TestHostResidencyController: AppResidencyHosting {
             break
         case .quit:
             Self.logger.notice("No visible windows and no active VMs — requesting termination")
-            NSApp.terminate(nil)
+            requestTerminationFromRunLoop()
         }
     }
 

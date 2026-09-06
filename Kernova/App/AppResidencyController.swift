@@ -121,6 +121,10 @@ final class AppResidencyController: AppResidencyHosting {
     /// outcome it applied.
     private var pendingUnhideReconcile: Task<UnhideOutcome, Never>?
 
+    /// Whether the unhide now being delivered is one ``unhideForSummon()``
+    /// performed, rather than the person reversing a ⌘H.
+    private var isUnhidingForSummon = false
+
     private static let logger = Logger(subsystem: "app.kernova", category: "AppResidency")
 
     init(
@@ -511,6 +515,32 @@ final class AppResidencyController: AppResidencyHosting {
         )
         requestSummonActivation()
         presentSummonedInterface(showing: target)
+        // Last, after the presentation is enqueued: the unhide notification can
+        // be delivered inside the call, and the reconcile it schedules must run
+        // behind the window show rather than reading a window list the show has
+        // not reached yet.
+        unhideForSummon()
+    }
+
+    /// Leaves the hidden state, so a surface this summon puts on screen is
+    /// actually on it.
+    ///
+    /// A launch that asked for the app hidden — `kernova`'s `hides`, an App
+    /// Intents launch — stays hidden for the life of the process, and a hidden
+    /// app displays no window however it is ordered, `orderFrontRegardless`
+    /// included. Only a summon does this: a launch that presents deliberately
+    /// builds its library behind the hide, where the Dock icon is what brings
+    /// it forward.
+    private func unhideForSummon() {
+        guard NSApp.isHidden else { return }
+        Self.logger.notice("Summoned while hidden — unhiding")
+        // Scoped across the call, which is what `applicationDidUnhide` is
+        // delivered inside: the summon is already deciding what goes on screen,
+        // and the unhide leg would otherwise read a window list the
+        // presentation has not reached yet and demote the app mid-summon.
+        isUnhidingForSummon = true
+        NSApp.unhide(nil)
+        isUnhidingForSummon = false
     }
 
     /// Requests activation for a summon via Launch Services, so a menu-bar
@@ -608,6 +638,7 @@ final class AppResidencyController: AppResidencyHosting {
     /// Re-asserts `.regular` before a window is shown, so a window can never be
     /// presented while the resident app is still headless `.accessory`.
     func activateForExternalRequest() {
+        unhideForSummon()
         setActivationPolicy(.regular)
         requestSummonActivation()
     }
@@ -776,7 +807,7 @@ final class AppResidencyController: AppResidencyHosting {
             guard !hasRequestedIdleTermination else { return }
             hasRequestedIdleTermination = true
             Self.logger.notice("Last window closed with the app set to quit — terminating")
-            NSApp.terminate(nil)
+            requestTerminationFromRunLoop()
         }
     }
 
@@ -813,7 +844,11 @@ final class AppResidencyController: AppResidencyHosting {
     /// Deliberately not ``syncActivationPolicy()``: that one quits an app whose
     /// last window closed, and an unhide is the one moment where a person has
     /// just asked for the app.
+    ///
+    /// An unhide ``unhideForSummon()`` performed is not that moment and decides
+    /// nothing: the summon that asked for it is already putting a surface up.
     func noteDidUnhide() {
+        guard !isUnhidingForSummon else { return }
         pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }
     }
 
@@ -866,6 +901,19 @@ final class AppResidencyController: AppResidencyHosting {
 /// Where a downgraded quit lands: ``closeGUIForSoftQuit()`` is the whole
 /// conformance.
 extension AppResidencyController: SoftQuitHosting {}
+
+/// Asks AppKit to terminate from a run-loop block rather than in place.
+///
+/// Every reconcile that can decide to quit is woken by an `ObservationLoop` or a
+/// deferred sync, both of which run inside a `Task { @MainActor … }` — the one
+/// context a terminate must not start from. ``VMCommandCore/quit()`` carries the
+/// evidence and the two rejected forms.
+@MainActor
+func requestTerminationFromRunLoop() {
+    RunLoop.main.perform(inModes: [.common]) {
+        MainActor.assumeIsolated { NSApp.terminate(nil) }
+    }
+}
 
 /// Observes every instance's ``VMInstance/isKeepingAppAlive`` so the process can
 /// settle when the last one flips inactive.

@@ -640,19 +640,35 @@ extension VMCommandCore {
 
     // MARK: - Application
 
-    /// Fires the quit from a later main-actor turn, so a transport waiting on
+    /// Fires the quit from a later main-queue turn, so a transport waiting on
     /// this verb has its answer encoded and handed over before the process
-    /// starts going down — `NSApp.terminate` does not come back, and a client
-    /// left reading a socket that simply closed cannot tell success from a
-    /// crash.
+    /// starts going down — the quit does not come back, and a client left
+    /// reading a socket that simply closed cannot tell success from a crash.
     func quit() {
         Self.logger.notice("Quit requested from a command front door")
-        guard let requestQuit else {
+        guard requestQuit != nil else {
             Self.logger.fault("No adapter is wired to take the app down")
             assertionFailure("No adapter is wired to take the app down")
             return
         }
-        Task { @MainActor in requestQuit() }
+        // RATIONALE: a run-loop block, not `Task { @MainActor in … }` and not
+        // `DispatchQueue.main.async` — both were tried and both wedge the app.
+        // The hook reaches `NSApp.terminate`, whose terminate-later reply spins
+        // a nested run loop, and the save pass that resolves that reply is a
+        // main-actor job, which Swift enqueues on the main dispatch queue. A
+        // nested loop entered from *inside* a main-queue item cannot re-enter
+        // `_dispatch_main_queue_drain`, so the pass never runs and the process
+        // never leaves. (`sample` of Debug build 777, 2026-09-05: with the Task
+        // form the main thread sat in `-[NSApplication _shouldTerminate]` under
+        // `completeTaskWithClosure`; with the dispatch form, under
+        // `_dispatch_main_queue_drain` — the nested loop parked in
+        // `__CFRunLoopServiceMachPort` both times, and no save-pass line was
+        // ever logged.) A run-loop block is serviced by the nested loop and
+        // leaves the main queue drainable, which is what makes the status item's
+        // own Quit — an event callout — work today.
+        RunLoop.main.perform(inModes: [.common]) {
+            MainActor.assumeIsolated { self.requestQuit?() }
+        }
     }
 
     // MARK: - Storage Disk Lookup
