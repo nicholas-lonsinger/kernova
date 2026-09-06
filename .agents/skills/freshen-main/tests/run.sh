@@ -58,10 +58,38 @@ if [ "$(local_main)" = "$(remote_main)" ]; then pass; else fail "fast-forwarded:
 
 seed_commit C
 printf 'local edit\n' >"$tmp/local/file"
-run "dirty" 0 "^freshen-main: verdict=dirty branch=main path=$tmp/local\$"
+run "dirty" 0 "^freshen-main: verdict=dirty branch=main path=$tmp/local files=file\$"
 if [ "$(local_main)" != "$(remote_main)" ]; then pass; else fail "dirty: the branch moved despite local changes"; fi
-git -C "$tmp/local" checkout -q -- file
+
+# An edit to a file the incoming commits leave alone does not block, and so
+# is never listed.
+printf 'unrelated\n' >"$tmp/seed/other"
+git -C "$tmp/seed" add other && git -C "$tmp/seed" commit -q -m "other" && git -C "$tmp/seed" push -q origin main 2>/dev/null
+run "discard not blocking" 1 "^freshen-main: verdict=setup-error reason=not-blocking path=other files=file\$" --discard other
+if [ "$(local_main)" != "$(remote_main)" ]; then pass; else fail "discard not blocking: the branch moved"; fi
+if [ "$(cat "$tmp/local/file")" = "local edit" ]; then pass; else fail "discard not blocking: the edit was discarded anyway"; fi
+
+run "discard" 0 "^freshen-main: verdict=fast-forwarded branch=main path=$tmp/local discarded=file\$" --discard file
+if [ "$(local_main)" = "$(remote_main)" ]; then pass; else fail "discard: local main is not at the remote tip"; fi
+
+# An untracked file the merge would create blocks too, and --discard cannot
+# restore what HEAD never had.
+seed_commit F
+printf 'incoming\n' >"$tmp/seed/new"
+git -C "$tmp/seed" add new && git -C "$tmp/seed" commit -q -m "new" && git -C "$tmp/seed" push -q origin main 2>/dev/null
+printf 'untracked\n' >"$tmp/local/new"
+run "dirty untracked" 0 "^freshen-main: verdict=dirty branch=main path=$tmp/local files=new\$"
+run "discard untracked" 1 '^freshen-main: verdict=setup-error reason=discard-failed path=new$' --discard new
+rm "$tmp/local/new"
 run "clean again" 0 '^freshen-main: verdict=fast-forwarded '
+
+seed_commit G
+printf 'local edit\n' >"$tmp/local/file"
+git -C "$tmp/local" rev-parse HEAD >"$tmp/local/.git/MERGE_HEAD"
+run "in progress" 0 "^freshen-main: verdict=dirty branch=main path=$tmp/local reason=in-progress\$"
+rm "$tmp/local/.git/MERGE_HEAD"
+git -C "$tmp/local" checkout -q -- file
+run "clean after in progress" 0 '^freshen-main: verdict=fast-forwarded '
 
 printf 'local commit\n' >"$tmp/local/file"
 git -C "$tmp/local" commit -q -am "local D"
