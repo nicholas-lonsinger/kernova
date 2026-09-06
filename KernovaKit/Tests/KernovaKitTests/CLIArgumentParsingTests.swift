@@ -68,6 +68,65 @@ struct CLIArgumentParsingTests {
         #expect(mapped == Set(StopDisposition.allCases))
     }
 
+    @Test("wait parses its condition and its deadline")
+    func waitParsesItsCondition() throws {
+        let running = try #require(
+            try parse(["wait", "Alpha", "--until", "running"]) as? KernovaCommand.Wait)
+        #expect(running.until == .running)
+        #expect(running.timeout == 300)
+
+        let agent = try #require(
+            try parse(["wait", "Alpha", "--until", "agent", "--timeout", "45"])
+                as? KernovaCommand.Wait)
+        #expect(agent.until == .agent)
+        #expect(agent.timeout == 45)
+    }
+
+    @Test("wait refuses a condition this build cannot watch for, and one it was not given")
+    func waitRefusesAnUnknownCondition() {
+        #expect(throws: (any Error).self) { try parse(["wait", "Alpha", "--until", "melted"]) }
+        #expect(throws: (any Error).self) { try parse(["wait", "Alpha"]) }
+    }
+
+    @Test("ip takes --wait and its own deadline")
+    func ipParsesWait() throws {
+        let plain = try #require(try parse(["ip", "Alpha"]) as? KernovaCommand.IP)
+        #expect(!plain.wait)
+
+        let waiting = try #require(
+            try parse(["ip", "Alpha", "--wait", "--timeout", "10"]) as? KernovaCommand.IP)
+        #expect(waiting.wait)
+        #expect(waiting.timeout == 10)
+    }
+
+    @Test("Each wait condition reads exactly one kind of state")
+    func waitConditionsReadOneKindOfState() {
+        #expect(WaitCondition.running.isSatisfied(byStatus: "running") == true)
+        #expect(WaitCondition.running.isSatisfied(byStatus: "stopped") == false)
+        #expect(WaitCondition.stopped.isSatisfied(byStatus: "stopped") == true)
+        #expect(WaitCondition.stopped.isSatisfied(byStatus: "running") == false)
+        // A status-shaped condition says nothing about the agent, and the
+        // agent condition says nothing about the status.
+        #expect(WaitCondition.running.isSatisfied(byAgentStatus: "current") == nil)
+        #expect(WaitCondition.stopped.isSatisfied(byAgentStatus: "current") == nil)
+        #expect(WaitCondition.agent.isSatisfied(byStatus: "running") == nil)
+        #expect(WaitCondition.agent.isSatisfied(byAgentStatus: "current") == true)
+        // Connected but out of date is not what a script waited for.
+        for other in ["waiting", "connecting", "outdated", "unresponsive", "expectedMissing"] {
+            #expect(WaitCondition.agent.isSatisfied(byAgentStatus: other) == false, "\(other)")
+        }
+    }
+
+    @Test("Every wait condition is reachable from the command line")
+    func everyWaitConditionParses() throws {
+        for condition in WaitCondition.allCases {
+            let parsed = try #require(
+                try parse(["wait", "Alpha", "--until", condition.rawValue])
+                    as? KernovaCommand.Wait)
+            #expect(parsed.until == condition)
+        }
+    }
+
     @Test("A bare invocation lists, so `kernova` alone answers something useful")
     func bareInvocationLists() throws {
         #expect(try parse([]) is KernovaCommand.List)

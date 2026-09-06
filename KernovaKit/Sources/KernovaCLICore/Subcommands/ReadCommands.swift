@@ -71,6 +71,14 @@ extension KernovaCommand {
         @Argument(help: "The virtual machine's name or identifier.")
         public var vm: String
 
+        /// Keep asking until the guest has an address.
+        @Flag(name: .long, help: "Keep asking until the guest has an address.")
+        public var wait = false
+
+        /// How long `--wait` waits before giving up.
+        @Option(name: .long, help: "Seconds to wait before giving up, with --wait.")
+        public var timeout: Double = 300
+
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
 
@@ -81,16 +89,44 @@ extension KernovaCommand {
         /// way.
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(options)
-            defer { client.close() }
-            let answer = try client.send(.ipAddress(selector)).payload()
-            guard case .ipAddress(let address) = answer else { throw answer.unexpectedAnswer }
+            let address = try resolve(selector)
             if options.format == .json {
                 Console.out(try JSONRenderer.render(address))
                 return
             }
             Console.out(try KernovaCommand.IP.line(for: address, vm: vm))
         }
+
+        /// The guest's address, waiting for one only where waiting can help.
+        ///
+        /// `--wait` polls: a reserved address is published by the vmnet layer,
+        /// which emits no library event, so there is no signal to await. Only
+        /// `pending` is worth waiting on — `unavailable` and
+        /// `externallyAssigned` are answers rather than delays, and polling
+        /// them to the deadline would turn a clear refusal into a long silence.
+        private func resolve(_ selector: VMSelector) throws -> GuestIPAddress {
+            let deadline = Date().addingTimeInterval(timeout)
+            while true {
+                let client = try CommandConnection.open(options)
+                let answer = try client.send(.ipAddress(selector)).payload()
+                client.close()
+                guard case .ipAddress(let address) = answer else { throw answer.unexpectedAnswer }
+                guard wait, case .pending = address else { return address }
+                guard Date() < deadline else {
+                    throw CLIFailure(
+                        .timedOut,
+                        "\u{201C}\(vm)\u{201D} had no address within \(Int(timeout)) seconds.")
+                }
+                Thread.sleep(forTimeInterval: Self.pollInterval)
+            }
+        }
+
+        /// How often `--wait` asks again.
+        ///
+        /// A reservation lands when the network materializes, a one-off at VM
+        /// start rather than something that drifts, so a slow cadence costs a
+        /// script nothing.
+        private static let pollInterval: TimeInterval = 1
 
         /// The one line an address prints, or the refusal it stands for.
         ///

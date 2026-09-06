@@ -51,17 +51,31 @@ public final class VMCommandClient {
         return response
     }
 
-    /// Sends the subscribe verb and vends the snapshot frame, then one element
-    /// per library event, until the app hangs up.
+    /// Sends one verb without reading its answer.
     ///
-    /// The iterator throws nothing: a read failure ends it, which is what a
-    /// `for` loop over a stream that stopped should see.
-    public func subscribe() throws -> AnyIterator<VMCommandResponse> {
-        try write(try JSONEncoder().encode(VMCommandRequest(verb: .events)))
-        return AnyIterator { [weak self] in
-            guard let self else { return nil }
-            return try? self.nextResponse()
-        }
+    /// For a caller reading frames itself — a subscription interleaves the
+    /// answers to later verbs with the events it is following.
+    public func post(_ verb: VMCommandRequest.Verb) throws {
+        try write(try JSONEncoder().encode(VMCommandRequest(verb: verb)))
+    }
+
+    /// The next frame the app sent, or `nil` once it hangs up.
+    ///
+    /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when
+    ///   ``waitForFrames(upTo:)`` set a deadline and it expired first.
+    public func nextFrame() throws -> VMCommandResponse? {
+        try nextResponse()
+    }
+
+    /// Bounds how long a single `nextFrame()` blocks.
+    ///
+    /// The deadline belongs to the socket rather than to a timer beside it, so
+    /// a wait cannot outlive it while parked in `read`.
+    public func waitForFrames(upTo seconds: TimeInterval) {
+        var deadline = timeval(
+            tv_sec: Int(seconds), tv_usec: Int32((seconds - seconds.rounded(.down)) * 1_000_000))
+        _ = setsockopt(
+            fd, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
     }
 
     /// Closes the connection; idempotent.
@@ -118,8 +132,12 @@ public final class VMCommandClient {
                 continue
             }
             if count == 0 { return nil }  // EOF
-            if errno == EINTR { continue }
-            throw CLIFailure(.unavailable, "Lost the connection to Kernova: \(Self.reason(errno)).")
+            let code = errno
+            if code == EINTR { continue }
+            if code == EAGAIN || code == EWOULDBLOCK {
+                throw CLIFailure(.timedOut, "")  // the read deadline, not a broken connection
+            }
+            throw CLIFailure(.unavailable, "Lost the connection to Kernova: \(Self.reason(code)).")
         }
     }
 

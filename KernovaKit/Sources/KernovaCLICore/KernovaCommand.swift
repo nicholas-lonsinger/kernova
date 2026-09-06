@@ -16,6 +16,7 @@ public struct KernovaCommand: ParsableCommand {
         subcommands: [
             List.self, Info.self, IP.self,
             Start.self, Stop.self, Suspend.self, Pause.self, Resume.self, Restart.self, Open.self,
+            Wait.self,
             Version.self,
         ],
         defaultSubcommand: List.self
