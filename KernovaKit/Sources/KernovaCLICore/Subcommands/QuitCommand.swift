@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import KernovaAppRegistry
 import KernovaKit
 
 extension KernovaCommand {
@@ -32,6 +33,47 @@ extension KernovaCommand {
             // reach the dying instance, or spend the whole connect deadline
             // against one on its way out.
             if answer != nil { try Self.awaitExit(of: client) }
+            try Self.awaitDeregistration(of: client)
+        }
+
+        /// Blocks until Launch Services has released the Kernova this tool just
+        /// spoke to.
+        ///
+        /// Another verb of this tool would wait on its own way in, so this is
+        /// not what makes `kernova quit && kernova start x` safe. What it buys
+        /// is the promise the verb's *return* carries: a script is free to
+        /// reach for `open -a Kernova`, or anything else that asks Launch
+        /// Services to open the app, on the line after this one.
+        ///
+        /// Keyed on the connection's peer, not on the tool's own bundle. The
+        /// socket reaches whichever Kernova holds the app group, which is not
+        /// always the copy this tool is embedded in — a build under
+        /// DerivedData answers a tool installed from elsewhere, and a
+        /// bundle-keyed wait would find no instance and return at once. When
+        /// the kernel will not name the peer the bundle is the only key left,
+        /// and a copy of the tool outside an app bundle has no key at all.
+        ///
+        /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when the
+        ///   registration outlives the wait — the quit itself succeeded, and
+        ///   the code says the promise did not.
+        static func awaitDeregistration(of client: VMCommandClient) throws {
+            let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
+            let released: Bool
+            if let peer = client.peerProcessIdentifier {
+                released = AppRegistryWait.awaitDeregistration(ofProcess: peer, by: deadline)
+            } else if let bundle = AppLaunch.enclosingBundle {
+                released = AppRegistryWait.awaitDeregistration(
+                    ofBundleAt: bundle, scope: .all, by: deadline)
+            } else {
+                return
+            }
+            guard released else {
+                throw CLIFailure(
+                    .timedOut,
+                    "Kernova has quit, but macOS still had it registered "
+                        + "\(Int(AppRegistryWait.defaultDeadline)) seconds later. Starting it "
+                        + "again now may fail.")
+            }
         }
 
         /// Reads the answer a quit gets, treating end-of-stream as success.
@@ -45,11 +87,17 @@ extension KernovaCommand {
         }
 
         /// Blocks until the app closes the connection, which the kernel does
-        /// when the process exits.
+        /// when the process exits — nothing in the app closes the command
+        /// socket earlier, so the hang-up means the process is gone.
         ///
         /// Anything the app says in the meantime is read and dropped: the quit
         /// has been accepted, and the only thing left to wait for is the socket
         /// going away.
+        ///
+        /// The process being gone is not yet the app being relaunchable:
+        /// Launch Services holds its registration for tens of milliseconds
+        /// longer, and that registry is what `NSWorkspace.openApplication`
+        /// consults, so ``AppRegistryWait`` covers the rest.
         static func awaitExit(of client: VMCommandClient) throws {
             while try client.nextFrame() != nil {}
         }

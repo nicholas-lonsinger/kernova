@@ -1,4 +1,5 @@
 import AppKit
+import KernovaAppRegistry
 import os
 
 // A watchdog that monitors the main Kernova process and relaunches it after
@@ -7,92 +8,171 @@ import os
 //
 // Usage: KernovaRelaunchHelper <pid> <app-bundle-path>
 
-private let logger = Logger(subsystem: "app.kernova", category: "RelaunchHelper")
-
-// MARK: - Argument parsing
-
-guard CommandLine.arguments.count == 3,
-    let pid = pid_t(CommandLine.arguments[1])
-else {
-    logger.error("Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
-    exit(1)
-}
-
-let appPath = CommandLine.arguments[2]
-let appURL = URL(fileURLWithPath: appPath)
-
-guard FileManager.default.fileExists(atPath: appPath) else {
-    logger.error("App bundle not found: \(appPath, privacy: .private)")
-    exit(1)
-}
-
-// MARK: - Relaunch
-
+/// Waits for one process to exit, waits for Launch Services to let its app go,
+/// and opens the app again.
+///
+/// A type rather than top-level functions and variables: a `func` declared at
+/// the top level of `main.swift` is a *local* function, so a run-loop callout
+/// or dispatch handler that names one captures it as a non-`Sendable` function
+/// value. Static methods are named through the type and capture nothing.
 @MainActor
-func relaunchApp() async {
-    // Let LaunchServices finish cleaning up the terminated process: without this,
-    // NSWorkspace fails with "0 items" while the old registration lingers.
-    try? await Task.sleep(for: .seconds(1))
+enum Relauncher {
+    nonisolated private static let logger = Logger(
+        subsystem: "app.kernova", category: "RelaunchHelper")
 
-    let configuration = NSWorkspace.OpenConfiguration()
-    configuration.activates = true
+    /// How long the app is given to exit, in seconds.
+    ///
+    /// It bounds that wait alone; ``openWatchSeconds`` bounds the relaunch
+    /// behind it. One phase is armed at a time, and each says what it waited on.
+    private static let exitWatchSeconds: TimeInterval = 15
 
-    // LaunchServices may need more time to update after process exit.
-    for attempt in 1...4 {
-        do {
-            try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
-            logger.notice("Relaunched Kernova successfully (attempt \(attempt, privacy: .public))")
-            exit(0)
-        } catch {
-            logger.warning(
-                "Relaunch attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            if attempt < 4 {
-                try? await Task.sleep(for: .seconds(2))
+    /// How long `openApplication` is given to call back, in seconds.
+    ///
+    /// The completion handler is the only thing that ends this process, so
+    /// without a bound a handler that never fires leaves the helper parked in
+    /// its run loop for good. The deregistration wait ahead of the open carries
+    /// its own deadline and is finished before this is armed.
+    private static let openWatchSeconds: TimeInterval = 30
+
+    private static var appURL = URL(fileURLWithPath: "/")
+    private static var watched: pid_t = 0
+    private static var source: (any DispatchSourceProcess)?
+    private static var exitWatchTimeout: DispatchWorkItem?
+    private static var openWatchTimeout: DispatchWorkItem?
+
+    /// Reports how the tool is called and exits.
+    nonisolated static func refuseUsage() -> Never {
+        logger.error("Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
+        exit(1)
+    }
+
+    /// Reports a bundle that is not where the caller said and exits.
+    nonisolated static func refuseMissingBundle(at path: String) -> Never {
+        logger.error("App bundle not found: \(path, privacy: .private)")
+        exit(1)
+    }
+
+    /// Watches `pid`, and reopens the bundle at `appURL` once it has gone.
+    static func watch(pid: pid_t, appURL bundleURL: URL) {
+        appURL = bundleURL
+        watched = pid
+        logger.notice(
+            "Watching PID \(pid, privacy: .public) for exit, will relaunch \(bundleURL.path, privacy: .private)"
+        )
+
+        // Set up the watcher FIRST to close the TOCTOU race window: a death
+        // during setup is caught by the source, an earlier one by the liveness
+        // check below.
+        let watcher = DispatchSource.makeProcessSource(
+            identifier: pid, eventMask: .exit, queue: .main)
+        source = watcher
+        watcher.setEventHandler {
+            MainActor.assumeIsolated {
+                logger.notice("PID \(pid, privacy: .public) exited, relaunching Kernova")
+                begin()
             }
+        }
+        watcher.resume()
+
+        let timeout = DispatchWorkItem { MainActor.assumeIsolated { giveUpOnExit() } }
+        exitWatchTimeout = timeout
+
+        // NOW check if the PID exited before the watcher was attached.
+        if !processIsRunning(pid) {
+            logger.notice("PID \(pid, privacy: .public) already exited, relaunching immediately")
+            begin()
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + exitWatchSeconds, execute: timeout)
+    }
+
+    /// Ends the exit watch and hands the relaunch to a run-loop callout, never a
+    /// main-queue job: the relaunch waits on a nested run loop, and one entered
+    /// from inside a main-queue job cannot drain that queue.
+    private static func begin() {
+        exitWatchTimeout?.cancel()
+        source?.cancel()
+        RunLoop.main.perform { MainActor.assumeIsolated { relaunch() } }
+    }
+
+    /// Gives up on an open that never called back, leaving whatever it started
+    /// to carry on without a watchdog.
+    private static func giveUpOnOpen() {
+        logger.error(
+            "Launch Services did not answer the open of Kernova within \(Int(openWatchSeconds), privacy: .public) s; giving up"
+        )
+        exit(1)
+    }
+
+    /// Gives up on an app that never exited, leaving it running.
+    private static func giveUpOnExit() {
+        logger.warning(
+            "PID \(watched, privacy: .public) had not exited after \(Int(exitWatchSeconds), privacy: .public) s; not relaunching"
+        )
+        source?.cancel()
+        exit(1)
+    }
+
+    /// Waits for Launch Services to release the app's registration, then opens
+    /// it.
+    ///
+    /// Runs from a run-loop callout, which is what lets the wait service the
+    /// main run loop.
+    private static func relaunch() {
+        let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
+        if !AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all, by: deadline) {
+            logger.warning(
+                "Launch Services still had Kernova registered after \(Int(AppRegistryWait.defaultDeadline), privacy: .public) s; opening anyway"
+            )
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+
+        let timeout = DispatchWorkItem { MainActor.assumeIsolated { giveUpOnOpen() } }
+        openWatchTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + openWatchSeconds, execute: timeout)
+
+        // The handler carries only what it saw, and settles on the main queue:
+        // it arrives on a queue of Launch Services' choosing, and the work item
+        // it has to cancel lives here.
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+            let failure = error?.localizedDescription
+            DispatchQueue.main.async { MainActor.assumeIsolated { finishOpen(failure: failure) } }
         }
     }
 
-    // RATIONALE: the helper is app-sandbox + inherit
-    // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open` inherits
-    // that sandbox and reaches LaunchServices through the same mediated path
-    // `NSWorkspace` already took — it adds no capability this loop lacks.
-    logger.error("Failed to relaunch Kernova after 4 attempts, giving up")
-    exit(1)
-}
-
-// MARK: - PID monitoring
-
-logger.notice("Watching PID \(pid, privacy: .public) for exit, will relaunch \(appPath, privacy: .private)")
-
-// Set up the watcher FIRST to close the TOCTOU race window: a death during setup
-// is caught by the source, an earlier one by the kill check below.
-let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
-
-source.setEventHandler {
-    logger.notice("PID \(pid, privacy: .public) exited, relaunching Kernova")
-    source.cancel()
-    Task { @MainActor in
-        await relaunchApp()
+    /// Ends the helper on whatever the open reported.
+    private static func finishOpen(failure: String?) {
+        openWatchTimeout?.cancel()
+        openWatchTimeout = nil
+        guard let failure else {
+            logger.notice("Relaunched Kernova successfully")
+            exit(0)
+        }
+        // RATIONALE: the helper is app-sandbox + inherit
+        // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open`
+        // inherits that sandbox and reaches LaunchServices through the same
+        // mediated path `NSWorkspace` already took — it adds no capability this
+        // open lacks.
+        logger.error("Failed to relaunch Kernova: \(failure, privacy: .public)")
+        exit(1)
     }
 }
 
-source.resume()
+// MARK: - Entry
 
-// NOW check if the PID exited before the watcher was attached.
-if kill(pid, 0) != 0, errno == ESRCH {
-    logger.notice("PID \(pid, privacy: .public) already exited, relaunching immediately")
-    source.cancel()
-    Task { @MainActor in
-        await relaunchApp()
-    }
+guard CommandLine.arguments.count == 3, let watchedPID = pid_t(CommandLine.arguments[1]) else {
+    Relauncher.refuseUsage()
 }
 
-// Safety timeout: relaunchApp() calls exit(0) on success, so this fires only if
-// the relaunch never completes.
-DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
-    logger.warning("Timeout waiting for PID \(pid, privacy: .public) to exit, giving up")
-    source.cancel()
-    exit(1)
+let appPath = CommandLine.arguments[2]
+
+guard FileManager.default.fileExists(atPath: appPath) else {
+    Relauncher.refuseMissingBundle(at: appPath)
 }
+
+Relauncher.watch(pid: watchedPID, appURL: URL(fileURLWithPath: appPath))
 
 RunLoop.main.run()

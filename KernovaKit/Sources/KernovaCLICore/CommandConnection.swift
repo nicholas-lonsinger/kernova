@@ -64,9 +64,15 @@ public enum CommandConnection {
     /// The first successful connect is the readiness signal; a launch Launch
     /// Services refused ends the wait early rather than spending the whole
     /// deadline on an app that is not coming.
+    ///
+    /// One deadline covers both halves — waiting out a registration Launch
+    /// Services has not released, then waiting for the app to answer — so the
+    /// number the refusal below names is the one a caller actually waits.
     private static func launchAndConnect(to socketPath: String) throws -> VMCommandClient {
-        if case .failure(let failure) = AppLaunch.launchEnclosingApp() { throw failure }
+        let deadline = Date(timeIntervalSinceNow: ConnectBackoff.defaultDeadline)
+        if case .failure(let failure) = AppLaunch.launchEnclosingApp(by: deadline) { throw failure }
         for delay in ConnectBackoff.delays() {
+            guard Date() < deadline else { break }
             Thread.sleep(forTimeInterval: delay)
             if let failure = AppLaunch.reportedFailure { throw failure }
             if let client = try? VMCommandClient(socketPath: socketPath) { return client }

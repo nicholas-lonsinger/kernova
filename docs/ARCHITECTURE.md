@@ -481,7 +481,8 @@ and the `VMCommandRequest`/`VMCommandResponse` envelope — so an out-of-process
 declarations the app throws and returns, rather than a mirror of them.
 
 It also vends `KernovaCLICore` — the `kernova` tool's parsing, rendering, exit-code mapping and
-socket client.
+socket client — and `KernovaAppRegistry`, a **static** product reading Launch Services' registry and
+waiting for it to release an app.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
