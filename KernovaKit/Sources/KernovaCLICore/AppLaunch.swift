@@ -34,6 +34,13 @@ enum AppLaunch {
     /// rather than spending its whole deadline on an app that will never come.
     static var reportedFailure: CLIFailure? { failure.value }
 
+    /// The app bundle this copy of the tool is inside, or `nil` for a copy that
+    /// is not inside one.
+    static var enclosingBundle: URL? {
+        guard let executable = Bundle.main.executableURL else { return nil }
+        return EnclosingAppBundle.locate(executable: executable)
+    }
+
     /// Asks Launch Services for the enclosing bundle, hidden and unactivated.
     ///
     /// Answers as soon as the request is away, not when the app is up.
@@ -46,9 +53,7 @@ enum AppLaunch {
     /// `NSWorkspace.OpenConfiguration` before they reach the app; `hides`
     /// arrives.
     static func launchEnclosingApp() -> Result<Void, CLIFailure> {
-        guard let executable = Bundle.main.executableURL,
-            let bundle = EnclosingAppBundle.locate(executable: executable)
-        else {
+        guard let bundle = enclosingBundle else {
             return .failure(
                 CLIFailure(
                     .unavailable,

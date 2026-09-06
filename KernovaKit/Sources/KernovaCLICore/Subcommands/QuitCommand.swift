@@ -32,6 +32,11 @@ extension KernovaCommand {
             // reach the dying instance, or spend the whole connect deadline
             // against one on its way out.
             if answer != nil { try Self.awaitExit(of: client) }
+            // A copy of the tool outside an app bundle starts no app, so it has
+            // no registration to collide with.
+            if let bundle = AppLaunch.enclosingBundle {
+                try AppRegistryWait.awaitDeregistration(ofBundleAt: bundle)
+            }
         }
 
         /// Reads the answer a quit gets, treating end-of-stream as success.
@@ -45,11 +50,17 @@ extension KernovaCommand {
         }
 
         /// Blocks until the app closes the connection, which the kernel does
-        /// when the process exits.
+        /// when the process exits — nothing in the app closes the command
+        /// socket earlier, so the hang-up means the process is gone.
         ///
         /// Anything the app says in the meantime is read and dropped: the quit
         /// has been accepted, and the only thing left to wait for is the socket
         /// going away.
+        ///
+        /// The process being gone is not yet the app being relaunchable:
+        /// Launch Services holds its registration for tens of milliseconds
+        /// longer, and that registry is what `NSWorkspace.openApplication`
+        /// consults, so ``AppRegistryWait`` covers the rest.
         static func awaitExit(of client: VMCommandClient) throws {
             while try client.nextFrame() != nil {}
         }
