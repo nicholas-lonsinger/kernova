@@ -18,7 +18,7 @@ extension KernovaCommand {
 
         /// Reads the library and writes it.
         public func run() throws {
-            let client = try CommandConnection.open()
+            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
             let answer = try client.send(.list).payload()
             guard case .summaries(let rows) = answer else { throw answer.unexpectedAnswer }
@@ -49,7 +49,7 @@ extension KernovaCommand {
         /// Reads the VM and writes it.
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open()
+            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
             let answer = try client.send(.info(selector)).payload()
             guard case .info(let info) = answer else { throw answer.unexpectedAnswer }
@@ -108,7 +108,7 @@ extension KernovaCommand {
         private func resolve(_ selector: VMSelector) throws -> GuestIPAddress {
             let deadline = Date().addingTimeInterval(timeout)
             while true {
-                let client = try CommandConnection.open()
+                let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
                 let answer = try client.send(.ipAddress(selector)).payload()
                 client.close()
                 guard case .ipAddress(let address) = answer else { throw answer.unexpectedAnswer }

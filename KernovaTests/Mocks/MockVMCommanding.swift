@@ -490,6 +490,15 @@ final class MockVMCommanding: VMCommanding {
         if let guestAgentDiskError { throw guestAgentDiskError }
     }
 
+    // MARK: - Application
+
+    /// How many times the quit verb was asked for.
+    private(set) var quitCallCount = 0
+
+    func quit() {
+        quitCallCount += 1
+    }
+
     // MARK: - Observation
 
     /// One stream shared by every call, unlike the core's per-caller streams:

@@ -31,6 +31,10 @@ public struct GlobalOptions: ParsableArguments {
     @Flag(name: [.customShort("y"), .long], help: "Answer yes to the confirmation a verb asks for.")
     public var yes = false
 
+    /// Refuse rather than starting Kernova to answer.
+    @Flag(name: .long, help: "Fail instead of starting Kernova when it is not running.")
+    public var noLaunch = false
+
     /// Creates the group with every option at its default.
     public init() {}
 }

@@ -20,9 +20,7 @@ struct FindSnapshotsIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<[SnapshotEntity]> {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
-        return .result(value: try await gateway.snapshots(ofVM: vm.id))
+        .result(value: try await gateway.snapshots(ofVM: vm.id))
     }
 }
 
@@ -59,8 +57,6 @@ struct RevertToSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await runWithConsent(asking: checkpointAwareConfirmation) { confirmed in
             try await gateway.revertToSnapshot(
                 vm.id, snapshot: snapshot.id, takingCheckpoint: takeCheckpoint,
@@ -115,8 +111,6 @@ struct DeleteSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await runWithConsent { confirmed in
             try await gateway.deleteSnapshot(
                 vm.id, snapshot: snapshot.id, confirmed: confirmed)
@@ -148,8 +142,6 @@ struct RenameSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.renameSnapshot(vm.id, snapshot: snapshot.id, to: name)
         return .result()
     }
@@ -178,8 +170,6 @@ struct SetSnapshotNotesIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.setSnapshotNotes(vm.id, snapshot: snapshot.id, notes: notes)
         return .result()
     }

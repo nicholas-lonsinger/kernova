@@ -7,8 +7,8 @@ import Testing
 /// Covers `AppWindowRegistry.hasTrackedUserWindow(countingMiniaturized:)` — the
 /// deterministic half of the window-presence answer the activation-policy
 /// reconcile and the reopen leg both read — the clipboard window's
-/// close-driven deregistration, and the `WindowResidencyHosting` calls a
-/// presentation and a close owe.
+/// close-driven deregistration, and the `WindowResidencyHosting` call a
+/// presentation owes.
 ///
 /// Only the tracked windows are exercised for presence: the `NSApp.windows` scan
 /// `hasUserWindow(countingMiniaturized:)` layers on top sees every other suite's
@@ -24,12 +24,10 @@ struct AppWindowRegistryPresenceTests {
     private final class StubResidencyHost: WindowResidencyHosting {
         var prepareCount = 0
         var syncCount = 0
-        var reconcileCount = 0
         var activateCount = 0
 
         func prepareToPresentWindow() { prepareCount += 1 }
         func syncActivationPolicy() { syncCount += 1 }
-        func reconcileIdleTermination() { reconcileCount += 1 }
         func activateForExternalRequest() { activateCount += 1 }
     }
 
@@ -116,7 +114,7 @@ struct AppWindowRegistryPresenceTests {
         #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
     }
 
-    @Test("Showing a clipboard window asks residency to prepare, and its close reconciles")
+    @Test("Showing a clipboard window asks residency to prepare, and its close deregisters it")
     func clipboardWindowDrivesResidency() throws {
         let registry = makeRegistry()
         defer { registry.closeAll() }
@@ -128,11 +126,13 @@ struct AppWindowRegistryPresenceTests {
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
 
         #expect(host.prepareCount == 1)
-        #expect(host.reconcileCount == 0)
 
+        // The close is answered by the registry's own deregistration; the
+        // resident app's global `willClose` observer runs the reconcile, since
+        // a clipboard window is titled.
         window.close()
 
-        #expect(host.reconcileCount == 1)
+        #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
     }
 
     @Test("A VM whose state refuses the clipboard opens no window")

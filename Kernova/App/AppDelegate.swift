@@ -33,16 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
     private var libraryLoad: Task<Void, Never>?
-    /// Latched once ``armAutoStartPass(surfacingDisplays:)`` has armed the pass, so the first
-    /// interactive bring-up of an automation-launched process runs it and no
-    /// later one runs it a second time.
+    /// Latched once ``armAutoStartPass(surfacingDisplays:)`` has armed the pass,
+    /// so whoever arms it first decides whether its guests surface a display and
+    /// no later call runs the pass a second time.
     private var hasArmedAutoStartPass = false
-    /// Whether `applicationOpenUntitledFile(_:)` ran, latched before
-    /// `applicationDidFinishLaunching` reads it — see ``AppResidencyController/launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:openEventIsDirect:isHiddenLaunch:isLoginItemLaunch:isDefaultLaunch:)``.
-    private var didOpenUntitledFile = false
-    /// Whether `application(_:open:)` ran with a launch document, latched the
-    /// same way.
-    private var didOpenLaunchDocuments = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
 
@@ -105,6 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onSurfaceLibrary = { [weak lifecycle] in
             lifecycle?.presentSummonedInterface()
         }
+        // The status item's own Quit path, so the command core's quit verb and
+        // the affordance a person clicks take the app down the same way.
+        viewModel.onRequestQuit = { [weak self] in
+            self?.termination.requestFullQuit()
+        }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)
         }
@@ -129,18 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         lifecycle.registerAutomationFrontDoors()
     }
 
-    /// Records that Launch Services asked for the app's default surface.
-    ///
-    /// AppKit sends this while handling the launch `kAEOpenApplication`, which
-    /// it does *between* `applicationWillFinishLaunching` and
-    /// `applicationDidFinishLaunching` — so the latch is always settled by the
-    /// time `readLaunchProvenance` reads it. The window itself is not opened
-    /// here: `AppResidencyController.start(provenance:)` owns presentation, and
-    /// answering `true` only reports
-    /// that the request was taken.
+    /// Takes Launch Services' request for the app's default surface without
+    /// opening anything: `AppResidencyController.start(provenance:)` owns
+    /// presentation, and answering `true` only reports that the request was
+    /// taken.
     func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        didOpenUntitledFile = true
-        return true
+        true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -163,82 +156,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         lifecycle.start(provenance: readLaunchProvenance(notification))
     }
 
-    /// Reads the launch's raw signals and classifies them.
+    /// Reads what the launch asked for.
     ///
-    /// The only place any of them is read: everything downstream takes the
-    /// decided ``AppResidencyController/LaunchProvenance``, so a second front
-    /// door (a CLI, #309) marks its own launches rather than adding a second
-    /// detection mechanism.
+    /// The only place either signal is read: everything downstream takes the
+    /// ``AppResidencyController/LaunchProvenance`` this builds.
     private func readLaunchProvenance(
         _ notification: Notification
     ) -> AppResidencyController.LaunchProvenance {
         let event = NSAppleEventManager.shared().currentAppleEvent
-        let isOpenEvent =
-            event.map { descriptor in
-                descriptor.eventClass == AEEventClass(kCoreEventClass)
-                    && (descriptor.eventID == AEEventID(kAEOpenApplication)
-                        || descriptor.eventID == AEEventID(kAEOpenDocuments))
-            } ?? false
         let isLoginItem =
             event.map { descriptor in
                 descriptor.eventID == AEEventID(kAEOpenApplication)
                     && descriptor.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
                         == keyAELaunchedAsLogInItem
             } ?? false
-        // Absent means unknown, and unknown resolves to the interactive launch.
-        let defaultLaunchKey = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool
-        let isDefaultLaunch = defaultLaunchKey ?? true
-
-        // The verdict alone cannot say which signal produced it, and a launch
-        // that arrives with an open event no person sent looks identical to a
-        // double-click in everything but these.
-        let eventID = event.map { String(describing: $0.eventID) } ?? "none"
-        let sender =
-            event?.attributeDescriptor(forKeyword: keySenderPIDAttr).map { String($0.int32Value) }
-            ?? "none"
-        // A launch the app itself asked Launch Services for is `kAEDirectCall`;
-        // a source that positively names another process sent the open event on
-        // someone else's behalf. An absent or unreadable source (`int32Value` is
-        // 0, `kAEUnknownSource`, on any coercion failure) is not evidence of
-        // either, and unknown resolves toward the person.
-        let eventSource = event?.attributeDescriptor(forKeyword: keyEventSourceAttr)?.int32Value
-        let isDirectOpen =
-            eventSource.map { $0 == Int32(kAEDirectCall) || $0 == Int32(kAEUnknownSource) }
-            ?? true
-        let source = eventSource.map { String($0) } ?? "none"
         let isHiddenLaunch = NSApp.isHidden
-        // Positive evidence rather than an inference: the `kernova` tool says
-        // outright what it launched the app for.
-        let isCLILaunch = ProcessInfo.processInfo.arguments.contains(
-            KernovaLaunchArgument.automation)
         Self.logger.notice(
-            "Launch signals — openEvent=\(isOpenEvent, privacy: .public) eventID=\(eventID, privacy: .public) senderPID=\(sender, privacy: .public) eventSource=\(source, privacy: .public) directOpen=\(isDirectOpen, privacy: .public) loginItem=\(isLoginItem, privacy: .public) cli=\(isCLILaunch, privacy: .public) defaultLaunchKey=\(defaultLaunchKey.map(String.init) ?? "absent", privacy: .public) untitled=\(self.didOpenUntitledFile, privacy: .public) documents=\(self.didOpenLaunchDocuments, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
+            "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
         )
 
-        return AppResidencyController.launchProvenance(
-            openedUntitledFile: didOpenUntitledFile,
-            openedDocuments: didOpenLaunchDocuments,
-            hasOpenAppleEvent: isOpenEvent,
-            openEventIsDirect: isDirectOpen,
-            isHiddenLaunch: isHiddenLaunch,
-            isLoginItemLaunch: isLoginItem,
-            isCLILaunch: isCLILaunch,
-            isDefaultLaunch: isDefaultLaunch)
+        return AppResidencyController.LaunchProvenance(
+            origin: isLoginItem ? .loginItem : .user, isHidden: isHiddenLaunch)
     }
 
     /// Arms the launch pass that brings up the VMs marked to start
     /// automatically, once per process.
     ///
-    /// Deferred rather than skipped for an automation launch: a nightly
-    /// automation must not cost the user *Start automatically on launch* for the
-    /// rest of the process's life, so the first interactive bring-up — a reopen,
-    /// a document open, a status-item summon — runs the pass it never got. The
-    /// pass is safe to run late because `VMLibraryViewModel.autoStartStep`
-    /// re-reads each instance when it acts and skips one already running.
-    ///
-    /// The latch also settles the surfacing question: whoever arms the pass
-    /// first decides it, and a headless login launch arms it before any window
-    /// exists to surface into.
+    /// The latch settles the surfacing question: whoever arms the pass first
+    /// decides it, and a headless launch arms it before any window exists to
+    /// surface into.
     func armAutoStartPass(surfacingDisplays: Bool) {
         guard !hasArmedAutoStartPass else { return }
         hasArmedAutoStartPass = true
@@ -303,11 +249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: - Open URLs (Finder double-click / dock icon drop)
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        // A launch document arrives between `applicationWillFinishLaunching` and
-        // `applicationDidFinishLaunching`, so this latch is settled in time to
-        // classify the launch — a double-clicked bundle is a person asking, and
-        // carries no `kAEOpenApplication` of its own to say so.
-        didOpenLaunchDocuments = true
         importVMs(from: urls)
         // A double-click while the app is already resident+headless gets no
         // reopen — macOS sends no reopen for a document open — so surface the

@@ -30,9 +30,8 @@ The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, s
 
 ## Launch model
 
-Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper. With *Continue running in Status Bar* on, a login launch comes up headless — status item, no window, no Dock icon — and boots the VMs marked to start automatically.
-With it off there is no status item to reach such a process, so the launch presents the library like a double-click.
+Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper.
 
-A launch the system performs to service an App Intent comes up headless — `.accessory`, no window, no auto-start pass — then stays resident or leaves per `AppResidencyController.automationIdleOutcome`.
+What a launch puts on screen is decided in one place, `AppResidencyController.launchPosture`, from two things the sandbox bears on: whether the launch came up hidden, and whether it came from the login item. Two things ask for a hidden launch — the system servicing an App Intent, and the bundled `kernova` tool, whose launch options are what the sandbox constrains (`AppLaunch.launchEnclosingApp`).
 
-Such a launch is hidden. When the Shortcuts runner also sends it a `kAEOpenApplication`, that event comes from the runner's own process rather than as Launch Services' direct call, so `AppResidencyController.launchProvenance` reads a hidden launch whose open event another process sent as automation — what keeps it apart from a Finder, Dock, or `open -g -j` launch.
+The process then stays until somebody quits it; `AppTerminationController` owns what that does.

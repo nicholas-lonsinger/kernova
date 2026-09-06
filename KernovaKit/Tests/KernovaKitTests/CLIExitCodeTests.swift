@@ -54,6 +54,31 @@ struct CLIExitCodeTests {
         #expect(!CLIExitCode.allCases.map(\.rawValue).contains(64))
     }
 
+    @Test("A quit is a success even when the app hangs up instead of answering")
+    func quitTreatsEndOfStreamAsSuccess() {
+        // The app encodes `ok` before it starts going down, but the process it
+        // was asked to leave is leaving: a closed connection is the quit
+        // happening, not a failure.
+        #expect(throws: Never.self) { try KernovaCommand.Quit.outcome(for: nil) }
+        #expect(throws: Never.self) {
+            try KernovaCommand.Quit.outcome(for: VMCommandResponse(result: .ok))
+        }
+    }
+
+    @Test("A quit the app refuses exits with the refusal's own code")
+    func quitReportsARefusal() {
+        let refused = VMCommandResponse(
+            result: .refused(.authorizationRefused(reason: "not this team")))
+        do {
+            try KernovaCommand.Quit.outcome(for: refused)
+            Issue.record("expected an authorization refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .authorizationRefused)
+        } catch {
+            Issue.record("expected a CLIFailure, got \(error)")
+        }
+    }
+
     @Test("A refused answer becomes the failure the tool exits with")
     func responsePayloadThrowsTheRefusal() throws {
         let refused = VMCommandResponse(result: .failure(.notFound(selector: .idOrName("Ghost"))))

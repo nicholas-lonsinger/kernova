@@ -27,8 +27,6 @@ struct StartVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.start(vm.id, recovery: recovery)
         return .result()
     }
@@ -56,8 +54,6 @@ struct StopVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await runWithConsent { confirmed in
             try await gateway.stop(vm.id, disposition: method.disposition, confirmed: confirmed)
         }
@@ -82,8 +78,6 @@ struct PauseVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.pause(vm.id)
         return .result()
     }
@@ -105,8 +99,6 @@ struct ResumeVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.resume(vm.id)
         return .result()
     }
@@ -129,8 +121,6 @@ struct SuspendVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.suspend(vm.id)
         return .result()
     }
@@ -153,8 +143,6 @@ struct RestartVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.restart(vm.id)
         return .result()
     }
@@ -186,8 +174,6 @@ struct OpenVMIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.reveal(target.id)
         return .result()
     }

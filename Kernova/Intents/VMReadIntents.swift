@@ -22,8 +22,6 @@ struct GetVMStateIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         let info = try await gateway.info(vm.id)
         let spoken = VMStatus.displayName(forWireName: info.status)
         return .result(
@@ -50,9 +48,7 @@ struct GetVMIPAddressIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String?> {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
-        return .result(value: try await gateway.ipAddress(of: vm.id))
+        .result(value: try await gateway.ipAddress(of: vm.id))
     }
 }
 
@@ -82,8 +78,6 @@ struct TakeSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         let snapshot = try await gateway.takeSnapshot(vm.id, name: name, notes: notes)
         return .result(value: snapshot.name)
     }

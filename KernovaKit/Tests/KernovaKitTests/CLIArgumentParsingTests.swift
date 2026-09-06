@@ -34,6 +34,12 @@ struct CLIArgumentParsingTests {
         #expect(try parse(["open", "Alpha"]) is KernovaCommand.Open)
     }
 
+    @Test("quit parses, and names no virtual machine")
+    func quitResolves() throws {
+        #expect(try parse(["quit"]) is KernovaCommand.Quit)
+        #expect(throws: (any Error).self) { try parse(["quit", "Alpha"]) }
+    }
+
     @Test("start takes --recovery, and defaults to a normal boot")
     func startParsesRecovery() throws {
         #expect(try #require(try parse(["start", "Alpha"]) as? KernovaCommand.Start).recovery == false)
@@ -166,6 +172,18 @@ struct CLIArgumentParsingTests {
         #expect(!command.options.quiet)
         #expect(!command.options.id)
         #expect(!command.options.yes)
+        // Starting the app to answer is the default; --no-launch opts out.
+        #expect(!command.options.noLaunch)
+    }
+
+    @Test("--no-launch parses on a verb that would otherwise start the app")
+    func noLaunchParses() throws {
+        let listing = try #require(try parse(["list", "--no-launch"]) as? KernovaCommand.List)
+        #expect(listing.options.noLaunch)
+
+        let start = try #require(
+            try parse(["start", "Alpha", "--no-launch"]) as? KernovaCommand.Start)
+        #expect(start.options.noLaunch)
     }
 
     @Test("Every global option parses on every verb that takes one")

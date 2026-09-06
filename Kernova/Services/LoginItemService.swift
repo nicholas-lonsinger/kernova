@@ -15,7 +15,8 @@ protocol LoginItemRegistration {
 /// A login launch is then an ordinary Launch Services open, which
 /// ``AppResidencyController/launchPosture(for:keepInMenuBar:)`` brings up
 /// headless with *Continue running in Status Bar* on, and `.regular` with its
-/// library window otherwise.
+/// library window otherwise — the same pair a launch that asks for no window
+/// gets.
 ///
 /// Registering the *main app* rather than a LaunchAgent is also what keeps the
 /// toggle away from this process's own lifecycle: `SMAppService.h` scopes both

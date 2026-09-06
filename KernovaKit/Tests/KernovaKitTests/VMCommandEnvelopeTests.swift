@@ -108,6 +108,7 @@ struct VMCommandEnvelopeTests {
             .editSharedDirectory(selector, .setReadOnly(directory: diskID, readOnly: true)),
             .guestAgentDisk(selector, .mount),
             .guestAgentDisk(selector, .unmount),
+            .quit,
         ]
         // Every case of the vocabulary is represented, so a verb added without a
         // round trip fails here rather than shipping unencodable. `create` is
@@ -172,6 +173,33 @@ struct VMCommandEnvelopeTests {
         #expect(name(of: .eject(item: diskID)) == "eject")
         #expect(name(of: .remove(directory: diskID)) == "remove")
         #expect(GuestAgentDiskEdit.allCases == [.mount, .unmount])
+    }
+
+    @Test("Only the verbs that put something on screen ask the app forward")
+    func surfacingVerbsAreNamedExhaustively() {
+        let surfacing: [VMCommandRequest.Verb] = [
+            .open(selector),
+            .reveal(selector),
+            .start(selector, recovery: false, presentation: .surface),
+            .resume(selector, presentation: .surface),
+            .restart(selector, presentation: .surface),
+        ]
+        for verb in surfacing {
+            #expect(verb.surfacesInterface, "\(verb)")
+        }
+        // A quit takes the app down; there is nothing to bring forward first,
+        // and doing so would flash a window on the way out.
+        let silent: [VMCommandRequest.Verb] = [
+            .quit,
+            .list,
+            .info(selector),
+            .start(selector, recovery: false, presentation: .headless),
+            .resume(selector, presentation: .headless),
+            .restart(selector, presentation: .headless),
+        ]
+        for verb in silent {
+            #expect(!verb.surfacesInterface, "\(verb)")
+        }
     }
 
     @Test("Every response result round-trips")

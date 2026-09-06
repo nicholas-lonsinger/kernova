@@ -18,6 +18,11 @@ import Testing
 /// The `.closeGUI` branch is exercised against a spy rather than a real
 /// ``AppResidencyController``, whose `closeGUIForSoftQuit()` reaches
 /// `syncActivationPolicy()` and can terminate.
+///
+/// ``AppTerminationController/requestFullQuit()`` is driven through its
+/// `terminationEndingForTesting` seam, so the two-phase order is observable
+/// without the real `NSApp.terminate` — or an unmatched
+/// `reply(toApplicationShouldTerminate:)` — reaching the shared host.
 @Suite("AppTerminationController gate", .serialized, .admissionGated)
 @MainActor
 struct AppTerminationGateTests {
@@ -39,6 +44,83 @@ struct AppTerminationGateTests {
     private func makeController() -> (AppTerminationController, VMLibraryViewModel) {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         return (AppTerminationController(viewModel: viewModel), viewModel)
+    }
+
+    /// Records how each finished save pass ended, and what the gate would
+    /// answer at that moment.
+    @MainActor
+    private final class EndingSpy {
+        let ended = AsyncGate()
+        private(set) var endings: [AppTerminationController.TerminationEnding] = []
+        /// The gate's reply, read from inside the ending the pass performs.
+        private(set) var replyWhenEnded: NSApplication.TerminateReply?
+
+        func record(
+            _ ending: AppTerminationController.TerminationEnding,
+            reply: NSApplication.TerminateReply?
+        ) {
+            endings.append(ending)
+            replyWhenEnded = reply
+            ended.notify()
+        }
+    }
+
+    @Test("A full quit saves first and asks to terminate second")
+    func fullQuitSavesBeforeTerminating() async throws {
+        let (controller, viewModel) = makeController()
+        viewModel.keepInMenuBarOnQuit = true
+        let spy = EndingSpy()
+        controller.terminationEndingForTesting = { [weak controller] ending in
+            spy.record(ending, reply: controller?.handleTerminationRequest())
+        }
+
+        controller.requestFullQuit()
+        // The save pass is a `Task`, so nothing has ended on the turn the
+        // request was made.
+        #expect(spy.endings.isEmpty)
+
+        try await spy.ended.wait { spy.endings.count == 1 }
+        // Nothing deferred this quit, so the pass asks for one of its own.
+        #expect(spy.endings == [.terminate])
+        // The pass has already run, so the gate has nothing to wait for — the
+        // `.terminateLater` reply, and the nested run loop AppKit answers it
+        // with, is what the two phases exist to avoid.
+        #expect(spy.replyWhenEnded == .terminateNow)
+    }
+
+    @Test("A second full quit joins the pass already running rather than starting another")
+    func secondFullQuitJoinsTheFirst() async throws {
+        let (controller, viewModel) = makeController()
+        viewModel.keepInMenuBarOnQuit = true
+        let spy = EndingSpy()
+        controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
+
+        controller.requestFullQuit()
+        controller.requestFullQuit()
+
+        try await spy.ended.wait { spy.endings.count == 1 }
+        // A second pass would reach `trySave` on a VM the first one holds and
+        // force-stop it mid-write, so exactly one pass runs and ends.
+        #expect(spy.endings == [.terminate])
+    }
+
+    @Test("A quit AppKit begins while the pass runs is answered by the pass, not left waiting")
+    func deferredQuitIsAnsweredByThePass() async throws {
+        let (controller, viewModel) = makeController()
+        viewModel.keepInMenuBarOnQuit = true
+        let spy = EndingSpy()
+        controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
+
+        controller.requestFullQuit()
+        // A quit Apple Event, a logout, or a TCC revocation landing while the
+        // pass is still queued: deferred rather than vetoed, because a
+        // `.terminateCancel` reaches loginwindow as a refusal to shut down.
+        #expect(controller.handleTerminationRequest() == .terminateLater)
+
+        try await spy.ended.wait { spy.endings.count == 1 }
+        // AppKit is waiting on that reply, so the pass answers it rather than
+        // asking for a second termination.
+        #expect(spy.endings == [.deferredReply])
     }
 
     @Test("With nothing to downgrade into, every quit terminates")

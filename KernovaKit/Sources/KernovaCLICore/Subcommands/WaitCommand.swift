@@ -64,7 +64,7 @@ extension KernovaCommand {
         /// Waits, or refuses with what stood in the way.
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open()
+            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
             let deadline = Date().addingTimeInterval(timeout)
 

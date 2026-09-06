@@ -3,29 +3,78 @@ import KernovaKit
 
 /// How a subcommand reaches the app.
 public enum CommandConnection {
-    /// A client connected to the running app's command socket.
+    /// A client connected to Kernova's command socket, starting the app when
+    /// nothing is listening and `launchIfNeeded` allows it.
     ///
-    /// Kernova has to be running already; `kernova` does not start it (#1143).
+    /// The launch comes up hidden and takes no focus, so a verb typed in a
+    /// terminal answers without anything appearing in front of it. `--no-launch`
+    /// is what turns that off, leaving a stopped app as the exit-9 refusal it
+    /// was.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable`` when this
     ///   build resolves no app-group container — an ad-hoc signature has none,
-    ///   so the tool can reach no app at all — or when Kernova is not running.
-    public static func open() throws -> VMCommandClient {
+    ///   so the tool can reach no app at all — when the launch itself is
+    ///   refused, or when the app does not answer in time.
+    public static func open(launchIfNeeded: Bool) throws -> VMCommandClient {
+        let socketPath = try socketPath()
+        do {
+            return try VMCommandClient(socketPath: socketPath)
+        } catch let failure as CLIFailure {
+            guard launchIfNeeded else { throw failure }
+            return try launchAndConnect(to: socketPath)
+        }
+    }
+
+    /// A client connected to a Kernova that is already running, or `nil` when
+    /// none is — for the one verb that has nothing to ask of an app that is not
+    /// there.
+    ///
+    /// A build that resolves no app-group container still throws: it cannot
+    /// reach an app whether or not one is running, which is a different answer
+    /// from "there is nothing to talk to".
+    public static func openIfRunning() throws -> VMCommandClient? {
+        let socketPath = try socketPath()
+        return try? VMCommandClient(socketPath: socketPath)
+    }
+
+    /// Runs one verb that answers with nothing, reporting whatever refusal it
+    /// carries.
+    public static func perform(
+        _ verb: VMCommandRequest.Verb, launchIfNeeded: Bool
+    ) throws {
+        let client = try open(launchIfNeeded: launchIfNeeded)
+        defer { client.close() }
+        _ = try client.send(verb).payload()
+    }
+
+    /// Where this build's socket lives, refusing a build that resolves no
+    /// app-group container.
+    private static func socketPath() throws -> String {
         guard let socketPath = KernovaAppGroup.socketPath() else {
             throw CLIFailure(
                 .unavailable,
                 "This copy of kernova is not signed to share Kernova's app group, so it cannot "
                     + "reach the app. Install the tool from Kernova's Settings \u{2192} Advanced.")
         }
-        return try VMCommandClient(socketPath: socketPath)
+        return socketPath
     }
 
-    /// Runs one verb that answers with nothing, reporting whatever refusal it
-    /// carries.
-    public static func perform(_ verb: VMCommandRequest.Verb) throws {
-        let client = try open()
-        defer { client.close() }
-        _ = try client.send(verb).payload()
+    /// Starts the app and retries the connect on ``ConnectBackoff``'s schedule.
+    ///
+    /// The first successful connect is the readiness signal; a launch Launch
+    /// Services refused ends the wait early rather than spending the whole
+    /// deadline on an app that is not coming.
+    private static func launchAndConnect(to socketPath: String) throws -> VMCommandClient {
+        if case .failure(let failure) = AppLaunch.launchEnclosingApp() { throw failure }
+        for delay in ConnectBackoff.delays() {
+            Thread.sleep(forTimeInterval: delay)
+            if let failure = AppLaunch.reportedFailure { throw failure }
+            if let client = try? VMCommandClient(socketPath: socketPath) { return client }
+        }
+        throw CLIFailure(
+            .unavailable,
+            "Kernova was started but did not answer within "
+                + "\(Int(ConnectBackoff.defaultDeadline)) seconds.")
     }
 }
 

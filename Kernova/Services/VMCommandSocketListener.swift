@@ -15,7 +15,7 @@ import os
 /// against, publishes no socket and logs why: the capability is absent rather
 /// than present and broken.
 @MainActor
-final class VMCommandSocketListener: AutomationWorkCounting {
+final class VMCommandSocketListener {
     /// Owner-only on the socket file, so the group container's own rules are
     /// not the only thing standing between a stranger and the socket.
     private static let socketFileMode = mode_t(S_IRUSR | S_IWUSR)
@@ -28,15 +28,21 @@ final class VMCommandSocketListener: AutomationWorkCounting {
     private let socketPath: String?
     private let awaitReady: @MainActor @Sendable () async -> Void
     private let onSurfaceRequested: @MainActor @Sendable () -> Void
-    private let onIdle: @MainActor () -> Void
     private let queue = DispatchQueue(label: "app.kernova.command-socket")
 
     private var listener: UnixSocketListener?
+    /// Every live client, held for its I/O lifetime: ``stop()`` is what closes
+    /// them, and a connection nothing retains stops reading.
     private var connections: [ObjectIdentifier: VMCommandConnection] = [:]
 
-    /// `true` while any client is connected — what holds an automation launch
-    /// open until the last one leaves.
-    var hasWorkInFlight: Bool { !connections.isEmpty }
+    #if DEBUG
+    /// Fires on the main actor whenever a connection is adopted or forgotten,
+    /// so a test can await the transport's own bookkeeping rather than poll it.
+    var onConnectionsChangedForTesting: (@MainActor () -> Void)?
+
+    /// How many clients are connected.
+    var connectionCountForTesting: Int { connections.count }
+    #endif
 
     /// Prepares the socket, which nothing binds until `start()`.
     ///
@@ -52,15 +58,13 @@ final class VMCommandSocketListener: AutomationWorkCounting {
         authorizer: (any PeerAuthorizing)?,
         socketPath: String?,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
-        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void,
-        onIdle: @MainActor @escaping () -> Void
+        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void
     ) {
         self.router = router
         self.authorizer = authorizer
         self.socketPath = socketPath
         self.awaitReady = awaitReady
         self.onSurfaceRequested = onSurfaceRequested
-        self.onIdle = onIdle
     }
 
     /// Binds the socket and begins accepting same-team clients.
@@ -133,11 +137,16 @@ final class VMCommandSocketListener: AutomationWorkCounting {
                 self?.forget(connection)
             }
         }
+        #if DEBUG
+        onConnectionsChangedForTesting?()
+        #endif
     }
 
     private func forget(_ connection: VMCommandConnection) {
         guard connections.removeValue(forKey: ObjectIdentifier(connection)) != nil else { return }
-        onIdle()
+        #if DEBUG
+        onConnectionsChangedForTesting?()
+        #endif
     }
 
     // MARK: - Accept
@@ -219,9 +228,8 @@ final class VMCommandSocketListener: AutomationWorkCounting {
 final class VMCommandConnection: @unchecked Sendable {
     /// How long a connection may stay silent before it is closed.
     ///
-    /// A client that connects and never speaks costs a descriptor and holds an
-    /// automation launch open; nothing legitimate waits this long before its
-    /// first frame.
+    /// A client that connects and never speaks costs a descriptor; nothing
+    /// legitimate waits this long before its first frame.
     private static let firstFrameTimeout: DispatchTimeInterval = .seconds(30)
 
     /// Ceiling on the bytes buffered for a client that has stopped reading.

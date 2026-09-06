@@ -59,6 +59,10 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case editSharedDirectory(VMSelector, SharedDirectoryEdit)
         case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
 
+        /// Quits Kernova the way the status item's Quit does, save-suspending
+        /// running and paused VMs on the way out.
+        case quit
+
         /// Whether answering this request puts something on screen.
         ///
         /// A door outside the app has to bring the app forward before it does —
@@ -76,7 +80,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .list, .info, .ipAddress, .snapshots, .events, .cancelGuestSetup, .stop, .pause,
                 .suspend, .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot,
                 .setSnapshotNotes, .clone, .rename, .delete, .importVM, .cancelPreparing,
-                .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .guestAgentDisk:
+                .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .guestAgentDisk,
+                .quit:
                 false
             }
         }
@@ -112,6 +117,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .editRemovableMedia: .editRemovableMedia
             case .editSharedDirectory: .editSharedDirectory
             case .guestAgentDisk: .guestAgentDisk
+            case .quit: .quit
             }
         }
     }

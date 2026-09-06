@@ -638,6 +638,22 @@ extension VMCommandCore {
         }
     }
 
+    // MARK: - Application
+
+    /// Fires the quit from a later main-actor turn, so a transport waiting on
+    /// this verb has its answer encoded and handed over before the app starts
+    /// going down — a client left reading a socket that simply closed cannot
+    /// tell success from a crash.
+    func quit() {
+        Self.logger.notice("Quit requested from a command front door")
+        guard let requestQuit else {
+            Self.logger.fault("No adapter is wired to take the app down")
+            assertionFailure("No adapter is wired to take the app down")
+            return
+        }
+        Task { @MainActor in requestQuit() }
+    }
+
     // MARK: - Storage Disk Lookup
 
     /// The storage disk `id` refers to, resolving the synthesized main disk

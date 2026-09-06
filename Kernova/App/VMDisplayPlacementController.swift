@@ -43,8 +43,6 @@ final class VMDisplayPlacementController {
     /// The app-level work a transition owes once the window list has settled.
     enum FollowUp: Equatable {
         case none
-        /// Re-decide whether a process nobody is watching still has work.
-        case idleReconcile
         /// Bring the library back so the popped-in display is visible.
         case restoreLibrary
     }
@@ -121,7 +119,7 @@ final class VMDisplayPlacementController {
         case .closed(.userClose):
             Placement(mode: .hidden, persistPreference: nil, followUp: .none)
         case .closed(.appDismissal):
-            Placement(mode: .inline, persistPreference: nil, followUp: .idleReconcile)
+            Placement(mode: .inline, persistPreference: nil, followUp: .none)
         case .closed(.popIn):
             Placement(mode: .inline, persistPreference: .inline, followUp: .restoreLibrary)
         }
@@ -350,8 +348,6 @@ final class VMDisplayPlacementController {
             switch placement.followUp {
             case .none:
                 break
-            case .idleReconcile:
-                self.residency?.reconcileIdleTermination()
             case .restoreLibrary:
                 self.viewModel.selectedID = vmID
                 switch Self.libraryRestore(

@@ -20,7 +20,7 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 
 - `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator`,
   `AppWindowRegistry`, `MainMenuController`, `AppTerminationController` and one `AppResidencyHosting`,
-  and owns the launch classification. `main()` picking that residency is the only place the process
+  and reads what the launch asked for. `main()` picking that residency is the only place the process
   mode is branched on; every delegate method below it forwards without forking. It answers the
   residency's `AppLaunchHosting` seam — the auto-start pass, the first library read, the true quit.
 - `AppResidencyHosting` — everything the delegate asks of the process's residency: the launch, the
@@ -28,19 +28,19 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   implementations, `AppResidencyController` and `TestHostResidencyController`. It refines
   `WindowResidencyHosting`, which is the narrower seam the window layer holds.
 - `AppResidencyController` — the resident app's residency: the activation policy, the menu-bar
-  status item, the GUI summon, the idle quit an automation launch settles into, and the automation
-  front doors it opens and then reads for work in flight. Both doors answer `AutomationWorkCounting`
-  and nothing else, so the aliveness decision counts work rather than doors and a third one would
-  change no decision.
+  status item, the GUI summon, and the automation front doors it opens. It decides what a launch
+  puts on screen (`launchPosture`) from what the launch asked for and the residency preference, and
+  reaches the quit through `AppLaunchHosting`.
 - `TestHostResidencyController` — the test host's residency, built only under XCTest: a plain
   foreground `.regular` app that shows the library at launch and idle-quits once no window is on
   screen, the app is not hidden, and no guest is live. It opens no automation front door and offers
   no soft quit.
 - `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
   rather than downgrade to a GUI close, the save pass that suspends every live guest before the
-  process exits, and the relaunch a TCC revocation needs. It reaches the GUI close through
-  `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is what makes every
-  quit in the test host a real one.
+  process exits, and the relaunch a TCC revocation needs. Every quit reaches it, whether the app
+  initiated it (`requestFullQuit`) or AppKit did (`applicationShouldTerminate`). It reaches the GUI
+  close through `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is
+  what makes every quit in the test host a real one.
 - `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
   menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
   to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches
@@ -307,7 +307,8 @@ session down without that hook, so a suspended session survives to revert at its
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
   `surfaceDisplay` hook, a VM with no display to surface through `revealInLibrary`, an unawaited
-  failure through `onFailure` — and `events()` vends an
+  failure through `onFailure`, and the quit verb's termination through `requestQuit` — and
+  `events()` vends an
   `AsyncStream<[VMLibraryEvent]>`, one element per diffing pass, plus the clone/import copy
   failures no model field survives to hold, for callers that cannot observe the model. Whether a given VM
   admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's
@@ -325,9 +326,7 @@ session down without that hook, so a suspended session survives to revert at its
   carries the resolved identifier), and awaits the app's first library read before any verb or read,
   since an intent can be delivered while that read is still in flight. It presents nothing: a
   `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
-  gathered by re-issuing the verb with `confirmed: true`. It also counts intents in flight and
-  reports the process idle to `AppResidencyController` when the last one finishes — the only signal a process
-  the system launched to service an intent, and which therefore has no window, can settle on. It
+  gathered by re-issuing the verb with `confirmed: true`. It
   follows `events()` from the first library read on: each batch writes the VMs it added, renamed,
   or removed to the Spotlight index through `VMEntityIndexing`, the index Spotlight search matches
   a VM name in.
@@ -430,7 +429,7 @@ AppDelegate
     │                 └── USBDeviceService
     ├── creates → MainMenuController
     ├── creates → AppResidencyHosting: AppResidencyController (activation policy, status item,
-    │                 summon, intent gateway, idle quit) or TestHostResidencyController
+    │                 summon, intent gateway) or TestHostResidencyController
     ├── creates → AppTerminationController (quit gate, save pass, relaunch)
     └── creates → AppWindowRegistry
                       ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
@@ -442,12 +441,13 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
                           VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
 
+VMCommandCore ──requestQuit──→ VMLibraryViewModel ──→ AppDelegate ──→ AppTerminationController
+
 kernova (CLI) ──bytes over the app-group AF_UNIX socket──→ VMCommandSocketListener
-                                       VMCommandSocketListener ──idle──→ AppResidencyController
+kernova (CLI) ──NSWorkspace hidden launch of its enclosing bundle──→ Kernova.app
                        VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
 
 Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
-                                       VMIntentGateway ──idle───→ AppResidencyController
                                        VMIntentGateway ──writes─→ Spotlight index (VMEntityIndexing)
 
 VMCommandCore ──reads/writes──→ VMLibrary

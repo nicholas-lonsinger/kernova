@@ -7,6 +7,7 @@ import Testing
 @Suite("AppTerminationController outcome", .admissionGated)
 struct AppTerminationOutcomeTests {
     private func outcome(
+        hasCompletedSavePass: Bool = false,
         shouldTerminateAgent: Bool = true,
         isSavePassRunning: Bool = false,
         hasSaveInFlight: Bool = false,
@@ -14,6 +15,7 @@ struct AppTerminationOutcomeTests {
         hasInstancesToSave: Bool = false
     ) -> AppTerminationController.TerminationOutcome {
         AppTerminationController.terminationOutcome(
+            hasCompletedSavePass: hasCompletedSavePass,
             shouldTerminateAgent: shouldTerminateAgent,
             isSavePassRunning: isSavePassRunning,
             hasSaveInFlight: hasSaveInFlight,
@@ -33,6 +35,24 @@ struct AppTerminationOutcomeTests {
         // `.deferToSavePass` replies `.terminateLater`; a `.terminateCancel` would
         // reach loginwindow as Kernova refusing the logout or shut down.
         #expect(outcome(isSavePassRunning: true) == .deferToSavePass)
+    }
+
+    @Test("the app's own two-phase quit is answered at once, whatever is still live")
+    func completedSavePassTerminatesNow() {
+        // `requestFullQuit` saves first and asks second, so by the time the gate
+        // is consulted there is nothing left to wait for — and answering
+        // `.terminateLater` here would enter the nested wait the two-phase quit
+        // exists to avoid.
+        #expect(outcome(hasCompletedSavePass: true) == .terminateNow)
+        #expect(
+            outcome(hasCompletedSavePass: true, isSavePassRunning: true, hasInstancesToSave: true)
+                == .terminateNow)
+        // Even the soft-quit downgrade: the process is already leaving.
+        #expect(
+            outcome(hasCompletedSavePass: true, shouldTerminateAgent: false) == .terminateNow)
+        #expect(
+            outcome(hasCompletedSavePass: true, hasSaveInFlight: true, hasRevertInFlight: true)
+                == .terminateNow)
     }
 
     @Test("an idle library terminates immediately")
