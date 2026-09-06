@@ -28,22 +28,19 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   implementations, `AppResidencyController` and `TestHostResidencyController`. It refines
   `WindowResidencyHosting`, which is the narrower seam the window layer holds.
 - `AppResidencyController` — the resident app's residency: the activation policy, the menu-bar
-  status item, the GUI summon, and the automation front doors it opens. A launch that asked for no
-  window — hidden, or from the login item — comes up headless with *Continue running in Status Bar*
-  on and presents the library with it off; either way the process stays until somebody quits it.
+  status item, the GUI summon, and the automation front doors it opens. It decides what a launch
+  puts on screen (`launchPosture`) from what the launch asked for and the residency preference, and
+  reaches the quit through `AppLaunchHosting`.
 - `TestHostResidencyController` — the test host's residency, built only under XCTest: a plain
   foreground `.regular` app that shows the library at launch and idle-quits once no window is on
   screen, the app is not hidden, and no guest is live. It opens no automation front door and offers
   no soft quit.
 - `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
   rather than downgrade to a GUI close, the save pass that suspends every live guest before the
-  process exits, and the relaunch a TCC revocation needs. A quit the app itself initiates
-  (`requestFullQuit`) runs that pass first and asks AppKit to terminate second, so the gate answers
-  it `.terminateNow` and no caller's context can starve the pass; a termination AppKit begins —
-  the quit Apple Event, logout, a TCC revocation — arrives from its own event loop and is answered
-  `.terminateLater` while the pass runs. It reaches the GUI close through
-  `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is what makes every
-  quit in the test host a real one.
+  process exits, and the relaunch a TCC revocation needs. Every quit reaches it, whether the app
+  initiated it (`requestFullQuit`) or AppKit did (`applicationShouldTerminate`). It reaches the GUI
+  close through `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is
+  what makes every quit in the test host a real one.
 - `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
   menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
   to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches

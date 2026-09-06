@@ -32,10 +32,6 @@ The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, s
 
 Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper.
 
-A launch that comes up hidden has asked for no window, and a login launch asks the same thing.
+What a launch puts on screen is decided in one place, `AppResidencyController.launchPosture`, from two things the sandbox bears on: whether the launch came up hidden, and whether it came from the login item. Two things ask for a hidden launch — the system servicing an App Intent, and the bundled `kernova` tool, whose launch options are what the sandbox constrains (`AppLaunch.launchEnclosingApp`).
 
-Two produce a hidden launch: one the system performs to service an App Intent, and a `kernova` launch, which passes `hides` — the one `NSWorkspace.OpenConfiguration` field the App Sandbox lets through (measured 2026-09-05, #1143; `arguments`, `environment` and a custom `appleEvent` are all dropped).
-
-With *Continue running in Status Bar* on, such a launch comes up headless: status item, no window, no Dock icon. With it off there is no status item to reach that process, so the launch creates the library window behind the hide and the Dock icon brings it forward.
-
-Every launch boots the VMs marked to start automatically, and the process stays until somebody quits it.
+The process then stays until somebody quits it; `AppTerminationController` owns what that does.
