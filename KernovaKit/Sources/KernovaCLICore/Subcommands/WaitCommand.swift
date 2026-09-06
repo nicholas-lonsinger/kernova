@@ -64,7 +64,7 @@ extension KernovaCommand {
         /// Waits, or refuses with what stood in the way.
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(options)
+            let client = try CommandConnection.open()
             defer { client.close() }
             let deadline = Date().addingTimeInterval(timeout)
 
@@ -74,50 +74,54 @@ extension KernovaCommand {
             guard let snapshot = try nextFrame(from: client, before: deadline) else {
                 throw CLIFailure(.unavailable, "Kernova closed the connection.")
             }
-            guard case .summaries(let rows) = try snapshot.payload() else {
-                throw snapshot.result.unexpectedAnswer
-            }
-            guard let vmID = try identify(selector, in: rows) else { return }
+            _ = try snapshot.payload()
 
-            if until == .agent {
-                // The snapshot carries no agent status, so read one — but only
-                // now, once the subscription is provably live. A read taken
-                // before it could miss a change in the gap.
-                try client.post(.info(.id(vmID)))
-            }
+            // The app resolves the selector, so a name matches by exactly the
+            // rules every other verb uses and a refusal carries its own exit
+            // code. Issued only now, once the snapshot proves the subscription
+            // is live, so the baseline it reads cannot predate it.
+            try client.post(.info(selector))
+
+            // Events for a VM not yet identified are kept rather than dropped:
+            // the info answer and the event stream are answered by separate
+            // tasks, so nothing guarantees the answer reaches the wire first.
+            var pending: [VMCommandResponse.Result] = []
+            let baseline = try awaitInfo(from: client, before: deadline, buffering: &pending)
+            if isSatisfied(byBaseline: baseline) { return }
+            for result in pending where try isSatisfied(by: result, vm: baseline.id) { return }
 
             while true {
                 guard let frame = try nextFrame(from: client, before: deadline) else {
                     throw CLIFailure(
                         .unavailable, "Kernova stopped answering before the state arrived.")
                 }
-                if try isSatisfied(by: frame.payload(), vm: vmID) { return }
+                if try isSatisfied(by: frame.payload(), vm: baseline.id) { return }
             }
         }
 
-        /// The VM `selector` names, or `nil` when the wait is already over.
-        ///
-        /// A `stopped` wait on a VM that is not in the library is satisfied,
-        /// not refused: a script tearing one down asked for it to be gone.
-        private func identify(_ selector: VMSelector, in rows: [VMSummary]) throws -> UUID? {
-            let matches = rows.filter { row in
-                switch selector {
-                case .id(let id): row.id == id
-                case .name(let name): row.name == name
-                case .idOrName(let text): row.id.uuidString == text || row.name == text
+        /// Reads frames until the `info` answer lands, keeping every event that
+        /// arrives first.
+        private func awaitInfo(
+            from client: VMCommandClient, before deadline: Date,
+            buffering pending: inout [VMCommandResponse.Result]
+        ) throws -> VMInfo {
+            while true {
+                guard let frame = try nextFrame(from: client, before: deadline) else {
+                    throw CLIFailure(.unavailable, "Kernova closed the connection.")
                 }
+                // A refusal here is the app's own — a selector naming no VM
+                // exits 3, an ambiguous one exits 4 listing the candidates.
+                let result = try frame.payload()
+                if case .info(let info) = result { return info }
+                pending.append(result)
             }
-            guard let match = matches.first else {
-                if until == .stopped { return nil }
-                throw CLIFailure(
-                    CLIExitCode(.notFound(selector: selector)),
-                    CommandErrorDTO.notFound(selector: selector).message)
-            }
-            guard matches.count == 1 else {
-                let failure = CommandErrorDTO.ambiguous(selector: selector, candidates: matches)
-                throw CLIFailure(CLIExitCode(failure), failure.message)
-            }
-            return until.isSatisfied(byStatus: match.status) == true ? nil : match.id
+        }
+
+        /// Whether the VM was already in the state when the wait started.
+        private func isSatisfied(byBaseline info: VMInfo) -> Bool {
+            until.isSatisfied(byStatus: info.status)
+                ?? until.isSatisfied(byAgentStatus: info.agentStatus)
+                ?? false
         }
 
         /// Whether `result` says the wait is over.
@@ -129,14 +133,11 @@ extension KernovaCommand {
                 return until.isSatisfied(byStatus: to) ?? false
             case .event(.agentStatusChanged(let id, _, let status)) where id == vm:
                 return until.isSatisfied(byAgentStatus: status) ?? false
-            case .event(.removed(let id, _)) where id == vm:
-                // The VM left the library. It is stopped in every sense that
-                // matters; anything else waits for a state it can never reach.
-                guard until == .stopped else {
-                    throw CLIFailure(
-                        .notFound, "\u{201C}\(vm.uuidString)\u{201D} left the library.")
-                }
-                return true
+            case .event(.removed(let id, let name)) where id == vm:
+                // The VM left the library, so no state it could reach is
+                // coming — including `stopped`, which is about a guest that
+                // still exists.
+                throw CLIFailure(.notFound, "\u{201C}\(name)\u{201D} left the library.")
             default:
                 return false
             }

@@ -56,7 +56,7 @@ struct CommandLineToolInstallerTests {
         #expect(try Data(contentsOf: destination) == existing)
     }
 
-    @Test("An existing link is refused too, rather than silently repointed")
+    @Test("A live link somewhere else is the user's, and is refused")
     func installRefusesAnExistingLink() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -64,9 +64,75 @@ struct CommandLineToolInstallerTests {
         try FileManager.default.createSymbolicLink(
             at: destination, withDestinationURL: URL(fileURLWithPath: "/usr/bin/env"))
 
+        #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
         #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
             try CommandLineToolInstaller.installSymlink(at: destination)
         }
+    }
+
+    @Test("A dangling link into a Kernova bundle is ours, and is repointed")
+    func installReplacesAStaleKernovaLink() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("kernova")
+        // The shape the installer writes, for an app that has since moved.
+        let vanished =
+            directory
+            .appendingPathComponent("Gone.app/Contents/Helpers/kernova")
+        try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: vanished)
+
+        // `fileExists` follows the link and reports nothing there, which is the
+        // trap: the create would fail EEXIST and read as a write problem.
+        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(CommandLineToolInstaller.occupant(at: destination) == .staleKernovaLink)
+
+        try CommandLineToolInstaller.installSymlink(at: destination)
+
+        let target = try FileManager.default.destinationOfSymbolicLink(
+            atPath: destination.path(percentEncoded: false))
+        #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+    }
+
+    @Test("A dangling link pointing anywhere else is left alone")
+    func installRefusesADanglingForeignLink() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("kernova")
+        try FileManager.default.createSymbolicLink(
+            at: destination,
+            withDestinationURL: directory.appendingPathComponent("some-other-tool"))
+
+        #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
+        #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
+            try CommandLineToolInstaller.installSymlink(at: destination)
+        }
+    }
+
+    @Test("A live link into another Kernova belongs to that copy")
+    func installRefusesALiveKernovaLink() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let helpers = directory.appendingPathComponent(
+            "Other.app/Contents/Helpers", isDirectory: true)
+        try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
+        let other = helpers.appendingPathComponent("kernova")
+        try Data("#!/bin/sh\n".utf8).write(to: other)
+        let destination = directory.appendingPathComponent("kernova")
+        try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: other)
+
+        #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
+        #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
+            try CommandLineToolInstaller.installSymlink(at: destination)
+        }
+    }
+
+    @Test("A free path holds nothing")
+    func freePathHoldsNothing() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(
+            CommandLineToolInstaller.occupant(at: directory.appendingPathComponent("kernova"))
+                == .nothing)
     }
 
     @Test("A path the app cannot write refuses, and says why")

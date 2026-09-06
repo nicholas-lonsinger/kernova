@@ -22,6 +22,14 @@ public final class VMCommandClient {
         guard descriptor >= 0 else {
             throw CLIFailure(.unavailable, "Could not open a socket: \(Self.reason(errno)).")
         }
+        // Without this, a write to an app that has hung up kills the tool with
+        // SIGPIPE — signal 13, which a shell reports as 141 and no caller can
+        // map onto a CLIExitCode. With it the write returns EPIPE and the
+        // failure surfaces as exit 9.
+        var suppressSIGPIPE: Int32 = 1
+        _ = setsockopt(
+            descriptor, SOL_SOCKET, SO_NOSIGPIPE, &suppressSIGPIPE,
+            socklen_t(MemoryLayout<Int32>.size))
         var address: sockaddr_un
         do {
             address = try UnixSocketAddress.make(path: socketPath)

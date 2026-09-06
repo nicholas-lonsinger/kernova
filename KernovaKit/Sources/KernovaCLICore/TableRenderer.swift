@@ -8,14 +8,23 @@ import KernovaKit
 public enum TableRenderer {
     /// A listing, one VM per line.
     ///
+    /// Name first because that is what a person scans for, and the identifier
+    /// last because it is 36 characters nobody reads unless two VMs share a
+    /// name.
+    ///
     /// `quiet` prints names alone — `.idOrName` accepts one back, so a name is
     /// what a shell loop feeds to the next command.
     public static func render(_ rows: [VMSummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.name).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
         return columns(
-            headings: ["NAME", "STATUS", "ID"],
-            rows: rows.map { [$0.name, VMStatus.displayName(forWireName: $0.status), $0.id.uuidString] })
+            headings: ["NAME", "STATUS", "IP ADDRESS", "ID"],
+            rows: rows.map {
+                [
+                    $0.name, VMStatus.displayName(forWireName: $0.status),
+                    render($0.ipAddress), $0.id.uuidString,
+                ]
+            })
     }
 
     /// One VM's full description, as a field-per-line block.

@@ -99,6 +99,21 @@ struct CLIArgumentParsingTests {
         #expect(waiting.timeout == 10)
     }
 
+    @Test("ip refuses a non-address in both formats, never exiting 0 on one")
+    func ipRefusesANonAddressInEveryFormat() throws {
+        // `--format json` renders the same value the table would; it must not
+        // turn a refusal into a success just because JSON could describe it.
+        for absent: GuestIPAddress in [.pending, .externallyAssigned, .unavailable] {
+            #expect(throws: CLIFailure.self) {
+                try KernovaCommand.IP.line(for: absent, vm: "Alpha")
+            }
+            // The JSON renderer itself never refuses — the classification above
+            // is what both formats share, which is why it runs first.
+            #expect(throws: Never.self) { try JSONRenderer.render(absent) }
+        }
+        #expect(try KernovaCommand.IP.line(for: .reserved("10.0.0.2"), vm: "Alpha") == "10.0.0.2")
+    }
+
     @Test("Each wait condition reads exactly one kind of state")
     func waitConditionsReadOneKindOfState() {
         #expect(WaitCondition.running.isSatisfied(byStatus: "running") == true)

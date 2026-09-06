@@ -14,12 +14,15 @@ public struct VMSummary: Codable, Sendable, Hashable {
     /// still being written by a create, clone or import reports `preparing`,
     /// which is not a ``VMStatus`` value.
     public let status: String
+    /// What the guest's address resolves to on the network its mode joins.
+    public let ipAddress: GuestIPAddress
 
     /// Names one VM.
-    public init(id: UUID, name: String, status: String) {
+    public init(id: UUID, name: String, status: String, ipAddress: GuestIPAddress) {
         self.id = id
         self.name = name
         self.status = status
+        self.ipAddress = ipAddress
     }
 }
 

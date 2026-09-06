@@ -18,7 +18,7 @@ extension KernovaCommand {
 
         /// Reads the library and writes it.
         public func run() throws {
-            let client = try CommandConnection.open(options)
+            let client = try CommandConnection.open()
             defer { client.close() }
             let answer = try client.send(.list).payload()
             guard case .summaries(let rows) = answer else { throw answer.unexpectedAnswer }
@@ -49,7 +49,7 @@ extension KernovaCommand {
         /// Reads the VM and writes it.
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(options)
+            let client = try CommandConnection.open()
             defer { client.close() }
             let answer = try client.send(.info(selector)).payload()
             guard case .info(let info) = answer else { throw answer.unexpectedAnswer }
@@ -90,11 +90,12 @@ extension KernovaCommand {
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let address = try resolve(selector)
-            if options.format == .json {
-                Console.out(try JSONRenderer.render(address))
-                return
-            }
-            Console.out(try KernovaCommand.IP.line(for: address, vm: vm))
+            // Classified before either renderer runs, so both formats exit the
+            // same way: an answer that is not an address refuses whether or not
+            // JSON could have described it.
+            let line = try KernovaCommand.IP.line(for: address, vm: vm)
+            Console.out(
+                options.format == .json ? try JSONRenderer.render(address) : line)
         }
 
         /// The guest's address, waiting for one only where waiting can help.
@@ -107,7 +108,7 @@ extension KernovaCommand {
         private func resolve(_ selector: VMSelector) throws -> GuestIPAddress {
             let deadline = Date().addingTimeInterval(timeout)
             while true {
-                let client = try CommandConnection.open(options)
+                let client = try CommandConnection.open()
                 let answer = try client.send(.ipAddress(selector)).payload()
                 client.close()
                 guard case .ipAddress(let address) = answer else { throw answer.unexpectedAnswer }

@@ -9,10 +9,10 @@ import Testing
 struct CLIRenderingTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running")
+        name: "Alpha", status: "running", ipAddress: .reserved("192.168.64.4"))
     private let longName = VMSummary(
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
-        name: "A Much Longer Name", status: "initialBoot")
+        name: "A Much Longer Name", status: "initialBoot", ipAddress: .pending)
 
     private func info(ipAddress: GuestIPAddress = .reserved("192.168.64.4")) -> VMInfo {
         VMInfo(
@@ -54,6 +54,21 @@ struct CLIRenderingTests {
         {
             #expect(line == line.trimmingCharacters(in: .whitespaces))
         }
+    }
+
+    @Test("A listing names every field #309 asks for: name, state, address, identifier")
+    func listingCarriesEveryField() {
+        let lines = TableRenderer.render([alpha, longName], quiet: false)
+            .components(separatedBy: "\n")
+
+        #expect(lines[0].contains("NAME"))
+        #expect(lines[0].contains("STATUS"))
+        #expect(lines[0].contains("IP ADDRESS"))
+        #expect(lines[0].contains("ID"))
+        // Each address reads the way `info` states it, per case.
+        #expect(lines[1].contains("192.168.64.4"))
+        #expect(lines[1].contains(alpha.id.uuidString))
+        #expect(lines[2].contains("Pending"))
     }
 
     @Test("--quiet prints names alone, one per line")

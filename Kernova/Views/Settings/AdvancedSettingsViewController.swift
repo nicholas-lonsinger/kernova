@@ -190,15 +190,13 @@ final class AdvancedSettingsViewController: NSViewController {
         do {
             try CommandLineToolInstaller.installSymlink(at: destination)
         } catch {
-            present(CommandLineToolInstaller.self, failure: error, at: destination)
+            presentInstallFailure(error, at: destination)
         }
     }
 
     /// Explains what stopped the install, keeping the equivalent command on
     /// screen and selectable so the user can run it themselves.
-    private func present(
-        _: CommandLineToolInstaller.Type, failure: any Error, at destination: URL
-    ) {
+    private func presentInstallFailure(_ failure: any Error, at destination: URL) {
         let reason: String =
             switch failure {
             case CommandLineToolInstaller.InstallFailure.exists:

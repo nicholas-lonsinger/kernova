@@ -5,19 +5,12 @@ import KernovaKit
 public enum CommandConnection {
     /// A client connected to the running app's command socket.
     ///
-    /// Kernova has to be running already; `kernova` does not start it. A
-    /// sandboxed process's `NSWorkspace.openApplication` reaches the app with
-    /// none of `arguments`, `environment` or `appleEvent` — measured
-    /// 2026-09-05, with an unsandboxed caller's `arguments` arriving as the
-    /// control — so a launch the tool performed would be indistinguishable from
-    /// a double-click. It would put the library window on screen and hold the
-    /// process resident, which is the wrong answer for a shell with nobody
-    /// watching.
+    /// Kernova has to be running already; `kernova` does not start it (#1143).
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable`` when this
     ///   build resolves no app-group container — an ad-hoc signature has none,
     ///   so the tool can reach no app at all — or when Kernova is not running.
-    public static func open(_ options: GlobalOptions) throws -> VMCommandClient {
+    public static func open() throws -> VMCommandClient {
         guard let socketPath = KernovaAppGroup.socketPath() else {
             throw CLIFailure(
                 .unavailable,
@@ -29,8 +22,8 @@ public enum CommandConnection {
 
     /// Runs one verb that answers with nothing, reporting whatever refusal it
     /// carries.
-    public static func perform(_ verb: VMCommandRequest.Verb, _ options: GlobalOptions) throws {
-        let client = try open(options)
+    public static func perform(_ verb: VMCommandRequest.Verb) throws {
+        let client = try open()
         defer { client.close() }
         _ = try client.send(verb).payload()
     }

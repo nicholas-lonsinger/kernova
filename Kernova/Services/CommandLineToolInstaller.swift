@@ -39,12 +39,30 @@ enum CommandLineToolInstaller {
 
     /// Links `destination` to the bundled tool.
     ///
-    /// - Throws: ``InstallFailure``. Nothing is replaced: a file already there
-    ///   might be another tool, or a link the user pointed somewhere on purpose.
+    /// Nothing is replaced except this installer's own leftovers: a file
+    /// already there might be another tool, and a link might be one the user
+    /// pointed somewhere on purpose. A link into a Kernova bundle that no
+    /// longer exists — the app moved, or an older copy was deleted — is ours,
+    /// and repointing it is the whole reason somebody clicked Install again.
+    ///
+    /// - Throws: ``InstallFailure``.
     static func installSymlink(at destination: URL) throws {
         let manager = FileManager.default
         let path = destination.path(percentEncoded: false)
-        guard !manager.fileExists(atPath: path) else { throw InstallFailure.exists }
+
+        switch occupant(at: destination) {
+        case .nothing:
+            break
+        case .staleKernovaLink:
+            do {
+                try manager.removeItem(at: destination)
+            } catch {
+                throw InstallFailure.unwritable(error.localizedDescription)
+            }
+        case .somethingElse:
+            throw InstallFailure.exists
+        }
+
         do {
             try manager.createSymbolicLink(at: destination, withDestinationURL: bundledToolURL)
         } catch {
@@ -54,6 +72,41 @@ enum CommandLineToolInstaller {
             throw InstallFailure.unwritable(error.localizedDescription)
         }
         Self.logger.notice("Installed the command line tool at \(path, privacy: .public)")
+    }
+
+    /// What is already at a destination.
+    enum Occupant: Equatable {
+        /// The path is free.
+        case nothing
+        /// A broken link this installer wrote for a bundle that has since moved.
+        case staleKernovaLink
+        /// Anything else, which is somebody's and is left alone.
+        case somethingElse
+    }
+
+    /// What holds `destination`.
+    ///
+    /// `attributesOfItem` rather than `fileExists`, which follows symlinks: a
+    /// dangling link reads as absent through the latter, so the create would
+    /// fail `EEXIST` and be reported as a write problem instead of the stale
+    /// link it is.
+    static func occupant(at destination: URL) -> Occupant {
+        let manager = FileManager.default
+        let path = destination.path(percentEncoded: false)
+        guard let attributes = try? manager.attributesOfItem(atPath: path) else { return .nothing }
+        guard attributes[.type] as? FileAttributeType == .typeSymbolicLink else {
+            return .somethingElse
+        }
+        guard let target = try? manager.destinationOfSymbolicLink(atPath: path) else {
+            return .somethingElse
+        }
+        // Only a link this installer could have written, and only one whose
+        // target is gone. A live link to another Kernova is that copy's, and a
+        // link somewhere else entirely is the user's.
+        guard target.hasSuffix("/Contents/Helpers/\(KernovaAppGroup.commandLineToolName)"),
+            !manager.fileExists(atPath: target)
+        else { return .somethingElse }
+        return .staleKernovaLink
     }
 
     /// The command that does by hand what the panel does.
