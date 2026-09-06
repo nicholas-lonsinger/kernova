@@ -161,7 +161,10 @@ final class AppResidencyController: AppResidencyHosting {
     ///
     /// The command socket binds in the app-group container, admitting peers
     /// this build's own team signed. A build resolving neither a container nor
-    /// a team publishes no socket and the CLI finds nothing to connect to.
+    /// a team publishes no socket and the CLI finds nothing to connect to. It
+    /// takes the same readiness await for the same reason: it is bound before
+    /// the library read lands, so that a tool which just launched the app finds
+    /// something to connect to.
     func registerAutomationFrontDoors() {
         let gateway = VMIntentGateway(
             commands: viewModel.commands,
@@ -177,6 +180,10 @@ final class AppResidencyController: AppResidencyHosting {
             router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
             socketPath: KernovaAppGroup.socketPath(),
+            awaitReady: { [weak self] in
+                guard let self else { return }
+                await self.awaitLibraryReady()
+            },
             onIdle: { [weak self] in self?.reconcileIdleTermination() })
         socket.start()
 
@@ -226,6 +233,11 @@ final class AppResidencyController: AppResidencyHosting {
     /// a source that could not be read counts as direct. `openedDocuments`
     /// outranks the hidden-and-foreign rule: opening a document is a request
     /// to see it.
+    ///
+    /// `isCLILaunch` needs none of that. The `kernova` tool passes
+    /// ``KernovaLaunchArgument/automation``, which is a statement rather than
+    /// an inference — and the only evidence available at all for a launch from
+    /// a shell over SSH, which carries no open event and is not hidden.
     nonisolated static func launchProvenance(
         openedUntitledFile: Bool,
         openedDocuments: Bool,
@@ -233,9 +245,14 @@ final class AppResidencyController: AppResidencyHosting {
         openEventIsDirect: Bool,
         isHiddenLaunch: Bool,
         isLoginItemLaunch: Bool,
+        isCLILaunch: Bool,
         isDefaultLaunch: Bool
     ) -> LaunchProvenance {
         if isLoginItemLaunch { return .loginItem }
+        // The one launch that says outright what it is for. It has to outrank
+        // the inference below, because a shell over SSH leaves none of the
+        // signals that inference reads.
+        if isCLILaunch { return .automation }
         if openedDocuments { return .user }
         if isHiddenLaunch && hasOpenAppleEvent && !openEventIsDirect { return .automation }
         if openedUntitledFile || hasOpenAppleEvent || isDefaultLaunch { return .user }

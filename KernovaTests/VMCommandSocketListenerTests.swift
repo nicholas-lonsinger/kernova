@@ -23,6 +23,31 @@ struct VMCommandSocketListenerTests {
         let authorizer: MockPeerAuthorizer
         let idle: AsyncGate
         let path: String
+        /// Lets a test hold the library read open, the way a cold launch does.
+        let readiness: LibraryReadiness
+    }
+
+    /// The app's first library read, as a gate a test opens when it chooses.
+    ///
+    /// Lock-guarded rather than `@MainActor`: production awaits it while the
+    /// test holds the main actor.
+    final class LibraryReadiness: @unchecked Sendable {
+        private let gate = AsyncGate()
+        private let lock = NSLock()
+        private var landed: Bool
+
+        init(landed: Bool) { self.landed = landed }
+
+        /// Reports the read as complete, releasing everything waiting on it.
+        func land() {
+            lock.withLock { landed = true }
+            gate.notify()
+        }
+
+        /// What the listener awaits before answering a verb.
+        func wait() async {
+            try? await gate.wait { self.lock.withLock { self.landed } }
+        }
     }
 
     /// A short path: `sockaddr_un.sun_path` holds 104 bytes and the container's
@@ -34,20 +59,24 @@ struct VMCommandSocketListenerTests {
 
     private func makeHarness(
         authorized: Bool = true,
-        library: [VMSummary] = []
+        library: [VMSummary] = [],
+        libraryHasLanded: Bool = true
     ) -> Harness {
         let commands = MockVMCommanding()
         commands.library = library
         let authorizer = MockPeerAuthorizer(isAuthorizedResult: authorized)
         let idle = AsyncGate()
+        let readiness = LibraryReadiness(landed: libraryHasLanded)
         let path = temporarySocketPath()
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: commands),
             authorizer: authorizer,
             socketPath: path,
+            awaitReady: { await readiness.wait() },
             onIdle: { idle.notify() })
         return Harness(
-            listener: listener, commands: commands, authorizer: authorizer, idle: idle, path: path)
+            listener: listener, commands: commands, authorizer: authorizer, idle: idle, path: path,
+            readiness: readiness)
     }
 
     // MARK: - Reads
@@ -85,6 +114,37 @@ struct VMCommandSocketListenerTests {
         client.close()
         try await harness.idle.wait { !harness.listener.hasWorkInFlight }
         #expect(!harness.listener.hasWorkInFlight)
+    }
+
+    @Test("No verb is answered until the app's first library read has landed")
+    func verbsWaitForTheLibraryRead() async throws {
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        // The cold-launch shape: the socket is bound, the library is not read
+        // yet, and the VMs appear only once it is.
+        let harness = makeHarness(library: [], libraryHasLanded: false)
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.send(VMCommandRequest(verb: .list))
+
+        // RATIONALE: a fixed observation window, the negative-assertion case
+        // docs/TESTING.md sanctions — the claim is that nothing arrives, and
+        // there is no signal for an event that must not happen. An empty
+        // library reported as the truth is worse than any refusal, because it
+        // exits 0.
+        client.observe(forAtMost: 2)
+        #expect(try await client.nextResponse() == nil)
+        #expect(harness.commands.listCallCount == 0)
+
+        // The read lands, and only now does the verb see the library it names.
+        client.observeWithBackstop()
+        harness.commands.library = [alpha]
+        harness.readiness.land()
+
+        #expect(try await client.nextResponse()?.result == .summaries([alpha]))
     }
 
     // MARK: - Envelope refusals
@@ -183,6 +243,7 @@ struct VMCommandSocketListenerTests {
             router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
             authorizer: MockPeerAuthorizer(),
             socketPath: nil,
+            awaitReady: {},
             onIdle: {})
         listener.start()
         #expect(!listener.hasWorkInFlight)
@@ -196,6 +257,7 @@ struct VMCommandSocketListenerTests {
             router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
             authorizer: nil,
             socketPath: path,
+            awaitReady: {},
             onIdle: {})
         listener.start()
         #expect(!FileManager.default.fileExists(atPath: path))
@@ -251,6 +313,19 @@ private final class TestCommandClient: @unchecked Sendable {
                 offset += written
             }
         }
+    }
+
+    /// Narrows the read deadline to `seconds`, for a negative assertion that
+    /// has to bound how long it watches.
+    func observe(forAtMost seconds: Int) {
+        var deadline = timeval(tv_sec: seconds, tv_usec: 0)
+        _ = setsockopt(
+            fd, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+    }
+
+    /// Restores the full backstop deadline.
+    func observeWithBackstop() {
+        observe(forAtMost: Int(testWaitBackstop))
     }
 
     /// The next framed response, or `nil` at end of stream.
