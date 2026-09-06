@@ -27,9 +27,7 @@ struct CloneVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<VMEntity> {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
-        return .result(value: try await gateway.clone(vm.id, machineIdentity: identity.identity))
+        .result(value: try await gateway.clone(vm.id, machineIdentity: identity.identity))
     }
 }
 
@@ -52,8 +50,6 @@ struct RenameVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.rename(vm.id, to: name)
         return .result()
     }
@@ -82,8 +78,6 @@ struct DeleteVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await runWithConsent { confirmed in
             try await gateway.delete(vm.id, confirmed: confirmed)
         }
@@ -108,8 +102,6 @@ struct CancelPreparingIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await runWithConsent { confirmed in
             try await gateway.cancelPreparing(vm.id, confirmed: confirmed)
         }
@@ -134,8 +126,6 @@ struct CancelGuestSetupIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await runWithConsent { confirmed in
             try await gateway.cancelGuestSetup(vm.id, confirmed: confirmed)
         }

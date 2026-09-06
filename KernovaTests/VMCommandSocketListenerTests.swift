@@ -21,7 +21,8 @@ struct VMCommandSocketListenerTests {
         let listener: VMCommandSocketListener
         let commands: MockVMCommanding
         let authorizer: MockPeerAuthorizer
-        let idle: AsyncGate
+        /// Fires whenever the listener adopts or forgets a connection.
+        let connectionsChanged: AsyncGate
         /// Fires when the listener asks the app to come forward.
         let surfaced: AsyncGate
         let surfaceCount: Counter
@@ -78,7 +79,7 @@ struct VMCommandSocketListenerTests {
         let commands = MockVMCommanding()
         commands.library = library
         let authorizer = MockPeerAuthorizer(isAuthorizedResult: authorized)
-        let idle = AsyncGate()
+        let connectionsChanged = AsyncGate()
         let surfaced = AsyncGate()
         let surfaceCount = Counter()
         let readiness = LibraryReadiness(landed: libraryHasLanded)
@@ -91,11 +92,12 @@ struct VMCommandSocketListenerTests {
             onSurfaceRequested: {
                 surfaceCount.increment()
                 surfaced.notify()
-            },
-            onIdle: { idle.notify() })
+            })
+        listener.onConnectionsChangedForTesting = { connectionsChanged.notify() }
         return Harness(
-            listener: listener, commands: commands, authorizer: authorizer, idle: idle,
-            surfaced: surfaced, surfaceCount: surfaceCount, path: path, readiness: readiness)
+            listener: listener, commands: commands, authorizer: authorizer,
+            connectionsChanged: connectionsChanged, surfaced: surfaced, surfaceCount: surfaceCount,
+            path: path, readiness: readiness)
     }
 
     // MARK: - Reads
@@ -117,7 +119,7 @@ struct VMCommandSocketListenerTests {
         #expect(harness.authorizer.checkCount == 1)
     }
 
-    @Test("A connected client holds the process, and releases it at EOF")
+    @Test("A connection is held for its I/O lifetime, and dropped at EOF")
     func connectionCountRisesAndFalls() async throws {
         let harness = makeHarness()
         harness.listener.start()
@@ -128,11 +130,13 @@ struct VMCommandSocketListenerTests {
         // The answer proves the connection was adopted on the main actor: the
         // count is written in the same hop that starts reading.
         _ = try await client.nextResponse()
-        #expect(harness.listener.hasWorkInFlight)
+        #expect(harness.listener.connectionCountForTesting == 1)
 
         client.close()
-        try await harness.idle.wait { !harness.listener.hasWorkInFlight }
-        #expect(!harness.listener.hasWorkInFlight)
+        try await harness.connectionsChanged.wait {
+            harness.listener.connectionCountForTesting == 0
+        }
+        #expect(harness.listener.connectionCountForTesting == 0)
     }
 
     @Test("No verb is answered until the app's first library read has landed")
@@ -216,7 +220,7 @@ struct VMCommandSocketListenerTests {
         #expect(try await client.nextResponse() == nil)
         // Nothing reached the verbs, and no connection was ever adopted.
         #expect(harness.commands.library.isEmpty)
-        #expect(!harness.listener.hasWorkInFlight)
+        #expect(harness.listener.connectionCountForTesting == 0)
     }
 
     @Test("A peer speaking another protocol version is refused before any verb runs")
@@ -293,10 +297,9 @@ struct VMCommandSocketListenerTests {
             authorizer: MockPeerAuthorizer(),
             socketPath: nil,
             awaitReady: {},
-            onSurfaceRequested: {},
-            onIdle: {})
+            onSurfaceRequested: {})
         listener.start()
-        #expect(!listener.hasWorkInFlight)
+        #expect(listener.connectionCountForTesting == 0)
         listener.stop()
     }
 
@@ -308,8 +311,7 @@ struct VMCommandSocketListenerTests {
             authorizer: nil,
             socketPath: path,
             awaitReady: {},
-            onSurfaceRequested: {},
-            onIdle: {})
+            onSurfaceRequested: {})
         listener.start()
         #expect(!FileManager.default.fileExists(atPath: path))
         listener.stop()

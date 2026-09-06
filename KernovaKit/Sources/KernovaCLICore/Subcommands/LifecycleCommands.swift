@@ -57,10 +57,7 @@ extension KernovaCommand {
         /// Starts the VM.
         public func run() throws {
             // Headless, always. A command typed in a terminal is not a request
-            // for a window to jump in front of whatever is on screen, and a
-            // presented display would mark the process as having surfaced an
-            // interface — cancelling the idle quit an automation launch settles
-            // into.
+            // for a window to jump in front of whatever is on screen.
             try CommandConnection.perform(
                 .start(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),

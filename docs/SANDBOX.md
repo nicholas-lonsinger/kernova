@@ -30,9 +30,12 @@ The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, s
 
 ## Launch model
 
-Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper. With *Continue running in Status Bar* on, a login launch comes up headless — status item, no window, no Dock icon — and boots the VMs marked to start automatically.
-With it off there is no status item to reach such a process, so the launch presents the library like a double-click.
+Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Open at Login" is an opt-in General-settings toggle that registers the app itself through `SMAppService.mainApp` (`LoginItemService`), which is MAS- and sandbox-compatible and embeds no helper.
 
-A launch the system performs to service an App Intent comes up headless — `.accessory`, no window, no auto-start pass — then stays resident or leaves per `AppResidencyController.automationIdleOutcome`.
+A launch that comes up hidden has asked for no window, and a login launch asks the same thing.
 
-Such a launch is hidden. When the Shortcuts runner also sends it a `kAEOpenApplication`, that event comes from the runner's own process rather than as Launch Services' direct call, so `AppResidencyController.launchProvenance` reads a hidden launch whose open event another process sent as automation — what keeps it apart from a Finder, Dock, or `open -g -j` launch.
+Two produce a hidden launch: one the system performs to service an App Intent, and a `kernova` launch, which passes `hides` — the one `NSWorkspace.OpenConfiguration` field the App Sandbox lets through (measured 2026-09-05, #1143; `arguments`, `environment` and a custom `appleEvent` are all dropped).
+
+With *Continue running in Status Bar* on, such a launch comes up headless: status item, no window, no Dock icon. With it off there is no status item to reach that process, so the launch creates the library window behind the hide and the Dock icon brings it forward.
+
+Every launch boots the VMs marked to start automatically, and the process stays until somebody quits it.

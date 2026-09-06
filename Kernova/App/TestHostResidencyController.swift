@@ -14,10 +14,9 @@ import os
 /// do, and leaves ``idleOutcome(hasVisibleUserWindow:isHidden:hasLiveGuest:)``
 /// as the only decision this makes.
 ///
-/// That decision needs no counterpart to ``AppResidencyController``'s
-/// `hasPresentedInterface` latch: ``start(provenance:)`` puts the library on
-/// screen synchronously *before* arming the observation, so no reconcile can
-/// ever fire against a window-less process.
+/// ``start(provenance:)`` puts the library on screen synchronously *before*
+/// arming the observation, so no reconcile can ever fire against a window-less
+/// process.
 @MainActor
 final class TestHostResidencyController: AppResidencyHosting {
     private let viewModel: VMLibraryViewModel
@@ -157,7 +156,11 @@ final class TestHostResidencyController: AppResidencyHosting {
             hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive))
     }
 
-    func reconcileIdleTermination() {
+    /// Re-decides whether the test host still has a reason to run, for the
+    /// guest-liveness observation that is the only thing watching a suite's VMs
+    /// settle. A window close is answered by AppKit's own last-window rule
+    /// through ``terminatesAfterLastWindowClosed``.
+    private func reconcileIdleTermination() {
         switch currentIdleOutcome {
         case .stayResident:
             break

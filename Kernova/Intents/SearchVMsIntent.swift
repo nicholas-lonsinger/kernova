@@ -28,8 +28,6 @@ struct SearchVMsIntent: ShowInAppSearchResultsIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         try await gateway.revealSearchResult(matching: criteria.term)
         return .result()
     }

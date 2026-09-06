@@ -4,14 +4,8 @@ import Testing
 @testable import Kernova
 
 /// Covers ``AppResidencyController/prepareToPresentWindow()`` — the chokepoint
-/// every window that bypasses the summon path goes through to reach
-/// `markInterfacePresented()`, the one setter of the `hasPresentedInterface`
-/// latch.
-///
-/// That latch is what
-/// ``AppResidencyController/automationIdleOutcome(isAutomationLaunch:hasPresentedInterface:hasVisibleUserWindow:keepInMenuBar:hasUninterruptibleWork:hasLiveGuest:hasAutomationWorkInFlight:)``
-/// short-circuits on, so a window on screen can never be idle-quit out from
-/// under the user by a reconcile that reads the window list a moment too late.
+/// every window that bypasses the summon path goes through, and the one place
+/// such a window arms the auto-start pass asking for surfaced displays.
 ///
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``:
 /// that creates the menu-bar status item and installs a process-wide `willClose`
@@ -52,37 +46,35 @@ struct AppResidencyPresentationTests {
         return (controller, host)
     }
 
-    @Test("A controller that has presented nothing holds the latch clear")
-    func freshControllerHasNotPresented() {
+    @Test("A controller that has presented nothing arms nothing")
+    func freshControllerArmsNothing() {
         let (controller, launchHost) = makeController()
 
-        #expect(!controller.hasPresentedInterface)
+        withExtendedLifetime(controller) {}
         #expect(launchHost.count == 0)
     }
 
-    @Test("Preparing to present a window latches the interface as presented")
-    func prepareLatchesPresented() {
+    @Test("Preparing to present a window arms the auto-start pass")
+    func prepareArmsThePass() {
         let (controller, launchHost) = makeController()
 
         controller.prepareToPresentWindow()
 
-        #expect(controller.hasPresentedInterface)
         #expect(launchHost.count == 1)
     }
 
-    @Test("A second window keeps the latch and re-arms the auto-start pass seam")
-    func repeatedPreparesKeepTheLatch() {
+    @Test("A second window re-arms the seam, leaving the once-per-process latch to the delegate")
+    func repeatedPreparesReachTheSeamEachTime() {
         let (controller, launchHost) = makeController()
 
         controller.prepareToPresentWindow()
         controller.prepareToPresentWindow()
 
-        #expect(controller.hasPresentedInterface)
         #expect(launchHost.count == 2)
     }
 
-    /// A headless login launch arms the pass with no window, so the presentation
-    /// that may follow it must still ask for surfacing — the delegate's
+    /// A headless launch arms the pass with no window, so the presentation that
+    /// may follow it must still ask for surfacing — the delegate's
     /// once-per-process latch is what keeps the second arming from re-running
     /// the pass, and this seam must not pre-empt that by lying about surfacing.
     @Test("A presentation arms the auto-start pass asking for surfaced displays")

@@ -3,17 +3,6 @@ import Cocoa
 import KernovaKit
 import os
 
-/// An automation front door that can be mid-request, and therefore holds a
-/// process nobody asked to see open until it isn't.
-///
-/// Every such door answers this and nothing else: the residency counts work,
-/// not doors, so adding one changes no decision.
-@MainActor
-protocol AutomationWorkCounting: AnyObject {
-    /// Whether this door has a request in flight.
-    var hasWorkInFlight: Bool { get }
-}
-
 /// The residency decisions a window owner needs but cannot make.
 @MainActor
 protocol WindowResidencyHosting: AnyObject {
@@ -21,8 +10,6 @@ protocol WindowResidencyHosting: AnyObject {
     func prepareToPresentWindow()
     /// Re-decides the activation policy now, rather than on the next runloop turn.
     func syncActivationPolicy()
-    /// Re-decide whether the process still has work.
-    func reconcileIdleTermination()
     /// Brings the app forward for a surface something outside the process asked
     /// for.
     ///
@@ -87,8 +74,7 @@ protocol AppLaunchHosting: AnyObject {
 }
 
 /// The one owner of what the process *is* when no window is on screen: the
-/// activation policy, the status item, the GUI summon, and the idle quit an
-/// automation launch settles into.
+/// activation policy, the status item, and the GUI summon.
 ///
 /// Constructed only for the resident app — the test host runs
 /// ``TestHostResidencyController`` instead — so every path here can assume the
@@ -103,26 +89,14 @@ final class AppResidencyController: AppResidencyHosting {
     private let windows: AppWindowRegistry
     weak var host: (any AppLaunchHosting)?
 
-    /// Every automation front door this process opened, retained so the
-    /// aliveness decision can ask whether any of them is still running a
-    /// request — which is what holds an otherwise-idle automation launch open.
-    /// `AppDependencyManager` owns the gateway copy intents resolve.
-    private var automationFrontDoors: [any AutomationWorkCounting] = []
-
-    /// How this process was brought up, decided once by ``start(provenance:)``.
-    private var launchProvenance: LaunchProvenance = .user
-
-    /// Whether any GUI surface has been put on screen this run.
-    ///
-    /// What separates an automation-launched process that is still headless from
-    /// one a person has since summoned: only the former may idle-quit, and only
-    /// the former still owes the auto-start pass.
-    private(set) var hasPresentedInterface = false
+    /// The command socket this process bound, held for the life of the process:
+    /// nothing else retains it, and a released listener stops answering.
+    /// `AppDependencyManager` owns the intent gateway copy intents resolve.
+    private var commandSocket: VMCommandSocketListener?
 
     /// Latched once a reconcile has asked to terminate for want of anything to
-    /// do, so a second one — a window closing during the async save, or an
-    /// intent settling behind the last window — can't request a second
-    /// termination.
+    /// do, so a second one — a window closing during the async save — can't
+    /// request a second termination.
     private var hasRequestedIdleTermination = false
 
     /// The menu-bar status item — the "Kernova is running" affordance and the way
@@ -135,10 +109,6 @@ final class AppResidencyController: AppResidencyHosting {
     /// Watches the residency toggle so the status item and the reconcile follow
     /// it live.
     private var residencyObservation: ObservationLoop?
-
-    /// Watches guest liveness for an automation launch, so a process an intent
-    /// started a VM in can leave once that guest stops.
-    private var idleObservation: ObservationLoop?
 
     /// Single close-side trigger for the activation-policy reconcile.
     ///
@@ -187,7 +157,6 @@ final class AppResidencyController: AppResidencyHosting {
                 guard let self else { return }
                 await self.awaitLibraryReady()
             },
-            onIdle: { [weak self] in self?.reconcileIdleTermination() },
             surfaceLibrary: { [weak self] in self?.presentSummonedInterface() })
         AppDependencyManager.shared.add(dependency: gateway)
 
@@ -199,11 +168,9 @@ final class AppResidencyController: AppResidencyHosting {
                 guard let self else { return }
                 await self.awaitLibraryReady()
             },
-            onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() },
-            onIdle: { [weak self] in self?.reconcileIdleTermination() })
+            onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() })
         socket.start()
-
-        automationFrontDoors = [gateway, socket]
+        commandSocket = socket
     }
 
     /// Awaits the app's first library read on the main actor, so the gateway's
@@ -214,99 +181,57 @@ final class AppResidencyController: AppResidencyHosting {
 
     // MARK: - Start
 
-    /// Who brought this process up, as decided by ``launchProvenance(openedUntitledFile:openedDocuments:hasOpenAppleEvent:openEventIsDirect:isHiddenLaunch:isLoginItemLaunch:isDefaultLaunch:)``.
-    enum LaunchProvenance: Equatable {
-        /// A person opened the app — a double-click, `open`, the Dock.
-        case user
-        /// The system opened it at login, on the user's standing request.
-        case loginItem
-        /// Something opened it to service automation, with nobody present.
-        case automation
-    }
+    /// What a launch asked for: who performed it, and whether it asked for the
+    /// app hidden.
+    struct LaunchProvenance: Equatable {
+        /// Who performed the launch.
+        enum Origin: String, Equatable {
+            /// Anything a person or a launcher did — a double-click, `open`,
+            /// the Dock, a Shortcut, the `kernova` tool.
+            case user
+            /// The system opened the app at login, on the user's standing
+            /// request.
+            case loginItem
+        }
 
-    /// Classifies a launch from the signals AppKit settles before
-    /// `applicationDidFinishLaunching`.
-    ///
-    /// **Positive identification only.** A user launch that came up headless —
-    /// no window for a double-click — is far worse than an automation launch
-    /// that showed one, so `.automation` is returned only for a launch that
-    /// shows no sign of a person at all or carries the pair below, and anything
-    /// unrecognized resolves to `.user`.
-    ///
-    /// What makes that separable is the pair *hidden* and *foreign*, measured on
-    /// macOS 27 (26A5425a) on 2026-09-04: an App Intents launch comes up hidden,
-    /// and the open Apple Event the Shortcuts runner sends it — which the runner
-    /// sends on roughly one launch in four, so its absence carries no
-    /// information — has a `keyEventSourceAttr` of `kAELocalProcess` naming the
-    /// runner as sender. Each launch a person performs that was measured breaks
-    /// that pair: a Finder double-click and a Dock click carry a foreign open
-    /// event but come up unhidden, and `open -a`, `open -g -j -a` and a
-    /// Shortcuts *Open App* action all send `kAEDirectCall`. An opener that
-    /// asks for the app hidden has asked for no window, which is what the rule
-    /// answers.
-    ///
-    /// `openEventIsDirect` says nothing when `hasOpenAppleEvent` is `false`, and
-    /// a source that could not be read counts as direct. `openedDocuments`
-    /// outranks the hidden-and-foreign rule: opening a document is a request
-    /// to see it.
-    ///
-    /// `isCLILaunch` needs none of that: it is a launcher's own statement,
-    /// carried by ``KernovaLaunchArgument/automation``, rather than an
-    /// inference from what the launch looks like. That is what a launch from a
-    /// shell over SSH needs, since it leaves none of the signals above. The
-    /// bundled `kernova` tool cannot make that statement (#1143), so today it
-    /// is answered by any launcher outside the sandbox.
-    nonisolated static func launchProvenance(
-        openedUntitledFile: Bool,
-        openedDocuments: Bool,
-        hasOpenAppleEvent: Bool,
-        openEventIsDirect: Bool,
-        isHiddenLaunch: Bool,
-        isLoginItemLaunch: Bool,
-        isCLILaunch: Bool,
-        isDefaultLaunch: Bool
-    ) -> LaunchProvenance {
-        if isLoginItemLaunch { return .loginItem }
-        // The one launch that says outright what it is for. It has to outrank
-        // the inference below, because a shell over SSH leaves none of the
-        // signals that inference reads.
-        if isCLILaunch { return .automation }
-        if openedDocuments { return .user }
-        if isHiddenLaunch && hasOpenAppleEvent && !openEventIsDirect { return .automation }
-        if openedUntitledFile || hasOpenAppleEvent || isDefaultLaunch { return .user }
-        return .automation
+        let origin: Origin
+
+        /// Whether the app came up hidden, read from `NSApp.isHidden`.
+        ///
+        /// An opener that asks for the app hidden has asked for no window. An
+        /// App Intents launch is one of them: measured on macOS 27 (26A5425a)
+        /// on 2026-09-04, the system brings such a launch up hidden. The
+        /// `kernova` tool asks for the same thing by passing `hides`.
+        let isHidden: Bool
     }
 
     /// How a launch brings the process up, as decided by
     /// ``launchPosture(for:keepInMenuBar:)``.
     enum LaunchPosture: Equatable {
-        /// Put the library on screen; the auto-start pass rides along with it.
+        /// Put the library on screen. A hidden launch still creates it, behind
+        /// the hide, so the Dock icon a person clicks has something to show.
         case present
-        /// `.accessory`, no window. `armsAutoStart` says whether the pass runs
-        /// headless (a login launch) or is deferred to the first presentation
-        /// (an automation launch).
-        case headless(armsAutoStart: Bool)
+        /// `.accessory`, no window.
+        case headless
     }
 
-    /// Decides what a launch puts on screen and whether the auto-start pass runs
-    /// now.
+    /// Decides what a launch puts on screen.
     ///
-    /// A person opening the app asked to see it. A login launch did not: marking
-    /// VMs to start automatically *and* asking for Kernova at login is a request
-    /// to have those guests running, not to be shown a window — so it comes up
-    /// as the status-item app and boots them there. With *Continue running in
-    /// Status Bar* off there is no status item to reach a headless process, so
-    /// that launch presents instead. An `.automation` launch presents nothing and
-    /// boots nothing: nobody asked for a window, and booting guests is not what
-    /// servicing a read verb means.
+    /// A launch that asked for no window — hidden — and a login launch are the
+    /// same request: have Kernova running, not be shown it. Both come up as the
+    /// status-item app, which is the affordance that then reaches the GUI. With
+    /// *Continue running in Status Bar* off there is no status item, so a
+    /// headless process would be unreachable and every launch presents instead
+    /// — behind the hide for a hidden one, where the Dock icon is what reaches
+    /// it.
+    ///
+    /// Either way the auto-start pass runs, as it does on every launch, and the
+    /// process stays until somebody quits it.
     nonisolated static func launchPosture(
         for provenance: LaunchProvenance, keepInMenuBar: Bool
     ) -> LaunchPosture {
-        switch provenance {
-        case .user: .present
-        case .loginItem: keepInMenuBar ? .headless(armsAutoStart: true) : .present
-        case .automation: .headless(armsAutoStart: false)
-        }
+        guard keepInMenuBar else { return .present }
+        return provenance.origin == .loginItem || provenance.isHidden ? .headless : .present
     }
 
     /// Brings the resident app up in the posture
@@ -314,26 +239,16 @@ final class AppResidencyController: AppResidencyHosting {
     ///
     /// The status item, the residency observation and the window-close reconcile
     /// are set up for every provenance — they are what the process needs to be
-    /// reachable and to answer for itself, whoever started it. The three
-    /// postures then differ in what goes on screen and when the auto-start pass
-    /// runs:
+    /// reachable and to answer for itself, whoever started it. The two postures
+    /// differ only in what goes on screen; both arm the auto-start pass, so VMs
+    /// marked `VMConfiguration.startsAutomaticallyOnLaunch` come up once the
+    /// library read lands, surfacing their displays only where there is a GUI
+    /// to surface into.
     ///
-    /// - `.present` puts the library up, arming the pass with it, so VMs marked
-    ///   `VMConfiguration.startsAutomaticallyOnLaunch` come up once the library
-    ///   read lands.
-    /// - `.headless(armsAutoStart: true)` runs that pass with no window: the
-    ///   status item keeps the process reachable, and the residency preference
-    ///   that put it there is what keeps the process alive.
-    /// - `.headless(armsAutoStart: false)` presents and boots nothing, and takes
-    ///   the idle-termination observer that is the only thing able to reconcile
-    ///   a process that never opens a window.
-    ///
-    /// Both headless postures drop straight to `.accessory` — deliberately *not*
-    /// through ``syncActivationPolicy()``, whose `.quit` branch would terminate
-    /// the process out from under the very intent that launched it whenever
-    /// *Continue running in Status Bar* is off.
+    /// `.headless` drops straight to `.accessory` — deliberately *not* through
+    /// ``syncActivationPolicy()``, which reads a window list this launch has not
+    /// built yet.
     func start(provenance: LaunchProvenance) {
-        launchProvenance = provenance
         let line = Self.residentProvenanceLine(
             bundlePath: Bundle.main.bundlePath,
             build: Self.buildNumber,
@@ -370,18 +285,13 @@ final class AppResidencyController: AppResidencyHosting {
             // this moment, since the app isn't active yet this early in launch.
             // Arming the auto-start pass rides along with it.
             presentSummonedInterface()
-        case .headless(armsAutoStart: true):
+        case .headless:
             setActivationPolicy(.accessory)
-            // Not `markInterfacePresented`: nothing went on screen, so the
-            // process has not joined the window reconcile. A later summon
-            // latches it then, and its own arming call is a no-op behind the
+            // Not `armAutoStartForPresentation`: nothing went on screen, so a
+            // guest booting here has no window to surface into. A later summon
+            // asks for surfacing, and its own arming call is a no-op behind the
             // delegate's once-per-process latch.
             host?.armAutoStartPass(surfacingDisplays: false)
-        case .headless(armsAutoStart: false):
-            setActivationPolicy(.accessory)
-            // Nothing else will reconcile a process that never opens a window:
-            // this is what lets it leave once the guest an intent started stops.
-            observeForIdleTermination()
         }
     }
 
@@ -407,15 +317,9 @@ final class AppResidencyController: AppResidencyHosting {
         bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool,
         launch: LaunchProvenance
     ) -> String {
-        let launchName =
-            switch launch {
-            case .user: "user"
-            case .loginItem: "loginItem"
-            case .automation: "automation"
-            }
-        return "bundle=\(bundlePath) build=\(build) config=\(configuration) "
+        "bundle=\(bundlePath) build=\(build) config=\(configuration) "
             + "vmNetworking=\(vmNetworkingEntitled ? "entitled" : "unentitled") "
-            + "launch=\(launchName)"
+            + "launch=\(launch.origin.rawValue) hidden=\(launch.isHidden)"
     }
 
     // MARK: - Status Item
@@ -689,19 +593,15 @@ final class AppResidencyController: AppResidencyHosting {
         // runs first and a VM booting here finds the measurable surface
         // `applyMatchWindowBootResolution` needs. The marked VMs only exist in
         // `instances` once that read applies.
-        markInterfacePresented()
+        armAutoStartForPresentation()
     }
 
-    /// Records that a GUI surface is going on screen: the process has joined the
-    /// window reconcile, and owes the auto-start pass an automation launch
-    /// deferred.
+    /// Arms the auto-start pass for a GUI surface going on screen, so the guests
+    /// it boots can surface their displays.
     ///
-    /// Both must happen together at every presenting path. Latching the flag
-    /// alone would end idle-quit *and* leave the pass unarmed for the rest of
-    /// the process's life, so a display window an intent asked for would
-    /// silently cost the user *Start automatically on launch*.
-    private func markInterfacePresented() {
-        hasPresentedInterface = true
+    /// Every presenting path calls it; the delegate's once-per-process latch is
+    /// what makes the second call a no-op.
+    private func armAutoStartForPresentation() {
         host?.armAutoStartPass(surfacingDisplays: true)
     }
 
@@ -716,7 +616,7 @@ final class AppResidencyController: AppResidencyHosting {
         // The chokepoint every window that bypasses `presentSummonedInterface`
         // passes through — a display window an `open` verb asked for, a
         // clipboard window, Settings.
-        markInterfacePresented()
+        armAutoStartForPresentation()
         setActivationPolicy(.regular)
     }
 
@@ -856,17 +756,7 @@ final class AppResidencyController: AppResidencyHosting {
     /// Re-run on every window open and close, and on the unhide that makes a
     /// hidden app's windows legible again, so a partial close can never strand
     /// the policy.
-    ///
-    /// An unpresented automation launch is routed away from `residencyOutcome`
-    /// entirely: that decision reads neither provenance nor in-flight intents,
-    /// so a *Start VM* intent raising `hasUninterruptibleWork` would give the
-    /// headless process a Dock icon, and the same work settling would quit it —
-    /// save-suspending the guest the intent had just started.
     func syncActivationPolicy() {
-        guard !isUnpresentedAutomationLaunch else {
-            reconcileIdleTermination()
-            return
-        }
         switch Self.residencyOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
             isHidden: NSApp.isHidden,
@@ -922,8 +812,7 @@ final class AppResidencyController: AppResidencyHosting {
     ///
     /// Deliberately not ``syncActivationPolicy()``: that one quits an app whose
     /// last window closed, and an unhide is the one moment where a person has
-    /// just asked for the app — on either arm, the window reconcile's or the
-    /// unpresented automation launch's idle reconcile.
+    /// just asked for the app.
     func noteDidUnhide() {
         pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }
     }
@@ -969,91 +858,6 @@ final class AppResidencyController: AppResidencyHosting {
         Self.logger.notice(
             "Activation policy \(current.rawValue, privacy: .public) → \(policy.rawValue, privacy: .public) (hasVisibleWindow=\(self.hasVisibleUserWindow, privacy: .public))"
         )
-    }
-
-    // MARK: - Idle Termination
-
-    /// What becomes of an automation-launched process once its work settles.
-    enum AutomationIdleOutcome: Equatable {
-        /// Keep running — headless, reachable through the status item.
-        case stayResident
-        /// Quit through `applicationShouldTerminate`, save-suspending anything live.
-        case quit
-    }
-
-    /// Decides whether a process nobody asked to see still has a reason to run.
-    ///
-    /// The window reconcile (`residencyOutcome`) cannot answer this: it keys on
-    /// windows, and this process has never had one, so nothing it watches will
-    /// ever fire. This is the counterpart trigger — every other state hands back
-    /// to the window reconcile by answering `.stayResident`.
-    ///
-    /// A live guest or work in flight always holds the process, whatever the
-    /// residency preference: a request that started a VM must not have it
-    /// save-suspended the moment that request returns. With *Continue running in
-    /// Status Bar* on, the process stays as the user asked; with it off there is
-    /// neither Dock icon nor status item, so a process that keeps running would
-    /// be unreachable — it leaves instead.
-    nonisolated static func automationIdleOutcome(
-        isAutomationLaunch: Bool,
-        hasPresentedInterface: Bool,
-        hasVisibleUserWindow: Bool,
-        keepInMenuBar: Bool,
-        hasUninterruptibleWork: Bool,
-        hasLiveGuest: Bool,
-        hasAutomationWorkInFlight: Bool
-    ) -> AutomationIdleOutcome {
-        guard isAutomationLaunch, !hasPresentedInterface, !hasVisibleUserWindow else {
-            return .stayResident
-        }
-        if hasAutomationWorkInFlight || hasLiveGuest || hasUninterruptibleWork {
-            return .stayResident
-        }
-        return keepInMenuBar ? .stayResident : .quit
-    }
-
-    /// Whether the aliveness question belongs to `automationIdleOutcome` rather
-    /// than to the window reconcile.
-    ///
-    /// True for an automation launch that has never put a surface on screen —
-    /// the process `residencyOutcome` cannot speak for, because it decides from
-    /// windows and this one has none and never will until someone summons it.
-    private var isUnpresentedAutomationLaunch: Bool {
-        launchProvenance == .automation && !hasPresentedInterface && !hasVisibleUserWindow
-    }
-
-    /// Re-decides whether the process still has a reason to run.
-    ///
-    /// Answered only for an automation launch that has never presented — a
-    /// windowed resident app is the window reconcile's to decide, and one the
-    /// user has summoned has joined it.
-    func reconcileIdleTermination() {
-        switch Self.automationIdleOutcome(
-            isAutomationLaunch: launchProvenance == .automation,
-            hasPresentedInterface: hasPresentedInterface,
-            hasVisibleUserWindow: hasVisibleUserWindow,
-            keepInMenuBar: viewModel.keepInMenuBarOnQuit,
-            hasUninterruptibleWork: viewModel.hasUninterruptibleWork,
-            hasLiveGuest: viewModel.instances.contains(where: \.isKeepingAppAlive),
-            hasAutomationWorkInFlight: automationFrontDoors.contains { $0.hasWorkInFlight }
-        ) {
-        case .stayResident:
-            break
-        case .quit:
-            guard !hasRequestedIdleTermination else { return }
-            hasRequestedIdleTermination = true
-            Self.logger.notice(
-                "Automation launch settled with nothing left to run — terminating")
-            NSApp.terminate(nil)
-        }
-    }
-
-    /// Watches guest liveness so an automation launch settles once the guest an
-    /// intent started stops — hours later, with nothing else watching.
-    private func observeForIdleTermination() {
-        idleObservation = observeGuestLiveness(of: viewModel) { [weak self] in
-            self?.reconcileIdleTermination()
-        }
     }
 }
 

@@ -17,7 +17,7 @@ import os
 /// It presents nothing: a refusal leaves as the ``CommandError`` the core threw,
 /// which each intent renders in the framework's idiom.
 @MainActor
-final class VMIntentGateway: AutomationWorkCounting {
+final class VMIntentGateway {
     nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     private let commands: any VMCommanding
@@ -27,27 +27,9 @@ final class VMIntentGateway: AutomationWorkCounting {
     private let index: any VMEntityIndexing
     /// Holds the identifiers already written to the index, across launches.
     private let defaults: UserDefaults
-    /// Called on the main actor whenever the last intent in flight finishes.
-    private let onIdle: @MainActor () -> Void
     /// Puts the library window in front of the user, for a search with no VM to
     /// reveal.
     private let surfaceLibrary: @MainActor () -> Void
-
-    /// How many intents are executing.
-    ///
-    /// What holds a process the system launched purely to service an intent:
-    /// nothing else is watching one that never opens a window.
-    ///
-    /// Counted at the ``AppIntent/perform()`` boundary and nowhere else, so it
-    /// spans the whole of one intent — the consent round trip and the result
-    /// the framework has yet to collect included — and so the reads the system
-    /// issues on its own to resolve a parameter are not counted at all. Those arrive unbidden, in volume, and counting
-    /// one would report the process idle before the intent it was resolving for
-    /// had been delivered.
-    private var intentsInFlight = 0
-
-    /// Whether any intent is executing.
-    var hasWorkInFlight: Bool { intentsInFlight > 0 }
 
     /// The single readiness await, memoized so an intent storm waits on one task.
     private var readiness: Task<Void, Never>?
@@ -64,14 +46,12 @@ final class VMIntentGateway: AutomationWorkCounting {
         awaitReady: @escaping @Sendable () async -> Void,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         defaults: UserDefaults = .standard,
-        onIdle: @escaping @MainActor () -> Void = {},
         surfaceLibrary: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.awaitReady = awaitReady
         self.index = index
         self.defaults = defaults
-        self.onIdle = onIdle
         self.surfaceLibrary = surfaceLibrary
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
@@ -99,36 +79,6 @@ final class VMIntentGateway: AutomationWorkCounting {
         let task = Task { [awaitReady] in await awaitReady() }
         readiness = task
         await task.value
-    }
-
-    // MARK: - In-Flight Accounting
-
-    /// Marks one intent as executing, holding the process open.
-    ///
-    /// Every ``AppIntent/perform()`` calls this first and pairs it with
-    /// ``endIntent()`` in a `defer`, which is what makes the hold span the
-    /// whole intent rather than one gateway call: a destructive verb's refusal
-    /// returns here long before `requestConfirmation` has asked the question,
-    /// and a read's value is built after its call has returned. Releasing at
-    /// either point would let the process quit mid-intent — and `NSApp.terminate`
-    /// does not come back.
-    func beginIntent() {
-        intentsInFlight += 1
-    }
-
-    /// Marks one intent as finished, reporting the process idle when it was the
-    /// last.
-    ///
-    /// The report is deferred to a later main-actor turn and re-tests the count,
-    /// so the result the intent just built reaches the framework first and a
-    /// second intent arriving in between cancels it.
-    func endIntent() {
-        intentsInFlight -= 1
-        guard intentsInFlight == 0 else { return }
-        Task { @MainActor [weak self] in
-            guard let self, self.intentsInFlight == 0 else { return }
-            self.onIdle()
-        }
     }
 
     // MARK: - Reads
@@ -407,10 +357,9 @@ final class VMIntentGateway: AutomationWorkCounting {
     ///
     /// The index is never emptied: writing first and pruning second, by
     /// identifier, is what keeps the library findable through a process that
-    /// ends between the two — a launch made purely to service an intent is
-    /// terminated the moment that intent finishes. A refused write leaves both
-    /// the index and the recorded identifiers as they stand, so the previous
-    /// run's records answer until the retry lands.
+    /// ends between the two. A refused write leaves both the index and the
+    /// recorded identifiers as they stand, so the previous run's records answer
+    /// until the retry lands.
     private func syncWholeLibrary() async {
         let all = await vms()
         let current = all.map(\.id)

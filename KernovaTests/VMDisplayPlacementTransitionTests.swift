@@ -51,12 +51,12 @@ struct VMDisplayPlacementTransitionTests {
         #expect(placement.followUp == .none)
     }
 
-    @Test("An app dismissal returns the display slot and reconciles idleness")
+    @Test("An app dismissal returns the display slot and owes nothing after it")
     func appDismissal() {
         let placement = VMDisplayPlacementController.placement(for: .closed(.appDismissal))
         #expect(placement.mode == .inline)
         #expect(placement.persistPreference == nil)
-        #expect(placement.followUp == .idleReconcile)
+        #expect(placement.followUp == .none)
     }
 
     @Test("A pop-in returns the display slot, persists inline, and restores the library")

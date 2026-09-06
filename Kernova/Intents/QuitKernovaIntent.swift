@@ -17,8 +17,6 @@ struct QuitKernovaIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        gateway.beginIntent()
-        defer { gateway.endIntent() }
         await gateway.quit()
         return .result()
     }

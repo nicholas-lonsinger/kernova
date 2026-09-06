@@ -11,6 +11,12 @@ import Testing
 /// log alone.
 @Suite("AppResidencyController.residentProvenanceLine", .admissionGated)
 struct AppResidencyProvenanceLineTests {
+    private func provenance(
+        _ origin: AppResidencyController.LaunchProvenance.Origin, isHidden: Bool
+    ) -> AppResidencyController.LaunchProvenance {
+        AppResidencyController.LaunchProvenance(origin: origin, isHidden: isHidden)
+    }
+
     @Test("formats bundle path, build, configuration, and entitlement state into one line")
     func formatsAllFields() {
         #expect(
@@ -19,9 +25,9 @@ struct AppResidencyProvenanceLineTests {
                 build: "142",
                 configuration: "Release",
                 vmNetworkingEntitled: true,
-                launch: .user)
+                launch: provenance(.user, isHidden: false))
                 == "bundle=/Applications/Kernova.app build=142 config=Release "
-                + "vmNetworking=entitled launch=user")
+                + "vmNetworking=entitled launch=user hidden=false")
     }
 
     @Test("reports an unentitled signature")
@@ -32,9 +38,24 @@ struct AppResidencyProvenanceLineTests {
                 build: "142",
                 configuration: "Debug",
                 vmNetworkingEntitled: false,
-                launch: .loginItem)
+                launch: provenance(.loginItem, isHidden: false))
                 == "bundle=/Applications/Kernova.app build=142 config=Debug "
-                + "vmNetworking=unentitled launch=loginItem")
+                + "vmNetworking=unentitled launch=loginItem hidden=false")
+    }
+
+    /// The pair that decides the posture, so a launch that came up with no
+    /// window is legible from the log alone.
+    @Test("reports a launch that asked for no window")
+    func hiddenLaunch() {
+        #expect(
+            AppResidencyController.residentProvenanceLine(
+                bundlePath: "/Applications/Kernova.app",
+                build: "142",
+                configuration: "Debug",
+                vmNetworkingEntitled: false,
+                launch: provenance(.user, isHidden: true))
+                == "bundle=/Applications/Kernova.app build=142 config=Debug "
+                + "vmNetworking=unentitled launch=user hidden=true")
     }
 
     @Test("tolerates a missing build number without crashing")
@@ -45,8 +66,8 @@ struct AppResidencyProvenanceLineTests {
                 build: "?",
                 configuration: "Debug",
                 vmNetworkingEntitled: false,
-                launch: .automation)
+                launch: provenance(.user, isHidden: false))
                 == "bundle=/Applications/Kernova.app build=? config=Debug "
-                + "vmNetworking=unentitled launch=automation")
+                + "vmNetworking=unentitled launch=user hidden=false")
     }
 }
