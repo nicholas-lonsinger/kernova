@@ -28,13 +28,17 @@ final class AppTerminationController: NSObject {
     /// registration can never drop live work.
     private var cancellableLaunchWork: Task<Void, Never>?
 
-    /// Latched once the termination gate has replied `.terminateLater`, so a
-    /// second quit can't start a second save pass: its `trySave` would come back
-    /// as `operationInProgress` and the catch would force-stop a VM mid-save.
+    /// Latched once a termination save pass has started, so a second quit can't
+    /// start a second one: its `trySave` would come back as
+    /// `operationInProgress` and the catch would force-stop a VM mid-save.
     ///
-    /// Never reset, matching the quit flags below: every later quit defers to the
-    /// pass, which always replies and terminates the app.
+    /// Never reset, matching the quit flags below: every later quit joins the
+    /// pass, which always ends by terminating the app.
     private var isRunningTerminationSavePass = false
+
+    /// Latched once that pass has finished, which is what lets the gate answer
+    /// `.terminateNow` for the quit the pass itself then asks for.
+    private var hasCompletedTerminationSavePass = false
 
     /// Set by `handleQuitAppleEvent` when the sender is System Settings / TCC.
     private var terminationIsTCCRevocation = false
@@ -263,13 +267,19 @@ final class AppTerminationController: NSObject {
     /// A running save pass outranks the soft-quit downgrade: the app is already
     /// on its way out, so closing the GUI and telling the user it stays resident
     /// would be false.
+    ///
+    /// A *completed* pass outranks everything: it is the app's own two-phase
+    /// quit asking to leave, with the saving already done, and the gate has only
+    /// to get out of the way.
     nonisolated static func terminationOutcome(
+        hasCompletedSavePass: Bool,
         shouldTerminateAgent: Bool,
         isSavePassRunning: Bool,
         hasSaveInFlight: Bool,
         hasRevertInFlight: Bool,
         hasInstancesToSave: Bool
     ) -> TerminationOutcome {
+        if hasCompletedSavePass { return .terminateNow }
         if isSavePassRunning { return .deferToSavePass }
         guard shouldTerminateAgent else { return .closeGUI }
         if hasSaveInFlight || hasRevertInFlight || hasInstancesToSave { return .saveThenTerminate }
@@ -280,8 +290,16 @@ final class AppTerminationController: NSObject {
     ///
     /// Every quit path funnels through `terminate:` and thus this method, so
     /// this single gate covers them all — see ``shouldTerminateOnQuit``.
+    ///
+    /// `.terminateLater` is reached only by a termination AppKit begins on its
+    /// own — the quit Apple Event, a logout or shutdown, a TCC revocation — all
+    /// of which arrive from AppKit's own event loop, where the nested wait it
+    /// runs is safe. A quit the app initiates goes through
+    /// ``requestFullQuit()``, which saves first and so is answered
+    /// `.terminateNow`.
     func handleTerminationRequest() -> NSApplication.TerminateReply {
         switch Self.terminationOutcome(
+            hasCompletedSavePass: hasCompletedTerminationSavePass,
             shouldTerminateAgent: shouldTerminateOnQuit,
             isSavePassRunning: isRunningTerminationSavePass,
             hasSaveInFlight: viewModel.hasSaveInFlight,
@@ -347,14 +365,63 @@ final class AppTerminationController: NSObject {
         }
     }
 
-    /// The single "truly terminate the resident app" path: latch the
-    /// authorized-quit flag so the gate proceeds to the save-suspend path
-    /// instead of downgrading to a GUI close, then terminate.
+    /// The single "truly terminate the resident app" path: save every live
+    /// guest, then ask AppKit to terminate.
+    ///
+    /// Two phases, in that order, because the one-phase form cannot work from
+    /// here. Terminating first makes the gate reply `.terminateLater`, and
+    /// AppKit answers that by spinning a nested run loop — which the save pass
+    /// this controller runs cannot make progress inside, since it is a
+    /// main-actor `Task` and the caller may already be occupying the main queue.
+    /// Saving first leaves the gate nothing to wait for, so the caller's context
+    /// stops mattering: a command verb, an intent, an observation-driven
+    /// reconcile and a menu action all reach this the same way.
+    ///
+    /// AppKit's own terminations keep the deferred reply
+    /// (``handleTerminationRequest()``); they arrive from its event loop, where
+    /// the nested wait is safe.
+    ///
+    /// A second request while the pass runs joins it rather than starting
+    /// another: the pass always ends by terminating.
     func requestFullQuit() {
-        Self.logger.notice("User-requested full quit — terminating the resident app")
         userRequestedAgentQuit = true
+        guard !isRunningTerminationSavePass else {
+            Self.logger.notice("Full quit requested again — joining the save pass already running")
+            return
+        }
+        Self.logger.notice("User-requested full quit — saving live guests, then terminating")
+        isRunningTerminationSavePass = true
+        // Before the save pass, so it never has to chase a guest the launch
+        // pass brings up behind it.
+        cancellableLaunchWork?.cancel()
+        viewModel.cancelAndCleanupPreparing()
+        Task { @MainActor in
+            await self.runTerminationSavePass()
+            // A drop/odoc delivered during the async save window above can
+            // register a fresh phantom, so sweep again before leaving or that
+            // bundle is orphaned on disk.
+            self.viewModel.cancelAndCleanupPreparing()
+            self.hasCompletedTerminationSavePass = true
+            self.terminate()
+        }
+    }
+
+    /// Asks AppKit to terminate, which the gate answers `.terminateNow`.
+    private func terminate() {
+        #if DEBUG
+        if let terminateForTesting {
+            terminateForTesting()
+            return
+        }
+        #endif
         NSApp.terminate(nil)
     }
+
+    #if DEBUG
+    /// Stands in for `NSApp.terminate(nil)` so a test can drive the two-phase
+    /// quit without taking the shared test host down.
+    var terminateForTesting: (@MainActor () -> Void)?
+    #endif
 
     // MARK: - Save Pass
 

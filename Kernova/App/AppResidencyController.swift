@@ -807,7 +807,7 @@ final class AppResidencyController: AppResidencyHosting {
             guard !hasRequestedIdleTermination else { return }
             hasRequestedIdleTermination = true
             Self.logger.notice("Last window closed with the app set to quit — terminating")
-            requestTerminationFromRunLoop()
+            host?.requestFullQuit()
         }
     }
 
@@ -901,19 +901,6 @@ final class AppResidencyController: AppResidencyHosting {
 /// Where a downgraded quit lands: ``closeGUIForSoftQuit()`` is the whole
 /// conformance.
 extension AppResidencyController: SoftQuitHosting {}
-
-/// Asks AppKit to terminate from a run-loop block rather than in place.
-///
-/// Every reconcile that can decide to quit is woken by an `ObservationLoop` or a
-/// deferred sync, both of which run inside a `Task { @MainActor … }` — the one
-/// context a terminate must not start from. ``VMCommandCore/quit()`` carries the
-/// evidence and the two rejected forms.
-@MainActor
-func requestTerminationFromRunLoop() {
-    RunLoop.main.perform(inModes: [.common]) {
-        MainActor.assumeIsolated { NSApp.terminate(nil) }
-    }
-}
 
 /// Observes every instance's ``VMInstance/isKeepingAppAlive`` so the process can
 /// settle when the last one flips inactive.

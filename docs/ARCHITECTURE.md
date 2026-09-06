@@ -37,7 +37,11 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   no soft quit.
 - `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
   rather than downgrade to a GUI close, the save pass that suspends every live guest before the
-  process exits, and the relaunch a TCC revocation needs. It reaches the GUI close through
+  process exits, and the relaunch a TCC revocation needs. A quit the app itself initiates
+  (`requestFullQuit`) runs that pass first and asks AppKit to terminate second, so the gate answers
+  it `.terminateNow` and no caller's context can starve the pass; a termination AppKit begins —
+  the quit Apple Event, logout, a TCC revocation — arrives from its own event loop and is answered
+  `.terminateLater` while the pass runs. It reaches the GUI close through
   `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is what makes every
   quit in the test host a real one.
 - `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening

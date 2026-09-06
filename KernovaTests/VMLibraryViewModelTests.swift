@@ -1,7 +1,9 @@
 import CryptoKit
-import Testing
 import Foundation
+import KernovaTestSupport
+import Testing
 import Virtualization
+
 @testable import Kernova
 
 @Suite("VMLibraryViewModel Tests", .serialized, .admissionGated)
@@ -849,6 +851,19 @@ struct VMLibraryViewModelTests {
     }
 
     // MARK: - Lifecycle Delegation
+
+    @Test("The command core's quit reaches the adapter hook the app delegate answers")
+    func quitVerbReachesTheQuitHook() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let quits = QuitHookRecorder()
+        // What `AppDelegate` answers with `AppTerminationController.requestFullQuit()`.
+        viewModel.onRequestQuit = { quits.record() }
+
+        viewModel.commands.quit()
+
+        try await quits.gate.wait { quits.count == 1 }
+        #expect(quits.count == 1)
+    }
 
     @Test("start delegates to lifecycle coordinator")
     func startDelegates() async {
@@ -5824,5 +5839,17 @@ struct VMLibraryViewModelTests {
         #expect(rolled.first?.id == id)
         // Critical: path is the ORIGINAL one, not the failed-swap target.
         #expect(rolled.first?.path == "/tmp/old.iso")
+    }
+}
+
+/// Counts the quits the command core asked the adapter to perform.
+@MainActor
+private final class QuitHookRecorder {
+    private(set) var count = 0
+    let gate = AsyncGate()
+
+    func record() {
+        count += 1
+        gate.notify()
     }
 }
