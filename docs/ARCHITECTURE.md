@@ -443,6 +443,7 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
 VMCommandCore ──requestQuit──→ VMLibraryViewModel ──→ AppDelegate ──→ AppTerminationController
 
 kernova (CLI) ──bytes over the app-group AF_UNIX socket──→ VMCommandSocketListener
+kernova (CLI) ──NSWorkspace hidden launch of its enclosing bundle──→ Kernova.app
                        VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
 
 Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding

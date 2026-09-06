@@ -61,7 +61,8 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .start(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    recovery: recovery, presentation: .headless))
+                    recovery: recovery, presentation: .headless),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 
@@ -91,7 +92,8 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .stop(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    disposition: method.disposition, confirmed: options.yes))
+                    disposition: method.disposition, confirmed: options.yes),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 
@@ -115,7 +117,8 @@ extension KernovaCommand {
         /// Suspends the VM.
         public func run() throws {
             try CommandConnection.perform(
-                .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id)))
+                .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id)),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 
@@ -139,7 +142,8 @@ extension KernovaCommand {
         /// Pauses the VM.
         public func run() throws {
             try CommandConnection.perform(
-                .pause(try SelectorParsing.selector(from: vm, forcingID: options.id)))
+                .pause(try SelectorParsing.selector(from: vm, forcingID: options.id)),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 
@@ -167,7 +171,8 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .resume(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    presentation: .headless))
+                    presentation: .headless),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 
@@ -194,7 +199,8 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .restart(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    presentation: .headless))
+                    presentation: .headless),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 
@@ -221,7 +227,8 @@ extension KernovaCommand {
         /// Surfaces the VM's display.
         public func run() throws {
             try CommandConnection.perform(
-                .open(try SelectorParsing.selector(from: vm, forcingID: options.id)))
+                .open(try SelectorParsing.selector(from: vm, forcingID: options.id)),
+                launchIfNeeded: !options.noLaunch)
         }
     }
 }
