@@ -264,6 +264,15 @@ protocol VMCommanding: AnyObject {
     /// Takes the bundled installer image away again.
     func unmountGuestAgentDisk(_ selector: VMSelector) throws
 
+    // MARK: - Application
+
+    /// Quits Kernova — the explicit quit every out-of-process door shares,
+    /// save-suspending running and paused VMs on the way out.
+    ///
+    /// Presents nothing and asks nothing: the caller typed the quit, so there
+    /// is no consent left to gather.
+    func quit()
+
     // MARK: - Observation
 
     /// A stream of library changes, for callers that cannot observe the model.

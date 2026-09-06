@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 
@@ -1468,6 +1469,24 @@ struct VMCommandCoreTests {
         #expect(harness.core.storageDisk(id: mainDisk.id, on: instance) == mainDisk)
     }
 
+    // MARK: - Application
+
+    @Test("The quit verb asks the adapter once, on a later turn than the call")
+    func quitDefersToTheAdapter() async throws {
+        let harness = makeHarness()
+        let quits = QuitRecorder()
+        harness.core.requestQuit = { quits.record() }
+
+        harness.core.quit()
+
+        // Deferred deliberately: a transport waiting on this verb has to get
+        // its answer written before the process starts going down.
+        #expect(quits.count == 0)
+
+        try await quits.gate.wait { quits.count == 1 }
+        #expect(quits.count == 1)
+    }
+
     // MARK: - Events
 
     @Test("The event stream reports what changed, and nothing a listing already answers")
@@ -1916,6 +1935,18 @@ extension CommandError {
     fileprivate var isConflict: Bool {
         if case .conflict = self { return true }
         return false
+    }
+}
+
+/// Counts the quits the core asked its adapter to perform.
+@MainActor
+private final class QuitRecorder {
+    private(set) var count = 0
+    let gate = AsyncGate()
+
+    func record() {
+        count += 1
+        gate.notify()
     }
 }
 

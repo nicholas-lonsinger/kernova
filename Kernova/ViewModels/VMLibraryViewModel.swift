@@ -405,6 +405,11 @@ final class VMLibraryViewModel {
     /// launch path — has to bring that window up first or do nothing at all.
     @ObservationIgnored var onSurfaceLibrary: (() -> Void)?
 
+    /// Asks for the app to be taken down, for the quit verb an automation door
+    /// carries. The app delegate answers it with the same full quit the status
+    /// item's Quit performs.
+    @ObservationIgnored var onRequestQuit: (() -> Void)?
+
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
     @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
@@ -485,6 +490,9 @@ final class VMLibraryViewModel {
         }
         core.revealInLibrary = { [weak self] instance in
             self?.revealInLibrary(instance)
+        }
+        core.requestQuit = { [weak self] in
+            self?.onRequestQuit?()
         }
         // Through this adapter rather than handed over, so the core retains
         // neither the view model nor the app delegate behind it.

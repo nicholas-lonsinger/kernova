@@ -105,6 +105,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onSurfaceLibrary = { [weak lifecycle] in
             lifecycle?.presentSummonedInterface()
         }
+        // The status item's own Quit path, so the command core's quit verb and
+        // the affordance a person clicks take the app down the same way.
+        viewModel.onRequestQuit = { [weak self] in
+            self?.termination.requestFullQuit()
+        }
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)
         }

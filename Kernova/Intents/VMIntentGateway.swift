@@ -256,6 +256,18 @@ final class VMIntentGateway: AutomationWorkCounting {
         }
     }
 
+    // MARK: - Application
+
+    /// Quits Kernova, save-suspending running and paused VMs.
+    ///
+    /// Readiness first, like every verb: the library read is what the save pass
+    /// has to run over, and a quit racing it would take the process down with
+    /// nothing to suspend.
+    func quit() async {
+        await ready()
+        commands.quit()
+    }
+
     // MARK: - Snapshots
 
     @discardableResult

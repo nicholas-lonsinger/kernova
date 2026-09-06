@@ -59,6 +59,12 @@ final class VMCommandCore: VMCommanding {
     /// caller — the removable attachment a start failure names, above all.
     var onFailure: ((_ failure: CommandError, _ instance: VMInstance?) -> Void)?
 
+    /// Takes the app down the way the status item's Quit does.
+    ///
+    /// A hook rather than a call, for the reason ``surfaceDisplay`` states: the
+    /// quit is an AppKit termination, and the core performs none.
+    var requestQuit: (() -> Void)?
+
     /// Measures the window or screen a starting VM's display is about to occupy,
     /// for `displaySizesToWindow` — `nil` when nothing can measure one.
     ///

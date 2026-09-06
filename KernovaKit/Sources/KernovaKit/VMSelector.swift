@@ -57,6 +57,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case editRemovableMedia
     case editSharedDirectory
     case guestAgentDisk
+    case quit
 
     /// What a person calls this verb.
     ///
@@ -93,17 +94,19 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .editRemovableMedia: "Edit Removable Media"
         case .editSharedDirectory: "Edit Shared Directories"
         case .guestAgentDisk: "Guest Agent Disk"
+        case .quit: "Quit"
         }
     }
 
     /// Whether every state admits the verb, so naming it among the verbs a VM
     /// "accepts now" tells a user nothing.
     ///
-    /// The reads, which only answer a question, and the reveal that brings a VM
-    /// in front of the user whatever state it is in.
+    /// The reads, which only answer a question, the reveal that brings a VM in
+    /// front of the user whatever state it is in, and the quit, which addresses
+    /// no VM at all.
     public var isAdmittedInEveryState: Bool {
         switch self {
-        case .list, .info, .ipAddress, .snapshots, .events, .reveal: true
+        case .list, .info, .ipAddress, .snapshots, .events, .reveal, .quit: true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,

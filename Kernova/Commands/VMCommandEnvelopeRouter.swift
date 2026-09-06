@@ -206,6 +206,10 @@ struct VMCommandEnvelopeRouter {
             case .unmount: try commands.unmountGuestAgentDisk(selector)
             }
             return .ok
+
+        case .quit:
+            commands.quit()
+            return .ok
         }
     }
 

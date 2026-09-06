@@ -643,6 +643,18 @@ struct VMCommandEnvelopeRouterTests {
         #expect(double.openSelectors.isEmpty)
     }
 
+    @Test("A quit crosses the wire once, and is answered before anything acts on it")
+    func quitCrossesTheWire() async throws {
+        // Against the double rather than the core: the core's quit fires the
+        // adapter hook that takes the process down, which no test may reach.
+        let double = MockVMCommanding()
+        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+
+        #expect(try await transport.send(.quit).result == .ok)
+
+        #expect(double.quitCallCount == 1)
+    }
+
     @Test("The router drives anything that speaks the facade, not just the core")
     func routerDependsOnTheFacadeAlone() async throws {
         // Compiling at all is the assertion: the router takes `any VMCommanding`,

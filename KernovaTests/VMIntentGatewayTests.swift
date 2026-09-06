@@ -296,6 +296,16 @@ struct VMIntentGatewayTests {
         #expect(commands.takeSnapshotCalls.map(\.notes) == ["a note"])
     }
 
+    @Test("The quit verb reaches the facade, addressing no VM")
+    func quitReachesTheFacade() async {
+        let commands = MockVMCommanding()
+        let gateway = makeGateway(commands, defaults: makeStore("quit"))
+
+        await gateway.quit()
+
+        #expect(commands.quitCallCount == 1)
+    }
+
     // MARK: - Search
 
     /// A gateway that records every request for the library window, for the

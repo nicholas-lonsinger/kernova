@@ -307,7 +307,8 @@ session down without that hook, so a suspended session survives to revert at its
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
   `surfaceDisplay` hook, a VM with no display to surface through `revealInLibrary`, an unawaited
-  failure through `onFailure` — and `events()` vends an
+  failure through `onFailure`, and the quit verb's termination through `requestQuit` — and
+  `events()` vends an
   `AsyncStream<[VMLibraryEvent]>`, one element per diffing pass, plus the clone/import copy
   failures no model field survives to hold, for callers that cannot observe the model. Whether a given VM
   admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's
@@ -441,6 +442,8 @@ AppDelegate
 AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ VMLibrary (state, persistence)
                           VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
+
+VMCommandCore ──requestQuit──→ VMLibraryViewModel ──→ AppDelegate ──→ AppTerminationController
 
 kernova (CLI) ──bytes over the app-group AF_UNIX socket──→ VMCommandSocketListener
                                        VMCommandSocketListener ──idle──→ AppResidencyController
