@@ -27,10 +27,6 @@ public struct GlobalOptions: ParsableArguments {
     @Flag(name: .long, help: "Read the virtual machine argument as an identifier only.")
     public var id = false
 
-    /// Refuse rather than launching Kernova to answer.
-    @Flag(name: .customLong("no-launch"), help: "Fail instead of launching Kernova.")
-    public var noLaunch = false
-
     /// Supply the consent a destructive verb refuses without.
     @Flag(name: [.customShort("y"), .long], help: "Answer yes to the confirmation a verb asks for.")
     public var yes = false

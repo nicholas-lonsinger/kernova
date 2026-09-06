@@ -20,6 +20,7 @@ struct AppResidencyLaunchProvenanceTests {
         openEventIsDirect: Bool = true,
         isHiddenLaunch: Bool = false,
         isLoginItemLaunch: Bool = false,
+        isCLILaunch: Bool = false,
         isDefaultLaunch: Bool = false
     ) -> AppResidencyController.LaunchProvenance {
         AppResidencyController.launchProvenance(
@@ -29,6 +30,7 @@ struct AppResidencyLaunchProvenanceTests {
             openEventIsDirect: openEventIsDirect,
             isHiddenLaunch: isHiddenLaunch,
             isLoginItemLaunch: isLoginItemLaunch,
+            isCLILaunch: isCLILaunch,
             isDefaultLaunch: isDefaultLaunch)
     }
 
@@ -37,6 +39,35 @@ struct AppResidencyLaunchProvenanceTests {
     @Test("A launch with no sign of a person asking is automation")
     func noSignalsIsAutomation() {
         #expect(provenance() == .automation)
+    }
+
+    @Test("A launch the kernova tool asked for is automation, however it looks otherwise")
+    func cliLaunchIsAutomation() {
+        // Every signal a person's launch leaves, all at once: unhidden, a
+        // direct open event, the default launch. A shell over SSH carries none
+        // of them either way, so the argument is the only evidence there is.
+        #expect(
+            provenance(
+                openedUntitledFile: true,
+                hasOpenAppleEvent: true,
+                openEventIsDirect: true,
+                isHiddenLaunch: false,
+                isCLILaunch: true,
+                isDefaultLaunch: true) == .automation)
+        #expect(provenance(isCLILaunch: true) == .automation)
+    }
+
+    @Test("A login item that also carries the CLI argument is still a login item")
+    func loginItemOutranksTheCLIArgument() {
+        #expect(provenance(isLoginItemLaunch: true, isCLILaunch: true) == .loginItem)
+    }
+
+    @Test("Without the argument, a plain launch is still classified as before")
+    func absentArgumentChangesNothing() {
+        #expect(provenance(isCLILaunch: false, isDefaultLaunch: true) == .user)
+        #expect(
+            provenance(hasOpenAppleEvent: true, openEventIsDirect: false, isHiddenLaunch: true)
+                == .automation)
     }
 
     @Test("A login-item launch outranks every other signal")

@@ -46,18 +46,15 @@ struct CLIArgumentParsingTests {
         #expect(command.options.format == .table)
         #expect(!command.options.quiet)
         #expect(!command.options.id)
-        #expect(!command.options.noLaunch)
         #expect(!command.options.yes)
     }
 
     @Test("Every global option parses on every verb that takes one")
     func optionsParseEverywhere() throws {
         let list = try #require(
-            try parse(["list", "--format", "json", "--quiet", "--no-launch"])
-                as? KernovaCommand.List)
+            try parse(["list", "--format", "json", "--quiet"]) as? KernovaCommand.List)
         #expect(list.options.format == .json)
         #expect(list.options.quiet)
-        #expect(list.options.noLaunch)
 
         let info = try #require(
             try parse(["info", "Alpha", "--id", "-q", "--yes"]) as? KernovaCommand.Info)
