@@ -26,6 +26,14 @@ public enum CommandConnection {
         }
         return try VMCommandClient(socketPath: socketPath)
     }
+
+    /// Runs one verb that answers with nothing, reporting whatever refusal it
+    /// carries.
+    public static func perform(_ verb: VMCommandRequest.Verb, _ options: GlobalOptions) throws {
+        let client = try open(options)
+        defer { client.close() }
+        _ = try client.send(verb).payload()
+    }
 }
 
 /// Where the tool writes.

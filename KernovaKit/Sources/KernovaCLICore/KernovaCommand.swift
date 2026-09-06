@@ -13,7 +13,11 @@ public struct KernovaCommand: ParsableCommand {
         commandName: "kernova",
         abstract: "Drive Kernova's virtual machines from the command line.",
         version: toolVersion,
-        subcommands: [List.self, Info.self, IP.self, Version.self],
+        subcommands: [
+            List.self, Info.self, IP.self,
+            Start.self, Stop.self, Suspend.self, Pause.self, Resume.self, Restart.self, Open.self,
+            Version.self,
+        ],
         defaultSubcommand: List.self
     )
 

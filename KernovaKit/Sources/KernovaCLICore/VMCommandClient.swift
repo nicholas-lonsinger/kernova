@@ -138,12 +138,19 @@ extension VMCommandResponse {
     public func payload() throws -> Result {
         switch result {
         case .failure(let error):
-            throw CLIFailure(CLIExitCode(error), error.message)
+            throw CLIFailure(CLIExitCode(error), Self.message(for: error))
         case .refused(let refusal):
             throw CLIFailure(CLIExitCode(refusal), Self.message(for: refusal))
         default:
             return result
         }
+    }
+
+    /// A verb's refusal, plus the one thing a terminal can do about it that an
+    /// alert's buttons would have offered.
+    private static func message(for error: CommandErrorDTO) -> String {
+        guard case .confirmationRequired = error else { return error.message }
+        return error.message + "\n\nPass --yes to do it anyway."
     }
 
     private static func message(for refusal: VMCommandTransportRefusal) -> String {

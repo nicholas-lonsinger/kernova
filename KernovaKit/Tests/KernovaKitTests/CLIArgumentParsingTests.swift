@@ -23,6 +23,51 @@ struct CLIArgumentParsingTests {
         #expect(try parse(["version"]) is KernovaCommand.Version)
     }
 
+    @Test("Each lifecycle verb parses to its own subcommand")
+    func lifecycleVerbsResolve() throws {
+        #expect(try parse(["start", "Alpha"]) is KernovaCommand.Start)
+        #expect(try parse(["stop", "Alpha"]) is KernovaCommand.Stop)
+        #expect(try parse(["suspend", "Alpha"]) is KernovaCommand.Suspend)
+        #expect(try parse(["pause", "Alpha"]) is KernovaCommand.Pause)
+        #expect(try parse(["resume", "Alpha"]) is KernovaCommand.Resume)
+        #expect(try parse(["restart", "Alpha"]) is KernovaCommand.Restart)
+        #expect(try parse(["open", "Alpha"]) is KernovaCommand.Open)
+    }
+
+    @Test("start takes --recovery, and defaults to a normal boot")
+    func startParsesRecovery() throws {
+        #expect(try #require(try parse(["start", "Alpha"]) as? KernovaCommand.Start).recovery == false)
+        let recovery = try #require(
+            try parse(["start", "Alpha", "--recovery"]) as? KernovaCommand.Start)
+        #expect(recovery.recovery)
+        #expect(recovery.vm == "Alpha")
+    }
+
+    @Test("stop defaults to asking the guest, and each method names its own disposition")
+    func stopMethodsMapToDispositions() throws {
+        let byDefault = try #require(try parse(["stop", "Alpha"]) as? KernovaCommand.Stop)
+        #expect(byDefault.method == .graceful)
+        #expect(byDefault.method.disposition == .graceful)
+
+        let forced = try #require(try parse(["stop", "Alpha", "--force"]) as? KernovaCommand.Stop)
+        #expect(forced.method.disposition == .force)
+
+        let resumed = try #require(
+            try parse(["stop", "Alpha", "--resume-first"]) as? KernovaCommand.Stop)
+        #expect(resumed.method.disposition == .resumeThenShutDown)
+    }
+
+    @Test("Two stop methods at once is a usage error, not a silent winner")
+    func stopMethodsAreExclusive() {
+        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--force", "--graceful"]) }
+    }
+
+    @Test("Every stop method maps onto a wire disposition, exhaustively")
+    func everyStopMethodMaps() {
+        let mapped = Set(KernovaCommand.StopMethod.allCases.map(\.disposition))
+        #expect(mapped == Set(StopDisposition.allCases))
+    }
+
     @Test("A bare invocation lists, so `kernova` alone answers something useful")
     func bareInvocationLists() throws {
         #expect(try parse([]) is KernovaCommand.List)
