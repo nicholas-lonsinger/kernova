@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import KernovaAppRegistry
 import KernovaKit
 
 extension KernovaCommand {

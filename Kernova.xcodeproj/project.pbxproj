@@ -16,7 +16,8 @@
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A200000C /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000D /* KernovaTestSupport */; };
 		A200000E /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000F /* KernovaTestSupport */; };
-		A2000010 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000011 /* KernovaKit */; };
+		A2000010 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000011 /* KernovaAppRegistry */; };
+		A2000012 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000013 /* KernovaAppRegistry */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -178,6 +179,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000001 /* KernovaKit in Frameworks */,
+				A2000012 /* KernovaAppRegistry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -193,7 +195,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A2000010 /* KernovaKit in Frameworks */,
+				A2000010 /* KernovaAppRegistry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -304,6 +306,7 @@
 			name = Kernova;
 			packageProductDependencies = (
 				A2000002 /* KernovaKit */,
+				A2000013 /* KernovaAppRegistry */,
 			);
 			productName = Kernova;
 			productReference = A1000004 /* Kernova.app */;
@@ -349,7 +352,7 @@
 			);
 			name = KernovaRelaunchHelper;
 			packageProductDependencies = (
-				A2000011 /* KernovaKit */,
+				A2000011 /* KernovaAppRegistry */,
 			);
 			productName = KernovaRelaunchHelper;
 			productReference = A1000100 /* KernovaRelaunchHelper */;
@@ -852,9 +855,13 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaTestSupport;
 		};
-		A2000011 /* KernovaKit */ = {
+		A2000011 /* KernovaAppRegistry */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = KernovaKit;
+			productName = KernovaAppRegistry;
+		};
+		A2000013 /* KernovaAppRegistry */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaAppRegistry;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

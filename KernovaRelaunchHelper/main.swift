@@ -1,5 +1,5 @@
 import AppKit
-import KernovaKit
+import KernovaAppRegistry
 import os
 
 // A watchdog that monitors the main Kernova process and relaunches it after

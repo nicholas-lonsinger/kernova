@@ -17,6 +17,16 @@ let package = Package(
     ],
     products: [
         .library(name: "KernovaKit", targets: ["KernovaKit"]),
+        // Static, and it has to stay static: Xcode gives every target that
+        // links a *dynamic* package product a command copying that framework
+        // into the shared `Products/<config>/Frameworks`, and the destination
+        // carries no target name. Two command-line-tool targets linking one
+        // dynamic product therefore write the same path and the build fails
+        // with "Multiple commands produce" (Xcode 26.6; Xcode 27 emits no such
+        // copy for a tool). Both `kernova` and the relaunch helper need this
+        // code, so it links into each of them instead of being copied beside
+        // them.
+        .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
         .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
         .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
     ],
@@ -34,6 +44,13 @@ let package = Package(
             ],
             swiftSettings: sharedSwiftSettings
         ),
+        // Reading Launch Services' registry and waiting for it to let an app
+        // go. Its own target rather than part of `KernovaKit` so the relaunch
+        // helper can link it without linking everything else.
+        .target(
+            name: "KernovaAppRegistry",
+            swiftSettings: sharedSwiftSettings
+        ),
         // The `kernova` tool's whole vocabulary: parsing, rendering, exit
         // codes, and the client that speaks to the app. It lives in this
         // package so its tests ride `KernovaKitTests` — which is already in
@@ -42,6 +59,7 @@ let package = Package(
             name: "KernovaCLICore",
             dependencies: [
                 "KernovaKit",
+                "KernovaAppRegistry",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: sharedSwiftSettings
@@ -53,7 +71,9 @@ let package = Package(
         ),
         .testTarget(
             name: "KernovaKitTests",
-            dependencies: ["KernovaKit", "KernovaCLICore", "KernovaTestSupport"],
+            dependencies: [
+                "KernovaKit", "KernovaAppRegistry", "KernovaCLICore", "KernovaTestSupport",
+            ],
             swiftSettings: sharedSwiftSettings
         ),
     ]

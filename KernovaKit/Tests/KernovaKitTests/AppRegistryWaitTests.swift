@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaAppRegistry
 
 /// Holding on until Launch Services has let a bundle go, and leaving a running
 /// app alone while doing it.

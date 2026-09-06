@@ -1,6 +1,6 @@
 import Cocoa
 import Darwin
-import KernovaKit
+import KernovaAppRegistry
 import os
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.

@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import KernovaKit
+import KernovaAppRegistry
 
 /// The app bundle a helper executable is embedded in.
 enum EnclosingAppBundle {
