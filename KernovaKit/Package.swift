@@ -26,6 +26,14 @@ let package = Package(
         // copy for a tool). Both `kernova` and the relaunch helper need this
         // code, so it links into each of them instead of being copied beside
         // them.
+        //
+        // Static also means every consumer must reach it statically. A dynamic
+        // product that linked this one would carry its own copy, and a binary
+        // loading both — a test bundle linking `KernovaCLICore` and this
+        // together — would hold the registry's type metadata twice, so a cast
+        // or a protocol conformance could resolve against the wrong one.
+        // `KernovaCLICore` therefore has to stay the only library depending on
+        // it, and anything else that needs it takes it directly.
         .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
         .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
         .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),

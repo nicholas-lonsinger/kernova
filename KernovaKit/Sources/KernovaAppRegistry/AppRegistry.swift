@@ -76,6 +76,10 @@ final class TerminationObservation {
 protocol AppRegistry: Sendable {
     /// Every instance the registry holds for the bundle at `bundleURL`.
     func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance]
+
+    /// The instance the registry holds for `identifier`, or `nil` when it holds
+    /// none — an app it never registered, or one it has already let go.
+    func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)?
 }
 
 /// Launch Services itself, read through `NSRunningApplication`.
@@ -98,6 +102,14 @@ struct LaunchServicesRegistry: AppRegistry {
         return NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
             .filter { $0.bundleURL?.resolvingSymlinksInPath().path == wanted }
             .map(RunningAppInstance.init)
+    }
+
+    func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let application = NSRunningApplication(processIdentifier: identifier) else {
+            return nil
+        }
+        return RunningAppInstance(application: application)
     }
 }
 
@@ -176,7 +188,50 @@ public enum AppRegistryWait {
         by expiry: Date,
         registry: any AppRegistry
     ) -> Bool {
-        let instances = registry.instances(ofBundleAt: bundleURL).filter { scope.admits($0) }
+        awaitDeregistration(
+            of: registry.instances(ofBundleAt: bundleURL).filter { scope.admits($0) }, by: expiry)
+    }
+
+    /// Blocks until Launch Services has let the process `identifier` names go,
+    /// or `expiry` passes.
+    ///
+    /// The key a caller holding a live connection should use: it names the
+    /// instance actually on the other end, where a bundle path names whichever
+    /// copies happen to share it. Registry-held instances only, so a pid the
+    /// registry never had — anything but a registered app — is nothing to wait
+    /// for.
+    ///
+    /// Same run-loop requirement as
+    /// ``awaitDeregistration(ofBundleAt:scope:by:)``.
+    ///
+    /// - Returns: `true` once the registry has let go, `false` when `expiry`
+    ///   passed with the instance still registered.
+    @discardableResult
+    public static func awaitDeregistration(
+        ofProcess identifier: pid_t,
+        by expiry: Date = Date(timeIntervalSinceNow: defaultDeadline)
+    ) -> Bool {
+        awaitDeregistration(
+            ofProcess: identifier, by: expiry, registry: LaunchServicesRegistry())
+    }
+
+    /// ``awaitDeregistration(ofProcess:by:)`` against a given registry.
+    static func awaitDeregistration(
+        ofProcess identifier: pid_t,
+        by expiry: Date,
+        registry: any AppRegistry
+    ) -> Bool {
+        guard let instance = registry.instance(withProcessIdentifier: identifier) else {
+            return true
+        }
+        return awaitDeregistration(of: [instance], by: expiry)
+    }
+
+    /// The one wait: park on the run loop until every instance reports
+    /// terminated, waking on each instance's own notification.
+    private static func awaitDeregistration(
+        of instances: [any RegisteredAppInstance], by expiry: Date
+    ) -> Bool {
         let settled = { instances.allSatisfy { $0.hasTerminated } }
         guard !settled() else { return true }
 

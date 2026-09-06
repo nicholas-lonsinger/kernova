@@ -22,14 +22,23 @@ enum Relauncher {
 
     /// How long the app is given to exit, in seconds.
     ///
-    /// It bounds that wait alone. The relaunch behind it carries its own
-    /// deadline, so no two of these run at once and each says what it waited on.
+    /// It bounds that wait alone; ``openWatchSeconds`` bounds the relaunch
+    /// behind it. One phase is armed at a time, and each says what it waited on.
     private static let exitWatchSeconds: TimeInterval = 15
+
+    /// How long `openApplication` is given to call back, in seconds.
+    ///
+    /// The completion handler is the only thing that ends this process, so
+    /// without a bound a handler that never fires leaves the helper parked in
+    /// its run loop for good. The deregistration wait ahead of the open carries
+    /// its own deadline and is finished before this is armed.
+    private static let openWatchSeconds: TimeInterval = 30
 
     private static var appURL = URL(fileURLWithPath: "/")
     private static var watched: pid_t = 0
     private static var source: (any DispatchSourceProcess)?
     private static var exitWatchTimeout: DispatchWorkItem?
+    private static var openWatchTimeout: DispatchWorkItem?
 
     /// Reports how the tool is called and exits.
     nonisolated static func refuseUsage() -> Never {
@@ -87,6 +96,15 @@ enum Relauncher {
         RunLoop.main.perform { MainActor.assumeIsolated { relaunch() } }
     }
 
+    /// Gives up on an open that never called back, leaving whatever it started
+    /// to carry on without a watchdog.
+    private static func giveUpOnOpen() {
+        logger.error(
+            "Launch Services did not answer the open of Kernova within \(Int(openWatchSeconds), privacy: .public) s; giving up"
+        )
+        exit(1)
+    }
+
     /// Gives up on an app that never exited, leaving it running.
     private static func giveUpOnExit() {
         logger.warning(
@@ -112,20 +130,34 @@ enum Relauncher {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
 
+        let timeout = DispatchWorkItem { MainActor.assumeIsolated { giveUpOnOpen() } }
+        openWatchTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + openWatchSeconds, execute: timeout)
+
+        // The handler carries only what it saw, and settles on the main queue:
+        // it arrives on a queue of Launch Services' choosing, and the work item
+        // it has to cancel lives here.
         NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
-            guard let error else {
-                logger.notice("Relaunched Kernova successfully")
-                exit(0)
-            }
-            // RATIONALE: the helper is app-sandbox + inherit
-            // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open`
-            // inherits that sandbox and reaches LaunchServices through the same
-            // mediated path `NSWorkspace` already took — it adds no capability
-            // this open lacks.
-            logger.error(
-                "Failed to relaunch Kernova: \(error.localizedDescription, privacy: .public)")
-            exit(1)
+            let failure = error?.localizedDescription
+            DispatchQueue.main.async { MainActor.assumeIsolated { finishOpen(failure: failure) } }
         }
+    }
+
+    /// Ends the helper on whatever the open reported.
+    private static func finishOpen(failure: String?) {
+        openWatchTimeout?.cancel()
+        openWatchTimeout = nil
+        guard let failure else {
+            logger.notice("Relaunched Kernova successfully")
+            exit(0)
+        }
+        // RATIONALE: the helper is app-sandbox + inherit
+        // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open`
+        // inherits that sandbox and reaches LaunchServices through the same
+        // mediated path `NSWorkspace` already took — it adds no capability this
+        // open lacks.
+        logger.error("Failed to relaunch Kernova: \(failure, privacy: .public)")
+        exit(1)
     }
 }
 

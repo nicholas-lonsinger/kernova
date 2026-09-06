@@ -33,31 +33,41 @@ extension KernovaCommand {
             // reach the dying instance, or spend the whole connect deadline
             // against one on its way out.
             if answer != nil { try Self.awaitExit(of: client) }
-            try Self.awaitDeregistration()
+            try Self.awaitDeregistration(of: client)
         }
 
-        /// Blocks until Launch Services has released the app this tool is
-        /// embedded in.
+        /// Blocks until Launch Services has released the Kernova this tool just
+        /// spoke to.
         ///
-        /// Another verb of this tool would wait here on its own way in, so this
-        /// is not what makes `kernova quit && kernova start x` safe. What it
-        /// buys is the promise the verb's *return* carries: a script is free to
+        /// Another verb of this tool would wait on its own way in, so this is
+        /// not what makes `kernova quit && kernova start x` safe. What it buys
+        /// is the promise the verb's *return* carries: a script is free to
         /// reach for `open -a Kernova`, or anything else that asks Launch
         /// Services to open the app, on the line after this one.
         ///
-        /// A copy of the tool outside an app bundle names no app, so it has
-        /// nothing to wait on.
+        /// Keyed on the connection's peer, not on the tool's own bundle. The
+        /// socket reaches whichever Kernova holds the app group, which is not
+        /// always the copy this tool is embedded in — a build under
+        /// DerivedData answers a tool installed from elsewhere, and a
+        /// bundle-keyed wait would find no instance and return at once. When
+        /// the kernel will not name the peer the bundle is the only key left,
+        /// and a copy of the tool outside an app bundle has no key at all.
         ///
         /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when the
         ///   registration outlives the wait — the quit itself succeeded, and
         ///   the code says the promise did not.
-        static func awaitDeregistration() throws {
-            guard let bundle = AppLaunch.enclosingBundle else { return }
+        static func awaitDeregistration(of client: VMCommandClient) throws {
             let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
-            guard
-                AppRegistryWait.awaitDeregistration(
+            let released: Bool
+            if let peer = client.peerProcessIdentifier {
+                released = AppRegistryWait.awaitDeregistration(ofProcess: peer, by: deadline)
+            } else if let bundle = AppLaunch.enclosingBundle {
+                released = AppRegistryWait.awaitDeregistration(
                     ofBundleAt: bundle, scope: .all, by: deadline)
-            else {
+            } else {
+                return
+            }
+            guard released else {
                 throw CLIFailure(
                     .timedOut,
                     "Kernova has quit, but macOS still had it registered "

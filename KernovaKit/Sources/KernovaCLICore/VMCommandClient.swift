@@ -12,6 +12,14 @@ public final class VMCommandClient {
     private var decoder = StreamFrameDecoder()
     private var isClosed = false
 
+    /// The process on the other end, or `nil` when the kernel would not say.
+    ///
+    /// Read once at connect, because the answer is gone the moment the peer
+    /// exits — which is exactly when a caller wants it. A caller that gets
+    /// `nil` has no instance to name and must fall back to whatever it can
+    /// identify without one.
+    public let peerProcessIdentifier: pid_t?
+
     /// Connects to the socket at `path`.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable`` when nothing
@@ -46,9 +54,20 @@ public final class VMCommandClient {
             throw CLIFailure(.unavailable, "Kernova is not answering: \(Self.reason(code)).")
         }
         fd = descriptor
+        peerProcessIdentifier = Self.peerProcessIdentifier(of: descriptor)
     }
 
     deinit { close() }
+
+    /// The pid behind a connected Unix-domain socket, or `nil` when the kernel
+    /// declines to say.
+    private static func peerProcessIdentifier(of descriptor: Int32) -> pid_t? {
+        var peer: pid_t = 0
+        var length = socklen_t(MemoryLayout<pid_t>.size)
+        let read = getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERPID, &peer, &length)
+        guard read == 0, peer > 0 else { return nil }
+        return peer
+    }
 
     /// Sends one verb and reads the single answer.
     public func send(_ verb: VMCommandRequest.Verb) throws -> VMCommandResponse {

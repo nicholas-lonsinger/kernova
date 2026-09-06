@@ -77,6 +77,45 @@ struct AppRegistryWaitTests {
         #expect(released)
     }
 
+    // MARK: - Keyed on the process
+
+    @Test("A pid-keyed wait ends once that instance reports terminated")
+    func processWaitEndsWhenTheInstanceTerminates() async throws {
+        let instance = FakeRegisteredInstance()
+        let registry = FakeAppRegistry(registered: [], byProcessIdentifier: [42: instance])
+
+        async let outcome = self.awaitDeregistration(
+            ofProcess: 42, from: registry, within: testWaitBackstop)
+        try await instance.observed.wait { instance.isObserved }
+        instance.terminate()
+        let released = await outcome
+
+        #expect(released)
+    }
+
+    /// The registry holds registered apps only, so a pid it does not know is
+    /// nothing to wait for — including one it has already let go.
+    @Test("A pid the registry does not hold ends the wait without waiting at all")
+    func processWaitEndsWhenThePidIsUnknown() async throws {
+        let registry = FakeAppRegistry(registered: [])
+
+        let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0)
+
+        #expect(released)
+    }
+
+    @Test("A pid-keyed wait on an instance macOS never lets go fails at its deadline")
+    func processWaitFailsAtItsDeadline() async throws {
+        let registry = FakeAppRegistry(
+            registered: [], byProcessIdentifier: [42: FakeRegisteredInstance()])
+
+        // The deadline is the assertion here, so it is deliberately small
+        // (docs/TESTING.md, "Injected production timeouts").
+        let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0.2)
+
+        #expect(!released)
+    }
+
     // MARK: - Process liveness
 
     /// Launch Services registers an instance before it has a process
@@ -109,6 +148,18 @@ struct AppRegistryWaitTests {
                 by: Date(timeIntervalSinceNow: deadline), registry: registry)
         }
     }
+
+    /// ``awaitDeregistration(from:scope:within:)`` for the pid-keyed entry
+    /// point, on the same off-main thread.
+    private func awaitDeregistration(
+        ofProcess identifier: pid_t, from registry: FakeAppRegistry, within deadline: TimeInterval
+    ) async -> Bool {
+        await offCooperativePool {
+            AppRegistryWait.awaitDeregistration(
+                ofProcess: identifier, by: Date(timeIntervalSinceNow: deadline),
+                registry: registry)
+        }
+    }
 }
 
 // MARK: - Doubles
@@ -116,8 +167,14 @@ struct AppRegistryWaitTests {
 /// A registry answering with whatever instances a test hands it, for any bundle.
 private struct FakeAppRegistry: AppRegistry {
     let registered: [FakeRegisteredInstance]
+    /// The instance answering a pid lookup, when the test drives that path.
+    var byProcessIdentifier: [pid_t: FakeRegisteredInstance] = [:]
 
     func instances(ofBundleAt bundleURL: URL) -> [any RegisteredAppInstance] { registered }
+
+    func instance(withProcessIdentifier identifier: pid_t) -> (any RegisteredAppInstance)? {
+        byProcessIdentifier[identifier]
+    }
 }
 
 /// An instance a test terminates on cue, reporting it through the same callback
