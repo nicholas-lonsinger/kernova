@@ -486,6 +486,10 @@ It also carries the VM command vocabulary — `VMSelector`, `VMVerb`, the result
 and the `VMCommandRequest`/`VMCommandResponse` envelope — so an out-of-process client links the same
 declarations the app throws and returns, rather than a mirror of them.
 
+It also vends `KernovaCLICore` — the `kernova` tool's parsing, rendering, exit-code mapping and
+socket client. Living here rather than in the executable target is what puts its tests in
+`KernovaKitTests`, already in the test plan, instead of needing a fourth test target.
+
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
 a shipping target** — nothing enforces that.
@@ -538,6 +542,13 @@ context) and one release point (`VMSessionContext.tearDown`).
   `AppTerminationController` during a quit that followed a TCC revocation. It watches the app's PID
   and relaunches through `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
+- **KernovaCLI** — the `kernova` tool, embedded at `Contents/Helpers/kernova` ([BUILD.md](BUILD.md)
+  says why not `Contents/MacOS`) and installed as a symlink from Settings → Advanced by
+  `CommandLineToolInstaller`. It is sandboxed with `app-sandbox` plus the app group and nothing
+  else — deliberately not `inherit`, which is for a child the app spawns, where this is started by
+  the user's shell. `KernovaCLI/main.swift` is one line; everything the tool does lives in
+  `KernovaCLICore`.
+
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding four long-lived vsock connections to the host (control, log forwarding,
   clipboard, drop) and dialing one more per transfer through `VsockGuestDataDialer`, which reuses
@@ -580,4 +591,6 @@ context) and one release point (`VMSessionContext.tearDown`).
 | **CryptoKit** | SHA-256 → the synthesized main disk's stable UUID |
 | **os** | `os.Logger` |
 | **SwiftProtobuf** | Wire-protocol codegen and runtime; `KernovaKit` only |
+| **ArgumentParser** | The `kernova` tool's command line; `KernovaCLICore` only |
+| **Security** | Reading this process's own entitlements and a socket peer's code identity |
 

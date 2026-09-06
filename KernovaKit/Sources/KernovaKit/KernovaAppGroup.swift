@@ -18,6 +18,9 @@ public enum KernovaAppGroup {
     /// The command socket's leaf name inside the group container.
     public static let socketFileName = "kernova.sock"
 
+    /// What the command-line tool is called, on disk and on a command line.
+    public static let commandLineToolName = "kernova"
+
     private static let entitlementKey = "com.apple.security.application-groups"
 
     nonisolated private static let logger = KernovaLogger(
