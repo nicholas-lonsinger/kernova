@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import os
 
 /// The System category: the VM's resources, display, audio, input devices and

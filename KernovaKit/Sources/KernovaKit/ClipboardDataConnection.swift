@@ -101,7 +101,7 @@ public enum ClipboardDataConnection {
     /// The most a data connection's header frame may declare: 64 KiB.
     ///
     /// A `ClipboardTransferRequest`/`Reply` is tens of bytes; the bound keeps a
-    /// peer from making this side buffer toward `VsockFrame.maxPayloadSize`
+    /// peer from making this side buffer toward `StreamFrame.maxPayloadSize`
     /// before the frame is even parsed.
     static let maxHeaderFrameBytes = 64 * 1024
 
@@ -175,7 +175,7 @@ public enum ClipboardDataConnection {
     ///   ends the connection before the frame is complete, `.unexpectedFrame`
     ///   when the bytes do not decode as a version-1 `Frame`.
     public static func readFrame(fd: Int32) throws -> Frame {
-        let prefix = try readExactly(fd: fd, count: VsockFrame.lengthPrefixSize)
+        let prefix = try readExactly(fd: fd, count: StreamFrame.lengthPrefixSize)
         let size = Int(
             prefix.withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) })
         guard size <= maxHeaderFrameBytes else {

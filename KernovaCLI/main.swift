@@ -1,0 +1,3 @@
+import KernovaCLICore
+
+KernovaCommand.run()

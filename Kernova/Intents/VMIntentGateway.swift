@@ -17,7 +17,7 @@ import os
 /// It presents nothing: a refusal leaves as the ``CommandError`` the core threw,
 /// which each intent renders in the framework's idiom.
 @MainActor
-final class VMIntentGateway {
+final class VMIntentGateway: AutomationWorkCounting {
     nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     private let commands: any VMCommanding
@@ -47,7 +47,7 @@ final class VMIntentGateway {
     private var intentsInFlight = 0
 
     /// Whether any intent is executing.
-    var hasIntentInFlight: Bool { intentsInFlight > 0 }
+    var hasWorkInFlight: Bool { intentsInFlight > 0 }
 
     /// The single readiness await, memoized so an intent storm waits on one task.
     private var readiness: Task<Void, Never>?
@@ -173,7 +173,9 @@ final class VMIntentGateway {
     }
 
     func ipAddress(of id: UUID) async throws -> String? {
-        try await perform(.ipAddress, on: id) { try self.commands.ipAddress(of: .id(id)) }
+        try await perform(.ipAddress, on: id) {
+            try self.commands.ipAddress(of: .id(id)).reservedAddress
+        }
     }
 
     /// The VM's named restore points, newest first.

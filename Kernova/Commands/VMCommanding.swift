@@ -1,16 +1,6 @@
 import Foundation
 import KernovaKit
 
-/// Whether a verb that brings a guest up puts its display in front of the user.
-enum VMDisplayPresentation: Equatable {
-    /// Surface the VM's display — the detached window for a pop-out or
-    /// fullscreen VM, keyboard focus in the inline display otherwise.
-    case surface
-    /// Bring the guest up with nothing put on screen, for a process that has no
-    /// window and is not asking for one.
-    case headless
-}
-
 /// Every VM verb Kernova offers, typed end to end.
 ///
 /// One method per verb, addressing VMs by ``VMSelector`` and refusing with
@@ -42,8 +32,8 @@ protocol VMCommanding: AnyObject {
 
     func info(_ selector: VMSelector) throws -> VMInfo
 
-    /// The address the app reserved for this guest, `nil` when it has none.
-    func ipAddress(of selector: VMSelector) throws -> String?
+    /// What the guest's address resolves to on the network its mode joins.
+    func ipAddress(of selector: VMSelector) throws -> GuestIPAddress
 
     /// The VM's named restore points, newest first.
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary]
@@ -111,8 +101,9 @@ protocol VMCommanding: AnyObject {
     /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws
 
-    /// Shuts the guest down and starts it again once it has powered off.
-    func restart(_ selector: VMSelector) async throws
+    /// Shuts the guest down and starts it again once it has powered off,
+    /// bringing it back up the way ``start(_:recovery:presentation:)`` would.
+    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
@@ -283,12 +274,13 @@ protocol VMCommanding: AnyObject {
     func events() -> AsyncStream<[VMLibraryEvent]>
 }
 
-/// The surfacing spellings of the two verbs that can come up headless.
+/// The surfacing spellings of the three verbs that can come up headless.
 ///
-/// Bringing a guest up puts its display in front of the user everywhere but the
-/// launch auto-start pass, so every other front door — the wire router, the
-/// intents, the AppKit UI — spells the verb without a presentation and gets
-/// ``VMDisplayPresentation/surface``.
+/// An in-process front door is a GUI by construction, so the AppKit UI and the
+/// App Intents spell the verb without a presentation and get
+/// ``VMDisplayPresentation/surface``. The launch auto-start pass and the wire
+/// router are the callers that say which they want, because they are the ones
+/// that can be running with nowhere to present.
 extension VMCommanding {
     func start(_ selector: VMSelector, recovery: Bool) async throws {
         try await start(selector, recovery: recovery, presentation: .surface)
@@ -296,5 +288,9 @@ extension VMCommanding {
 
     func resume(_ selector: VMSelector) async throws {
         try await resume(selector, presentation: .surface)
+    }
+
+    func restart(_ selector: VMSelector) async throws {
+        try await restart(selector, presentation: .surface)
     }
 }

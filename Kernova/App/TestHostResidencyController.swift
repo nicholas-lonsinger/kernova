@@ -58,10 +58,15 @@ final class TestHostResidencyController: AppResidencyHosting {
         }
     }
 
-    /// Nothing to publish: the gateway writes to the developer's own Spotlight
-    /// index, and holds an events subscription that would keep the core's
-    /// observation loop armed for every test.
-    func registerIntentGateway() {}
+    /// Nothing to open: the gateway writes to the developer's own Spotlight
+    /// index and holds an events subscription that would keep the core's
+    /// observation loop armed for every test, and a bound command socket would
+    /// put the test host in front of any `kernova` the developer ran meanwhile.
+    func registerAutomationFrontDoors() {}
+
+    /// Nothing to do: the test host is already a foreground `.regular` app, and
+    /// it opens no command socket to be asked from.
+    func activateForExternalRequest() {}
 
     // MARK: - Residency
 

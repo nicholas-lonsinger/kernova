@@ -124,8 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillFinishLaunching(_ notification: Notification) {
         libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
         // Before `lifecycle.start(provenance:)`, so an intent delivered during
-        // launch resolves against a published gateway.
-        lifecycle.registerIntentGateway()
+        // launch resolves against a published gateway, and the command socket
+        // is bound before a client that just launched the app dials it.
+        lifecycle.registerAutomationFrontDoors()
     }
 
     /// Records that Launch Services asked for the app's default surface.
@@ -206,8 +207,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             ?? true
         let source = eventSource.map { String($0) } ?? "none"
         let isHiddenLaunch = NSApp.isHidden
+        // Positive evidence rather than an inference: the `kernova` tool says
+        // outright what it launched the app for.
+        let isCLILaunch = ProcessInfo.processInfo.arguments.contains(
+            KernovaLaunchArgument.automation)
         Self.logger.notice(
-            "Launch signals — openEvent=\(isOpenEvent, privacy: .public) eventID=\(eventID, privacy: .public) senderPID=\(sender, privacy: .public) eventSource=\(source, privacy: .public) directOpen=\(isDirectOpen, privacy: .public) loginItem=\(isLoginItem, privacy: .public) defaultLaunchKey=\(defaultLaunchKey.map(String.init) ?? "absent", privacy: .public) untitled=\(self.didOpenUntitledFile, privacy: .public) documents=\(self.didOpenLaunchDocuments, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
+            "Launch signals — openEvent=\(isOpenEvent, privacy: .public) eventID=\(eventID, privacy: .public) senderPID=\(sender, privacy: .public) eventSource=\(source, privacy: .public) directOpen=\(isDirectOpen, privacy: .public) loginItem=\(isLoginItem, privacy: .public) cli=\(isCLILaunch, privacy: .public) defaultLaunchKey=\(defaultLaunchKey.map(String.init) ?? "absent", privacy: .public) untitled=\(self.didOpenUntitledFile, privacy: .public) documents=\(self.didOpenLaunchDocuments, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
         )
 
         return AppResidencyController.launchProvenance(
@@ -217,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             openEventIsDirect: isDirectOpen,
             isHiddenLaunch: isHiddenLaunch,
             isLoginItemLaunch: isLoginItem,
+            isCLILaunch: isCLILaunch,
             isDefaultLaunch: isDefaultLaunch)
     }
 

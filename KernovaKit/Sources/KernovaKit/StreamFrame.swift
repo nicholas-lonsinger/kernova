@@ -8,23 +8,23 @@ import Foundation
 ///
 /// Byte-stream transports (vsock SOCK_STREAM, AF_UNIX SOCK_STREAM, pipes) do
 /// not preserve message boundaries; this framing layer reintroduces them.
-enum VsockFrame {
+public enum StreamFrame {
     /// Maximum payload size accepted on the wire, in bytes.
     ///
     /// A peer that announces a larger frame is protocol-violating —
-    /// `VsockFrameDecoder.nextFrame()` throws `VsockFrameError.frameTooLarge`
+    /// `StreamFrameDecoder.nextFrame()` throws `StreamFrameError.frameTooLarge`
     /// rather than buffer unboundedly. A DoS backstop only: no real frame
     /// approaches it, since a transfer's payload never crosses as a frame — it
     /// is raw bytes on that transfer's own data connection.
-    static let maxPayloadSize: Int = 128 * 1024 * 1024
+    public static let maxPayloadSize: Int = 128 * 1024 * 1024
 
     /// Number of bytes occupied by the length prefix.
-    static let lengthPrefixSize: Int = 4
+    public static let lengthPrefixSize: Int = 4
 
     /// Returns `payload` prefixed with its big-endian `UInt32` length.
-    static func encode(_ payload: Data) throws -> Data {
+    public static func encode(_ payload: Data) throws -> Data {
         guard payload.count <= maxPayloadSize else {
-            throw VsockFrameError.frameTooLarge(
+            throw StreamFrameError.frameTooLarge(
                 declaredSize: payload.count,
                 maxAllowed: maxPayloadSize
             )
@@ -39,14 +39,14 @@ enum VsockFrame {
 }
 
 /// Errors thrown by the framing layer.
-enum VsockFrameError: Error, Sendable, Equatable {
-    /// A frame's declared payload size exceeds `VsockFrame.maxPayloadSize`.
+public enum StreamFrameError: Error, Sendable, Equatable {
+    /// A frame's declared payload size exceeds `StreamFrame.maxPayloadSize`.
     /// On the decode side the stream is unrecoverable at this point and the
     /// caller should close the connection.
     case frameTooLarge(declaredSize: Int, maxAllowed: Int)
 }
 
-/// Reassembles `VsockFrame` payloads from an unframed byte stream.
+/// Reassembles `StreamFrame` payloads from an unframed byte stream.
 ///
 /// Feed arbitrary chunks via `feed(_:)` (a single payload may span any number
 /// of chunks; multiple payloads may share one chunk) then drain whole frames
@@ -54,7 +54,7 @@ enum VsockFrameError: Error, Sendable, Equatable {
 ///
 /// The decoder is `Sendable` and intended to be owned by a single actor or
 /// queue at a time.
-struct VsockFrameDecoder: Sendable {
+public struct StreamFrameDecoder: Sendable {
     /// Floor below which the consumed prefix is never compacted, so small
     /// buffers don't churn on a shift.
     private static let compactionThreshold: Int = 64 * 1024
@@ -63,10 +63,10 @@ struct VsockFrameDecoder: Sendable {
     private var readOffset: Int = 0
 
     /// Creates an empty decoder ready to accept bytes via `feed(_:)`.
-    init() {}
+    public init() {}
 
     /// Appends raw bytes to the internal buffer (does not parse).
-    mutating func feed(_ chunk: Data) {
+    public mutating func feed(_ chunk: Data) {
         buffer.append(chunk)
     }
 
@@ -76,26 +76,26 @@ struct VsockFrameDecoder: Sendable {
     ///   a slice aliasing the decoder's buffer — consume it before the next
     ///   `feed`/`nextFrame` — or `nil` if the buffer does not yet hold a
     ///   complete frame.
-    /// - Throws: `VsockFrameError.frameTooLarge` if a frame's declared size
-    ///   exceeds `VsockFrame.maxPayloadSize`; the stream is then corrupt and the
+    /// - Throws: `StreamFrameError.frameTooLarge` if a frame's declared size
+    ///   exceeds `StreamFrame.maxPayloadSize`; the stream is then corrupt and the
     ///   decoder should be discarded.
-    mutating func nextFrame() throws -> Data? {
+    public mutating func nextFrame() throws -> Data? {
         let unread = buffer.count - readOffset
-        guard unread >= VsockFrame.lengthPrefixSize else { return nil }
+        guard unread >= StreamFrame.lengthPrefixSize else { return nil }
 
         let payloadSize = Int(readLengthPrefix())
 
-        guard payloadSize <= VsockFrame.maxPayloadSize else {
-            throw VsockFrameError.frameTooLarge(
+        guard payloadSize <= StreamFrame.maxPayloadSize else {
+            throw StreamFrameError.frameTooLarge(
                 declaredSize: payloadSize,
-                maxAllowed: VsockFrame.maxPayloadSize
+                maxAllowed: StreamFrame.maxPayloadSize
             )
         }
 
-        let totalFrameSize = VsockFrame.lengthPrefixSize + payloadSize
+        let totalFrameSize = StreamFrame.lengthPrefixSize + payloadSize
         guard unread >= totalFrameSize else { return nil }
 
-        let payloadStart = buffer.startIndex + readOffset + VsockFrame.lengthPrefixSize
+        let payloadStart = buffer.startIndex + readOffset + StreamFrame.lengthPrefixSize
         let payloadEnd = buffer.startIndex + readOffset + totalFrameSize
         // RATIONALE: return a slice aliasing `buffer` rather than copying the
         // payload out, removing the per-frame copy on the common path (#377); on
@@ -112,14 +112,14 @@ struct VsockFrameDecoder: Sendable {
     }
 
     /// `true` when no buffered bytes remain.
-    var isEmpty: Bool { buffer.count == readOffset }
+    public var isEmpty: Bool { buffer.count == readOffset }
 
     /// Number of buffered bytes not yet consumed.
-    var bufferedByteCount: Int { buffer.count - readOffset }
+    public var bufferedByteCount: Int { buffer.count - readOffset }
 
     private func readLengthPrefix() -> UInt32 {
         let start = buffer.startIndex + readOffset
-        let end = start + VsockFrame.lengthPrefixSize
+        let end = start + StreamFrame.lengthPrefixSize
         return buffer[start..<end].withUnsafeBytes { raw in
             UInt32(bigEndian: raw.loadUnaligned(as: UInt32.self))
         }
@@ -143,7 +143,7 @@ struct VsockFrameDecoder: Sendable {
         // it reclaims (#377). The price is a buffer growing to ~2× the live bytes
         // between compactions.
         let unread = buffer.count - readOffset
-        if readOffset >= max(VsockFrameDecoder.compactionThreshold, unread) {
+        if readOffset >= max(StreamFrameDecoder.compactionThreshold, unread) {
             let unreadStart = buffer.startIndex + readOffset
             buffer.removeSubrange(buffer.startIndex..<unreadStart)
             readOffset = 0

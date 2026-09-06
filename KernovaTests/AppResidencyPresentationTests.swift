@@ -9,7 +9,7 @@ import Testing
 /// latch.
 ///
 /// That latch is what
-/// ``AppResidencyController/automationIdleOutcome(isAutomationLaunch:hasPresentedInterface:hasVisibleUserWindow:keepInMenuBar:hasUninterruptibleWork:hasLiveGuest:hasIntentInFlight:)``
+/// ``AppResidencyController/automationIdleOutcome(isAutomationLaunch:hasPresentedInterface:hasVisibleUserWindow:keepInMenuBar:hasUninterruptibleWork:hasLiveGuest:hasAutomationWorkInFlight:)``
 /// short-circuits on, so a window on screen can never be idle-quit out from
 /// under the user by a reconcile that reads the window list a moment too late.
 ///

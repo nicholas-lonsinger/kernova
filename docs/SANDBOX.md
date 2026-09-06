@@ -18,12 +18,13 @@ Everything `Kernova/Resources/Kernova.entitlements` claims:
 | `com.apple.security.virtualization` | Running guests — compatible with the sandbox on the store: UTM ships exactly this combination there, macOS guests included |
 | `com.apple.vm.networking` | Guest networking beyond NAT — vmnet requires it for all API use, and a bridged attachment fails VZ configuration validation without it. Granted by Apple as a managed capability on the App ID; compatible with the sandbox on the store — UTM's store build carries it |
 | `com.apple.security.device.audio-input` | Opt-in per-VM microphone passthrough |
+| `com.apple.security.application-groups` | The container the app and the bundled `kernova` tool meet in, holding the command socket. `$(TeamIdentifierPrefix)` is load-bearing, so an ad-hoc build resolves no group and offers no socket ([research note](research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md)) |
 
 `com.apple.vm.networking` is restricted — it must be authorized by the embedded provisioning profile — so the default build signs with `Kernova/Resources/Kernova.Development.entitlements`, the same set minus that key. [BUILD.md](BUILD.md) "Signing identity" owns the selection mechanics and the per-machine opt-in. The sandbox profile needs nothing further: `application.sb` grants the `com.apple.NetworkSharing` mach-lookup exactly when the entitlement is present.
 
 One absence is deliberate:
 
-**`com.apple.security.network.server`.** The app never calls `socket()`/`bind()`/`listen()` — `VZVirtioSocketListener`/`VZVirtioSocketConnection` hand it already-connected fds, and the sandbox's network entitlements gate socket *acquisition*, not I/O on granted fds. The serial relay's `AF_UNIX` listener binds inside the app's own temp directory, which file rules already allow. Neither vsock nor the relay needs it.
+**`com.apple.security.network.server`.** It gates network-family listeners, which the app has none of. `VZVirtioSocketListener`/`VZVirtioSocketConnection` hand it already-connected fds, and the sandbox's network entitlements gate socket *acquisition*, not I/O on granted fds. Both `AF_UNIX` listeners are admitted by file rules on where they bind: the serial relay's inside the app's own temp directory, the command socket's inside the app-group container ([research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md](research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md) — both ends of that exchange hold neither `network.client` nor `.server`).
 
 The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, sandboxed with `app-sandbox` + `inherit` and nothing else.
 

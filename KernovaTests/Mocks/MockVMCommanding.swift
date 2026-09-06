@@ -15,7 +15,7 @@ final class MockVMCommanding: VMCommanding {
     /// The library `list()` answers with, and what the recorded verbs address.
     var library: [VMSummary] = []
     /// The address `ipAddress(of:)` answers with.
-    var reservedAddress: String?
+    var reservedAddress: GuestIPAddress = .unavailable
     /// The snapshot `takeSnapshot` answers with, built from its arguments when
     /// left unset.
     var snapshotToReturn: SnapshotSummary?
@@ -50,7 +50,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var pauseSelectors: [VMSelector] = []
     private(set) var resumeCalls: [(selector: VMSelector, presentation: VMDisplayPresentation)] = []
     private(set) var suspendSelectors: [VMSelector] = []
-    private(set) var restartSelectors: [VMSelector] = []
+    private(set) var restartCalls: [(selector: VMSelector, presentation: VMDisplayPresentation)] = []
     private(set) var openSelectors: [VMSelector] = []
     private(set) var revealSelectors: [VMSelector] = []
     private(set) var cancelGuestSetupCalls: [(selector: VMSelector, confirmed: Bool)] = []
@@ -186,7 +186,7 @@ final class MockVMCommanding: VMCommanding {
             bundlePath: "/tmp/\(summary.id.uuidString).kernova")
     }
 
-    func ipAddress(of selector: VMSelector) throws -> String? {
+    func ipAddress(of selector: VMSelector) throws -> GuestIPAddress {
         ipAddressSelectors.append(selector)
         if let ipAddressError { throw ipAddressError }
         _ = try resolve(selector)
@@ -268,8 +268,8 @@ final class MockVMCommanding: VMCommanding {
         if let suspendError { throw suspendError }
     }
 
-    func restart(_ selector: VMSelector) async throws {
-        restartSelectors.append(selector)
+    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
+        restartCalls.append((selector, presentation))
         if let restartError { throw restartError }
     }
 
@@ -333,7 +333,7 @@ final class MockVMCommanding: VMCommanding {
         // caller that reads it back on the same turn finds it.
         let created = VMSummary(
             id: configuration.id, name: configuration.name,
-            status: VMCommandCore.preparingWireStatus)
+            status: VMStatus.preparingWireName, ipAddress: .unavailable)
         library.append(created)
         return created
     }
@@ -344,7 +344,7 @@ final class MockVMCommanding: VMCommanding {
         let source = try resolve(selector)
         let copy =
             cloneResult
-            ?? VMSummary(id: UUID(), name: "\(source.name) copy", status: source.status)
+            ?? VMSummary(id: UUID(), name: "\(source.name) copy", status: source.status, ipAddress: .unavailable)
         // The core registers the copy's phantom row before answering, so a
         // caller that reads it back on the same turn finds it.
         library.append(copy)

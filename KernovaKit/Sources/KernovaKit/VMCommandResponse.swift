@@ -26,8 +26,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case summary(VMSummary)
         /// One VM's full description.
         case info(VMInfo)
-        /// A VM's reserved address, `nil` when it has none.
-        case ipAddress(String?)
+        /// What a VM's address resolves to on the network its mode joins.
+        case ipAddress(GuestIPAddress)
         /// A VM's restore points.
         case snapshots([SnapshotSummary])
         /// One restore point a capture produced.
@@ -36,6 +36,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.
         case failure(CommandErrorDTO)
+        /// The request was refused by the envelope, before any verb ran.
+        case refused(VMCommandTransportRefusal)
     }
 
     /// The refusal this response carries, or `nil` when the verb succeeded.

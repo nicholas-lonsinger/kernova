@@ -1,13 +1,19 @@
 import AppKit
+import KernovaKit
 
 /// The "Advanced" pane of the Settings window.
 ///
 /// Hosts the *Always show advanced options* toggle — whether advanced menu
 /// actions (e.g. *Start in Recovery Mode*) are always visible or revealed only
-/// on an Option (⌥) hold — and the two machine-identity toggles: blocking
-/// duplicate machine IDs from booting, and whether Clone generates a new
-/// machine ID. All backed by `AppPreferences`; the menus re-read the
-/// preferences each time they open, so no change notification is needed here.
+/// on an Option (⌥) hold — the two machine-identity toggles (blocking duplicate
+/// machine IDs from booting, and whether Clone generates a new machine ID), and
+/// the command-line tool install. The toggles are backed by `AppPreferences`;
+/// the menus re-read the preferences each time they open, so no change
+/// notification is needed here.
+///
+/// The tool section is absent, not disabled, in a build that resolves no
+/// app-group container: the tool there could reach no app, so there is nothing
+/// to offer.
 @MainActor
 final class AdvancedSettingsViewController: NSViewController {
     private let preferences: AppPreferences
@@ -63,7 +69,7 @@ final class AdvancedSettingsViewController: NSViewController {
                 + "clone those keeping the ID. To do the opposite for one clone, hold Option (⌥) "
                 + "over Clone in the Virtual Machine menu or the VM's context menu.")
 
-        let section = NSStackView(views: [
+        var rows: [NSView] = [
             makeGroupedFormSectionHeader("Advanced Options"),
             card,
             caption,
@@ -72,7 +78,32 @@ final class AdvancedSettingsViewController: NSViewController {
             blockCaption,
             cloneCard,
             cloneCaption,
-        ])
+        ]
+        var fullWidthRows: [NSView] = [
+            card, caption, blockCard, blockCaption, cloneCard, cloneCaption,
+        ]
+        // Absent, not disabled, in a build with no group container: the tool
+        // installed from there could reach no app.
+        let offersCommandLineTool = CommandLineToolInstaller.isAvailable
+        if offersCommandLineTool {
+            let installButton = NSButton(
+                title: "Install\u{2026}", target: self, action: #selector(installCommandLineTool))
+            installButton.bezelStyle = .push
+            let toolCard = makeGroupedFormCard(rows: [
+                makeGroupedFormCardRow("Command line tool", control: installButton)
+            ])
+            let toolCaption = makeGroupedFormCaption(
+                "Links the bundled kernova tool into a folder you choose, so a shell can drive "
+                    + "your virtual machines. Kernova has to be running for it to answer. If the "
+                    + "folder is not already on your PATH, add it:")
+            let pathHint = makeCalloutCode("export PATH=\"/usr/local/bin:$PATH\"")
+            rows.append(contentsOf: [
+                makeGroupedFormSectionHeader("Command Line Tool"), toolCard, toolCaption, pathHint,
+            ])
+            fullWidthRows.append(contentsOf: [toolCard, toolCaption, pathHint])
+        }
+
+        let section = NSStackView(views: rows)
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = Spacing.small
@@ -80,6 +111,9 @@ final class AdvancedSettingsViewController: NSViewController {
         // read as distinct settings.
         section.setCustomSpacing(Spacing.section, after: caption)
         section.setCustomSpacing(Spacing.section, after: blockCaption)
+        if offersCommandLineTool {
+            section.setCustomSpacing(Spacing.section, after: cloneCaption)
+        }
         section.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
@@ -91,19 +125,18 @@ final class AdvancedSettingsViewController: NSViewController {
         root.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(section)
         let pad = Spacing.large
-        NSLayoutConstraint.activate([
+        // Every card and caption spans the column; the section headers do not.
+        var constraints = fullWidthRows.map {
+            $0.widthAnchor.constraint(equalTo: section.widthAnchor)
+        }
+        constraints.append(contentsOf: [
             section.topAnchor.constraint(equalTo: root.topAnchor, constant: pad),
             section.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: pad),
             section.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -pad),
             section.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -pad),
             root.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
-            card.widthAnchor.constraint(equalTo: section.widthAnchor),
-            caption.widthAnchor.constraint(equalTo: section.widthAnchor),
-            blockCard.widthAnchor.constraint(equalTo: section.widthAnchor),
-            blockCaption.widthAnchor.constraint(equalTo: section.widthAnchor),
-            cloneCard.widthAnchor.constraint(equalTo: section.widthAnchor),
-            cloneCaption.widthAnchor.constraint(equalTo: section.widthAnchor),
         ])
+        NSLayoutConstraint.activate(constraints)
         view = root
     }
 
@@ -129,5 +162,67 @@ final class AdvancedSettingsViewController: NSViewController {
 
     @objc private func cloneNewIDToggled() {
         preferences.cloneGeneratesNewMachineID = (cloneNewIDSwitch.state == .on)
+    }
+
+    /// Asks where the tool should go, then links it there.
+    ///
+    /// A save panel rather than a hardcoded `/usr/local/bin`: the app is
+    /// sandboxed, so the only way it can write outside its container is a path
+    /// the user picks, and a panel is also what lets somebody choose a folder
+    /// already on their `PATH`.
+    @objc private func installCommandLineTool() {
+        let panel = NSSavePanel()
+        panel.directoryURL = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
+        panel.nameFieldStringValue = KernovaAppGroup.commandLineToolName
+        panel.prompt = "Install"
+        panel.message = "Choose where to install the kernova command line tool."
+        panel.canCreateDirectories = true
+        panel.showsHiddenFiles = true
+
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let destination = panel.url else { return }
+            self?.install(at: destination)
+        }
+    }
+
+    private func install(at destination: URL) {
+        do {
+            try CommandLineToolInstaller.installSymlink(at: destination)
+        } catch {
+            presentInstallFailure(error, at: destination)
+        }
+    }
+
+    /// Explains what stopped the install, keeping the equivalent command on
+    /// screen and selectable so the user can run it themselves.
+    private func presentInstallFailure(_ failure: any Error, at destination: URL) {
+        let reason: String =
+            switch failure {
+            case CommandLineToolInstaller.InstallFailure.exists:
+                "Something is already at that path. Kernova does not replace it."
+            case CommandLineToolInstaller.InstallFailure.unwritable(let detail):
+                detail
+            default:
+                failure.localizedDescription
+            }
+
+        let alert = NSAlert()
+        alert.messageText = "Couldn\u{2019}t Install the Command Line Tool"
+        alert.informativeText = reason
+        alert.addButton(withTitle: "OK")
+
+        let hint = NSStackView(views: [
+            makeGroupedFormCaption("You can create the link yourself:"),
+            makeCalloutCode(CommandLineToolInstaller.manualCommand(for: destination)),
+        ])
+        hint.orientation = .vertical
+        hint.alignment = .leading
+        hint.spacing = Spacing.tight
+        hint.setFrameSize(hint.fittingSize)
+        alert.accessoryView = hint
+
+        guard let window = view.window else { return }
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 }

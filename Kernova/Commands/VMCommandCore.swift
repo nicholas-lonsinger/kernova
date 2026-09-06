@@ -161,24 +161,22 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    /// The wire status a VM being written into place by a create, clone or
-    /// import reports in place of its real ``VMStatus``.
-    nonisolated static let preparingWireStatus = "preparing"
-
-    /// `instance`'s status as it crosses the wire — ``preparingWireStatus``
-    /// while a create, clone or import is still writing its bundle, its real
-    /// ``VMStatus`` otherwise.
+    /// `instance`'s status as it crosses the wire —
+    /// ``VMStatus/preparingWireName`` while a create, clone or import is still
+    /// writing its bundle, its real `VMStatus` otherwise.
     func wireStatus(_ instance: VMInstance) -> String {
-        instance.isPreparing ? Self.preparingWireStatus : instance.status.rawValue
+        instance.isPreparing ? VMStatus.preparingWireName : instance.status.rawValue
     }
 
     /// ``ObservedState``'s wire status, by the same rule as ``wireStatus(_:)``.
     private func wireStatus(for state: ObservedState) -> String {
-        state.isPreparing ? Self.preparingWireStatus : state.status.rawValue
+        state.isPreparing ? VMStatus.preparingWireName : state.status.rawValue
     }
 
     func summary(_ instance: VMInstance) -> VMSummary {
-        VMSummary(id: instance.instanceID, name: instance.name, status: wireStatus(instance))
+        VMSummary(
+            id: instance.instanceID, name: instance.name, status: wireStatus(instance),
+            ipAddress: library.networkSlots.reservedAddress(for: instance.configuration))
     }
 
     // MARK: - State Gates
@@ -294,7 +292,7 @@ final class VMCommandCore: VMCommanding {
             diskSizeInGB: config.diskSizeInGB,
             networkMode: config.networkEnabled ? config.networkMode.rawValue : nil,
             macAddress: config.macAddress,
-            ipAddress: library.networkSlots.reservedAddress(for: config).reservedAddress,
+            ipAddress: library.networkSlots.reservedAddress(for: config),
             agentStatus: instance.agentStatus.wireName,
             hasSavedState: instance.hasSaveFile,
             isEphemeral: config.ephemeralModeEnabled,
@@ -303,8 +301,8 @@ final class VMCommandCore: VMCommanding {
         )
     }
 
-    func ipAddress(of selector: VMSelector) throws -> String? {
-        library.networkSlots.reservedAddress(for: try resolve(selector).configuration).reservedAddress
+    func ipAddress(of selector: VMSelector) throws -> GuestIPAddress {
+        library.networkSlots.reservedAddress(for: try resolve(selector).configuration)
     }
 
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
@@ -387,7 +385,11 @@ final class VMCommandCore: VMCommanding {
             guard let now = current[id] else { continue }
             guard let before = lastObserved[id] else {
                 batch.append(
-                    .added(VMSummary(id: id, name: now.name, status: wireStatus(for: now))))
+                    .added(
+                        VMSummary(
+                            id: id, name: now.name, status: wireStatus(for: now),
+                            ipAddress: library.networkSlots.reservedAddress(
+                                for: instance.configuration))))
                 continue
             }
             if before.status != now.status || before.isPreparing != now.isPreparing {

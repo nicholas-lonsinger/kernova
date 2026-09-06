@@ -14,12 +14,15 @@ public struct VMSummary: Codable, Sendable, Hashable {
     /// still being written by a create, clone or import reports `preparing`,
     /// which is not a ``VMStatus`` value.
     public let status: String
+    /// What the guest's address resolves to on the network its mode joins.
+    public let ipAddress: GuestIPAddress
 
     /// Names one VM.
-    public init(id: UUID, name: String, status: String) {
+    public init(id: UUID, name: String, status: String, ipAddress: GuestIPAddress) {
         self.id = id
         self.name = name
         self.status = status
+        self.ipAddress = ipAddress
     }
 }
 
@@ -45,10 +48,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let networkMode: String?
     /// The address the guest presents on that network.
     public let macAddress: String?
-    /// The address the app reserved for this guest, `nil` when it has none to
-    /// report — networking off, an externally addressed bridge, or a build
-    /// whose reservation machinery is absent.
-    public let ipAddress: String?
+    /// What the guest's address resolves to on the network its mode joins.
+    public let ipAddress: GuestIPAddress
     /// The guest agent's install and connectivity state, as its wire name.
     public let agentStatus: String
     /// Whether the bundle holds a suspended session.
@@ -71,7 +72,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         diskSizeInGB: Int,
         networkMode: String?,
         macAddress: String?,
-        ipAddress: String?,
+        ipAddress: GuestIPAddress,
         agentStatus: String,
         hasSavedState: Bool,
         isEphemeral: Bool,
@@ -248,4 +249,73 @@ public enum CommandRecoveryDTO: Codable, Sendable, Hashable {
     /// The start failed opening one attachment; removing that attachment (the
     /// file is untouched) and starting again is the offered way out.
     case removeStartFailedAttachment(id: UUID, label: String)
+}
+
+/// How every surface words a refusal.
+///
+/// The copy lives on the wire type rather than on the app's own error, because
+/// every door that shows it — an AppKit alert, Shortcuts, the `kernova` tool —
+/// can hold one of these and only one of them can hold the app's. Rendering it
+/// twice is how two doors come to say different things about the same refusal.
+extension CommandErrorDTO {
+    /// The heading a surface shows this refusal under.
+    public var title: String {
+        switch self {
+        case .notFound, .ambiguous, .busy, .unsupported, .invalidState:
+            "Error"
+        case .confirmationRequired(let prompt):
+            prompt.title
+        case .conflict(_, _, let reason):
+            switch reason {
+            case .machineIdentity: "Duplicate Machine ID"
+            case .macAddress: "Duplicate MAC Address"
+            }
+        case .operationFailed(_, let title, _, _):
+            title ?? "Error"
+        }
+    }
+
+    /// What a surface tells the user, in one sentence per fact.
+    public var message: String {
+        switch self {
+        case .notFound(let selector):
+            "No virtual machine named \u{201C}\(selector.displayText)\u{201D}."
+        case .ambiguous(let selector, let candidates):
+            "\u{201C}\(selector.displayText)\u{201D} names \(candidates.count) virtual machines. "
+                + "Use one of their identifiers instead: "
+                + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
+                + "."
+        case .invalidState(let vm, let current, let allowed):
+            // Display names, never the raw values: those are the wire's
+            // vocabulary, and this sentence goes in front of a person. A verb
+            // every state admits is left out, since naming it says nothing.
+            {
+                let offered = allowed.filter { !$0.isAdmittedInEveryState }.map(\.displayName)
+                let state = VMStatus.displayName(forWireName: current).lowercased()
+                return "\u{201C}\(vm.name)\u{201D} is \(state). "
+                    + (offered.isEmpty
+                        ? "Nothing can be done with it in that state."
+                        : "What it accepts now: \(offered.joined(separator: ", ")).")
+            }()
+        case .busy(let vm, let operation):
+            "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
+        case .confirmationRequired(let prompt):
+            prompt.message
+        case .unsupported(let capability):
+            "This virtual machine does not support \(capability)."
+        case .conflict(let vm, let other, let reason):
+            switch reason {
+            case .machineIdentity:
+                "\u{201C}\(vm.name)\u{201D} has the same machine ID as \u{201C}\(other.name)\u{201D}, which is active. "
+                    + "Two virtual machines with the same machine ID must not run at once. "
+                    + "Stop \u{201C}\(other.name)\u{201D} first, or allow this in Settings \u{2192} Advanced."
+            case .macAddress:
+                "\u{201C}\(vm.name)\u{201D} has the same MAC address as \u{201C}\(other.name)\u{201D}, which is active. "
+                    + "Two virtual machines with the same MAC address must not run on the same network at once. "
+                    + "Stop \u{201C}\(other.name)\u{201D} first, or give one of them a new address in Network settings."
+            }
+        case .operationFailed(_, _, let message, _):
+            message
+        }
+    }
 }

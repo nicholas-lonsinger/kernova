@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox, as Mac App Store review requires of every executable
+	     embedded in the app bundle. Deliberately NOT `com.apple.security.inherit`
+	     like KernovaRelaunchHelper: inherit is for a child the sandboxed app
+	     spawns, and this tool is started by the user's shell, with no parent
+	     sandbox to inherit. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- The only thing this tool needs: the container holding the app's command
+	     socket. File rules inside a group container are what admit connecting to
+	     it, so neither `network.client` nor `network.server` appears here — see
+	     docs/research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md.
+	     The team prefix is load-bearing; docs/SANDBOX.md says why. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(TeamIdentifierPrefix)app.kernova</string>
+	</array>
+</dict>
+</plist>

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 @testable import Kernova
 
 /// Mock for `VirtualizationProviding` that moves a VM's lifecycle phase without

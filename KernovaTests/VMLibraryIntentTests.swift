@@ -24,7 +24,7 @@ struct VMLibraryIntentTests {
     /// A library of one VM, which every verb here addresses.
     @discardableResult
     private func seed(_ commands: MockVMCommanding, vm: UUID) -> VMSummary {
-        let summary = VMSummary(id: vm, name: "Wired", status: "stopped")
+        let summary = VMSummary(id: vm, name: "Wired", status: "stopped", ipAddress: .unavailable)
         commands.library = [summary]
         return summary
     }
@@ -69,7 +69,7 @@ struct VMLibraryIntentTests {
         let commands = MockVMCommanding()
         let vm = UUID()
         seed(commands, vm: vm)
-        commands.cloneResult = VMSummary(id: UUID(), name: "Wired 2", status: "preparing")
+        commands.cloneResult = VMSummary(id: UUID(), name: "Wired 2", status: "preparing", ipAddress: .unavailable)
 
         let copy = try await makeGateway(commands).clone(vm, machineIdentity: .followPreference)
 

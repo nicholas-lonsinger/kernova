@@ -15,7 +15,7 @@ enum VMIntentFixtures {
         diskSizeInGB: Int = 64,
         networkMode: String? = "nat",
         macAddress: String? = "aa:bb:cc:dd:ee:ff",
-        ipAddress: String? = nil,
+        ipAddress: GuestIPAddress = .unavailable,
         agentStatus: String = "notInstalled",
         hasSavedState: Bool = false,
         isEphemeral: Bool = false,

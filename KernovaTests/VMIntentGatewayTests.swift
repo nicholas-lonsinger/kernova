@@ -20,7 +20,7 @@ struct VMIntentGatewayTests {
     private func makeSummary(
         name: String = "Wired", status: String = "stopped", id: UUID = UUID()
     ) -> VMSummary {
-        VMSummary(id: id, name: name, status: status)
+        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable)
     }
 
     /// A gateway whose library read has already landed, over a seeded mock.
@@ -64,7 +64,7 @@ struct VMIntentGatewayTests {
         #expect(entity.diskSizeInGB == info.diskSizeInGB)
         #expect(entity.networkMode == info.networkMode)
         #expect(entity.macAddress == info.macAddress)
-        #expect(entity.ipAddress == info.ipAddress)
+        #expect(entity.ipAddress == info.ipAddress.reservedAddress)
         #expect(entity.agentStatus == info.agentStatus)
         #expect(entity.hasSavedState == info.hasSavedState)
         #expect(entity.isEphemeral == info.isEphemeral)
@@ -77,9 +77,9 @@ struct VMIntentGatewayTests {
 
     @Test("A VM still copying into place reads back as preparing, which is no VMStatus")
     func entityNamesThePreparingWireStatus() {
-        #expect(VMStatus(rawValue: VMCommandCore.preparingWireStatus) == nil)
-        #expect(VMEntity.statusDisplayName(VMCommandCore.preparingWireStatus) == "Preparing")
-        #expect(VMEntity.statusDisplayName("initialBoot") == "Initial Boot")
+        #expect(VMStatus(rawValue: VMStatus.preparingWireName) == nil)
+        #expect(VMStatus.displayName(forWireName: VMStatus.preparingWireName) == "Preparing")
+        #expect(VMStatus.displayName(forWireName: "initialBoot") == "Initial Boot")
     }
 
     @Test("The Spotlight record carries the name and the guest, and no runtime status")
@@ -284,7 +284,10 @@ struct VMIntentGatewayTests {
         #expect(commands.pauseSelectors == [.id(id)])
         #expect(commands.resumeCalls.map(\.selector) == [.id(id)])
         #expect(commands.suspendSelectors == [.id(id)])
-        #expect(commands.restartSelectors == [.id(id)])
+        #expect(commands.restartCalls.map(\.selector) == [.id(id)])
+        // An intent runs in a GUI session, so its restart surfaces like the
+        // menu item's.
+        #expect(commands.restartCalls.map(\.presentation) == [.surface])
         #expect(commands.openSelectors == [.id(id)])
         #expect(commands.revealSelectors == [.id(id)])
         #expect(commands.ipAddressSelectors == [.id(id)])
@@ -670,7 +673,7 @@ struct VMIntentGatewayTests {
             index: MockVMEntityIndex(),
             defaults: makeStore(store),
             onIdle: {
-                if box.gateway?.hasIntentInFlight == true { log.reportedWhileBusy = true }
+                if box.gateway?.hasWorkInFlight == true { log.reportedWhileBusy = true }
                 log.count += 1
                 log.gate.notify()
             })
@@ -684,12 +687,12 @@ struct VMIntentGatewayTests {
         let gateway = makeIdleReportingGateway(MockVMCommanding(), store: "idle-single", log: log)
 
         gateway.beginIntent()
-        #expect(gateway.hasIntentInFlight)
+        #expect(gateway.hasWorkInFlight)
         gateway.endIntent()
         // Deferred, so the value the intent has just built reaches the framework
         // before anything can act on the process being idle.
         #expect(log.count == 0)
-        #expect(!gateway.hasIntentInFlight)
+        #expect(!gateway.hasWorkInFlight)
 
         try await log.gate.wait { log.count == 1 }
         #expect(!log.reportedWhileBusy)
@@ -703,7 +706,7 @@ struct VMIntentGatewayTests {
         gateway.beginIntent()
         gateway.beginIntent()
         gateway.endIntent()
-        #expect(gateway.hasIntentInFlight)
+        #expect(gateway.hasWorkInFlight)
 
         gateway.endIntent()
         try await log.gate.wait { log.count == 1 }
@@ -745,7 +748,7 @@ struct VMIntentGatewayTests {
         #expect(try await gateway.snapshots(ofVM: vm).isEmpty)
 
         #expect(log.count == 0)
-        #expect(!gateway.hasIntentInFlight)
+        #expect(!gateway.hasWorkInFlight)
     }
 }
 

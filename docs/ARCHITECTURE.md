@@ -24,16 +24,18 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
   mode is branched on; every delegate method below it forwards without forking. It answers the
   residency's `AppLaunchHosting` seam — the auto-start pass, the first library read, the true quit.
 - `AppResidencyHosting` — everything the delegate asks of the process's residency: the launch, the
-  reopen, the summon, the quit-after-last-window answer, and the App Intents front door. Two peer
+  reopen, the summon, the quit-after-last-window answer, and the automation front doors. Two peer
   implementations, `AppResidencyController` and `TestHostResidencyController`. It refines
   `WindowResidencyHosting`, which is the narrower seam the window layer holds.
 - `AppResidencyController` — the resident app's residency: the activation policy, the menu-bar
-  status item, the GUI summon, the idle quit an automation launch settles into, and the
-  `VMIntentGateway` it publishes and then reads for intents in flight.
+  status item, the GUI summon, the idle quit an automation launch settles into, and the automation
+  front doors it opens and then reads for work in flight. Both doors answer `AutomationWorkCounting`
+  and nothing else, so the aliveness decision counts work rather than doors and a third one would
+  change no decision.
 - `TestHostResidencyController` — the test host's residency, built only under XCTest: a plain
   foreground `.regular` app that shows the library at launch and idle-quits once no window is on
-  screen, the app is not hidden, and no guest is live. It publishes no intent gateway and offers no
-  soft quit.
+  screen, the app is not hidden, and no guest is live. It opens no automation front door and offers
+  no soft quit.
 - `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
   rather than downgrade to a GUI close, the save pass that suspends every live guest before the
   process exits, and the relaunch a TCC revocation needs. It reaches the GUI close through
@@ -261,8 +263,20 @@ Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the log
 `EntitlementService` (what this build's signature authorizes, so feature UI can degrade in builds
 signed without a restricted entitlement), `AttachmentFileMonitor` (existence watching for the
 settings pane's disk, removable-media and shared-directory rows, held by the panel context they
-share), `RuntimeFileAccess` (per-boot security-scoped access, released once in
-`VMSessionContext.tearDown`), and `SerialSocketRelay` (below).
+share), and `RuntimeFileAccess` (per-boot security-scoped access, released once in
+`VMSessionContext.tearDown`).
+
+Two AF_UNIX listeners share `UnixSocketListener`, which owns the bind/listen/accept plumbing and
+hands each accepted descriptor to its owner on the listener's queue with no lock held:
+`SerialSocketRelay` (below) and `VMCommandSocketListener`.
+
+`VMCommandSocketListener` is the out-of-process front door — the socket in the app-group container
+the `kernova` tool connects to. It admits a peer only when `SameTeamPeerAuthorizer` matches the
+peer's audit token against a requirement naming this build's own team, then gives each connection a
+`VMCommandConnection` confined to the listener's private queue: framing and JSON stay off the main
+actor, and only the verb itself hops to it through `VMCommandEnvelopeRouter`. A build resolving no
+group container or no team binds nothing and the tool finds no socket. The container's ID is
+resolved from the process's own signature by `KernovaAppGroup`, never spelled in code.
 
 **Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
 rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through
@@ -428,7 +442,9 @@ AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ V
                           VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
                           VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
 
-A wire client ──bytes──→ VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
+kernova (CLI) ──bytes over the app-group AF_UNIX socket──→ VMCommandSocketListener
+                                       VMCommandSocketListener ──idle──→ AppResidencyController
+                       VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
 
 Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
                                        VMIntentGateway ──idle───→ AppResidencyController
@@ -463,6 +479,9 @@ helpers. **New host/guest-identical code belongs here**, not copied into both ta
 It also carries the VM command vocabulary — `VMSelector`, `VMVerb`, the result and refusal types,
 and the `VMCommandRequest`/`VMCommandResponse` envelope — so an out-of-process client links the same
 declarations the app throws and returns, rather than a mirror of them.
+
+It also vends `KernovaCLICore` — the `kernova` tool's parsing, rendering, exit-code mapping and
+socket client.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
@@ -516,6 +535,12 @@ context) and one release point (`VMSessionContext.tearDown`).
   `AppTerminationController` during a quit that followed a TCC revocation. It watches the app's PID
   and relaunches through `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
+- **KernovaCLI** — the `kernova` tool, embedded at `Contents/Helpers/kernova` ([BUILD.md](BUILD.md)
+  says why not `Contents/MacOS`) and installed as a symlink from Settings → Advanced by
+  `CommandLineToolInstaller`. It is sandboxed with `app-sandbox` plus the app group and nothing
+  else — deliberately not `inherit`, which is for a child the app spawns, where this is started by
+  the user's shell. Everything the tool does lives in `KernovaCLICore`.
+
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding four long-lived vsock connections to the host (control, log forwarding,
   clipboard, drop) and dialing one more per transfer through `VsockGuestDataDialer`, which reuses
@@ -558,4 +583,6 @@ context) and one release point (`VMSessionContext.tearDown`).
 | **CryptoKit** | SHA-256 → the synthesized main disk's stable UUID |
 | **os** | `os.Logger` |
 | **SwiftProtobuf** | Wire-protocol codegen and runtime; `KernovaKit` only |
+| **ArgumentParser** | The `kernova` tool's command line; `KernovaCLICore` only |
+| **Security** | Reading this process's own entitlements and a socket peer's code identity |
 

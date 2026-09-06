@@ -16,14 +16,15 @@ struct VMCommandEnvelopeTests {
     private let diskID = UUID(uuid: (2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6))
 
     private var summary: VMSummary {
-        VMSummary(id: vmID, name: "Alpha", status: "running")
+        VMSummary(id: vmID, name: "Alpha", status: "running", ipAddress: .unavailable)
     }
 
     private var info: VMInfo {
         VMInfo(
             id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "shared",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: "192.168.66.2", agentStatus: "current",
+            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .reserved("192.168.66.2"),
+            agentStatus: "current",
             hasSavedState: true, isEphemeral: false, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova")
     }
@@ -64,16 +65,20 @@ struct VMCommandEnvelopeTests {
             .info(selector),
             .ipAddress(selector),
             .snapshots(selector),
-            .start(selector, recovery: true),
+            .events,
+            .start(selector, recovery: true, presentation: .surface),
+            .start(selector, recovery: false, presentation: .headless),
             .cancelGuestSetup(selector, confirmed: false),
             .cancelGuestSetup(selector, confirmed: true),
             .stop(selector, disposition: .graceful, confirmed: false),
             .stop(selector, disposition: .resumeThenShutDown, confirmed: true),
             .stop(selector, disposition: .force, confirmed: true),
             .pause(selector),
-            .resume(selector),
+            .resume(selector, presentation: .surface),
+            .resume(selector, presentation: .headless),
             .suspend(selector),
-            .restart(selector),
+            .restart(selector, presentation: .surface),
+            .restart(selector, presentation: .headless),
             .open(selector),
             .reveal(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
@@ -176,8 +181,10 @@ struct VMCommandEnvelopeTests {
             .summaries([summary]),
             .summary(summary),
             .info(info),
-            .ipAddress("192.168.66.2"),
-            .ipAddress(nil),
+            .ipAddress(.reserved("192.168.66.2")),
+            .ipAddress(.unavailable),
+            .ipAddress(.externallyAssigned),
+            .ipAddress(.pending),
             .snapshots([snapshot]),
             .snapshot(snapshot),
             .event(.added(summary)),
@@ -185,6 +192,9 @@ struct VMCommandEnvelopeTests {
             .event(.statusChanged(id: vmID, name: "Alpha", from: "stopped", to: "running")),
             .event(.agentStatusChanged(id: vmID, name: "Alpha", status: "current")),
             .event(.failure(id: vmID, name: "Alpha", message: "the disk went away")),
+            .refused(.authorizationRefused(reason: "not this team")),
+            .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
+            .refused(.undecodableRequest("the bytes are not JSON")),
         ]
         for result in results {
             let response = VMCommandResponse(result: result)

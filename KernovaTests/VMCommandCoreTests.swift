@@ -236,7 +236,7 @@ struct VMCommandCoreTests {
         #expect(info.cpuCount == 6)
         #expect(info.snapshotCount == 0)
         // Networking is off on the fixture, so there is no address to report.
-        #expect(info.ipAddress == nil)
+        #expect(info.ipAddress == .unavailable)
         #expect(info.networkMode == nil)
     }
 
@@ -254,14 +254,15 @@ struct VMCommandCoreTests {
         #expect(harness.vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
 
         // Nothing derives an address until the network's addressing is known,
-        // and no headless read invents one meanwhile.
-        #expect(try harness.core.info(.id(instance.id)).ipAddress == nil)
-        #expect(try harness.core.ipAddress(of: .id(instance.id)) == nil)
+        // and no headless read invents one meanwhile — the wait is reported as
+        // `pending` rather than as an absence.
+        #expect(try harness.core.info(.id(instance.id)).ipAddress == .pending)
+        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .pending)
 
         harness.vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.4"]
 
-        #expect(try harness.core.info(.id(instance.id)).ipAddress == "192.168.64.4")
-        #expect(try harness.core.ipAddress(of: .id(instance.id)) == "192.168.64.4")
+        #expect(try harness.core.info(.id(instance.id)).ipAddress == .reserved("192.168.64.4"))
+        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .reserved("192.168.64.4"))
     }
 
     @Test("snapshots answers the manifest newest first")

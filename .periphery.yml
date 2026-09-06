@@ -9,6 +9,7 @@ schemes:
   - Kernova
   - KernovaMacOSAgent
   - KernovaRelaunchHelper
+  - KernovaCLI
 
 # `KernovaKit` is a closed monorepo package — every consumer (the
 # `Kernova` app and `KernovaMacOSAgent`) lives in this same project, so

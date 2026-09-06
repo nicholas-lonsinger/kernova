@@ -1,3 +1,4 @@
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -50,5 +51,16 @@ struct VMStatusTests {
         #expect(VMStatus.installing.rawValue == "installing")
         #expect(VMStatus.initialBoot.rawValue == "initialBoot")
         #expect(VMStatus.error.rawValue == "error")
+    }
+
+    @Test("A wire status reads back in words, preparing included")
+    func wireNamesReadBackInWords() {
+        #expect(VMStatus.displayName(forWireName: "running") == "Running")
+        #expect(VMStatus.displayName(forWireName: "initialBoot") == "Initial Boot")
+        // Not a VMStatus case, and the one wire name that still has words.
+        #expect(VMStatus(rawValue: VMStatus.preparingWireName) == nil)
+        #expect(VMStatus.displayName(forWireName: VMStatus.preparingWireName) == "Preparing")
+        // A name from no vocabulary this build knows falls back to itself.
+        #expect(VMStatus.displayName(forWireName: "teleporting") == "teleporting")
     }
 }

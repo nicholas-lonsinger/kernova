@@ -14,12 +14,12 @@ private struct TestTransport {
 
     func send(_ verb: VMCommandRequest.Verb) async throws -> VMCommandResponse {
         let request = try JSONEncoder().encode(VMCommandRequest(verb: verb))
-        let response = try await router.handle(request)
+        let response = await router.handle(request)
         return try JSONDecoder().decode(VMCommandResponse.self, from: response)
     }
 
     func sendRaw(_ bytes: Data) async throws -> VMCommandResponse {
-        try JSONDecoder().decode(VMCommandResponse.self, from: try await router.handle(bytes))
+        try JSONDecoder().decode(VMCommandResponse.self, from: await router.handle(bytes))
     }
 }
 
@@ -134,7 +134,8 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
 
-        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let response = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
 
         #expect(response.result == .ok)
         #expect(harness.virtualization.startCallCount == 1)
@@ -187,7 +188,8 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
-        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let response = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
 
         guard case .invalidState(_, let current, let allowed)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -230,7 +232,8 @@ struct VMCommandEnvelopeRouterTests {
             code: VZError.Code.virtualMachineLimitExceeded.rawValue)
         let instance = makeInstance(in: harness, name: "Capped")
 
-        let response = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let response = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
 
         guard case .operationFailed(_, let title, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -312,7 +315,8 @@ struct VMCommandEnvelopeRouterTests {
         harness.library.instances.append(instance)
         harness.storage.bundles[bundleURL] = config
 
-        let started = try await harness.transport.send(.start(.id(instance.id), recovery: false))
+        let started = try await harness.transport.send(
+            .start(.id(instance.id), recovery: false, presentation: .surface))
         #expect(started.result == .ok)
         for await _ in installService.installStartedStream { break }
 
@@ -378,7 +382,7 @@ struct VMCommandEnvelopeRouterTests {
         library.instances.append(instance)
         storage.bundles[bundleURL] = config
 
-        let started = try await transport.send(.start(.id(instance.id), recovery: false))
+        let started = try await transport.send(.start(.id(instance.id), recovery: false, presentation: .surface))
         #expect(started.result == .ok)
 
         // The install completes synchronously (`MockMacOSInstallService` has no
@@ -402,7 +406,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Each storage-disk edit crosses the wire onto its own facade call")
     func storageDiskEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -431,7 +435,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Each removable-media edit crosses the wire onto its own facade call")
     func removableMediaEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "running")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -457,7 +461,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Each shared-directory edit crosses the wire onto its own facade call")
     func sharedDirectoryEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -477,7 +481,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Both guest-agent-disk edits cross the wire")
     func guestAgentDiskEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "running")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -599,8 +603,11 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         makeInstance(in: harness)
 
-        await #expect(throws: VMCommandEnvelopeRouter.EnvelopeError.self) {
-            _ = try await harness.transport.sendRaw(Data("not a request".utf8))
+        let response = try await harness.transport.sendRaw(Data("not a request".utf8))
+
+        guard case .refused(.undecodableRequest) = response.result else {
+            Issue.record("expected an undecodable-request refusal, got \(response.result)")
+            return
         }
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -609,23 +616,24 @@ struct VMCommandEnvelopeRouterTests {
     func foreignProtocolVersionIsRefused() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false))
+        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false, presentation: .surface))
         request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
 
-        let error = await #expect(throws: VMCommandEnvelopeRouter.EnvelopeError.self) {
-            _ = try await harness.transport.sendRaw(try JSONEncoder().encode(request))
-        }
+        let response = try await harness.transport.sendRaw(try JSONEncoder().encode(request))
 
         #expect(
-            error
-                == .unsupportedProtocolVersion(VMCommandRequest.currentProtocolVersion + 1))
+            response.result
+                == .refused(
+                    .unsupportedProtocolVersion(
+                        peer: VMCommandRequest.currentProtocolVersion + 1,
+                        expected: VMCommandRequest.currentProtocolVersion)))
         #expect(harness.virtualization.startCallCount == 0)
     }
 
     @Test("A reveal crosses the wire onto the facade's own verb")
     func revealCrossesTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
 
@@ -641,7 +649,7 @@ struct VMCommandEnvelopeRouterTests {
         // so a double with no library, no lifecycle coordinator and no VM behind
         // it answers the same envelope the core does.
         let double = MockVMCommanding()
-        double.library = [VMSummary(id: UUID(), name: "Stub", status: "stopped")]
+        double.library = [VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)]
         double.pauseError = CommandError.unsupported(capability: "pausing")
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
 

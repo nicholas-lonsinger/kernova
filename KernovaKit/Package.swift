@@ -17,16 +17,32 @@ let package = Package(
     ],
     products: [
         .library(name: "KernovaKit", targets: ["KernovaKit"]),
+        .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
         .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.0")
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.0"),
+        // Linked by KernovaCLICore alone — neither the app nor the guest agent
+        // gains a dependency.
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     ],
     targets: [
         .target(
             name: "KernovaKit",
             dependencies: [
                 .product(name: "SwiftProtobuf", package: "swift-protobuf")
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The `kernova` tool's whole vocabulary: parsing, rendering, exit
+        // codes, and the client that speaks to the app. It lives in this
+        // package so its tests ride `KernovaKitTests` — which is already in
+        // Kernova.xctestplan — rather than needing a fourth test target.
+        .target(
+            name: "KernovaCLICore",
+            dependencies: [
+                "KernovaKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: sharedSwiftSettings
         ),
@@ -37,7 +53,7 @@ let package = Package(
         ),
         .testTarget(
             name: "KernovaKitTests",
-            dependencies: ["KernovaKit", "KernovaTestSupport"],
+            dependencies: ["KernovaKit", "KernovaCLICore", "KernovaTestSupport"],
             swiftSettings: sharedSwiftSettings
         ),
     ]
