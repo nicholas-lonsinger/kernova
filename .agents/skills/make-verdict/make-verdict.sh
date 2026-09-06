@@ -15,8 +15,8 @@
 # `--from-log` reports an existing log and runs nothing. Otherwise the target
 # runs synchronously in the foreground with no timeout, poll, or retry of its
 # own. The log lands in artifacts/make-verdict/ (KERNOVA_VERDICT_DIR overrides)
-# beside a copy of the verdict, which a caller whose shell call timed out
-# before the run finished can wait on instead of starting a second run.
+# beside a copy of the verdict, which a caller that lost the run's completion
+# notification reads instead of starting a second run.
 #
 # Output (stdout, nothing else):
 #   make-verdict: target=test suite=- duration=412s log=artifacts/make-verdict/test.log
