@@ -22,9 +22,22 @@ struct VMCommandSocketListenerTests {
         let commands: MockVMCommanding
         let authorizer: MockPeerAuthorizer
         let idle: AsyncGate
+        /// Fires when the listener asks the app to come forward.
+        let surfaced: AsyncGate
+        let surfaceCount: Counter
         let path: String
         /// Lets a test hold the library read open, the way a cold launch does.
         let readiness: LibraryReadiness
+    }
+
+    /// A tally a production callback writes and the test reads.
+    final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+
+        var value: Int { lock.withLock { count } }
+
+        func increment() { lock.withLock { count += 1 } }
     }
 
     /// The app's first library read, as a gate a test opens when it chooses.
@@ -66,6 +79,8 @@ struct VMCommandSocketListenerTests {
         commands.library = library
         let authorizer = MockPeerAuthorizer(isAuthorizedResult: authorized)
         let idle = AsyncGate()
+        let surfaced = AsyncGate()
+        let surfaceCount = Counter()
         let readiness = LibraryReadiness(landed: libraryHasLanded)
         let path = temporarySocketPath()
         let listener = VMCommandSocketListener(
@@ -73,17 +88,21 @@ struct VMCommandSocketListenerTests {
             authorizer: authorizer,
             socketPath: path,
             awaitReady: { await readiness.wait() },
+            onSurfaceRequested: {
+                surfaceCount.increment()
+                surfaced.notify()
+            },
             onIdle: { idle.notify() })
         return Harness(
-            listener: listener, commands: commands, authorizer: authorizer, idle: idle, path: path,
-            readiness: readiness)
+            listener: listener, commands: commands, authorizer: authorizer, idle: idle,
+            surfaced: surfaced, surfaceCount: surfaceCount, path: path, readiness: readiness)
     }
 
     // MARK: - Reads
 
     @Test("A read verb round-trips over the socket")
     func unaryReadRoundTrips() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
         let harness = makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -118,7 +137,7 @@ struct VMCommandSocketListenerTests {
 
     @Test("No verb is answered until the app's first library read has landed")
     func verbsWaitForTheLibraryRead() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
         // The cold-launch shape: the socket is bound, the library is not read
         // yet, and the VMs appear only once it is.
         let harness = makeHarness(library: [], libraryHasLanded: false)
@@ -147,6 +166,36 @@ struct VMCommandSocketListenerTests {
         #expect(try await client.nextResponse()?.result == .summaries([alpha]))
     }
 
+    @Test("A verb that surfaces asks the app forward first; one that does not, does not")
+    func surfacingVerbsAskTheAppForward() async throws {
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable)
+        let harness = makeHarness(library: [alpha])
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        // A read puts nothing on screen, so nothing is brought forward.
+        try client.send(VMCommandRequest(verb: .list))
+        _ = try await client.nextResponse()
+        #expect(harness.surfaceCount.value == 0)
+
+        // `open` does, and a window ordered front behind the terminal that
+        // asked for it has answered nobody.
+        try client.send(VMCommandRequest(verb: .open(.id(alpha.id))))
+        _ = try await client.nextResponse()
+        try await harness.surfaced.wait { harness.surfaceCount.value == 1 }
+        #expect(harness.surfaceCount.value == 1)
+
+        // A headless start is a bring-up nobody asked to see.
+        try client.send(
+            VMCommandRequest(
+                verb: .start(.id(alpha.id), recovery: false, presentation: .headless)))
+        _ = try await client.nextResponse()
+        #expect(harness.surfaceCount.value == 1)
+    }
+
     // MARK: - Envelope refusals
 
     @Test("An unauthorized peer is told so, then disconnected")
@@ -172,7 +221,7 @@ struct VMCommandSocketListenerTests {
 
     @Test("A peer speaking another protocol version is refused before any verb runs")
     func foreignProtocolVersionIsRefused() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
         let harness = makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -217,7 +266,7 @@ struct VMCommandSocketListenerTests {
 
     @Test("A subscription answers with the library, then with each change")
     func subscriptionDeliversSnapshotThenEvents() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped")
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
         let harness = makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -244,6 +293,7 @@ struct VMCommandSocketListenerTests {
             authorizer: MockPeerAuthorizer(),
             socketPath: nil,
             awaitReady: {},
+            onSurfaceRequested: {},
             onIdle: {})
         listener.start()
         #expect(!listener.hasWorkInFlight)
@@ -258,6 +308,7 @@ struct VMCommandSocketListenerTests {
             authorizer: nil,
             socketPath: path,
             awaitReady: {},
+            onSurfaceRequested: {},
             onIdle: {})
         listener.start()
         #expect(!FileManager.default.fileExists(atPath: path))

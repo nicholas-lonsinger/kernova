@@ -31,11 +31,11 @@ extension VMCommandCore {
         // Dispatch on the surviving setup context, not status, so `.error`
         // retries route through the same pipeline too.
         if instance.configuration.installContext != nil {
-            installAndAutoBoot(instance)
+            installAndAutoBoot(instance, presentation: presentation)
             return
         }
         if instance.configuration.linuxInstallContext != nil {
-            downloadAndAutoBoot(instance)
+            downloadAndAutoBoot(instance, presentation: presentation)
             return
         }
 
@@ -233,6 +233,7 @@ extension VMCommandCore {
     /// the `.kernovadownload` bundle if present.
     private func runGuestSetup(
         on instance: VMInstance,
+        presentation: VMDisplayPresentation,
         _ pipeline: @escaping (VMLifecycleCoordinator) async throws -> Void
     ) {
         if instance.setupTask != nil { return }  // guard against rapid double-click
@@ -297,7 +298,10 @@ extension VMCommandCore {
             // while touching a task no longer doing anything cancellable.
             instance.setupTask = nil
             do {
-                try await self.start(instance)
+                // The caller's presentation, not the default: a setup started
+                // from a door with nowhere to present must not surface the
+                // display the boot after it brings up.
+                try await self.start(instance, presentation: presentation)
             } catch let failure as CommandError {
                 self.report(failure, on: instance)
             } catch {
@@ -309,24 +313,28 @@ extension VMCommandCore {
     }
 
     /// Drives the macOS install pipeline for a VM carrying an `installContext`.
-    private func installAndAutoBoot(_ instance: VMInstance) {
+    private func installAndAutoBoot(
+        _ instance: VMInstance, presentation: VMDisplayPresentation
+    ) {
         guard let context = instance.configuration.installContext else {
             assertionFailure("installAndAutoBoot called without installContext")
             return
         }
-        runGuestSetup(on: instance) { lifecycle in
+        runGuestSetup(on: instance, presentation: presentation) { lifecycle in
             try await lifecycle.installMacOS(on: instance, context: context)
         }
     }
 
     /// Drives the Linux installer-image pipeline for a VM carrying a
     /// `linuxInstallContext`.
-    private func downloadAndAutoBoot(_ instance: VMInstance) {
+    private func downloadAndAutoBoot(
+        _ instance: VMInstance, presentation: VMDisplayPresentation
+    ) {
         guard let context = instance.configuration.linuxInstallContext else {
             assertionFailure("downloadAndAutoBoot called without linuxInstallContext")
             return
         }
-        runGuestSetup(on: instance) { lifecycle in
+        runGuestSetup(on: instance, presentation: presentation) { lifecycle in
             try await lifecycle.downloadLinuxImage(on: instance, context: context)
         }
     }
@@ -582,7 +590,7 @@ extension VMCommandCore {
     /// it back suspended on the baseline's memory image, and that is the state
     /// the mode promises — so it is resumed rather than booted, and never waited
     /// on for a `.stopped` that is not coming.
-    func restart(_ selector: VMSelector) async throws {
+    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
         let instance = try resolve(selector)
         try require(.restart, on: instance)
         try await stop(instance, disposition: .graceful, confirmed: true)
@@ -590,10 +598,13 @@ extension VMCommandCore {
             !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
                 && (instance.canStart || instance.canResume)
         }
+        // The bring-up half inherits the caller's presentation: a restart from a
+        // door with nowhere to present is still a restart, not a request for a
+        // window.
         if instance.canStart {
-            try await start(instance)
+            try await start(instance, presentation: presentation)
         } else {
-            try await resume(.id(instance.id))
+            try await resume(.id(instance.id), presentation: presentation)
         }
     }
 

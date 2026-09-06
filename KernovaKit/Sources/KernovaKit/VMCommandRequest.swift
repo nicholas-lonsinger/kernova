@@ -37,7 +37,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case pause(VMSelector)
         case resume(VMSelector, presentation: VMDisplayPresentation)
         case suspend(VMSelector)
-        case restart(VMSelector)
+        case restart(VMSelector, presentation: VMDisplayPresentation)
         case open(VMSelector)
         case reveal(VMSelector)
 
@@ -58,6 +58,28 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
         case editSharedDirectory(VMSelector, SharedDirectoryEdit)
         case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
+
+        /// Whether answering this request puts something on screen.
+        ///
+        /// A door outside the app has to bring the app forward before it does —
+        /// a window ordered front behind the terminal that asked for it has not
+        /// answered anybody. Read from the request rather than the verb name,
+        /// because the two bring-up verbs surface only when their caller says
+        /// so.
+        public var surfacesInterface: Bool {
+            switch self {
+            case .open, .reveal:
+                true
+            case .start(_, _, let presentation), .resume(_, let presentation),
+                .restart(_, let presentation):
+                presentation == .surface
+            case .list, .info, .ipAddress, .snapshots, .events, .cancelGuestSetup, .stop, .pause,
+                .suspend, .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot,
+                .setSnapshotNotes, .clone, .rename, .delete, .importVM, .cancelPreparing,
+                .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .guestAgentDisk:
+                false
+            }
+        }
 
         /// Which verb this is, for a transport mapping onto its own naming.
         public var verb: VMVerb {

@@ -23,6 +23,14 @@ protocol WindowResidencyHosting: AnyObject {
     func syncActivationPolicy()
     /// Re-decide whether the process still has work.
     func reconcileIdleTermination()
+    /// Brings the app forward for a surface something outside the process asked
+    /// for.
+    ///
+    /// An in-process gesture needs none of this — the user is already in the
+    /// app — but a request arriving over the command socket carries no
+    /// `NSEvent`, so the window it surfaces would open behind whatever the
+    /// person is looking at.
+    func activateForExternalRequest()
 }
 
 /// Everything ``AppDelegate`` asks of the process's residency — what it is
@@ -184,6 +192,7 @@ final class AppResidencyController: AppResidencyHosting {
                 guard let self else { return }
                 await self.awaitLibraryReady()
             },
+            onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() },
             onIdle: { [weak self] in self?.reconcileIdleTermination() })
         socket.start()
 
@@ -234,10 +243,12 @@ final class AppResidencyController: AppResidencyHosting {
     /// outranks the hidden-and-foreign rule: opening a document is a request
     /// to see it.
     ///
-    /// `isCLILaunch` needs none of that. The `kernova` tool passes
-    /// ``KernovaLaunchArgument/automation``, which is a statement rather than
-    /// an inference — and the only evidence available at all for a launch from
-    /// a shell over SSH, which carries no open event and is not hidden.
+    /// `isCLILaunch` needs none of that: it is a launcher's own statement,
+    /// carried by ``KernovaLaunchArgument/automation``, rather than an
+    /// inference from what the launch looks like. That is what a launch from a
+    /// shell over SSH needs, since it leaves none of the signals above. The
+    /// bundled `kernova` tool cannot make that statement (#1143), so today it
+    /// is answered by any launcher outside the sandbox.
     nonisolated static func launchProvenance(
         openedUntitledFile: Bool,
         openedDocuments: Bool,
@@ -689,6 +700,11 @@ final class AppResidencyController: AppResidencyHosting {
 
     /// Re-asserts `.regular` before a window is shown, so a window can never be
     /// presented while the resident app is still headless `.accessory`.
+    func activateForExternalRequest() {
+        setActivationPolicy(.regular)
+        requestSummonActivation()
+    }
+
     func prepareToPresentWindow() {
         // The chokepoint every window that bypasses `presentSummonedInterface`
         // passes through — a display window an `open` verb asked for, a

@@ -101,8 +101,9 @@ protocol VMCommanding: AnyObject {
     /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws
 
-    /// Shuts the guest down and starts it again once it has powered off.
-    func restart(_ selector: VMSelector) async throws
+    /// Shuts the guest down and starts it again once it has powered off,
+    /// bringing it back up the way ``start(_:recovery:presentation:)`` would.
+    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
@@ -273,7 +274,7 @@ protocol VMCommanding: AnyObject {
     func events() -> AsyncStream<[VMLibraryEvent]>
 }
 
-/// The surfacing spellings of the two verbs that can come up headless.
+/// The surfacing spellings of the three verbs that can come up headless.
 ///
 /// An in-process front door is a GUI by construction, so the AppKit UI and the
 /// App Intents spell the verb without a presentation and get
@@ -287,5 +288,9 @@ extension VMCommanding {
 
     func resume(_ selector: VMSelector) async throws {
         try await resume(selector, presentation: .surface)
+    }
+
+    func restart(_ selector: VMSelector) async throws {
+        try await restart(selector, presentation: .surface)
     }
 }

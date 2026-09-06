@@ -25,10 +25,12 @@ struct AppWindowRegistryPresenceTests {
         var prepareCount = 0
         var syncCount = 0
         var reconcileCount = 0
+        var activateCount = 0
 
         func prepareToPresentWindow() { prepareCount += 1 }
         func syncActivationPolicy() { syncCount += 1 }
         func reconcileIdleTermination() { reconcileCount += 1 }
+        func activateForExternalRequest() { activateCount += 1 }
     }
 
     private func makeRegistry() -> AppWindowRegistry {

@@ -174,7 +174,9 @@ final class VMCommandCore: VMCommanding {
     }
 
     func summary(_ instance: VMInstance) -> VMSummary {
-        VMSummary(id: instance.instanceID, name: instance.name, status: wireStatus(instance))
+        VMSummary(
+            id: instance.instanceID, name: instance.name, status: wireStatus(instance),
+            ipAddress: library.networkSlots.reservedAddress(for: instance.configuration))
     }
 
     // MARK: - State Gates
@@ -383,7 +385,11 @@ final class VMCommandCore: VMCommanding {
             guard let now = current[id] else { continue }
             guard let before = lastObserved[id] else {
                 batch.append(
-                    .added(VMSummary(id: id, name: now.name, status: wireStatus(for: now))))
+                    .added(
+                        VMSummary(
+                            id: id, name: now.name, status: wireStatus(for: now),
+                            ipAddress: library.networkSlots.reservedAddress(
+                                for: instance.configuration))))
                 continue
             }
             if before.status != now.status || before.isPreparing != now.isPreparing {

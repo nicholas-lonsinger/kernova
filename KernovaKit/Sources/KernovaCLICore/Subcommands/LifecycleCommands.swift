@@ -64,8 +64,7 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .start(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    recovery: recovery, presentation: .headless),
-                options)
+                    recovery: recovery, presentation: .headless))
         }
     }
 
@@ -95,8 +94,7 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .stop(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    disposition: method.disposition, confirmed: options.yes),
-                options)
+                    disposition: method.disposition, confirmed: options.yes))
         }
     }
 
@@ -120,7 +118,7 @@ extension KernovaCommand {
         /// Suspends the VM.
         public func run() throws {
             try CommandConnection.perform(
-                .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id)), options)
+                .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id)))
         }
     }
 
@@ -144,7 +142,7 @@ extension KernovaCommand {
         /// Pauses the VM.
         public func run() throws {
             try CommandConnection.perform(
-                .pause(try SelectorParsing.selector(from: vm, forcingID: options.id)), options)
+                .pause(try SelectorParsing.selector(from: vm, forcingID: options.id)))
         }
     }
 
@@ -172,8 +170,7 @@ extension KernovaCommand {
             try CommandConnection.perform(
                 .resume(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    presentation: .headless),
-                options)
+                    presentation: .headless))
         }
     }
 
@@ -182,7 +179,8 @@ extension KernovaCommand {
         /// What `kernova restart --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "restart",
-            abstract: "Shut a guest down and start it again.")
+            abstract: "Shut a guest down and start it again.",
+            discussion: "The guest comes back up without surfacing its display, as `start` does.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.")
@@ -197,7 +195,9 @@ extension KernovaCommand {
         /// Restarts the VM.
         public func run() throws {
             try CommandConnection.perform(
-                .restart(try SelectorParsing.selector(from: vm, forcingID: options.id)), options)
+                .restart(
+                    try SelectorParsing.selector(from: vm, forcingID: options.id),
+                    presentation: .headless))
         }
     }
 
@@ -224,7 +224,7 @@ extension KernovaCommand {
         /// Surfaces the VM's display.
         public func run() throws {
             try CommandConnection.perform(
-                .open(try SelectorParsing.selector(from: vm, forcingID: options.id)), options)
+                .open(try SelectorParsing.selector(from: vm, forcingID: options.id)))
         }
     }
 }

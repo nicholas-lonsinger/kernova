@@ -27,6 +27,7 @@ final class VMCommandSocketListener: AutomationWorkCounting {
     private let authorizer: (any PeerAuthorizing)?
     private let socketPath: String?
     private let awaitReady: @MainActor @Sendable () async -> Void
+    private let onSurfaceRequested: @MainActor @Sendable () -> Void
     private let onIdle: @MainActor () -> Void
     private let queue = DispatchQueue(label: "app.kernova.command-socket")
 
@@ -51,12 +52,14 @@ final class VMCommandSocketListener: AutomationWorkCounting {
         authorizer: (any PeerAuthorizing)?,
         socketPath: String?,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
+        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void,
         onIdle: @MainActor @escaping () -> Void
     ) {
         self.router = router
         self.authorizer = authorizer
         self.socketPath = socketPath
         self.awaitReady = awaitReady
+        self.onSurfaceRequested = onSurfaceRequested
         self.onIdle = onIdle
     }
 
@@ -78,11 +81,12 @@ final class VMCommandSocketListener: AutomationWorkCounting {
             path: socketPath, queue: queue, backlog: 8, fileMode: Self.socketFileMode)
         let router = self.router
         let awaitReady = self.awaitReady
+        let onSurfaceRequested = self.onSurfaceRequested
         do {
             try listener.start { [weak self] fd in
                 Self.admit(
                     fd, authorizer: authorizer, router: router, awaitReady: awaitReady,
-                    queue: self?.queue
+                    onSurfaceRequested: onSurfaceRequested, queue: self?.queue
                 ) {
                     connection in
                     Task { @MainActor [weak self] in
@@ -149,6 +153,7 @@ final class VMCommandSocketListener: AutomationWorkCounting {
         authorizer: any PeerAuthorizing,
         router: VMCommandEnvelopeRouter,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
+        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void,
         queue: DispatchQueue?,
         adopt: (VMCommandConnection) -> Void
     ) {
@@ -168,7 +173,10 @@ final class VMCommandSocketListener: AutomationWorkCounting {
                 reason: "Only Kernova components signed by the same team may drive this app.")
             return
         }
-        adopt(VMCommandConnection(fd: fd, queue: queue, router: router, awaitReady: awaitReady))
+        adopt(
+            VMCommandConnection(
+                fd: fd, queue: queue, router: router, awaitReady: awaitReady,
+                onSurfaceRequested: onSurfaceRequested))
     }
 
     /// Writes one refusal frame, best-effort, and closes the descriptor.
@@ -227,6 +235,7 @@ final class VMCommandConnection: @unchecked Sendable {
     private let queue: DispatchQueue
     private let router: VMCommandEnvelopeRouter
     private let awaitReady: @MainActor @Sendable () async -> Void
+    private let onSurfaceRequested: @MainActor @Sendable () -> Void
 
     private var decoder = StreamFrameDecoder()
     private var readSource: DispatchSourceRead?
@@ -241,12 +250,14 @@ final class VMCommandConnection: @unchecked Sendable {
         fd: Int32,
         queue: DispatchQueue,
         router: VMCommandEnvelopeRouter,
-        awaitReady: @MainActor @Sendable @escaping () async -> Void
+        awaitReady: @MainActor @Sendable @escaping () async -> Void,
+        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void
     ) {
         self.fd = fd
         self.queue = queue
         self.router = router
         self.awaitReady = awaitReady
+        self.onSurfaceRequested = onSurfaceRequested
     }
 
     /// Begins reading, and arms the silent-client deadline.
@@ -381,10 +392,14 @@ final class VMCommandConnection: @unchecked Sendable {
                         })
                 }
             } else {
+                let onSurfaceRequested = self.onSurfaceRequested
                 Task { @MainActor [self] in
                     // The library read has to have landed: a verb run against a
                     // library that has not is not refused, it is answered wrong.
                     await awaitReady()
+                    // Before the verb, so the window it surfaces opens in front
+                    // of the person who asked rather than behind their terminal.
+                    if request.verb.surfacesInterface { onSurfaceRequested() }
                     send(router.encode(await router.respond(to: request)))
                 }
             }

@@ -148,8 +148,8 @@ struct VMCommandEnvelopeRouter {
         case .suspend(let selector):
             try await commands.suspend(selector)
             return .ok
-        case .restart(let selector):
-            try await commands.restart(selector)
+        case .restart(let selector, let presentation):
+            try await commands.restart(selector, presentation: presentation)
             return .ok
         case .open(let selector):
             try commands.open(selector)

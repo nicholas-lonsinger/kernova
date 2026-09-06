@@ -64,6 +64,10 @@ final class TestHostResidencyController: AppResidencyHosting {
     /// put the test host in front of any `kernova` the developer ran meanwhile.
     func registerAutomationFrontDoors() {}
 
+    /// Nothing to do: the test host is already a foreground `.regular` app, and
+    /// it opens no command socket to be asked from.
+    func activateForExternalRequest() {}
+
     // MARK: - Residency
 
     /// Nothing to prepare: this is a plain foreground `.regular` app, so a window

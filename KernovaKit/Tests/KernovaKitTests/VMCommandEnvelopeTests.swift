@@ -16,7 +16,7 @@ struct VMCommandEnvelopeTests {
     private let diskID = UUID(uuid: (2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6))
 
     private var summary: VMSummary {
-        VMSummary(id: vmID, name: "Alpha", status: "running")
+        VMSummary(id: vmID, name: "Alpha", status: "running", ipAddress: .unavailable)
     }
 
     private var info: VMInfo {
@@ -77,7 +77,8 @@ struct VMCommandEnvelopeTests {
             .resume(selector, presentation: .surface),
             .resume(selector, presentation: .headless),
             .suspend(selector),
-            .restart(selector),
+            .restart(selector, presentation: .surface),
+            .restart(selector, presentation: .headless),
             .open(selector),
             .reveal(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),

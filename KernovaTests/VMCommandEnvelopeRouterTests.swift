@@ -406,7 +406,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Each storage-disk edit crosses the wire onto its own facade call")
     func storageDiskEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -435,7 +435,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Each removable-media edit crosses the wire onto its own facade call")
     func removableMediaEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "running")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -461,7 +461,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Each shared-directory edit crosses the wire onto its own facade call")
     func sharedDirectoryEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -481,7 +481,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("Both guest-agent-disk edits cross the wire")
     func guestAgentDiskEditsCrossTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "running")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
         let selector = VMSelector.id(summary.id)
@@ -633,7 +633,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A reveal crosses the wire onto the facade's own verb")
     func revealCrossesTheWire() async throws {
         let double = MockVMCommanding()
-        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped")
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
 
@@ -649,7 +649,7 @@ struct VMCommandEnvelopeRouterTests {
         // so a double with no library, no lifecycle coordinator and no VM behind
         // it answers the same envelope the core does.
         let double = MockVMCommanding()
-        double.library = [VMSummary(id: UUID(), name: "Stub", status: "stopped")]
+        double.library = [VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)]
         double.pauseError = CommandError.unsupported(capability: "pausing")
         let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
 

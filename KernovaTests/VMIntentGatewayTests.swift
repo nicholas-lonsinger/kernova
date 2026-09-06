@@ -20,7 +20,7 @@ struct VMIntentGatewayTests {
     private func makeSummary(
         name: String = "Wired", status: String = "stopped", id: UUID = UUID()
     ) -> VMSummary {
-        VMSummary(id: id, name: name, status: status)
+        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable)
     }
 
     /// A gateway whose library read has already landed, over a seeded mock.
@@ -284,7 +284,10 @@ struct VMIntentGatewayTests {
         #expect(commands.pauseSelectors == [.id(id)])
         #expect(commands.resumeCalls.map(\.selector) == [.id(id)])
         #expect(commands.suspendSelectors == [.id(id)])
-        #expect(commands.restartSelectors == [.id(id)])
+        #expect(commands.restartCalls.map(\.selector) == [.id(id)])
+        // An intent runs in a GUI session, so its restart surfaces like the
+        // menu item's.
+        #expect(commands.restartCalls.map(\.presentation) == [.surface])
         #expect(commands.openSelectors == [.id(id)])
         #expect(commands.revealSelectors == [.id(id)])
         #expect(commands.ipAddressSelectors == [.id(id)])
