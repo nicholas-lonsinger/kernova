@@ -14,9 +14,9 @@
 #
 # `--from-log` reports an existing log and runs nothing. Otherwise the target
 # runs synchronously in the foreground with no timeout, poll, or retry of its
-# own: run this script in the background and let the harness's exit
-# notification be the completion signal. The log lands in artifacts/make-verdict/
-# (KERNOVA_VERDICT_DIR overrides) beside a copy of the verdict.
+# own. The log lands in artifacts/make-verdict/ (KERNOVA_VERDICT_DIR overrides)
+# beside a copy of the verdict, which a caller whose shell call timed out
+# before the run finished can wait on instead of starting a second run.
 #
 # Output (stdout, nothing else):
 #   make-verdict: target=test suite=- duration=412s log=artifacts/make-verdict/test.log
@@ -60,9 +60,9 @@ target="${1:-}"
 suite="${2:-}"
 out_dir="${KERNOVA_VERDICT_DIR:-artifacts/make-verdict}"
 
-# <target>.verdict is the completion signal for a caller that launched the
-# script in the background: removed before a run starts, written on every
-# exit — setup errors included — so a wait on it always ends.
+# <target>.verdict is the completion signal for a caller whose shell call
+# outlived its timeout: removed before a run starts, written on every exit —
+# setup errors included — so a wait on it always ends.
 verdict_file="$out_dir/${target:-setup}.verdict"
 [ -n "$from_log" ] || rm -f "$verdict_file"
 

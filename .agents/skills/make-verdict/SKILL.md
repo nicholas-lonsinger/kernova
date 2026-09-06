@@ -16,11 +16,13 @@ Run the make target named by the arguments through this skill's script and retur
 | Build only | `.agents/skills/make-verdict/make-verdict.sh build` |
 | Lint | `.agents/skills/make-verdict/make-verdict.sh lint` |
 
-A run can outlast one shell call and cannot be resumed, so launch it and wait for its verdict file, from the repository root:
+From the repository root, run the command exactly as written in the table, in the foreground, with the shell call's timeout at its maximum. The script's stdout is the verdict; it also writes the same lines to `artifacts/make-verdict/<target>.verdict`, with `<target>` the first argument, on every exit — setup errors included.
 
-1. Launch the command exactly as written in the table, using the shell tool's own background option — no `&`, `nohup`, redirects, pipes, `tail`, or `tee`, and no cleanup of your own beforehand.
-2. Wait in the foreground at the shell call's maximum timeout: `until [ -f artifacts/make-verdict/<target>.verdict ]; do sleep 10; done`, with `<target>` the first argument. If the call times out, issue it again. The script removes the stale file before the run and writes it on every exit, setup errors included, so the wait always ends.
-3. Return `cat artifacts/make-verdict/<target>.verdict` verbatim — every line, nothing added, nothing summarized — followed by one line giving the verdict's meaning from this table:
+If the shell call times out before the script exits, the run is still going: do not start the script again, since that would begin a second build. Wait for the verdict file instead, in the foreground: `until [ -f artifacts/make-verdict/<target>.verdict ]; do sleep 10; done`.
+
+If that wait times out too and `pgrep -f make-verdict.sh` finds the script still running, wait again. If the script is gone and the file never appeared, the run was killed with the shell call — run the command once more.
+
+Return `cat artifacts/make-verdict/<target>.verdict` verbatim — every line, nothing added, nothing summarized — followed by one line giving the verdict's meaning from this table:
 
 - `green` — done.
 - `test-failed` — each `=== <test>` block carries that failure's `path:line: message`; fix those.
