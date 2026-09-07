@@ -34,6 +34,10 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case snapshot(SnapshotSummary)
         /// Bytes each of a VM's snapshots occupies on disk, by snapshot id.
         case snapshotSizes([UUID: UInt64])
+        /// Every configuration key the keyspace holds, in presentation order.
+        case configurationKeys([ConfigurationKeyDescriptor])
+        /// Configuration values, in the order they were asked for.
+        case configuration([ConfigurationEntry])
         /// One library change, for a transport streaming them.
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.

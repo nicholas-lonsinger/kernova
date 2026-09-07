@@ -119,32 +119,14 @@ extension KernovaCommand {
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
             let row = try PreparingCopy.importing(
-                Self.wirePath(for: path), waitingForTheCopy: !noWait, within: timeout,
+                PathParsing.wirePath(for: path), waitingForTheCopy: !noWait, within: timeout,
                 on: client)
             try PreparingCopy.write(row, options: options)
-        }
-
-        /// `path` as an absolute path, which is the only form the app can act
-        /// on.
-        ///
-        /// Resolved against the shell's directory, which is `PWD` in the
-        /// environment rather than the process's own: the tool is sandboxed,
-        /// and a sandboxed process reads its working directory as its
-        /// container (observed 2026-09-06, macOS 27 — a relative path crossed
-        /// the wire under `~/Library/Containers/app.kernova.cli/Data`). Nothing
-        /// on disk is consulted: the tool cannot read the file, so whether the
-        /// path names a bundle is the app's question to answer.
-        static func wirePath(
-            for path: String,
-            workingDirectory: String? = ProcessInfo.processInfo.environment["PWD"]
-        ) -> String {
-            let base = workingDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
-            return URL(fileURLWithPath: path, relativeTo: base).standardizedFileURL.path
         }
     }
 
     /// `kernova rename <vm> <new-name>` — change a virtual machine's label.
-    public struct Rename: ParsableCommand {
+    public struct Rename: VerbCommand {
         /// What `kernova rename --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "rename",
@@ -167,18 +149,20 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .rename(
+                try SelectorParsing.selector(from: vm, forcingID: options.id), newName: newName)
+        }
+
         /// Renames the VM.
         public func run() throws {
-            try CommandConnection.perform(
-                .rename(
-                    try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    newName: newName),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 
     /// `kernova delete <vm>` — take a virtual machine out of the library.
-    public struct Delete: ParsableCommand {
+    public struct Delete: VerbCommand {
         /// What `kernova delete --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "delete",
@@ -202,21 +186,24 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
-        /// Deletes the VM.
-        public func run() throws {
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
             // External attachments are left alone: naming which files to take
             // with it is a choice the app's own sheet gathers, and a terminal
             // that cannot show what would go should not decide it silently.
-            try CommandConnection.perform(
-                .delete(
-                    try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    permanently: permanent, alsoRemoving: [], confirmed: options.yes),
-                launchIfNeeded: !options.noLaunch)
+            .delete(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                permanently: permanent, alsoRemoving: [], confirmed: options.yes)
+        }
+
+        /// Deletes the VM.
+        public func run() throws {
+            try perform()
         }
     }
 
     /// `kernova reveal <vm>` — select the bundle in the Finder.
-    public struct Reveal: ParsableCommand {
+    public struct Reveal: VerbCommand {
         /// What `kernova reveal --help` says.
         ///
         /// The Finder is what comes forward, not Kernova: this answers where
@@ -238,11 +225,14 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .showInFinder(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
         /// Reveals the VM's bundle.
         public func run() throws {
-            try CommandConnection.perform(
-                .showInFinder(try SelectorParsing.selector(from: vm, forcingID: options.id)),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 }

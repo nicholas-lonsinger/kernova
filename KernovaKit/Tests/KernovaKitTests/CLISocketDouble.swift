@@ -1,7 +1,9 @@
+import ArgumentParser
 import Darwin
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Testing
 
 @testable import KernovaCLICore
 
@@ -118,5 +120,32 @@ final class TestCommandSocket: @unchecked Sendable {
             guard let base = raw.baseAddress else { return }
             _ = Darwin.write(connection, base, raw.count)
         }
+    }
+}
+
+/// One command line's round trip against a socket double.
+enum CLIWire {
+    /// Sends what `arguments` stand for to a double answering `response`, and
+    /// hands back what crossed the wire and what came back.
+    ///
+    /// The command line is parsed by the root command, so the request is the
+    /// one the tool would have sent — only the socket it reaches is the test's.
+    static func exchange(
+        _ arguments: [String], answering response: VMCommandResponse, tag: String
+    ) throws -> (sent: [VMCommandRequest.Verb], answer: VMCommandResponse) {
+        let command = try #require(
+            try KernovaCommand.parseAsRoot(arguments) as? any VerbCommand,
+            "\(arguments) did not parse to a command that builds its own request")
+        let request = try command.verb()
+
+        let listener = try TestCommandSocket(tag: tag)
+        defer { listener.close() }
+        let client = try VMCommandClient(socketPath: listener.path)
+        defer { client.close() }
+        client.waitForFrames(upTo: testWaitBackstop)
+        listener.serve([response])
+
+        let answer = try client.send(request)
+        return (listener.requests().map(\.verb), answer)
     }
 }

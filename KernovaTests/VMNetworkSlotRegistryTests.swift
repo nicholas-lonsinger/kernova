@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -330,6 +331,9 @@ struct VMNetworkSlotRegistryTests {
         #expect(registry.refuseSlotConflict(on: instance, movingFrom: old, to: new) == true)
         #expect(failures.errorTitle == "MAC Address In Use")
         #expect(failures.errorMessage?.contains("Twin") == true)
+        // The address as the edit spelled it, so the refusal names what was
+        // just typed rather than the holder's own spelling of it.
+        #expect(failures.errorMessage?.contains("AA:BB:CC:DD:EE:01") == true)
     }
 
     @Test("An edit onto an address nobody else holds is admitted")

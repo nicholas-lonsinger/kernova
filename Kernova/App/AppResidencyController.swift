@@ -159,11 +159,14 @@ final class AppResidencyController: AppResidencyHosting {
             surfaceLibrary: { [weak self] in self?.presentSummonedInterface() })
         AppDependencyManager.shared.add(dependency: gateway)
 
+        // The panel a named path's grant comes from has to bring the app
+        // forward first, and only this controller knows how — so the authority
+        // is built here and handed to the verbs that consult it.
+        viewModel.attachSourceAuthority(
+            PowerboxSourceAuthority(
+                activate: { [weak self] in self?.activateForExternalRequest() }))
         let socket = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(
-                commands: viewModel.commands,
-                importAuthority: PowerboxImportAuthority(
-                    activate: { [weak self] in self?.activateForExternalRequest() })),
+            router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
             socketPath: KernovaAppGroup.socketPath(),
             awaitReady: { [weak self] in

@@ -417,8 +417,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     /// Drives the confirmation outcomes without a window/sheet.
-    func confirmPassthroughEnableForTesting() { passthroughSetting?.confirmEnable() }
-    func cancelPassthroughEnableForTesting() { passthroughSetting?.cancelEnable() }
+    func confirmPassthroughEnableForTesting() { passthroughSetting?.confirm(.passthrough(true)) }
+    func cancelPassthroughEnableForTesting() { passthroughSetting?.cancel() }
 
     /// The bottom transfer bar's fraction, or `nil` while it is collapsed.
     var transferBarFractionForTesting: Double? {
@@ -579,7 +579,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Turning it off is immediate; turning it on confirms first, on this
     /// window (CLIPBOARD.md §10).
     @objc private func passthroughToggled() {
-        passthroughSetting?.set(passthroughSwitch.state == .on, confirmingIn: view.window)
+        passthroughSetting?.set(.passthrough(passthroughSwitch.state == .on), confirmingIn: view.window)
     }
 
     /// Pulls the representations the window renders richly, when it is visible.
@@ -999,7 +999,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let label = NSTextField(labelWithString: "Automatic passthrough")
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.isSelectable = false
-        label.toolTip = ClipboardPassthroughConfirmation.message
+        label.toolTip = ClipboardPassthroughConsent.prompt(vmName: instance.name).message
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)

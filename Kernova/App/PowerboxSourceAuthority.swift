@@ -4,19 +4,19 @@ import KernovaKit
 import UniformTypeIdentifiers
 import os
 
-/// Reads an import's source through the sandbox, asking the user for the bundle
+/// Reads a wire client's named file through the sandbox, asking the user for it
 /// when the container does not already admit it.
 ///
 /// A grant the user gives an open panel is the only way a sandboxed app reaches
 /// a file nobody handed it, so the panel is the authority: whatever the user
-/// picks is what gets imported, and a dismissed panel is a refusal.
+/// picks is what the verb acts on, and a dismissed panel is a refusal.
 ///
-/// No bookmark is captured — the source is copied into the library on the spot
-/// and never opened again.
+/// No bookmark is captured here — a caller that needs the grant to outlive the
+/// call mints one from the answered URL at the pick site.
 @MainActor
-final class PowerboxImportAuthority: ImportSourceAuthorizing {
+final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
     nonisolated private static let logger = Logger(
-        subsystem: "app.kernova", category: "PowerboxImportAuthority")
+        subsystem: "app.kernova", category: "PowerboxSourceAuthority")
 
     /// Brings the app forward, for the panel that is about to go up: a request
     /// arriving from a terminal has no window of its own, and a panel ordered in
@@ -27,27 +27,33 @@ final class PowerboxImportAuthority: ImportSourceAuthorizing {
         self.activate = activate
     }
 
-    func readableURL(for url: URL) async throws -> URL {
+    func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL {
         guard !FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
             return url
         }
         Self.logger.notice(
-            "Asking for permission to read '\(url.lastPathComponent, privacy: .public)' before importing it"
-        )
+            "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
         activate()
 
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.kernovaVM]
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.treatsFilePackagesAsDirectories = false
-        // The folder, not the bundle: a package URL here is ignored and the
+        switch source {
+        case .vmBundle:
+            panel.allowedContentTypes = [.kernovaVM]
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.treatsFilePackagesAsDirectories = false
+            panel.prompt = "Import"
+        case .sharedDirectory:
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.prompt = "Share"
+        }
+        // The folder, not the item: a package URL here is ignored and the
         // panel opens wherever it last was (observed 2026-09-06, macOS 27).
         panel.directoryURL = url.deletingLastPathComponent()
-        panel.prompt = "Import"
         panel.message =
-            "Kernova needs your permission to read \u{201C}\(url.lastPathComponent)\u{201D} before it can import it."
+            "Kernova needs your permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
 
         let dismissal = PanelDismissal(panel)
         let response = await withTaskCancellationHandler {
@@ -60,12 +66,22 @@ final class PowerboxImportAuthority: ImportSourceAuthorizing {
 
         guard response == .OK, let picked = panel.url else {
             throw CommandError.operationFailed(
-                verb: .importVM,
+                verb: source.verb,
                 message:
                     "Kernova was not given permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
             )
         }
         return picked
+    }
+}
+
+extension SandboxedSource {
+    /// The verb a refused grant fails.
+    fileprivate var verb: VMVerb {
+        switch self {
+        case .vmBundle: .importVM
+        case .sharedDirectory: .editSharedDirectory
+        }
     }
 }
 

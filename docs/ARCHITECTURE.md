@@ -318,13 +318,18 @@ session down without that hook, so a suspended session survives to revert at its
   because the states a force stop is most needed in are the ones no gate predicts. Create, clone and
   import register a preparing "phantom" `VMInstance` **synchronously, before any `await`** — that is
   what reserves the destination atomically on the MainActor, so overlapping imports and clones
-  cannot claim the same bundle URL.
+  cannot claim the same bundle URL. An import and a shared-directory add cross the wire as a path
+  their sandboxed caller holds no grant for, so the core puts each through the
+  `SandboxSourceAuthorizing` hook — `PowerboxSourceAuthority` in the app — which answers a URL this
+  process may read, asking the user through an open panel when the sandbox does not already admit
+  it. It is consulted after the VM and its state have decided the answer, so a refusal never costs
+  the user a panel.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
-  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core. An import
-  crosses as a path its sandboxed caller holds no grant for, so the router puts it through an
-  injected `ImportSourceAuthorizing` — `PowerboxImportAuthority` in the app — which answers a URL
-  this process may read, asking the user for the bundle through an open panel when the sandbox does
-  not already admit it.
+  encodes a `VMCommandResponse`, and decides nothing else. It depends on the protocol, never the
+  concrete core.
+- `VMConfigurationKeyRegistry` — the dotted configuration keyspace `configuration` and
+  `setConfiguration` address, one table of keys each naming its reader, its writer, and the
+  `VMCapabilityCatalog` gate a write of it passes. Every automation surface reads this one table.
 - `VMIntentGateway` — the App Intents boundary, built and published through `AppDependencyManager`
   by `AppResidencyController` so every
   intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity

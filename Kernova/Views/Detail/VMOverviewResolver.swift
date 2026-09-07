@@ -13,11 +13,8 @@ enum NetworkModeChoice: Equatable {
     case bridged(String?)
 
     init(_ configuration: VMConfiguration) {
-        guard configuration.networkEnabled else {
-            self = .none
-            return
-        }
-        switch configuration.networkMode {
+        switch configuration.effectiveNetworkMode {
+        case nil: self = .none
         case .shared: self = .shared
         case .hostOnly: self = .hostOnly
         case .bridged: self = .bridged(configuration.bridgedInterfaceIdentifier)

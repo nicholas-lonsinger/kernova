@@ -32,7 +32,7 @@ extension KernovaCommand {
     }
 
     /// `kernova start <vm>` — bring a guest up.
-    public struct Start: ParsableCommand {
+    public struct Start: VerbCommand {
         /// What `kernova start --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "start",
@@ -54,20 +54,23 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
-        /// Starts the VM.
-        public func run() throws {
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
             // Headless, always. A command typed in a terminal is not a request
             // for a window to jump in front of whatever is on screen.
-            try CommandConnection.perform(
-                .start(
-                    try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    recovery: recovery, presentation: .headless),
-                launchIfNeeded: !options.noLaunch)
+            .start(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                recovery: recovery, presentation: .headless)
+        }
+
+        /// Starts the VM.
+        public func run() throws {
+            try perform()
         }
     }
 
     /// `kernova stop <vm>` — take a guest down.
-    public struct Stop: ParsableCommand {
+    public struct Stop: VerbCommand {
         /// What `kernova stop --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "stop",
@@ -100,18 +103,21 @@ extension KernovaCommand {
             try TimeoutOption.validate(timeout)
         }
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .stop(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                disposition: method.disposition, confirmed: options.yes, timeout: timeout)
+        }
+
         /// Stops the VM.
         public func run() throws {
-            try CommandConnection.perform(
-                .stop(
-                    try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    disposition: method.disposition, confirmed: options.yes, timeout: timeout),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 
     /// `kernova suspend <vm>` — save the session to the bundle.
-    public struct Suspend: ParsableCommand {
+    public struct Suspend: VerbCommand {
         /// What `kernova suspend --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "suspend",
@@ -127,16 +133,19 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
         /// Suspends the VM.
         public func run() throws {
-            try CommandConnection.perform(
-                .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id)),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 
     /// `kernova pause <vm>` — hold the guest in memory.
-    public struct Pause: ParsableCommand {
+    public struct Pause: VerbCommand {
         /// What `kernova pause --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "pause",
@@ -152,16 +161,19 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .pause(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
         /// Pauses the VM.
         public func run() throws {
-            try CommandConnection.perform(
-                .pause(try SelectorParsing.selector(from: vm, forcingID: options.id)),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 
     /// `kernova resume <vm>` — let a paused guest run again.
-    public struct Resume: ParsableCommand {
+    public struct Resume: VerbCommand {
         /// What `kernova resume --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "resume",
@@ -179,18 +191,22 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
-        /// Resumes the VM, headless for the same reason `start` is.
+        /// The request this command line stands for, headless for the same
+        /// reason `start` is.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .resume(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                presentation: .headless)
+        }
+
+        /// Resumes the VM.
         public func run() throws {
-            try CommandConnection.perform(
-                .resume(
-                    try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    presentation: .headless),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 
     /// `kernova restart <vm>` — shut down and start again.
-    public struct Restart: ParsableCommand {
+    public struct Restart: VerbCommand {
         /// What `kernova restart --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "restart",
@@ -219,18 +235,21 @@ extension KernovaCommand {
             try TimeoutOption.validate(timeout)
         }
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .restart(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                presentation: .headless, timeout: timeout)
+        }
+
         /// Restarts the VM.
         public func run() throws {
-            try CommandConnection.perform(
-                .restart(
-                    try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    presentation: .headless, timeout: timeout),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 
     /// `kernova open <vm>` — put the guest's display in front of the user.
-    public struct Open: ParsableCommand {
+    public struct Open: VerbCommand {
         /// What `kernova open --help` says.
         ///
         /// The one verb here that deliberately surfaces something: it is what
@@ -249,11 +268,14 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .open(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
         /// Surfaces the VM's display.
         public func run() throws {
-            try CommandConnection.perform(
-                .open(try SelectorParsing.selector(from: vm, forcingID: options.id)),
-                launchIfNeeded: !options.noLaunch)
+            try perform()
         }
     }
 }

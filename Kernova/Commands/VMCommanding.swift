@@ -186,6 +186,11 @@ protocol VMCommanding: AnyObject {
     @discardableResult
     func importVM(from url: URL) throws -> VMSummary
 
+    /// The same import, named the way a caller holding no grant for the file
+    /// names it: the implementation obtains one for `path` first.
+    @discardableResult
+    func importVM(atPath path: String) async throws -> VMSummary
+
     /// Cancels an in-flight create, clone or import and removes its row.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
 
@@ -278,12 +283,65 @@ protocol VMCommanding: AnyObject {
     /// ``attachStorageDisks(_:paths:)`` states.
     func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws
 
+    /// Shares one folder with the guest, leaving a folder the VM already shares
+    /// as it is.
+    ///
+    /// On the wire where ``addSharedDirectories(_:paths:)`` is not, and named by
+    /// path rather than by pick: a share is reopened at every boot, so the
+    /// implementation obtains the grant for the path a client named — after the
+    /// VM and its state have decided the answer — and mints the bookmark that
+    /// outlives the session.
+    func addSharedDirectory(_ selector: VMSelector, path: String, readOnly: Bool) async throws
+
     /// Drops a shared directory's entry, leaving the folder itself alone.
     func removeSharedDirectory(_ selector: VMSelector, directory: UUID) throws
+
+    /// Drops the share the folder at `path` fills — the same edit named the way
+    /// a caller with no ids to hand names it.
+    func removeSharedDirectory(_ selector: VMSelector, path: String) throws
 
     func setSharedDirectoryReadOnly(
         _ selector: VMSelector, directory: UUID, readOnly: Bool
     ) throws
+
+    // MARK: - Port Forwarding
+
+    /// Adds one host→guest mapping, refusing a host port another rule in the
+    /// library already claims.
+    func addPortForwardingRule(_ selector: VMSelector, rule: PortForwardingRule) throws
+
+    /// Drops the rule claiming `claim`.
+    func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws
+
+    // MARK: - Configuration
+
+    /// Every configuration key `configuration` and `setConfiguration` address,
+    /// in presentation order.
+    ///
+    /// Addresses no VM: the keyspace is the same for all of them, and which
+    /// keys a particular VM answers for is what ``configuration(_:keys:)``
+    /// reports.
+    func configurationKeys() -> [ConfigurationKeyDescriptor]
+
+    /// The VM's values for `keys`, or for every key that applies to it when
+    /// `keys` is `nil`.
+    ///
+    /// Each value is written the way ``setConfiguration(_:assignments:confirmed:)``
+    /// parses it back.
+    func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry]
+
+    /// Applies every assignment or none, answering the values the assigned keys
+    /// ended up holding.
+    ///
+    /// Each key's gate and value is checked before anything is written, so a
+    /// batch naming one key the VM's state will not take, or one value it
+    /// cannot parse, changes nothing. `confirmed` supplies the consent the one
+    /// assignment that asks for it needs — turning automatic clipboard
+    /// passthrough on.
+    @discardableResult
+    func setConfiguration(
+        _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
+    ) throws -> [ConfigurationEntry]
 
     // MARK: - Guest Agent Disk
 

@@ -35,6 +35,10 @@ enum CommandError: Error, Sendable, Equatable {
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.
     case confirmationRequired(ConfirmationPrompt)
+    /// An argument named something the verb does not offer — a configuration
+    /// key that is not in the keyspace — or carried a value it cannot use.
+    /// The string is the whole refusal, in the words the user reads.
+    case invalidArgument(String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
     /// Running the VM would put two guests on one identity.
@@ -91,6 +95,8 @@ extension CommandError {
             .busy(vm: vm, operation: operation)
         case .confirmationRequired(let prompt):
             .confirmationRequired(prompt: prompt)
+        case .invalidArgument(let message):
+            .invalidArgument(message: message)
         case .unsupported(let capability):
             .unsupported(capability: capability)
         case .conflict(let vm, let other, let reason):

@@ -478,7 +478,13 @@ extension VMSettingsViewController {
     }
 
     private func setEphemeralMode(_ isOn: Bool) {
-        writeMirrored { $0.applyEphemeralMode(enabled: isOn, baseline: defaultEphemeralBaseline()) }
+        let manifest = instance.snapshotManifest
+        writeMirrored { config in
+            config.applyEphemeralMode(
+                enabled: isOn,
+                baseline: manifest.defaultEphemeralBaseline(
+                    preferring: config.ephemeralBaselineSnapshotID))
+        }
     }
 
     /// Writes a setting that renders on more than one surface, re-rendering all
@@ -491,30 +497,20 @@ extension VMSettingsViewController {
         }
     }
 
-    private func defaultEphemeralBaseline() -> UUID? {
-        let manifest = instance.snapshotManifest
-        if let chosen = instance.configuration.ephemeralBaselineSnapshotID,
-            manifest.snapshot(id: chosen) != nil
-        {
-            return chosen
-        }
-        if let current = manifest.currentID, manifest.snapshot(id: current) != nil {
-            return current
-        }
-        return manifest.ordered.first?.id
-    }
-
+    /// Sharing carries passthrough, so this goes through passthrough's own write
+    /// path: turning it on over a passthrough flag already set starts the guest
+    /// reading this Mac's clipboard, and confirms first.
     private func setClipboardSharing(_ isOn: Bool) {
-        writeMirrored { $0.clipboardSharingEnabled = isOn }
+        passthroughSetting.set(.sharing(isOn), confirmingIn: view.window)
     }
 
     private func setDropFiles(_ isOn: Bool) {
         writeMirrored { $0.dropFilesEnabled = isOn }
     }
 
-    /// Passthrough's shared write path, which every surface offering the toggle
-    /// goes through — this pane's Sharing row and the clipboard window's footer
-    /// switch.
+    /// The clipboard flags' shared write path, which every surface offering
+    /// either toggle goes through — this pane's Sharing rows and the clipboard
+    /// window's footer switch.
     ///
     /// Built per use so the confirmation alert never holds this controller.
     private var passthroughSetting: ClipboardPassthroughSetting {
@@ -524,14 +520,16 @@ extension VMSettingsViewController {
     }
 
     private func setClipboardPassthrough(_ isOn: Bool) {
-        passthroughSetting.set(isOn, confirmingIn: view.window)
+        passthroughSetting.set(.passthrough(isOn), confirmingIn: view.window)
     }
 
     #if DEBUG
     /// Drives the confirmation outcomes without a window/sheet, so tests exercise
     /// the real enable-commit and cancel-revert paths.
-    func confirmPassthroughEnableForTesting() { passthroughSetting.confirmEnable() }
-    func cancelPassthroughEnableForTesting() { passthroughSetting.cancelEnable() }
+    func confirmPassthroughEnableForTesting(_ change: ClipboardPassthroughSetting.Change) {
+        passthroughSetting.confirm(change)
+    }
+    func cancelPassthroughEnableForTesting() { passthroughSetting.cancel() }
     #endif
 
     @objc private func appDidBecomeActive() {

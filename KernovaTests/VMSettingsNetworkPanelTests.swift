@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaKit
 import Testing
 import Virtualization
 
@@ -707,14 +708,13 @@ struct VMSettingsNetworkPanelTests {
 
     @Test("Only a usable MAC address normalizes")
     func normalizedMACAddressAcceptsOnlyUsableAddresses() {
-        #expect(VMSettingsNetworkPanelViewController.normalizedMACAddress("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff")
-        #expect(
-            VMSettingsNetworkPanelViewController.normalizedMACAddress(" aa:bb:cc:dd:ee:ff\n") == "aa:bb:cc:dd:ee:ff")
+        #expect(GuestMACAddress.normalized("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff")
+        #expect(GuestMACAddress.normalized(" aa:bb:cc:dd:ee:ff\n") == "aa:bb:cc:dd:ee:ff")
         for text in [
             "aa-bb-cc-dd-ee-ff", "aabbccddeeff", "a:b:c:d:e:f", "aa:bb:cc:dd:ee:fg", "",
             "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01",
         ] {
-            #expect(VMSettingsNetworkPanelViewController.normalizedMACAddress(text) == nil)
+            #expect(GuestMACAddress.normalized(text) == nil)
         }
     }
 
@@ -849,6 +849,27 @@ struct VMSettingsNetworkPanelTests {
         #expect(visibleLabel("Host 2222 → Guest 22", in: vc.view))
     }
 
+    @Test("An added rule goes through the verb that owns the host-port claim")
+    func addingARuleGoesThroughTheVerb() throws {
+        let viewModel = makeViewModel()
+        let holder = makeInstance(guestOS: .linux)
+        holder.configuration.portForwardingRules = [Self.webRule]
+        viewModel.instances = [holder]
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let panel = try #require(networkPanel(in: vc))
+        let sheet = PortForwardingRuleSheetContentViewController(takenHostClaims: [])
+
+        // The pane writes through the verb rather than the array, so the one
+        // enforcement path decides — even for a claim the sheet was not told
+        // about.
+        panel.portForwardingRuleSheet(sheet, didAdd: Self.webRule)
+        #expect(instance.configuration.portForwardingRules.isEmpty)
+
+        panel.portForwardingRuleSheet(sheet, didAdd: Self.sshRule)
+        #expect(instance.configuration.portForwardingRules == [Self.sshRule])
+        #expect(visibleLabel("Host 2222 → Guest 22", in: vc.view))
+    }
+
     @Test("A running VM's rule controls are locked")
     func runningVMLocksTheRuleControls() {
         let (vc, _) = makeNetworkController(
@@ -885,11 +906,10 @@ struct VMSettingsNetworkPanelTests {
         ]
         viewModel.instances = [hostOnly, disabled]
 
-        let (vc, _) = makeNetworkController(
-            portForwardingRules: [Self.webRule], viewModel: viewModel)
+        _ = makeNetworkController(portForwardingRules: [Self.webRule], viewModel: viewModel)
 
         #expect(
-            networkPanel(in: vc)?.takenHostPortClaimsForTesting == [
+            viewModel.takenHostPortClaims == [
                 Self.webRule.hostClaim, Self.sshRule.hostClaim,
                 PortForwardingHostClaim(transport: .udp, hostPort: 5353),
             ])

@@ -10,7 +10,9 @@ import os
 /// every change made here waits for a recreate — which this is also what
 /// schedules, once no session could be holding the network.
 ///
-/// Headless: the two refusals leave through ``onFailure``.
+/// Headless: a refusal leaves through ``onFailure`` as words, and through
+/// ``slotConflict(on:movingFrom:to:)`` as data for a caller that renders its
+/// own.
 @MainActor
 @Observable
 final class VMNetworkSlotRegistry {
@@ -65,6 +67,14 @@ final class VMNetworkSlotRegistry {
 
     // MARK: - Composed Entry Points
 
+    /// Why a configuration change is refused, and which VM it collides with.
+    struct SlotConflict {
+        /// The VM already holding what the change asked for.
+        let other: VMInstance
+        /// What the two collide on.
+        let reason: ConflictReason
+    }
+
     /// Refuses a configuration edit that would put two guests on one MAC
     /// address, surfacing the alert the refusal owes.
     ///
@@ -72,10 +82,28 @@ final class VMNetworkSlotRegistry {
     func refuseSlotConflict(
         on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
     ) -> Bool {
+        guard let conflict = slotConflict(on: instance, movingFrom: old, to: new) else {
+            return false
+        }
+        let failure = commandFailure(conflict, on: instance)
+        Self.logger.notice(
+            "Refused a configuration change to '\(instance.name, privacy: .public)': \(failure.message, privacy: .public)"
+        )
+        onFailure?(failure.title, failure.message)
+        return true
+    }
+
+    /// The VM a configuration change would collide with, and what on — the one
+    /// derivation both an in-process refusal and a wire refusal read.
+    ///
+    /// `nil` when the change is admissible.
+    func slotConflict(
+        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
+    ) -> SlotConflict? {
         if let mac = new.macAddress, mac.lowercased() != old.macAddress?.lowercased(),
-            refuseIfDuplicateMACAddress(mac, on: instance)
+            let holder = vmsHoldingMACAddress(mac, otherThan: instance).first
         {
-            return true
+            return SlotConflict(other: holder, reason: .macAddressInUse(address: mac))
         }
         // A live VM's Mode picker stays enabled, and a mode change hot-swaps the
         // attachment: the address is unchanged, so the refusal above never sees
@@ -85,11 +113,54 @@ final class VMNetworkSlotRegistry {
         // collision by some other route has to stay editable to leave it.
         if instance.isActive || instance.isLivePaused,
             liveMACAddressConflict(for: old, excluding: instance) == nil,
-            refuseIfDuplicateMACAddressConflict(instance, joining: new)
+            let live = liveMACAddressConflict(for: new, excluding: instance)
         {
-            return true
+            return SlotConflict(other: live, reason: .macAddress)
         }
-        return false
+        return nil
+    }
+
+    /// `conflict` in the command vocabulary, so an alert and a wire client word
+    /// the same refusal identically.
+    func commandFailure(_ conflict: SlotConflict, on instance: VMInstance) -> CommandErrorDTO {
+        .conflict(
+            vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
+    }
+
+    private func summary(_ instance: VMInstance) -> VMSummary {
+        instance.summary(ipAddress: reservedAddress(for: instance.configuration))
+    }
+
+    // MARK: - Port Forwarding Claims
+
+    /// Which VM claims each (transport, host port) pair, in library order — the
+    /// one walk both forwarding questions are answered from.
+    ///
+    /// The claim is held by the persisted configuration, not by the mode: a rule
+    /// survives a switch away from Shared Network and takes its host port back
+    /// on the way in, so a VM in another mode counts too — otherwise two VMs end
+    /// up holding the same port and one of them silently stops forwarding. Two
+    /// VMs can arrive holding one claim, and the first in library order is the
+    /// one named.
+    private var hostPortClaimHolders: [PortForwardingHostClaim: VMInstance] {
+        var holders: [PortForwardingHostClaim: VMInstance] = [:]
+        for instance in instances {
+            for rule in instance.configuration.portForwardingRules
+            where holders[rule.hostClaim] == nil {
+                holders[rule.hostClaim] = instance
+            }
+        }
+        return holders
+    }
+
+    /// Every (transport, host port) pair any VM in the library claims.
+    var takenHostPortClaims: Set<PortForwardingHostClaim> {
+        Set(hostPortClaimHolders.keys)
+    }
+
+    /// The VM already forwarding `claim`'s host port, or `nil` when it is free.
+    func vmClaiming(_ claim: PortForwardingHostClaim) -> VMInstance? {
+        hostPortClaimHolders[claim]
     }
 
     /// Moves this VM's reservation and forwarding slots from `old` to `new`.
@@ -277,7 +348,7 @@ final class VMNetworkSlotRegistry {
     /// carries the same MAC — rules are keyed on the address, so a blanket
     /// withdrawal would disarm that VM's rules too; its own are re-declared
     /// instead. An address is one VM's alone once it passes
-    /// ``refuseIfDuplicateMACAddress(_:on:)``, so the survivor is a bundle that
+    /// ``slotConflict(on:movingFrom:to:)``, so the survivor is a bundle that
     /// arrived carrying one already in use.
     private func withdrawPortForwardingRules(for config: VMConfiguration) {
         guard let mac = config.macAddress?.lowercased() else { return }
@@ -326,52 +397,6 @@ final class VMNetworkSlotRegistry {
             Self.logger.warning(
                 "MAC address \(mac ?? "", privacy: .public) is held by \(names, privacy: .public)")
         }
-    }
-
-    /// Refuses a change that would give `instance` a MAC address another VM in
-    /// the library holds, logging the refusal and surfacing the alert.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    private func refuseIfDuplicateMACAddress(_ mac: String, on instance: VMInstance) -> Bool {
-        guard let holder = vmsHoldingMACAddress(mac, otherThan: instance).first else { return false }
-        Self.logger.notice(
-            "Refused the MAC address \(mac, privacy: .public) for '\(instance.name, privacy: .public)': '\(holder.name, privacy: .public)' already holds it"
-        )
-        onFailure?(
-            "MAC Address In Use",
-            "“\(holder.name)” already uses \(mac). "
-                + "Each virtual machine needs its own MAC address. "
-                + "Change or delete “\(holder.name)” first to move this address to “\(instance.name)”.")
-        return true
-    }
-
-    /// Refuses an operation that would put a second guest on one MAC address on
-    /// one network, logging the refusal and surfacing the alert.
-    ///
-    /// `config` is the configuration the VM would run under — its own at start,
-    /// the prospective one for a live mode switch, which moves an unchanged
-    /// address onto a different network.
-    ///
-    /// ``refuseIfDuplicateMACAddress(_:on:)`` keeps the library unique for every
-    /// address the app writes; this covers the pair a bundle arrived carrying,
-    /// which passed through no writer.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    private func refuseIfDuplicateMACAddressConflict(
-        _ instance: VMInstance, joining config: VMConfiguration
-    ) -> Bool {
-        guard let conflict = liveMACAddressConflict(for: config, excluding: instance),
-            let mac = config.macAddress
-        else { return false }
-        Self.logger.notice(
-            "Refused to run '\(instance.name, privacy: .public)': shares the MAC address \(mac, privacy: .public) with active VM '\(conflict.name, privacy: .public)'"
-        )
-        onFailure?(
-            "Duplicate MAC Address",
-            "“\(instance.name)” has the same MAC address as “\(conflict.name)”, which is active. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Stop “\(conflict.name)” first, or give one of them a new address in Network settings.")
-        return true
     }
 
     /// The first live VM sharing `config`'s MAC address on the network `config`

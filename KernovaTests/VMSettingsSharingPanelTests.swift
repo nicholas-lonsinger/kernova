@@ -142,7 +142,7 @@ struct VMSettingsSharingPanelTests {
         let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
 
-        vc.confirmPassthroughEnableForTesting()
+        vc.confirmPassthroughEnableForTesting(.passthrough(true))
 
         #expect(instance.configuration.clipboardPassthroughEnabled == true)
     }
@@ -162,10 +162,42 @@ struct VMSettingsSharingPanelTests {
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
     }
 
+    @Test("Turning sharing on over a passthrough flag already set confirms first")
+    func sharingEnableOverAStalePassthroughFlagConfirms() throws {
+        // Sharing off with the passthrough flag still set is what turning
+        // sharing off leaves behind, and turning it back on starts passthrough
+        // running — so it asks the same question the passthrough switch does.
+        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: false)
+        instance.configuration.clipboardPassthroughEnabled = true
+
+        let toggle = try #require(firstSwitch(action: "clipboardToggled", in: vc.view))
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        // No window to host the sheet in, so the enable reverts rather than
+        // granting the guest a continuous read without being asked.
+        #expect(instance.configuration.clipboardSharingEnabled == false)
+        #expect(!instance.configuration.clipboardPassthroughIsEffective)
+
+        vc.confirmPassthroughEnableForTesting(.sharing(true))
+        #expect(instance.configuration.clipboardPassthroughIsEffective)
+    }
+
+    @Test("Turning sharing on with no passthrough flag writes immediately")
+    func sharingEnableAloneWritesImmediately() throws {
+        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: false)
+
+        let toggle = try #require(firstSwitch(action: "clipboardToggled", in: vc.view))
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(instance.configuration.clipboardSharingEnabled == true)
+    }
+
     @Test("Turning passthrough off writes immediately without confirmation")
     func passthroughDisableWritesImmediately() {
         let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
-        vc.confirmPassthroughEnableForTesting()
+        vc.confirmPassthroughEnableForTesting(.passthrough(true))
         #expect(instance.configuration.clipboardPassthroughEnabled == true)
 
         guard let toggle = firstSwitch(action: "clipboardPassthroughToggled", in: vc.view) else {
@@ -182,10 +214,14 @@ struct VMSettingsSharingPanelTests {
     func passthroughConfirmationAlertWiring() {
         var confirmed = false
         var cancelled = false
-        let alert = ClipboardPassthroughConfirmation.alert(
-            onConfirm: { confirmed = true }, onCancel: { cancelled = true })
+        let alert = ClipboardPassthroughSetting.alert(
+            vmName: "Alpha", onConfirm: { confirmed = true }, onCancel: { cancelled = true })
 
-        #expect(alert.title == ClipboardPassthroughConfirmation.title)
+        // The words a wire client is refused with are the words the alert asks
+        // in, because both come from the one consent policy.
+        let prompt = ClipboardPassthroughConsent.prompt(vmName: "Alpha")
+        #expect(alert.title == prompt.title)
+        #expect(alert.message == prompt.message)
         #expect(alert.buttons.count == 2)
         #expect(alert.buttons.first?.role == .default)
         #expect(alert.buttons.last?.role == .cancel)

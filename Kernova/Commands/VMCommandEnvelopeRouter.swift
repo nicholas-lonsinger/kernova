@@ -6,8 +6,10 @@ import os
 /// back into a ``VMCommandResponse``.
 ///
 /// The whole wire boundary: it decodes, dispatches, and encodes, and decides
-/// nothing else. It depends on ``VMCommanding``, never on the concrete core, so
-/// a transport can be driven end to end against a test double.
+/// nothing else — the grant a sandboxed client's named path needs included,
+/// which the verb that acts on the path obtains for itself. It depends on
+/// ``VMCommanding``, never on the concrete core, so a transport can be driven
+/// end to end against a test double.
 @MainActor
 struct VMCommandEnvelopeRouter {
     nonisolated private static let logger = Logger(
@@ -15,12 +17,8 @@ struct VMCommandEnvelopeRouter {
 
     let commands: any VMCommanding
 
-    /// What turns the path an import names into a URL this process may read.
-    let importAuthority: any ImportSourceAuthorizing
-
-    init(commands: any VMCommanding, importAuthority: any ImportSourceAuthorizing) {
+    init(commands: any VMCommanding) {
         self.commands = commands
-        self.importAuthority = importAuthority
     }
 
     // MARK: - Bytes
@@ -196,11 +194,7 @@ struct VMCommandEnvelopeRouter {
                 confirmed: confirmed)
             return .ok
         case .importVM(let path):
-            // The path is a string a client with no file access of its own
-            // named, so the authority is what makes it readable — and the copy
-            // runs against whatever URL it answers with.
-            let source = try await importAuthority.readableURL(for: URL(fileURLWithPath: path))
-            return .summary(try commands.importVM(from: source))
+            return .summary(try await commands.importVM(atPath: path))
         case .cancelPreparing(let selector, let confirmed):
             try commands.cancelPreparing(selector, confirmed: confirmed)
             return .ok
@@ -214,14 +208,31 @@ struct VMCommandEnvelopeRouter {
             try await apply(edit, to: selector)
             return .ok
         case .editSharedDirectory(let selector, let edit):
-            try apply(edit, to: selector)
+            try await apply(edit, to: selector)
             return .ok
+        case .editPortForwarding(let selector, let edit):
+            switch edit {
+            case .add(let rule): try commands.addPortForwardingRule(selector, rule: rule)
+            case .remove(let claim):
+                try commands.removePortForwardingRule(selector, claim: claim)
+            }
+            return .ok
+
         case .guestAgentDisk(let selector, let edit):
             switch edit {
             case .mount: _ = try commands.mountGuestAgentDisk(selector)
             case .unmount: try commands.unmountGuestAgentDisk(selector)
             }
             return .ok
+
+        case .configurationKeys:
+            return .configurationKeys(commands.configurationKeys())
+        case .configuration(let selector, let keys):
+            return .configuration(try commands.configuration(selector, keys: keys))
+        case .setConfiguration(let selector, let assignments, let confirmed):
+            return .configuration(
+                try commands.setConfiguration(
+                    selector, assignments: assignments, confirmed: confirmed))
 
         case .quit:
             commands.quit()
@@ -266,8 +277,12 @@ struct VMCommandEnvelopeRouter {
     }
 
     /// One shared-directory edit, dispatched on the payload the verb carries.
-    private func apply(_ edit: SharedDirectoryEdit, to selector: VMSelector) throws {
+    private func apply(_ edit: SharedDirectoryEdit, to selector: VMSelector) async throws {
         switch edit {
+        case .add(let path, let readOnly):
+            try await commands.addSharedDirectory(selector, path: path, readOnly: readOnly)
+        case .removePath(let path):
+            try commands.removeSharedDirectory(selector, path: path)
         case .remove(let directory):
             try commands.removeSharedDirectory(selector, directory: directory)
         case .setReadOnly(let directory, let readOnly):

@@ -2,14 +2,14 @@ import Foundation
 import KernovaKit
 
 /// The user's preferred display hosting for a VM on start/resume.
-enum VMDisplayPreference: String, Codable, Sendable, Equatable {
+enum VMDisplayPreference: String, Codable, Sendable, Equatable, CaseIterable {
     case inline
     case popOut
     case fullscreen
 }
 
 /// How an enabled network device attaches to the world.
-enum VMNetworkMode: String, Codable, Sendable, Equatable {
+enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
     case shared
     case bridged
     case hostOnly
@@ -502,6 +502,44 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         ephemeralBaselineSnapshotID = enabled ? baseline : nil
     }
 
+    // MARK: - Network mode
+
+    /// The network this VM joins, or `nil` when it carries no device at all.
+    ///
+    /// The pair of fields behind it read as one choice, which is how every
+    /// surface offers it.
+    var effectiveNetworkMode: VMNetworkMode? {
+        networkEnabled ? networkMode : nil
+    }
+
+    /// Puts the VM on `mode`, or takes its network device away with `nil`.
+    ///
+    /// A change that gives the VM a device mints its first address:
+    /// a VM with none gets a fresh random one from VZ at every start, so the
+    /// address the LAN sees — and any DHCP reservation keyed on it — would
+    /// differ from one boot to the next. `bridgedInterfaceIdentifier` is left
+    /// alone, so switching away from Bridged and back remembers the interface.
+    ///
+    /// A no-op when the VM is already on `mode`, so nothing is minted for a
+    /// write that changes nothing.
+    mutating func applyNetworkMode(_ mode: VMNetworkMode?) {
+        guard mode != effectiveNetworkMode else { return }
+        guard let mode else {
+            networkEnabled = false
+            return
+        }
+        networkEnabled = true
+        networkMode = mode
+        mintMACAddressIfNeeded()
+    }
+
+    /// Gives a VM with no address of its own one, for the reason
+    /// ``applyNetworkMode(_:)`` states.
+    mutating func mintMACAddressIfNeeded() {
+        guard macAddress == nil else { return }
+        macAddress = GuestMACAddress.random()
+    }
+
     // MARK: - Snapshot revert
 
     /// The configuration a revert to `captured` installs: everything the
@@ -638,6 +676,28 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var displayBaseSize: (width: Int, height: Int) {
         guard displayResolutionIsHiDPI else { return (displayWidth, displayHeight) }
         return (displayWidth / 2, displayHeight / 2)
+    }
+
+    /// The stored trio a "looks like" size of `width` × `height` produces —
+    /// what every surface that lets a caller name a display size writes.
+    mutating func setDisplayBaseSize(width: Int, height: Int) {
+        displayResolution = DisplayBootSizing.resolution(
+            base: width, height: height, hiDPI: displayResolutionIsHiDPI)
+    }
+
+    /// The largest "looks like" size this VM takes: a HiDPI base is doubled
+    /// before it reaches VZ, so it stops at half the pixel ceiling.
+    var displayBaseSizeLimit: Int {
+        displayResolutionIsHiDPI
+            ? DisplayBootSizing.maximumDimension / 2 : DisplayBootSizing.maximumDimension
+    }
+
+    // MARK: - Clipboard
+
+    /// Whether passthrough actually runs: the flag alone leaves it inert,
+    /// because it rides on the clipboard sharing that carries it.
+    var clipboardPassthroughIsEffective: Bool {
+        clipboardSharingEnabled && clipboardPassthroughEnabled
     }
 
     // MARK: - Removable Media

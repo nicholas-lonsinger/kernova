@@ -310,6 +310,20 @@ extension VMCommandCore {
 
     // MARK: - Import
 
+    /// Copies the `.kernova` bundle at `path` into the library, obtaining the
+    /// grant this sandboxed process needs to read it first.
+    ///
+    /// The awaited grant is the whole of what separates this from
+    /// ``importVM(from:)``: the reservation it wraps still runs with no
+    /// suspension point inside it, so overlapping imports cannot claim the same
+    /// destination.
+    @discardableResult
+    func importVM(atPath path: String) async throws -> VMSummary {
+        let source = try await requireSourceAuthority(.importVM)
+            .readableURL(for: URL(fileURLWithPath: path), as: .vmBundle)
+        return try importVM(from: source)
+    }
+
     /// Reserves a collision-free destination for one `.kernova` bundle, registers its phantom row
     /// synchronously, and spawns the file copy — answering the existing row when the source is
     /// already in the library by UUID.

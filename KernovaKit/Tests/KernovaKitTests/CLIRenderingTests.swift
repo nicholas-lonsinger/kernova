@@ -215,6 +215,94 @@ struct CLIRenderingTests {
         #expect(row["name"] as? String == "Base")
     }
 
+    // MARK: - Configuration
+
+    private let settings = [
+        ConfigurationEntry(key: "cpus", value: "4"),
+        ConfigurationEntry(key: "network.mode", value: "shared"),
+        ConfigurationEntry(key: "clipboard.sharing", value: "true"),
+    ]
+
+    private let keyspace = [
+        ConfigurationKeyDescriptor(
+            name: "cpus", summary: "Virtual CPU cores, within what the guest allows.",
+            editableWhileRunning: false),
+        ConfigurationKeyDescriptor(
+            name: "clipboard.sharing", summary: "Exchange clipboard text with the guest.",
+            editableWhileRunning: true),
+    ]
+
+    @Test("A settings listing names its two columns and keeps the order it was answered in")
+    func settingsListingIsKeyAndValue() {
+        let lines = TableRenderer.render(settings, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 4)
+        #expect(lines[0].contains("KEY"))
+        #expect(lines[0].contains("VALUE"))
+        #expect(lines[1].hasPrefix("cpus"))
+        #expect(lines[1].hasSuffix("4"))
+        #expect(lines[2].contains("network.mode"))
+        #expect(lines[3].contains("clipboard.sharing"))
+        for line in lines { #expect(line == line.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    @Test("--quiet on a settings listing prints the values alone, one per line")
+    func quietSettingsListingIsValuesOnly() {
+        // Values rather than key=value: a script asking for one setting wants
+        // the value, and a whole listing stays line-for-line with `get --keys`.
+        #expect(TableRenderer.render(settings, quiet: true) == "4\nshared\ntrue")
+    }
+
+    @Test("A virtual machine with no settings to report prints nothing at all")
+    func emptySettingsListingIsEmpty() {
+        #expect(TableRenderer.render([ConfigurationEntry](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([ConfigurationEntry](), quiet: true).isEmpty)
+    }
+
+    @Test("A keyspace listing names each key, its summary, and whether a running guest takes it")
+    func keyspaceListingCarriesEveryColumn() {
+        let lines = TableRenderer.render(keyspace, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        for heading in ["KEY", "WHILE RUNNING", "SUMMARY"] {
+            #expect(lines[0].contains(heading), "missing \(heading)")
+        }
+        #expect(lines[1].contains("cpus"))
+        #expect(lines[1].contains("No"))
+        #expect(lines[1].contains("Virtual CPU cores"))
+        #expect(lines[2].contains("Yes"))
+        #expect(lines[2].contains("Exchange clipboard text"))
+    }
+
+    @Test("--quiet on a keyspace listing prints the names alone, which get and set take back")
+    func quietKeyspaceListingIsNamesOnly() {
+        #expect(TableRenderer.render(keyspace, quiet: true) == "cpus\nclipboard.sharing")
+    }
+
+    @Test("An empty keyspace prints nothing at all")
+    func emptyKeyspaceListingIsEmpty() {
+        #expect(TableRenderer.render([ConfigurationKeyDescriptor](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([ConfigurationKeyDescriptor](), quiet: true).isEmpty)
+    }
+
+    @Test("Settings JSON is the wire DTOs themselves, decodable back")
+    func settingsJSONIsTheWireDTO() throws {
+        let entries = try JSONRenderer.render(settings)
+        #expect(
+            try JSONDecoder().decode([ConfigurationEntry].self, from: Data(entries.utf8))
+                == settings)
+
+        let descriptors = try JSONRenderer.render(keyspace)
+        #expect(
+            try JSONDecoder().decode([ConfigurationKeyDescriptor].self, from: Data(descriptors.utf8))
+                == keyspace)
+        let objects = try #require(
+            try JSONSerialization.jsonObject(with: Data(descriptors.utf8)) as? [[String: Any]])
+        for field in ["name", "summary", "editableWhileRunning"] {
+            #expect(objects.first?[field] != nil, "missing \(field)")
+        }
+    }
+
     // MARK: - Addresses
 
     @Test("Each address case states its own answer, and only one is an address")

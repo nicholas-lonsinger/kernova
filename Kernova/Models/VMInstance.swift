@@ -673,6 +673,24 @@ final class VMInstance {
         !isPreparing && !phase.isTransitioning && !snapshotManifest.isEmpty
     }
 
+    // MARK: - Wire Projection
+
+    /// This VM's status as it crosses the wire —
+    /// ``VMStatus/preparingWireName`` while a create, clone or import is still
+    /// writing its bundle, its real ``VMStatus`` otherwise.
+    var wireStatus: String {
+        isPreparing ? VMStatus.preparingWireName : status.rawValue
+    }
+
+    /// This VM as any refusal or listing names it.
+    ///
+    /// The address is a parameter because only ``VMNetworkSlotRegistry``
+    /// resolves one, and both callers already hold it — so a summary is built
+    /// one way whichever of them is naming the VM.
+    func summary(ipAddress: GuestIPAddress) -> VMSummary {
+        VMSummary(id: instanceID, name: name, status: wireStatus, ipAddress: ipAddress)
+    }
+
     // MARK: - Ephemeral Mode
 
     /// The snapshot a power-off returns this VM to, or `nil` when Ephemeral
@@ -1091,9 +1109,7 @@ final class VMInstance {
     /// both transports and works with the clipboard window closed.
     func refreshClipboardPassthrough() {
         guard let context = sessionContext else { return }
-        let shouldRun =
-            configuration.clipboardSharingEnabled && configuration.clipboardPassthroughEnabled
-            && hasLiveVirtualMachine
+        let shouldRun = configuration.clipboardPassthroughIsEffective && hasLiveVirtualMachine
         if shouldRun {
             let coordinator =
                 context.clipboardPassthroughCoordinator
