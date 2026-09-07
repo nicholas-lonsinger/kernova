@@ -200,8 +200,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 0)
     }
 
-    @Test("deleteVM refuses a cold-paused VM whose resume is still in flight")
-    func deleteVMRefusesDuringInFlightResume() async throws {
+    @Test("deleteVM refuses a VM whose cold resume is still restoring it")
+    func deleteVMRefusesWhileRestoring() async throws {
         let storage = MockVMStorageService()
         let (viewModel, suspending) = makeSuspendingViewModel(storage: storage)
         suspending.shouldSuspendOnResume = true
@@ -213,11 +213,12 @@ struct VMLibraryViewModelTests {
         let resume = Task { @MainActor in try await viewModel.lifecycle.resume(instance) }
         await suspending.waitUntilSuspended()
 
-        // A real cold resume holds `.paused` with no live VM while it builds its
-        // configuration, so the enablement predicate still reads deletable — only
-        // the lifecycle lock can refuse here.
-        #expect(instance.isColdPaused)
-        #expect(instance.canDelete)
+        // A cold resume stands in `.restoringSavedState` for the whole of the
+        // configuration build, so the capability gate is what refuses here —
+        // the bundle this would trash is the one the restore is reading. The
+        // claim behind that gate is covered in `VMCommandCoreTests`.
+        #expect(instance.status == .restoring)
+        #expect(!instance.canDelete)
 
         await viewModel.delete(instance)
 

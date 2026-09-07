@@ -21,9 +21,10 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnPause = true
 
-    /// When `true`, `resume` will suspend *before* touching the phase, standing
-    /// in for the window a real cold resume spends building its configuration
-    /// while the VM still reads as suspended.
+    /// When `true`, `resume` will suspend while the VM stands in the phase a
+    /// real resume of its kind stands in — `.restoringSavedState` for a cold
+    /// one building its configuration, the live-paused phase it was called in
+    /// for a hot one.
     ///
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnResume = false
@@ -33,6 +34,14 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     ///
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnRevert = false
+
+    /// Error `start` throws once it is let through, resting the VM the way the
+    /// real service rests a failed start.
+    var startError: (any Error)?
+
+    /// Number of `start` calls, so a test can prove a second start joined the
+    /// first rather than issuing its own.
+    private(set) var startCallCount = 0
 
     // MARK: - Suspension Mechanism
 
@@ -78,8 +87,18 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     // MARK: - VirtualizationProviding
 
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
+        startCallCount += 1
+        // Before the suspension, as the real service enters it before its first
+        // await: a start in flight is what every other caller reads off the VM.
+        instance.enter(.starting(sessionID: nil))
         if shouldSuspendOnStart {
             await suspendIfNeeded()
+        }
+        if let error = startError {
+            instance.tearDownSession(
+                restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
+                    error, on: instance, transientRestingPhase: .stopped))
+            throw error
         }
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
@@ -100,6 +119,10 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func resume(_ instance: VMInstance) async throws {
+        // A cold resume rebuilds the VM from the save file and stands in
+        // `.restoringSavedState` for the whole of that build; a hot one resumes
+        // the session it already holds and touches no phase until it settles.
+        if instance.isColdPaused { instance.enter(.restoringSavedState(sessionID: nil)) }
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
