@@ -79,8 +79,8 @@ struct CLIRenderingTests {
 
     @Test("An empty library prints nothing at all")
     func emptyListingIsEmpty() {
-        #expect(TableRenderer.render([], quiet: false).isEmpty)
-        #expect(TableRenderer.render([], quiet: true).isEmpty)
+        #expect(TableRenderer.render([VMSummary](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([VMSummary](), quiet: true).isEmpty)
     }
 
     // MARK: - Info
@@ -104,6 +104,115 @@ struct CLIRenderingTests {
     @Test("--quiet on info prints the name alone")
     func quietInfoIsTheNameAlone() {
         #expect(TableRenderer.render(info(), quiet: true) == "Alpha")
+    }
+
+    // MARK: - Snapshots
+
+    private let taken = Date(timeIntervalSince1970: 1_770_000_000)
+
+    private func snapshot(
+        name: String, id: UUID = UUID(), isCurrent: Bool = false, kind: String = "warm"
+    ) -> SnapshotSummary {
+        SnapshotSummary(
+            id: id, name: name, notes: "", kind: kind, createdAt: taken, isCurrent: isCurrent,
+            isEphemeralBaseline: false)
+    }
+
+    @Test("A snapshot listing names every column #309 asks for, and marks the current one")
+    func snapshotListingCarriesEveryColumn() {
+        let rows = [
+            SnapshotRow(snapshot(name: "Base", isCurrent: true), onDiskBytes: 1_500_000_000),
+            SnapshotRow(snapshot(name: "Before Upgrade", kind: "cold"), onDiskBytes: 0),
+        ]
+        let lines = TableRenderer.render(rows, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        for heading in ["NAME", "CURRENT", "KIND", "TAKEN", "SIZE", "ID"] {
+            #expect(lines[0].contains(heading), "missing \(heading)")
+        }
+        #expect(lines[1].contains("Base"))
+        #expect(lines[1].contains("warm"))
+        #expect(lines[2].contains("cold"))
+        // The marker is on the current row and nowhere else.
+        #expect(lines[1].contains("*"))
+        #expect(!lines[2].contains("*"))
+        #expect(!lines[0].contains("*"))
+    }
+
+    @Test("A size reads in the unit Finder states a file in, not the one memory is counted in")
+    func snapshotSizesUseTheFileStyle() {
+        let fileStyle = ByteCountFormatter.string(fromByteCount: 1_500_000_000, countStyle: .file)
+        let memoryStyle = ByteCountFormatter.string(
+            fromByteCount: 1_500_000_000, countStyle: .memory)
+        // The assertion below only means something while the two styles differ
+        // for this value, which is the whole reason it was chosen.
+        #expect(fileStyle != memoryStyle)
+
+        let rendered = TableRenderer.render(
+            [SnapshotRow(snapshot(name: "Base"), onDiskBytes: 1_500_000_000)], quiet: false)
+        #expect(rendered.contains(fileStyle))
+        #expect(!rendered.contains(memoryStyle))
+    }
+
+    @Test("A size the app did not answer for reads as unknown, never as nothing at all")
+    func anUnansweredSizeReadsAsUnknown() {
+        let rendered = TableRenderer.render(
+            [SnapshotRow(snapshot(name: "Base"), onDiskBytes: nil)], quiet: false)
+        #expect(rendered.contains("Unknown"))
+    }
+
+    @Test("A capture date reads in this Mac's own words, not the wire's")
+    func snapshotDatesReadAsWords() {
+        let rendered = TableRenderer.render(
+            [SnapshotRow(snapshot(name: "Base"), onDiskBytes: 0)], quiet: false)
+        #expect(rendered.contains(taken.formatted(date: .abbreviated, time: .shortened)))
+    }
+
+    @Test("--quiet on a snapshot listing prints names alone, one per line")
+    func quietSnapshotListingIsNamesOnly() {
+        let rows = [
+            SnapshotRow(snapshot(name: "Base", isCurrent: true), onDiskBytes: 1),
+            SnapshotRow(snapshot(name: "Before Upgrade"), onDiskBytes: 2),
+        ]
+        #expect(TableRenderer.render(rows, quiet: true) == "Base\nBefore Upgrade")
+    }
+
+    @Test("A virtual machine with nothing captured prints nothing at all")
+    func emptySnapshotListingIsEmpty() {
+        #expect(TableRenderer.render([SnapshotRow](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([SnapshotRow](), quiet: true).isEmpty)
+    }
+
+    @Test("A snapshot's JSON is the wire DTO's own fields plus the size, decodable back")
+    func snapshotJSONIsTheWireDTOPlusItsSize() throws {
+        let summary = snapshot(name: "Base", isCurrent: true)
+        let rendered = try JSONRenderer.render([SnapshotRow(summary, onDiskBytes: 4_096)])
+
+        // The renderer writes dates ISO 8601, which is the form a script parses
+        // and the one the decoder has to be told to read back.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([SnapshotSummary].self, from: Data(rendered.utf8))
+        #expect(decoded == [summary])
+        let objects = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
+        let row = try #require(objects.first)
+        for field in [
+            "id", "name", "notes", "kind", "createdAt", "isCurrent", "isEphemeralBaseline",
+            "onDiskBytes",
+        ] {
+            #expect(row[field] != nil, "missing \(field)")
+        }
+        #expect(row["onDiskBytes"] as? Int == 4_096)
+    }
+
+    @Test("A size the app did not answer for is absent from the JSON, never a zero")
+    func anUnansweredSizeIsAbsentFromJSON() throws {
+        let rendered = try JSONRenderer.render(SnapshotRow(snapshot(name: "Base"), onDiskBytes: nil))
+        let row = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
+        #expect(row["onDiskBytes"] == nil)
+        #expect(row["name"] as? String == "Base")
     }
 
     // MARK: - Addresses
