@@ -193,6 +193,17 @@ expect_last '^make-verdict: verdict=setup-error reason=xcodebuild-missing '
 cmp -s "$tmp/out/build.verdict" "$tmp/last" || fail "$name: setup error left a stale or missing verdict file"
 run "help" 0 verdict --help
 expect_lines 0
+printf 'stale\n' >"$tmp/out/build.verdict"
+printf '%s\n' "$$" >"$tmp/out/make-verdict.pid"
+run "second start while one runs" 5 with_log build-ok.log 0 build
+expect_last '^make-verdict: verdict=setup-error reason=already-running target=build suite=-$'
+[ "$(cat "$tmp/out/build.verdict")" = stale ] || fail "$name: refused start touched the running run's verdict file"
+[ "$(cat "$tmp/out/make-verdict.pid")" = "$$" ] || fail "$name: refused start touched the pid file"
+( : ) & dead=$!; wait "$dead"
+printf '%s\n' "$dead" >"$tmp/out/make-verdict.pid"
+run "pid file of a dead run does not block" 0 with_log build-ok.log 0 build
+expect_last '^make-verdict: verdict=green '
+[ ! -e "$tmp/out/make-verdict.pid" ] || fail "$name: pid file left behind"
 
 # ---- xcresult-report.sh ----------------------------------------------------
 

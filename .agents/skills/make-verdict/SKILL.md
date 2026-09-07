@@ -15,7 +15,11 @@ Run the make target named by the arguments through this skill's script. Argument
 
 From the repository root, run the command exactly as written in the table, as a background shell call — in Claude Code, the Bash tool with `run_in_background`, which has no timeout — then act on the completion notification.
 
-The script's stdout is the verdict. It also writes the same lines to `artifacts/make-verdict/<target>.verdict`, with `<target>` the first argument, on every exit — setup errors included; that file is the pickup path when the completion notification never arrives, as when a session ended mid-run. Check for the file, and check `pgrep -f make-verdict.sh` before ever starting the script again: a second start begins a second build.
+The script's stdout is the verdict. It also writes the same lines to `artifacts/make-verdict/<target>.verdict`, with `<target>` the first argument, on every exit — setup errors included.
+
+The verdict file is removed when a run starts and appears whole when it ends, so its existence is the completion signal: the pickup path when the completion notification never arrives, as when a session ended mid-run, and the thing to wait on when a wait is needed.
+
+A start while a run is in progress is refused with `setup-error reason=already-running` and touches nothing, so nothing needs checking before starting one.
 
 The verdict's last line names one of these tokens:
 
