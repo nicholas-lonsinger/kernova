@@ -37,6 +37,8 @@ protocol AppResidencyHosting: WindowResidencyHosting {
     /// Opens every automation front door, before any launch presentation, so a
     /// request delivered during launch is answered rather than dropped.
     func registerAutomationFrontDoors()
+    /// Answers one `kernova:` link delivered to `application(_:open:)`.
+    func openAutomationLink(_ url: URL)
     /// Brings the process up for the launch it was given.
     func start(provenance: AppResidencyController.LaunchProvenance)
     /// The answer to `applicationShouldTerminateAfterLastWindowClosed(_:)`.
@@ -94,6 +96,10 @@ final class AppResidencyController: AppResidencyHosting {
     /// `AppDependencyManager` owns the intent gateway copy intents resolve.
     private var commandSocket: VMCommandSocketListener?
 
+    /// The `kernova:` link front door, held for the life of the process: it
+    /// memoizes the readiness await every link shares.
+    private var urlGateway: VMURLGateway?
+
     /// The menu-bar status item — the "Kernova is running" affordance and the way
     /// to summon the GUI while headless.
     ///
@@ -134,7 +140,7 @@ final class AppResidencyController: AppResidencyHosting {
 
     // MARK: - Automation front doors
 
-    /// Opens both out-of-process front doors, so a request delivered during
+    /// Opens every out-of-process front door, so a request delivered during
     /// launch is answered rather than failing for a door that isn't there yet.
     ///
     /// The App Intents gateway is retained by the dependency manager and lives
@@ -149,6 +155,10 @@ final class AppResidencyController: AppResidencyHosting {
     /// takes the same readiness await for the same reason: it is bound before
     /// the library read lands, so that a tool which just launched the app finds
     /// something to connect to.
+    ///
+    /// The link gateway takes it too, and for the plainest case of all: a
+    /// clicked link is what launched the app, and its verb has to wait for the
+    /// library that launch is still reading.
     func registerAutomationFrontDoors() {
         let gateway = VMIntentGateway(
             commands: viewModel.commands,
@@ -176,6 +186,26 @@ final class AppResidencyController: AppResidencyHosting {
             onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() })
         socket.start()
         commandSocket = socket
+
+        urlGateway = VMURLGateway(
+            commands: viewModel.commands,
+            awaitReady: { [weak self] in
+                guard let self else { return }
+                await self.awaitLibraryReady()
+            },
+            activate: { [weak self] in self?.activateForExternalRequest() },
+            summonLibrary: { [weak self] in self?.presentSummonedInterface() },
+            present: { [weak self] refusal in
+                self?.viewModel.surfaceUnawaitedFailure(refusal)
+            })
+    }
+
+    func openAutomationLink(_ url: URL) {
+        guard let urlGateway else {
+            Self.logger.warning("A Kernova link arrived before the automation doors opened")
+            return
+        }
+        Task { await urlGateway.handle(url) }
     }
 
     /// Awaits the app's first library read on the main actor, so the gateway's

@@ -63,6 +63,10 @@ final class TestHostResidencyController: AppResidencyHosting {
     /// put the test host in front of any `kernova` the developer ran meanwhile.
     func registerAutomationFrontDoors() {}
 
+    /// Nothing to answer: the test host registers no URL scheme, so no link is
+    /// ever delivered to it.
+    func openAutomationLink(_ url: URL) {}
+
     /// Nothing to do: the test host is already a foreground `.regular` app, and
     /// it opens no command socket to be asked from.
     func activateForExternalRequest() {}

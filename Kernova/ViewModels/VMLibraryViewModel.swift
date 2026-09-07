@@ -571,11 +571,16 @@ final class VMLibraryViewModel {
             // VM only arms a focus that the next display-state pass clears.
             // Detached windows are their own surface and need no selection.
             selectedID = instance.id
+            // Whether or not a window already exists, exactly as
+            // `revealInLibrary` asks: the inline display *is* part of the
+            // library window, so one buried behind another app, miniaturized,
+            // or never created has surfaced nothing — and `focusGuestDisplay`
+            // only moves the first responder, which nobody can see.
+            onSurfaceLibrary?()
             guard let presenter else {
                 // No window has ever been created, so there is no inline display
-                // to focus yet. Ask for one and focus when it attaches.
+                // to focus yet. The one just asked for focuses when it attaches.
                 bufferedDisplayFocus = instance.id
-                onSurfaceLibrary?()
                 return
             }
             presenter.focusGuestDisplay(for: instance)
@@ -584,11 +589,6 @@ final class VMLibraryViewModel {
 
     /// Selects the VM and asks for the library window — what a reveal lands on
     /// when there is no display to surface.
-    ///
-    /// The library is asked for whether or not a window already exists, unlike
-    /// the inline branch of ``surfaceDisplay(for:)``: a reveal answers somebody
-    /// who asked for this VM from outside the app, and a window sitting behind
-    /// every other one has not answered them.
     private func revealInLibrary(_ instance: VMInstance) {
         selectedID = instance.id
         onSurfaceLibrary?()
@@ -1205,6 +1205,16 @@ final class VMLibraryViewModel {
         } catch {
             present(error, for: instance)
         }
+    }
+
+    /// Shows a refusal nobody is waiting for.
+    ///
+    /// A `kernova:` link has no caller to answer to, so the app is where its
+    /// refusal lands — through the same routing every in-app refusal takes,
+    /// buffering included, so a refusal raised while the window it will be
+    /// shown in is still being built survives to reach it.
+    func surfaceUnawaitedFailure(_ failure: CommandError) {
+        present(failure, for: nil)
     }
 
     /// The single place a ``CommandError`` becomes something on screen.
