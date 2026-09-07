@@ -65,6 +65,7 @@ struct VMCommandEnvelopeTests {
             .info(selector),
             .ipAddress(selector),
             .snapshots(selector),
+            .snapshotOnDiskBytes(selector),
             .events,
             .start(selector, recovery: true, presentation: .surface),
             .start(selector, recovery: false, presentation: .headless),
@@ -82,6 +83,7 @@ struct VMCommandEnvelopeTests {
             .restart(selector, presentation: .headless, timeout: 120),
             .open(selector),
             .reveal(selector),
+            .showInFinder(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
             .revertToSnapshot(
                 selector, snapshot: snapshotID, takingCheckpoint: true, confirmed: true),
@@ -93,6 +95,7 @@ struct VMCommandEnvelopeTests {
             .delete(selector, permanently: true, alsoRemoving: [snapshotID], confirmed: true),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova"),
             .cancelPreparing(selector, confirmed: true),
+            .awaitPreparing(selector),
             .editStorageDisk(selector, .create(sizeInGB: 32)),
             .editStorageDisk(selector, .remove(disk: diskID, trashFile: true, confirmed: false)),
             .editStorageDisk(selector, .rename(disk: diskID, newLabel: "Scratch")),
@@ -189,11 +192,17 @@ struct VMCommandEnvelopeTests {
             #expect(verb.surfacesInterface, "\(verb)")
         }
         // A quit takes the app down; there is nothing to bring forward first,
-        // and doing so would flash a window on the way out.
+        // and doing so would flash a window on the way out. A Finder reveal
+        // brings the Finder forward, and an import asks for permission only
+        // when it has to, bringing the app forward itself at that point.
         let silent: [VMCommandRequest.Verb] = [
             .quit,
             .list,
             .info(selector),
+            .snapshotOnDiskBytes(selector),
+            .showInFinder(selector),
+            .importVM(path: "/Users/somebody/Downloads/Alpha.kernova"),
+            .awaitPreparing(selector),
             .start(selector, recovery: false, presentation: .headless),
             .resume(selector, presentation: .headless),
             .restart(selector, presentation: .headless, timeout: nil),
@@ -216,6 +225,10 @@ struct VMCommandEnvelopeTests {
             .ipAddress(.pending),
             .snapshots([snapshot]),
             .snapshot(snapshot),
+            // A snapshot of a large guest exceeds what 32 bits can name, so the
+            // width is part of what has to survive the trip.
+            .snapshotSizes([snapshotID: 12_884_901_888]),
+            .snapshotSizes([:]),
             .event(.added(summary)),
             .event(.removed(id: vmID, name: "Alpha")),
             .event(.statusChanged(id: vmID, name: "Alpha", from: "stopped", to: "running")),

@@ -160,7 +160,10 @@ final class AppResidencyController: AppResidencyHosting {
         AppDependencyManager.shared.add(dependency: gateway)
 
         let socket = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: viewModel.commands),
+            router: VMCommandEnvelopeRouter(
+                commands: viewModel.commands,
+                importAuthority: PowerboxImportAuthority(
+                    activate: { [weak self] in self?.activateForExternalRequest() })),
             authorizer: SameTeamPeerAuthorizer(),
             socketPath: KernovaAppGroup.socketPath(),
             awaitReady: { [weak self] in

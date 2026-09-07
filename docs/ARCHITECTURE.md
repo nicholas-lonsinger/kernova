@@ -306,7 +306,8 @@ session down without that hook, so a suspended session survives to revert at its
   by `VMSelector` and refusals speak one `CommandError` vocabulary; consent is a non-defaulted
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
   confirming entails. It presents nothing and imports no AppKit — a display leaves through the
-  `surfaceDisplay` hook, a VM with no display to surface through `revealInLibrary`, an unawaited
+  `surfaceDisplay` hook, a VM with no display to surface through `revealInLibrary`, a VM's bundle
+  in the Finder through `revealInFinder`, an unawaited
   failure through `onFailure`, and the quit verb's termination through `requestQuit` — and
   `events()` vends an
   `AsyncStream<[VMLibraryEvent]>`, one element per diffing pass, plus the clone/import copy
@@ -319,14 +320,20 @@ session down without that hook, so a suspended session survives to revert at its
   what reserves the destination atomically on the MainActor, so overlapping imports and clones
   cannot claim the same bundle URL.
 - `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
-  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core.
+  encodes a `VMCommandResponse`. It depends on the protocol, never the concrete core. An import
+  crosses as a path its sandboxed caller holds no grant for, so the router puts it through an
+  injected `ImportSourceAuthorizing` — `PowerboxImportAuthority` in the app — which answers a URL
+  this process may read, asking the user for the bundle through an open panel when the sandbox does
+  not already admit it.
 - `VMIntentGateway` — the App Intents boundary, built and published through `AppDependencyManager`
   by `AppResidencyController` so every
   intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity
   carries the resolved identifier), and awaits the app's first library read before any verb or read,
   since an intent can be delivered while that read is still in flight. It presents nothing: a
   `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
-  gathered by re-issuing the verb with `confirmed: true`. It
+  gathered by re-issuing the verb with `confirmed: true`. An import arrives as a `FileEntity`
+  whose security scope is the caller's, so it is the one verb the gateway awaits to settlement
+  (`awaitPreparing`), holding that scope for as long as the copy reads through it. It
   follows `events()` from the first library read on: each batch writes the VMs it added, renamed,
   or removed to the Spotlight index through `VMEntityIndexing`, the index Spotlight search matches
   a VM name in.

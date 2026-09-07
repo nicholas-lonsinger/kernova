@@ -32,6 +32,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case info
     case ipAddress
     case snapshots
+    case snapshotOnDiskBytes
     case events
     case start
     case cancelGuestSetup
@@ -42,6 +43,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case restart
     case open
     case reveal
+    case showInFinder
     case takeSnapshot
     case revertToSnapshot
     case deleteSnapshot
@@ -53,6 +55,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case delete
     case importVM
     case cancelPreparing
+    case awaitPreparing
     case editStorageDisk
     case editRemovableMedia
     case editSharedDirectory
@@ -69,6 +72,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .info: "Get Info"
         case .ipAddress: "Get IP Address"
         case .snapshots: "List Snapshots"
+        case .snapshotOnDiskBytes: "Get Snapshot Sizes"
         case .events: "Watch Events"
         case .start: "Start"
         case .cancelGuestSetup: "Cancel Setup"
@@ -79,6 +83,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .restart: "Restart"
         case .open: "Open"
         case .reveal: "Reveal"
+        case .showInFinder: "Show in Finder"
         case .takeSnapshot: "Take Snapshot"
         case .revertToSnapshot: "Revert to Snapshot"
         case .deleteSnapshot: "Delete Snapshot"
@@ -90,6 +95,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .delete: "Delete"
         case .importVM: "Import"
         case .cancelPreparing: "Cancel"
+        case .awaitPreparing: "Wait for Copy"
         case .editStorageDisk: "Edit Storage Disks"
         case .editRemovableMedia: "Edit Removable Media"
         case .editSharedDirectory: "Edit Shared Directories"
@@ -102,11 +108,14 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// "accepts now" tells a user nothing.
     ///
     /// The reads, which only answer a question, the reveal that brings a VM in
-    /// front of the user whatever state it is in, and the quit, which addresses
-    /// no VM at all.
+    /// front of the user whatever state it is in, the Finder reveal and the
+    /// settle wait, which address the bundle rather than the guest, and the
+    /// quit, which addresses no VM at all.
     public var isAdmittedInEveryState: Bool {
         switch self {
-        case .list, .info, .ipAddress, .snapshots, .events, .reveal, .quit: true
+        case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .events, .reveal,
+            .showInFinder, .awaitPreparing, .quit:
+            true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,

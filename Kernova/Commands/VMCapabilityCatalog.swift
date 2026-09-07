@@ -78,8 +78,9 @@ enum VMCapability: CaseIterable, Hashable {
         case .rename: .rename
         case .delete: .delete
         case .cancelPreparing: .cancelPreparing
+        case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
-        case .startInRecovery, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
+        case .startInRecovery, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleSettingsPane:
             nil
         }

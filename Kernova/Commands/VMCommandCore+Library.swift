@@ -447,6 +447,28 @@ extension VMCommandCore {
             dismissTitle: "Continue")
     }
 
+    // MARK: - Await Preparing
+
+    /// Waits for the copy still writing this VM's bundle to settle, answering
+    /// the settled row.
+    ///
+    /// The copy task is the single owner of the settle, so awaiting it is
+    /// enough: by the time it returns the row has been published, dropped by a
+    /// failure, or dropped by a cancel — and which of the three it was is read
+    /// off the library and the row rather than tracked here.
+    func awaitPreparing(_ selector: VMSelector) async throws -> VMSummary {
+        let instance = try resolve(selector)
+        guard let state = instance.preparingState else { return summary(instance) }
+        await state.task.value
+        guard library.instances.contains(where: { $0 === instance }) else {
+            throw instance.preparingFailure
+                ?? .operationFailed(
+                    verb: .awaitPreparing,
+                    message: "The \(state.operation.displayNoun.lowercased()) was cancelled.")
+        }
+        return summary(instance)
+    }
+
     // MARK: - Delete
 
     func delete(

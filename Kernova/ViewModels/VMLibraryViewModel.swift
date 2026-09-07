@@ -410,6 +410,10 @@ final class VMLibraryViewModel {
     /// item's Quit performs.
     @ObservationIgnored var onRequestQuit: (() -> Void)?
 
+    /// Asks for a VM's bundle to be selected in the Finder, for the verb that
+    /// puts it there. The app delegate answers it with the Workspace call.
+    @ObservationIgnored var onRevealInFinder: ((VMInstance) -> Void)?
+
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
     @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
@@ -490,6 +494,9 @@ final class VMLibraryViewModel {
         }
         core.revealInLibrary = { [weak self] instance in
             self?.revealInLibrary(instance)
+        }
+        core.revealInFinder = { [weak self] instance in
+            self?.onRevealInFinder?(instance)
         }
         core.requestQuit = { [weak self] in
             self?.onRequestQuit?()
@@ -779,6 +786,13 @@ final class VMLibraryViewModel {
         }
     }
     #endif
+
+    // MARK: - Show in Finder
+
+    /// Selects the VM's bundle in the Finder.
+    func showVMInFinder(_ instance: VMInstance) {
+        runSync(on: instance) { try self.commands.showInFinder(.id(instance.id)) }
+    }
 
     // MARK: - Clone
 

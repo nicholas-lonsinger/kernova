@@ -755,6 +755,14 @@ extension VMCommandCore {
         }
     }
 
+    // MARK: - Show in Finder
+
+    func showInFinder(_ selector: VMSelector) throws {
+        let instance = try resolve(selector)
+        try require(.showInFinder, on: instance)
+        revealInFinder?(instance)
+    }
+
     // MARK: - Application
 
     /// Fires the quit from a later main-actor turn, so a transport waiting on

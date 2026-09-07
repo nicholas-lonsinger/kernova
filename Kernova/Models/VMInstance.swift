@@ -127,6 +127,15 @@ final class VMInstance {
 
     var isPreparing: Bool { preparingState != nil }
 
+    /// Why the create, clone or import that was writing this row's bundle
+    /// failed, for a caller that awaited the copy rather than the call that
+    /// started it.
+    ///
+    /// Written where the failure is reported, which is after the row has left
+    /// the library — so it is only ever read through the copy task, and is gone
+    /// with the row.
+    var preparingFailure: CommandError?
+
     /// The named restore points this VM's bundle holds, mirrored from
     /// `Snapshots/manifest.json`.
     ///

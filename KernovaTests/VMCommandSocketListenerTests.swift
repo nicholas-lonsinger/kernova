@@ -85,7 +85,8 @@ struct VMCommandSocketListenerTests {
         let readiness = LibraryReadiness(landed: libraryHasLanded)
         let path = temporarySocketPath()
         let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: commands),
+            router: VMCommandEnvelopeRouter(
+                commands: commands, importAuthority: MockImportSourceAuthority()),
             authorizer: authorizer,
             socketPath: path,
             awaitReady: { await readiness.wait() },
@@ -293,7 +294,8 @@ struct VMCommandSocketListenerTests {
     @Test("A build with no group container publishes no socket")
     func noContainerBindsNothing() {
         let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
+            router: VMCommandEnvelopeRouter(
+                commands: MockVMCommanding(), importAuthority: MockImportSourceAuthority()),
             authorizer: MockPeerAuthorizer(),
             socketPath: nil,
             awaitReady: {},
@@ -307,7 +309,8 @@ struct VMCommandSocketListenerTests {
     func noAuthorizerBindsNothing() {
         let path = temporarySocketPath()
         let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
+            router: VMCommandEnvelopeRouter(
+                commands: MockVMCommanding(), importAuthority: MockImportSourceAuthority()),
             authorizer: nil,
             socketPath: path,
             awaitReady: {},

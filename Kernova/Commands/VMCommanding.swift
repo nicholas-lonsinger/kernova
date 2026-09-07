@@ -133,6 +133,12 @@ protocol VMCommanding: AnyObject {
     /// on a found VM needs, where the VM is stopped as often as not.
     func reveal(_ selector: VMSelector) throws
 
+    /// Selects the VM's bundle in the Finder.
+    ///
+    /// A bundle a create, clone or import is still writing lives under a hidden
+    /// staging path until the write is published, so a preparing VM refuses.
+    func showInFinder(_ selector: VMSelector) throws
+
     // MARK: - Snapshots
 
     @discardableResult
@@ -182,6 +188,16 @@ protocol VMCommanding: AnyObject {
 
     /// Cancels an in-flight create, clone or import and removes its row.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
+
+    /// Waits for a create, clone or import that is still writing its bundle to
+    /// settle, answering the settled row.
+    ///
+    /// Answers at once for a VM that is not preparing. Throws the copy's own
+    /// failure when it failed — the same ``CommandError`` the unattended
+    /// ``VMCommandCore/onFailure`` hook receives — and an
+    /// ``CommandError/operationFailed(verb:title:message:recovery:)`` when it
+    /// was cancelled.
+    func awaitPreparing(_ selector: VMSelector) async throws -> VMSummary
 
     // MARK: - Storage Disks
 

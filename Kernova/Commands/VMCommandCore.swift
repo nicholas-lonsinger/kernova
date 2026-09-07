@@ -54,6 +54,12 @@ final class VMCommandCore: VMCommanding {
     /// on different surfaces and only the adapter knows either.
     var revealInLibrary: ((VMInstance) -> Void)?
 
+    /// Selects a VM's bundle in the Finder, bringing the Finder forward.
+    ///
+    /// A hook rather than a call, for the reason ``surfaceDisplay`` states:
+    /// what a file lands in front of the user through is an AppKit question.
+    var revealInFinder: ((VMInstance) -> Void)?
+
     /// Receives every failure raised with no command call waiting on it — an
     /// Ephemeral baseline revert a power-off started, an external file that
     /// could not be trashed after its VM was deleted, the boot chained off a
@@ -449,11 +455,16 @@ final class VMCommandCore: VMCommanding {
     /// reaches no observable field and no diff can ever produce it, which is
     /// why it is emitted directly rather than left to the loop.
     func reportPreparingFailure(_ error: Error, verb: VMVerb, phantom: VMInstance) {
+        let failure = CommandError.operationFailed(
+            verb: verb, message: error.localizedDescription)
+        // The same failure `awaitPreparing` throws, so a caller waiting on the
+        // copy and one that was not are told the same thing.
+        phantom.preparingFailure = failure
         broadcaster.emit([
             .failure(
                 id: phantom.instanceID, name: phantom.name,
                 message: error.localizedDescription)
         ])
-        report(.operationFailed(verb: verb, message: error.localizedDescription), on: nil)
+        report(failure, on: nil)
     }
 }
