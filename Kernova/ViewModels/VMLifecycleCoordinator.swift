@@ -46,6 +46,15 @@ final class VMLifecycleCoordinator {
     /// claim and run alongside the first. Each body clears its own entry.
     private var unsettledOperations: [UUID: Int] = [:]
 
+    /// Maps VM ID → how that VM's most recent ``serialized`` body ended.
+    ///
+    /// One entry per VM: taking a claim drops it, and the body writes its own
+    /// before the count falls. What it buys a caller joining an operation is the
+    /// error the body actually threw — which is what the operation's own caller
+    /// gets, and is unrecoverable from the phase a failure rests at, since a
+    /// transient one rests at `.stopped` carrying no message.
+    private var settledOutcomes: [UUID: OperationOutcome] = [:]
+
     init(
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
@@ -69,6 +78,12 @@ final class VMLifecycleCoordinator {
     }
 
     // MARK: - Errors
+
+    /// How a ``serialized`` body ended.
+    enum OperationOutcome {
+        case succeeded
+        case failed(any Error)
+    }
 
     enum LifecycleError: LocalizedError {
         case operationInProgress(vmName: String)
@@ -106,11 +121,31 @@ final class VMLifecycleCoordinator {
         unsettledOperations[instanceID] != nil
     }
 
+    /// Suspends until no ``serialized`` body is still executing for this VM, and
+    /// answers with how the last one ended — `nil` when none had run.
+    ///
+    /// The outcome is read *inside* the wait's own predicate, at the instant the
+    /// count reaches zero. Reading it after the wait returned would be reading a
+    /// main-actor turn later, where the next operation's claim has already
+    /// replaced it. The predicate's one assignment is the exception to
+    /// ``waitForObservedChange(until:)``'s side-effect-free rule, and the reason
+    /// this seam exists instead of the bare wait at the call site.
+    func awaitSettledOutcome(for instanceID: UUID) async -> OperationOutcome? {
+        var captured: OperationOutcome?
+        await waitForObservedChange { [self] in
+            guard !hasUnsettledOperation(for: instanceID) else { return false }
+            captured = settledOutcomes[instanceID]
+            return true
+        }
+        return captured
+    }
+
     /// Removes any active-operation tracking for the given VM.
     ///
     /// Call when a VM is deleted to avoid stale entries in the dictionary.
     func clearActiveOperation(for instanceID: UUID) {
         activeOperations.removeValue(forKey: instanceID)
+        settledOutcomes.removeValue(forKey: instanceID)
     }
 
     /// Executes `body` only if no other operation is already in flight for this VM.
@@ -141,6 +176,7 @@ final class VMLifecycleCoordinator {
         let token = UUID()
         activeOperations[instance.id] = token
         unsettledOperations[instance.id, default: 0] += 1
+        settledOutcomes.removeValue(forKey: instance.id)
         defer {
             if activeOperations[instance.id] == token {
                 activeOperations.removeValue(forKey: instance.id)
@@ -152,7 +188,16 @@ final class VMLifecycleCoordinator {
         Self.logger.debug(
             "Acquired operation lock for '\(instance.name, privacy: .public)' (action: \(action, privacy: .public))")
         await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
-        return try await body()
+        // Recorded before the `defer` drops the count, so a caller waking on the
+        // count reaching zero finds the outcome already in place.
+        do {
+            let value = try await body()
+            settledOutcomes[instance.id] = .succeeded
+            return value
+        } catch {
+            settledOutcomes[instance.id] = .failed(error)
+            throw error
+        }
     }
 
     // MARK: - Lifecycle

@@ -245,8 +245,24 @@ struct VMCapabilityCatalog {
     /// and the lock a clone still copying this VM's files out of its bundle
     /// places on the source (``VMCapability/locksWhileCloned``).
     func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
+        isApplicable(capability, to: instance)
+            && transientBlockersClear(capability, on: instance)
+    }
+
+    /// The three transient layers ``isAvailable(_:on:)`` and ``accepts(_:on:)``
+    /// share: a bundle a create, clone or import is still writing
+    /// (``VMCapability/survivesPreparing``), the clone still copying this VM's
+    /// files out of its bundle (``VMCapability/locksWhileCloned``), and the
+    /// settle check for the commands an unsettled operation would reject
+    /// (``VMCapability/waitsForSettle``).
+    ///
+    /// Only the applicability term separates the two levels, so a capability
+    /// whose commit is wider than its offer widens that term alone and cannot
+    /// escape a blocker by being an exception.
+    private func transientBlockersClear(
+        _ capability: VMCapability, on instance: VMInstance
+    ) -> Bool {
         guard capability.survivesPreparing || !instance.isPreparing else { return false }
-        guard isApplicable(capability, to: instance) else { return false }
         guard !(capability.locksWhileCloned && library.hasCloneInFlight(from: instance)) else {
             return false
         }
@@ -262,23 +278,39 @@ struct VMCapabilityCatalog {
     /// Whether a commit of `capability` is taken now — what a verb's own guard
     /// asks, and what a refusal names as accepted.
     ///
-    /// Identical to ``isAvailable(_:on:)`` everywhere but rename and the two
-    /// bring-up verbs, each of which takes a state it is not offered in.
+    /// ``isAvailable(_:on:)`` over ``admitsCommit(_:on:)``: the transient
+    /// blockers are the same, and only the state term is wider.
     func accepts(_ capability: VMCapability, on instance: VMInstance) -> Bool {
+        admitsCommit(capability, on: instance)
+            && transientBlockersClear(capability, on: instance)
+    }
+
+    /// Whether the VM's own state takes a *commit* of `capability` —
+    /// ``isApplicable(_:to:)`` everywhere but the capabilities deliberately
+    /// taken in a state they are not offered in.
+    ///
+    /// Exhaustive rather than `default`, so a new capability has to choose a
+    /// side here too.
+    private func admitsCommit(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         switch capability {
         case .start:
-            // A start committed against a VM already coming up is asking for
-            // the state that bring-up is producing, so it joins it
-            // (``VMCommandCore/start(_:recovery:presentation:)``) instead of
-            // refusing a VM that is on its way to running. Offering it is a
-            // different question: ``isAvailable(_:on:)`` is unchanged, so the
-            // GUI's Start stays disabled for the whole boot.
-            if case .starting = instance.phase { return true }
-            return isAvailable(capability, on: instance)
+            // A start committed against a VM already coming up is asking for the
+            // state that bring-up is producing, so it joins it
+            // (``VMCommandCore/start(_:recovery:presentation:)``) rather than
+            // refusing a VM on its way to running. Both bring-up phases count:
+            // a boot with a save file passes through `.starting` into
+            // `.restoringSavedState` before its first await, so the restore is
+            // the whole of what another caller can observe. Offering it is the
+            // separate question ``isAvailable(_:on:)`` answers.
+            switch instance.phase {
+            case .starting, .restoringSavedState: return true
+            default: return isApplicable(.start, to: instance)
+            }
         case .resume:
-            // The restore's counterpart of the start join above.
+            // The same join, for the one bring-up phase a resume of its own
+            // stands in.
             if case .restoringSavedState = instance.phase { return true }
-            return isAvailable(capability, on: instance)
+            return isApplicable(.resume, to: instance)
         case .rename:
             // Offering a rename and taking one are deliberately different
             // states. A rename rewrites the name and nothing a running
@@ -287,14 +319,14 @@ struct VMCapabilityCatalog {
             // traded for an alert — only the revert that will assign a whole
             // configuration back over this one refuses
             // (``VMLifecyclePhase/renamePersists``).
-            return !instance.isPreparing && instance.renamePersists
+            return instance.renamePersists
         case .info, .ipAddress, .snapshots, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone, .delete,
             .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleGuestAgentDisk, .toggleSettingsPane:
-            return isAvailable(capability, on: instance)
+            return isApplicable(capability, to: instance)
         }
     }
 }

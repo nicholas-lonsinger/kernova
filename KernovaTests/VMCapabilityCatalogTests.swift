@@ -4,8 +4,8 @@ import Testing
 @testable import Kernova
 
 /// The one place per-VM command capability is derived: what each state admits,
-/// what a transient blocker takes away, and the three capabilities whose commit
-/// is deliberately wider than their offer.
+/// what a transient blocker takes away, and the capabilities whose commit is
+/// deliberately wider than their offer.
 @Suite("VMCapabilityCatalog Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCapabilityCatalogTests {
@@ -304,11 +304,17 @@ struct VMCapabilityCatalogTests {
 
     // MARK: - Bring-up: offer versus accept
 
-    @Test("A start is taken against a VM already coming up, and offered on none")
-    func startAcceptsAVMAlreadyStarting() {
+    @Test("A start is taken in either bring-up phase, and offered in neither")
+    func startAcceptsAVMAlreadyComingUp() {
         // What lets the CLI verb that cold-launched the app join the boot the
-        // launch auto-start pass began, in whichever order the two resumed.
-        for phase: VMLifecyclePhase in [.starting(sessionID: nil), .starting(sessionID: UUID())] {
+        // launch auto-start pass began, in whichever order the two resumed. The
+        // restore phases carry it too: a boot with a save file spends its whole
+        // observable window there, not in `.starting`.
+        let bringingUp: [VMLifecyclePhase] = [
+            .starting(sessionID: nil), .starting(sessionID: UUID()),
+            .restoringSavedState(sessionID: nil), .restoringSavedState(sessionID: UUID()),
+        ]
+        for phase in bringingUp {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: phase)
 
@@ -316,6 +322,25 @@ struct VMCapabilityCatalogTests {
             #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
             #expect(!harness.catalog.isAvailable(.start, on: instance), "\(phase)")
         }
+    }
+
+    @Test("The bring-up exceptions widen the state term only, not the transient blockers")
+    func bringUpExceptionsStillHonorTheCloneLock() {
+        // A start locks the source of a clone still copying files out of its
+        // bundle, and joining one does not exempt it: the exception replaces
+        // what the VM's own state admits, and nothing else.
+        let harness = makeHarness()
+        let source = makeInstance(in: harness, name: "Source", phase: .starting(sessionID: nil))
+        let phantom = makeInstance(in: harness, name: "Source copy")
+        let task = Task {}
+        defer { task.cancel() }
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: source.id), task: task)
+
+        #expect(!harness.catalog.accepts(.start, on: source))
+
+        phantom.preparingState = nil
+        #expect(harness.catalog.accepts(.start, on: source))
     }
 
     @Test("A resume is taken against a VM already restoring, and offered on none")
@@ -363,13 +388,15 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.accepts(.rename, on: instance))
     }
 
-    @Test("Outside the three offer-versus-accept exceptions, a commit is exactly an offer")
+    @Test("Outside the offer-versus-accept exceptions, a commit is exactly an offer")
     func acceptanceMatchesAvailabilityElsewhere() {
         /// The pairs the two levels are deliberately allowed to disagree on:
         /// rename in every phase, and each bring-up verb in the phase it joins.
         func isAnException(_ capability: VMCapability, in phase: VMLifecyclePhase) -> Bool {
             switch (capability, phase) {
-            case (.rename, _), (.start, .starting), (.resume, .restoringSavedState): true
+            case (.rename, _), (.start, .starting), (.start, .restoringSavedState),
+                (.resume, .restoringSavedState):
+                true
             default: false
             }
         }

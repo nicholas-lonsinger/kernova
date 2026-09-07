@@ -13,23 +13,25 @@ extension VMCommandCore {
     }
 
     /// The start every surface reaches, with the instance already resolved.
-    ///
-    /// The join stated in ``VMCommanding/start(_:recovery:presentation:)`` is
-    /// what makes a cold launch deterministic: the launch auto-start pass and
-    /// the socket verb that woke the app resume off the same first library
-    /// read, and either order now ends with the VM running.
     func start(
         _ instance: VMInstance, recovery: Bool = false,
         presentation: VMDisplayPresentation = .surface
     ) async throws {
         try require(.start, on: instance)
-        if case .starting = instance.phase {
+        // Both phases a bring-up stands in: a boot with a save file leaves
+        // `.starting` for `.restoringSavedState` before its first await.
+        switch instance.phase {
+        case .starting, .restoringSavedState:
             guard !recovery else {
-                throw CommandError.busy(vm: summary(instance), operation: "starting")
+                throw CommandError.busy(
+                    vm: summary(instance), operation: instance.status.displayName.lowercased())
             }
             if presentation == .surface { surfaceDisplay?(instance) }
-            try await joinBringUp(instance, verb: .start)
-            return
+            return try await joinBringUp(instance, verb: .start) {
+                startFailure($0, on: instance)
+            }
+        default:
+            break
         }
         if recovery, !capabilities.accepts(.startInRecovery, on: instance) {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
@@ -63,20 +65,31 @@ extension VMCommandCore {
 
     // MARK: - Joining a Bring-Up
 
-    /// Waits out the bring-up already in flight for `instance` and answers by
-    /// where it left the VM.
+    /// Waits out the bring-up already in flight for `instance` and answers with
+    /// what that bring-up answered its own caller.
+    ///
+    /// `refusal` is the verb's own error mapping, so a joined failure carries
+    /// the removable attachment or the capacity explanation the direct caller
+    /// gets rather than a second, blander rendering — a transient failure rests
+    /// the VM at `.stopped` with no message at all, so the phase cannot supply
+    /// one.
     ///
     /// The wait is on the operation still running its body, not on the claim: a
     /// cold boot retrying VZ file-lock contention rests at
     /// ``VMLifecyclePhase/starting(sessionID:)`` with no session between
     /// attempts, and a claim that `stop` released is not an operation that has
     /// finished.
-    private func joinBringUp(_ instance: VMInstance, verb: VMVerb) async throws {
+    private func joinBringUp(
+        _ instance: VMInstance, verb: VMVerb, refusal: (any Error) -> CommandError
+    ) async throws {
         Self.logger.notice(
             "Joining the bring-up already in flight for '\(instance.name, privacy: .public)'")
-        await waitForObservedChange { [lifecycle] in
-            !lifecycle.hasUnsettledOperation(for: instance.id)
+        if case .failed(let error) = await lifecycle.awaitSettledOutcome(for: instance.id) {
+            throw refusal(error)
         }
+        // Reached when the bring-up reported success but the VM is not live —
+        // its session was released before the start settled, which rests the VM
+        // and reports nothing to a caller that was not waiting.
         guard instance.hasLiveSession else {
             let state = instance.status.displayName.lowercased()
             let message =
@@ -578,8 +591,9 @@ extension VMCommandCore {
 
         if case .restoringSavedState = instance.phase {
             if presentation == .surface { surfaceDisplay?(instance) }
-            try await joinBringUp(instance, verb: .resume)
-            return
+            return try await joinBringUp(instance, verb: .resume) {
+                failure($0, verb: .resume, on: instance)
+            }
         }
 
         // A cold resume builds a fresh VZVirtualMachine from the save file, so it

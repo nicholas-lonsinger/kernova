@@ -448,8 +448,7 @@ struct VMCommandCoreTests {
     func startJoinsTheBringUpAlreadyInFlight() async throws {
         // The cold-launch race: the launch auto-start pass and the socket verb
         // resume off the same library read, and whichever runs first claims the
-        // VM. The loser used to be refused against a `.starting` VM although the
-        // boot it asked for was already happening.
+        // VM. Both orders have to end with the VM running.
         let harness = makeSuspendingHarness()
         let instance = makeInstance(in: harness, name: "Joining")
 
@@ -470,10 +469,65 @@ struct VMCommandCoreTests {
         #expect(instance.status == .running)
     }
 
-    @Test("A joined start reports a boot that failed as an operation failure")
-    func joinedStartReportsTheFailedBoot() async throws {
+    @Test("A start joins a bring-up standing in the restore phase too")
+    func startJoinsARestoreInFlight() async throws {
+        // A boot with a save file leaves `.starting` for `.restoringSavedState`
+        // before its first await, so the restore is the whole window another
+        // caller can see — and it is the window a start-on-launch VM whose
+        // earlier resume failed before `restoreFailed` comes up in.
+        let harness = makeSuspendingHarness()
+        harness.virtualization.shouldSuspendOnResume = true
+        let instance = makeInstance(in: harness, name: "Restoring", phase: .suspended)
+
+        let restore = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
+        await harness.virtualization.waitUntilSuspended()
+        #expect(instance.status == .restoring)
+
+        Task { @MainActor in harness.virtualization.resumeSuspended() }
+        try await harness.core.start(.id(instance.id), recovery: false)
+        try await restore.value
+
+        #expect(harness.virtualization.startCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A joined start is refused with the error the boot gave its own caller")
+    func joinedStartCarriesTheBootsOwnRefusal() async throws {
+        // A transient start failure rests the VM at `.stopped` carrying no
+        // message, so only the error the operation threw can answer the joiner
+        // with what the direct caller was told.
         let harness = makeSuspendingHarness()
         let instance = makeInstance(in: harness, name: "Joining a failure")
+        // The running-VM cap: transient, so it rests the VM at `.stopped` with
+        // no message, and explained with a title of its own to whoever asked.
+        harness.virtualization.startError = makeVMLimitExceededError()
+
+        let first = Task { @MainActor in
+            try await harness.core.start(.id(instance.id), recovery: false)
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        Task { @MainActor in harness.virtualization.resumeSuspended() }
+        let joined = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+        let direct = try #require(await commandError { try await first.value })
+
+        // Identical, decoration included: the phase the VM rests at carries no
+        // message, so nothing rebuilt from it could have matched.
+        #expect(joined == direct)
+        #expect(joined.alertTitle == direct.alertTitle)
+        #expect(instance.phase.errorMessage == nil)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status != .running)
+    }
+
+    @Test("An operation starting after the boot settled does not change the joiner's verdict")
+    func joinedStartIsNotJudgedByAFollowingOperation() async throws {
+        // The joiner reads the outcome at the instant the operation count
+        // reaches zero. Whatever takes the claim next replaces the retained
+        // outcome, and the verdict already returned stands.
+        let harness = makeSuspendingHarness()
+        let instance = makeInstance(in: harness, name: "Followed")
         harness.virtualization.startError = VirtualizationError.noVirtualMachine
 
         let first = Task { @MainActor in
@@ -484,11 +538,16 @@ struct VMCommandCoreTests {
         Task { @MainActor in harness.virtualization.resumeSuspended() }
         let joined = try #require(
             await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+        _ = await commandError { try await first.value }
 
+        // A second boot now succeeds and settles its own outcome over the
+        // failure — the joiner's answer was taken before it and is unmoved.
+        harness.virtualization.startError = nil
+        harness.virtualization.shouldSuspendOnStart = false
+        try await harness.core.start(.id(instance.id), recovery: false)
+
+        #expect(instance.status == .running)
         #expect(joined.isOperationFailure)
-        #expect(await commandError { try await first.value }?.isOperationFailure == true)
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(instance.status != .running)
     }
 
     @Test("A start into Recovery refuses a VM already booting as busy")
@@ -997,6 +1056,36 @@ struct VMCommandCoreTests {
 
         try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: true)
         #expect(harness.virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+    }
+
+    @Test("A delete refuses as busy while an operation holds the VM's claim")
+    func deleteRefusedByTheLifecycleClaim() async throws {
+        // The claim is a gate of its own, behind the capability one: a revert
+        // reads its plan and copies files before it touches the phase, so the
+        // VM still reads deletable while its bundle is being rewritten.
+        let harness = makeSuspendingHarness()
+        harness.virtualization.shouldSuspendOnRevert = true
+        let snapshot = VMSnapshot(name: "Clean install")
+        let instance = makeInstance(
+            in: harness, name: "Reverting", phase: .suspended, snapshots: [snapshot])
+
+        let revert = Task { @MainActor in
+            try await harness.core.revertToSnapshot(
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, confirmed: true)
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        #expect(harness.library.capabilities.accepts(.delete, on: instance))
+        let error = try #require(
+            await commandError {
+                try await harness.core.delete(
+                    .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+            })
+        #expect(error.isBusy)
+        #expect(harness.storage.deleteVMBundleCallCount == 0)
+
+        harness.virtualization.resumeSuspended()
+        try await revert.value
     }
 
     @Test("A VM delete with no consent refuses and touches nothing")
