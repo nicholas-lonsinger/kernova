@@ -2,12 +2,13 @@ import ArgumentParser
 import Foundation
 import KernovaKit
 
-/// How a completion reaches Kernova.
+/// What one Tab press is answered against: the connection it may open, how long
+/// it waits, and the shell that asked.
 ///
-/// Its own door rather than the one the verbs use. A Tab press never starts the
-/// app — nobody pressing it asked for that — and never waits long: a shell that
-/// has not come back is worse than a shell offering nothing.
-struct CompletionChannel {
+/// Its own door to Kernova rather than the one the verbs use. A Tab press never
+/// starts the app — nobody pressing it asked for that — and never waits long: a
+/// shell that has not come back is worse than a shell offering nothing.
+struct CompletionContext {
     /// Opens a connection to a Kernova that is already running, `nil` when none
     /// is.
     let connect: () throws -> VMCommandClient?
@@ -15,11 +16,17 @@ struct CompletionChannel {
     /// How long one round trip may take.
     let deadline: TimeInterval
 
+    /// The shell waiting for the candidates, which decides how they are
+    /// written.
+    let shell: CompletionShell?
+
     /// What a Tab press actually uses.
     ///
     /// Two seconds, because the wait lands on somebody with a key held down.
-    static var live: CompletionChannel {
-        CompletionChannel(connect: CommandConnection.openIfRunning, deadline: 2)
+    static var live: CompletionContext {
+        CompletionContext(
+            connect: CommandConnection.openIfRunning, deadline: 2,
+            shell: CompletionShell.requesting)
     }
 }
 
@@ -52,23 +59,25 @@ enum CompletionSource {
     /// The settings a `set` assignment offers, each with the `=` its value
     /// follows.
     ///
-    /// Nothing once the word carries an `=`: past that the vocabulary is the
+    /// Nothing once the line is past the key: from there the vocabulary is the
     /// setting's own, and this offers keys.
-    static let configurationAssignment = CompletionKind.custom { _, _, prefix in
-        prefix.contains("=") ? [] : configurationKeys(suffix: "=")
+    static let configurationAssignment = CompletionKind.custom { words, index, prefix in
+        guard
+            !CompletionLine.isPastAnAssignmentKey(in: words, completingAt: index, prefix: prefix)
+        else { return [] }
+        return configurationKeys(suffix: "=")
     }
 
     // MARK: - The reads behind them
 
     /// Every virtual machine in the library, by name or — under `--id` — by
     /// identifier.
-    static func vmNames(byIdentifier: Bool, over channel: CompletionChannel = .live) -> [String] {
-        guard case .summaries(let rows)? = answer(to: .list, over: channel) else { return [] }
-        let shell = CompletionShell.requesting
+    static func vmNames(byIdentifier: Bool, in context: CompletionContext = .live) -> [String] {
+        guard case .summaries(let rows)? = answer(to: .list, in: context) else { return [] }
         return rows.map {
             byIdentifier
-                ? candidate($0.id.uuidString, describedBy: $0.name, for: shell)
-                : candidate($0.name, describedBy: $0.status, for: shell)
+                ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)
+                : candidate($0.name, describedBy: $0.status, for: context.shell)
         }
     }
 
@@ -78,38 +87,37 @@ enum CompletionSource {
     /// `byIdentifier` reads both arguments the way `--id` does: the machine is
     /// named by identifier, and so is what comes back.
     static func snapshotNames(
-        ofVM vm: String, byIdentifier: Bool, over channel: CompletionChannel = .live
+        ofVM vm: String, byIdentifier: Bool, in context: CompletionContext = .live
     ) -> [String] {
         guard let selector = try? SelectorParsing.selector(from: vm, forcingID: byIdentifier),
-            case .snapshots(let listed)? = answer(to: .snapshots(selector), over: channel)
+            case .snapshots(let listed)? = answer(to: .snapshots(selector), in: context)
         else { return [] }
-        let shell = CompletionShell.requesting
         return listed.map {
             byIdentifier
-                ? candidate($0.id.uuidString, describedBy: $0.name, for: shell)
-                : candidate($0.name, describedBy: $0.kind, for: shell)
+                ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)
+                : candidate($0.name, describedBy: $0.kind, for: context.shell)
         }
     }
 
     /// Every setting `get` and `set` address, each with `suffix` appended.
     static func configurationKeys(
-        suffix: String = "", over channel: CompletionChannel = .live
+        suffix: String = "", in context: CompletionContext = .live
     ) -> [String] {
         guard
-            case .configurationKeys(let descriptors)? = answer(
-                to: .configurationKeys, over: channel)
+            case .configurationKeys(let descriptors)? = answer(to: .configurationKeys, in: context)
         else { return [] }
-        let shell = CompletionShell.requesting
-        return descriptors.map { candidate($0.name + suffix, describedBy: $0.summary, for: shell) }
+        return descriptors.map {
+            candidate($0.name + suffix, describedBy: $0.summary, for: context.shell)
+        }
     }
 
     /// One round trip, or `nil` for every way one can fail.
     private static func answer(
-        to verb: VMCommandRequest.Verb, over channel: CompletionChannel
+        to verb: VMCommandRequest.Verb, in context: CompletionContext
     ) -> VMCommandResponse.Result? {
-        guard let client = (try? channel.connect()) ?? nil else { return nil }
+        guard let client = (try? context.connect()) ?? nil else { return nil }
         defer { client.close() }
-        client.waitForFrames(upTo: channel.deadline)
+        client.waitForFrames(upTo: context.deadline)
         return try? client.send(verb).payload()
     }
 

@@ -35,7 +35,7 @@ enum CompletionLine {
     /// - Returns: `nil` for a line no padding makes parse, which is a line
     ///   whose completion has nothing to offer.
     static func command(from words: [String], completingAt index: Int) -> ParsableCommand? {
-        let typed = Array(words.dropFirst().prefix(max(0, index - 1)))
+        let typed = words.dropFirst().prefix(max(0, index - 1)).map(dequoted)
         for unwritten in 0...maximumUnwrittenArguments {
             let line = typed + Array(repeating: placeholder, count: unwritten + 1)
             if let command = try? KernovaCommand.parseAsRoot(line) { return command }
@@ -43,11 +43,61 @@ enum CompletionLine {
         return nil
     }
 
+    /// `word` with the quoting a shell removes before a command sees it.
+    ///
+    /// Shells hand a custom completion their words verbatim, quotes and
+    /// escapes intact. A virtual machine called `Alpha Copy` — the name every
+    /// clone is given — is typed `'Alpha Copy'`, and a selector built from that
+    /// word with its quotes still on matches nothing.
+    ///
+    /// Enough of the grammar to undo what a user types: single quotes take
+    /// everything literally, double quotes and a bare backslash escape the
+    /// character after them.
+    static func dequoted(_ word: String) -> String {
+        var result = ""
+        var openQuote: Character?
+        var escaped = false
+        for character in word {
+            if escaped {
+                result.append(character)
+                escaped = false
+                continue
+            }
+            if character == "\\", openQuote != "'" {
+                escaped = true
+                continue
+            }
+            if let open = openQuote {
+                if character == open { openQuote = nil } else { result.append(character) }
+                continue
+            }
+            if character == "'" || character == "\"" {
+                openQuote = character
+                continue
+            }
+            result.append(character)
+        }
+        return result
+    }
+
     /// Whether the line reads its virtual machine and snapshot arguments as
     /// identifiers rather than as display names.
     static func forcesIdentifiers(in words: [String], completingAt index: Int) -> Bool {
         let command = command(from: words, completingAt: index)
         return (command as? any GlobalOptionsCommand)?.options.id ?? false
+    }
+
+    /// Whether the word being completed is a `set` assignment's value rather
+    /// than the key in front of it.
+    ///
+    /// Two shapes, because bash holds `=` in `COMP_WORDBREAKS` and splits
+    /// `cpus=` into three words: the `=` is either still inside the word the
+    /// cursor sits in, or it is the whole word behind it.
+    static func isPastAnAssignmentKey(
+        in words: [String], completingAt index: Int, prefix: String
+    ) -> Bool {
+        if prefix.contains("=") { return true }
+        return words.indices.contains(index - 1) && words[index - 1] == "="
     }
 
     /// The virtual machine whose snapshots the line is asking for, and whether

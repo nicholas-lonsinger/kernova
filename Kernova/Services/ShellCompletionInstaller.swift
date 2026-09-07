@@ -28,13 +28,19 @@ enum ShellCompletionInstaller {
 
         /// Where this shell looks for that file without being told to.
         ///
-        /// zsh's is a system path because that is the one entry every zsh
-        /// carries in `fpath` already; the other two are per-user because that
-        /// is where bash-completion and fish look first.
+        /// bash-completion and fish each look in a folder under the user's own
+        /// home. zsh's `fpath` entries are system paths, and the ones on a Mac
+        /// belong to root — `/usr/local/share` does not exist at all on a stock
+        /// one — so a `site-functions` a package manager already made the
+        /// user's own is preferred and `~/.zsh/completions` is the answer when
+        /// there is none. That last one is on nobody's `fpath` until they add
+        /// it, which the pane says.
         var defaultDirectory: URL {
             switch self {
             case .zsh:
-                URL(fileURLWithPath: "/usr/local/share/zsh/site-functions", isDirectory: true)
+                ShellCompletionInstaller.siteFunctions
+                    ?? UserHome.url.appending(
+                        path: ".zsh/completions", directoryHint: .isDirectory)
             case .bash:
                 UserHome.url.appending(
                     path: ".local/share/bash-completion/completions", directoryHint: .isDirectory)
@@ -55,8 +61,10 @@ enum ShellCompletionInstaller {
         /// generated script's own self-call: that call is guarded by
         /// `funcstack[1]`, which `eval` pushes a frame in front of, so without
         /// this the first Tab only registers the function and a second is
-        /// needed to see any candidates. The guard variable is what keeps a
-        /// tool that answers nothing from recursing into this file forever.
+        /// needed to see any candidates. The guard is what keeps a tool that
+        /// answers nothing from recursing into this file forever, and it is
+        /// `local` so that zsh unwinds it however the function ends — the
+        /// recursive call still sees it, which is the whole job.
         var loaderScript: String {
             switch self {
             case .zsh:
@@ -64,12 +72,9 @@ enum ShellCompletionInstaller {
                 #compdef kernova
                 (( $+commands[kernova] )) || return 1
                 (( $+_kernova_loading )) && return 1
-                typeset -g _kernova_loading=1
+                local _kernova_loading=1
                 eval "$(kernova --generate-completion-script zsh 2>/dev/null)"
                 _kernova "$@"
-                local ret=$?
-                unset _kernova_loading
-                return ret
 
                 """
             case .bash:
@@ -87,10 +92,55 @@ enum ShellCompletionInstaller {
         }
     }
 
-    /// Why an install did not happen.
-    enum InstallFailure: Error, Equatable {
-        /// The destination cannot be written, grant or no grant.
-        case unwritable(String)
+    /// A `site-functions` on this Mac the user can write into, `nil` when
+    /// neither is there or both are root's.
+    static var siteFunctions: URL? {
+        let candidates = [
+            "/opt/homebrew/share/zsh/site-functions",
+            "/usr/local/share/zsh/site-functions",
+        ]
+        guard let path = candidates.first(where: isUserWritableDirectory) else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// Whether the user could create a file in the directory at `path`.
+    ///
+    /// Read from the directory's own owner and mode rather than asked with
+    /// `access`, which answers for *this* process: the panel's grant is what
+    /// lets the app write outside its container, and the question left after
+    /// that is whether the filesystem would refuse the user.
+    static func isUserWritableDirectory(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+            isDirectory.boolValue,
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+            let permissions = attributes[.posixPermissions] as? Int
+        else { return false }
+        if permissions & 0o002 != 0 { return true }
+        guard let owner = attributes[.ownerAccountID] as? uid_t, owner == getuid() else {
+            return false
+        }
+        return permissions & 0o200 != 0
+    }
+
+    /// The deepest folder on `directory`'s path that is there.
+    ///
+    /// A save panel silently ignores a `directoryURL` that does not exist and
+    /// opens wherever it was last, so it is pointed at the closest real
+    /// ancestor and told the rest of the path in its message.
+    static func existingAncestor(of directory: URL) -> URL {
+        var candidate = directory
+        while candidate.pathComponents.count > 1 {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(
+                atPath: candidate.path(percentEncoded: false), isDirectory: &isDirectory),
+                isDirectory.boolValue
+            {
+                return candidate
+            }
+            candidate = candidate.deletingLastPathComponent()
+        }
+        return URL(fileURLWithPath: "/", isDirectory: true)
     }
 
     /// Writes `shell`'s loader to `destination`.

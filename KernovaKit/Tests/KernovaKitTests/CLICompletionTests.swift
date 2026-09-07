@@ -29,12 +29,14 @@ struct CLICompletionTests {
             isCurrent: true, isEphemeralBaseline: false)
     }
 
-    /// A channel onto `listener`, with the generous deadline every wait in this
+    /// A context onto `listener`, with the generous deadline every wait in this
     /// bundle uses rather than the two seconds a person at a keyboard gets.
-    private func channel(to listener: TestCommandSocket) -> CompletionChannel {
-        CompletionChannel(
+    private func context(
+        to listener: TestCommandSocket, asking shell: CompletionShell? = nil
+    ) -> CompletionContext {
+        CompletionContext(
             connect: { try VMCommandClient(socketPath: listener.path) },
-            deadline: testWaitBackstop)
+            deadline: testWaitBackstop, shell: shell)
     }
 
     // MARK: - Reading the line back
@@ -77,6 +79,43 @@ struct CLICompletionTests {
         #expect(subject?.byIdentifier == true)
     }
 
+    @Test("A quoted virtual machine name arrives without its quotes")
+    func aQuotedNameIsDequoted() throws {
+        // The shell hands the word over verbatim, and every clone is named
+        // "<base> Copy", so this is the ordinary case rather than a corner.
+        let singleQuoted = CompletionLine.snapshotSubject(
+            in: ["kernova", "snapshot", "revert", "'Alpha Copy'", ""], completingAt: 4)
+        #expect(singleQuoted?.vm == "Alpha Copy")
+
+        let doubleQuoted = CompletionLine.snapshotSubject(
+            in: ["kernova", "snapshot", "revert", "\"Alpha Copy\"", ""], completingAt: 4)
+        #expect(doubleQuoted?.vm == "Alpha Copy")
+
+        let escaped = CompletionLine.snapshotSubject(
+            in: ["kernova", "snapshot", "revert", "Alpha\\ Copy", ""], completingAt: 4)
+        #expect(escaped?.vm == "Alpha Copy")
+
+        // A backslash inside single quotes is a character like any other.
+        let literal = CompletionLine.snapshotSubject(
+            in: ["kernova", "snapshot", "revert", "'Alpha\\Copy'", ""], completingAt: 4)
+        #expect(literal?.vm == "Alpha\\Copy")
+    }
+
+    @Test("A set assignment offers keys before the = and nothing after it")
+    func anAssignmentStopsOfferingKeysAtTheSeparator() throws {
+        #expect(
+            !CompletionLine.isPastAnAssignmentKey(
+                in: ["kernova", "set", "Alpha", "cpu"], completingAt: 3, prefix: "cpu"))
+        #expect(
+            CompletionLine.isPastAnAssignmentKey(
+                in: ["kernova", "set", "Alpha", "cpus=4"], completingAt: 3, prefix: "cpus="))
+        // bash holds `=` in COMP_WORDBREAKS, so `cpus=` reaches the tool as
+        // three words and the prefix carries none of the key.
+        #expect(
+            CompletionLine.isPastAnAssignmentKey(
+                in: ["kernova", "set", "Alpha", "cpus", "=", ""], completingAt: 5, prefix: ""))
+    }
+
     @Test("A line the grammar does not accept completes nothing")
     func anUnparseableLineHasNoSubject() throws {
         #expect(
@@ -96,14 +135,15 @@ struct CLICompletionTests {
 
     @Test("Nothing listening is no candidates, not a refusal")
     func aStoppedAppOffersNothing() throws {
-        let unreachable = CompletionChannel(
-            connect: { throw CLIFailure(.unavailable, "no app group") }, deadline: testWaitBackstop)
+        let unreachable = CompletionContext(
+            connect: { throw CLIFailure(.unavailable, "no app group") }, deadline: testWaitBackstop,
+            shell: .zsh)
 
-        #expect(CompletionSource.vmNames(byIdentifier: false, over: unreachable).isEmpty)
+        #expect(CompletionSource.vmNames(byIdentifier: false, in: unreachable).isEmpty)
         #expect(
-            CompletionSource.snapshotNames(ofVM: "Alpha", byIdentifier: false, over: unreachable)
+            CompletionSource.snapshotNames(ofVM: "Alpha", byIdentifier: false, in: unreachable)
                 .isEmpty)
-        #expect(CompletionSource.configurationKeys(over: unreachable).isEmpty)
+        #expect(CompletionSource.configurationKeys(in: unreachable).isEmpty)
     }
 
     @Test("The library listing is what a virtual machine argument offers")
@@ -112,7 +152,7 @@ struct CLICompletionTests {
         defer { listener.close() }
         listener.serve([VMCommandResponse(result: .summaries([alpha, beta]))])
 
-        let names = CompletionSource.vmNames(byIdentifier: false, over: channel(to: listener))
+        let names = CompletionSource.vmNames(byIdentifier: false, in: context(to: listener))
 
         #expect(names == ["Alpha", "Beta"])
         #expect(listener.requests().map(\.verb) == [.list])
@@ -124,7 +164,7 @@ struct CLICompletionTests {
         defer { listener.close() }
         listener.serve([VMCommandResponse(result: .summaries([alpha]))])
 
-        let names = CompletionSource.vmNames(byIdentifier: true, over: channel(to: listener))
+        let names = CompletionSource.vmNames(byIdentifier: true, in: context(to: listener))
 
         #expect(names == [alpha.id.uuidString])
     }
@@ -136,7 +176,7 @@ struct CLICompletionTests {
         listener.serve([VMCommandResponse(result: .snapshots([checkpoint]))])
 
         let names = CompletionSource.snapshotNames(
-            ofVM: "Alpha", byIdentifier: false, over: channel(to: listener))
+            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
 
         #expect(names == ["Before Update"])
         // The listing alone: the size walk a `snapshot list` performs would
@@ -147,18 +187,60 @@ struct CLICompletionTests {
     @Test("Under --id a virtual machine argument that is not one asks nothing")
     func anUnparseableIdentifierAsksNothing() throws {
         let opened = ConnectionCount()
-        let counting = CompletionChannel(
+        let counting = CompletionContext(
             connect: {
                 opened.value += 1
                 return nil
-            }, deadline: testWaitBackstop)
+            }, deadline: testWaitBackstop, shell: nil)
 
         let names = CompletionSource.snapshotNames(
-            ofVM: "Alpha", byIdentifier: true, over: counting)
+            ofVM: "Alpha", byIdentifier: true, in: counting)
 
         #expect(names.isEmpty)
         // The selector is refused client-side, so the app is never reached.
         #expect(opened.value == 0)
+    }
+
+    @Test("A refusal is no candidates, not a refusal printed into the line")
+    func aRefusedReadOffersNothing() throws {
+        let listener = try TestCommandSocket(tag: "cmp-refused")
+        defer { listener.close() }
+        listener.serve([
+            VMCommandResponse(
+                result: .failure(.ambiguous(selector: .idOrName("Alpha"), candidates: [alpha, beta])))
+        ])
+
+        let names = CompletionSource.snapshotNames(
+            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
+
+        #expect(names.isEmpty)
+    }
+
+    @Test("An app that takes the request and never answers offers nothing")
+    func aSilentAppOffersNothing() throws {
+        let listener = try TestCommandSocket(tag: "cmp-silent")
+        defer { listener.close() }
+        // Answers nothing and keeps the connection, which is the app that is
+        // running but not getting back to it. The deadline is short because it
+        // is what is under test.
+        listener.serve([], holdingOpen: true)
+        let silent = CompletionContext(
+            connect: { try VMCommandClient(socketPath: listener.path) }, deadline: 0.5, shell: nil)
+
+        #expect(CompletionSource.vmNames(byIdentifier: false, in: silent).isEmpty)
+        #expect(listener.requests().map(\.verb) == [.list])
+    }
+
+    @Test("zsh is answered with each value's description beside it")
+    func zshGetsDescribedCandidates() throws {
+        let listener = try TestCommandSocket(tag: "cmp-zsh")
+        defer { listener.close() }
+        listener.serve([VMCommandResponse(result: .summaries([alpha, beta]))])
+
+        let names = CompletionSource.vmNames(
+            byIdentifier: false, in: context(to: listener, asking: .zsh))
+
+        #expect(names == ["Alpha:running", "Beta:stopped"])
     }
 
     @Test("get and set offer the keyspace, set with the = its value follows")
@@ -171,14 +253,14 @@ struct CLICompletionTests {
         let plain = try TestCommandSocket(tag: "cmp-keys")
         defer { plain.close() }
         plain.serve([VMCommandResponse(result: .configurationKeys(keyspace))])
-        #expect(CompletionSource.configurationKeys(over: channel(to: plain)) == ["cpus"])
+        #expect(CompletionSource.configurationKeys(in: context(to: plain)) == ["cpus"])
         #expect(plain.requests().map(\.verb) == [.configurationKeys])
 
         let assigning = try TestCommandSocket(tag: "cmp-keys-eq")
         defer { assigning.close() }
         assigning.serve([VMCommandResponse(result: .configurationKeys(keyspace))])
         #expect(
-            CompletionSource.configurationKeys(suffix: "=", over: channel(to: assigning))
+            CompletionSource.configurationKeys(suffix: "=", in: context(to: assigning))
                 == ["cpus="])
     }
 

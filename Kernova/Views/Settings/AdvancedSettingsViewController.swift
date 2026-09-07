@@ -1,5 +1,6 @@
 import AppKit
 import KernovaKit
+import os
 
 /// The "Advanced" pane of the Settings window.
 ///
@@ -107,13 +108,16 @@ final class AdvancedSettingsViewController: NSViewController {
             let completionsCaption = makeGroupedFormCaption(
                 "Writes a small file that loads completions from the tool itself, so they stay "
                     + "current as Kernova updates. Tab then completes verbs and flags, and your "
-                    + "own virtual machines, snapshots, and setting keys.")
+                    + "own virtual machines, snapshots, and setting keys. bash needs the "
+                    + "bash-completion package; the bash macOS ships is too old for it. If the "
+                    + "folder is not already on your fpath, add it to your ~/.zshrc:")
+            let fpathHint = makeCalloutCode("fpath=(~/.zsh/completions $fpath)")
             rows.append(contentsOf: [
                 makeGroupedFormSectionHeader("Command Line Tool"), toolCard, toolCaption, pathHint,
-                completionsCard, completionsCaption,
+                completionsCard, completionsCaption, fpathHint,
             ])
             fullWidthRows.append(contentsOf: [
-                toolCard, toolCaption, pathHint, completionsCard, completionsCaption,
+                toolCard, toolCaption, pathHint, completionsCard, completionsCaption, fpathHint,
             ])
             pathHintRow = pathHint
         }
@@ -218,7 +222,9 @@ final class AdvancedSettingsViewController: NSViewController {
     /// The Install… menu that picks which shell to write completions for.
     ///
     /// A pull-down rather than three buttons or a shell picker beside one: the
-    /// choice *is* the command, and nothing here has a state to remember.
+    /// choice *is* the command, and nothing here has a state to remember. Each
+    /// item carries its own target and action, so what was chosen is the sender
+    /// rather than a selection a pull-down never really holds.
     private func makeCompletionsButton() -> NSPopUpButton {
         let button = NSPopUpButton(frame: .zero, pullsDown: true)
         button.bezelStyle = .push
@@ -226,11 +232,13 @@ final class AdvancedSettingsViewController: NSViewController {
         // chosen.
         button.addItem(withTitle: "Install\u{2026}")
         for shell in ShellCompletionInstaller.Shell.allCases {
-            button.addItem(withTitle: shell.rawValue)
-            button.lastItem?.representedObject = shell
+            let item = NSMenuItem(
+                title: shell.rawValue, action: #selector(installShellCompletions(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = shell
+            button.menu?.addItem(item)
         }
-        button.target = self
-        button.action = #selector(installShellCompletions(_:))
         return button
     }
 
@@ -239,15 +247,26 @@ final class AdvancedSettingsViewController: NSViewController {
     /// One panel per shell, because the grant a panel mints covers the one file
     /// it returned: writing three would need three answers whichever way they
     /// were gathered.
-    @objc private func installShellCompletions(_ sender: NSPopUpButton) {
-        guard let shell = sender.selectedItem?.representedObject as? ShellCompletionInstaller.Shell
-        else { return }
+    @objc private func installShellCompletions(_ sender: NSMenuItem) {
+        guard let shell = sender.representedObject as? ShellCompletionInstaller.Shell else {
+            Self.logger.fault(
+                "Shell completions item '\(sender.title, privacy: .public)' names no shell")
+            assertionFailure("Shell completions item \(sender.title) names no shell")
+            return
+        }
 
+        let directory = shell.defaultDirectory
         let panel = NSSavePanel()
-        panel.directoryURL = shell.defaultDirectory
+        // The panel ignores a directory that is not there and opens wherever it
+        // was last, so it lands on the closest folder that exists and the
+        // message says where the file belongs — New Folder makes the rest.
+        panel.directoryURL = ShellCompletionInstaller.existingAncestor(of: directory)
         panel.nameFieldStringValue = shell.fileName
         panel.prompt = "Install"
-        panel.message = "Choose where to install the \(shell.rawValue) completions for kernova."
+        panel.message =
+            "\(shell.rawValue) completions belong at "
+            + "\(directory.appending(path: shell.fileName).path(percentEncoded: false)). "
+            + "New Folder creates a folder that is not there yet."
         panel.canCreateDirectories = true
         panel.showsHiddenFiles = true
 
@@ -296,14 +315,15 @@ final class AdvancedSettingsViewController: NSViewController {
     /// What an install failure says on screen.
     private static func reason(for failure: any Error) -> String {
         switch failure {
-        case CommandLineToolInstaller.InstallFailure.exists:
+        case InstallFailure.exists:
             "Something is already at that path. Kernova does not replace it."
-        case CommandLineToolInstaller.InstallFailure.unwritable(let detail):
-            detail
-        case ShellCompletionInstaller.InstallFailure.unwritable(let detail):
+        case InstallFailure.unwritable(let detail):
             detail
         default:
             failure.localizedDescription
         }
     }
+
+    private static let logger = Logger(
+        subsystem: "app.kernova", category: "AdvancedSettingsViewController")
 }

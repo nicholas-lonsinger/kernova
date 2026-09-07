@@ -49,7 +49,7 @@ struct CommandLineToolInstallerTests {
         let existing = Data("someone else's tool".utf8)
         try existing.write(to: destination)
 
-        #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
+        #expect(throws: InstallFailure.exists) {
             try CommandLineToolInstaller.installSymlink(at: destination)
         }
         // Untouched: replacing it could delete a tool the user relies on.
@@ -65,7 +65,7 @@ struct CommandLineToolInstallerTests {
             at: destination, withDestinationURL: URL(fileURLWithPath: "/usr/bin/env"))
 
         #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
-        #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
+        #expect(throws: InstallFailure.exists) {
             try CommandLineToolInstaller.installSymlink(at: destination)
         }
     }
@@ -103,7 +103,7 @@ struct CommandLineToolInstallerTests {
             withDestinationURL: directory.appendingPathComponent("some-other-tool"))
 
         #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
-        #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
+        #expect(throws: InstallFailure.exists) {
             try CommandLineToolInstaller.installSymlink(at: destination)
         }
     }
@@ -121,7 +121,7 @@ struct CommandLineToolInstallerTests {
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: other)
 
         #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
-        #expect(throws: CommandLineToolInstaller.InstallFailure.exists) {
+        #expect(throws: InstallFailure.exists) {
             try CommandLineToolInstaller.installSymlink(at: destination)
         }
     }
@@ -143,7 +143,7 @@ struct CommandLineToolInstallerTests {
             try CommandLineToolInstaller.installSymlink(at: destination)
             Issue.record("expected the write to be refused")
             try? FileManager.default.removeItem(at: destination)
-        } catch CommandLineToolInstaller.InstallFailure.unwritable(let detail) {
+        } catch InstallFailure.unwritable(let detail) {
             #expect(!detail.isEmpty)
         } catch {
             Issue.record("expected an unwritable failure, got \(error)")
