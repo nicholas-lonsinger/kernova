@@ -27,6 +27,10 @@ final class VMLibraryViewModel {
     /// Every VM verb, headless. The one path from this adapter to a VM.
     let commands: any VMCommanding
 
+    /// The same object ``commands`` is, kept concretely for the one hook the
+    /// residency controller wires after construction.
+    private let core: VMCommandCore
+
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
     let snapshotStore: any VMSnapshotStoring
@@ -120,6 +124,12 @@ final class VMLibraryViewModel {
 
     /// Every per-VM capability predicate the AppKit surfaces read.
     var capabilities: VMCapabilityCatalog { library.capabilities }
+
+    /// Every (transport, host port) pair any VM in the library claims — what a
+    /// new rule may not name.
+    var takenHostPortClaims: Set<PortForwardingHostClaim> {
+        library.networkSlots.takenHostPortClaims
+    }
 
     func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
         capabilities.canDeleteSnapshot(snapshot, on: instance)
@@ -255,6 +265,15 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Wires what turns a path an out-of-process client named into a URL this
+    /// sandboxed process may read.
+    ///
+    /// Set rather than injected: the panel behind it has to bring the app
+    /// forward, which only the residency controller can do.
+    func attachSourceAuthority(_ authority: any SandboxSourceAuthorizing) {
+        core.sourceAuthority = authority
+    }
+
     func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) {
             try self.commands.addSharedDirectories(.id(instance.id), paths: files)
@@ -271,6 +290,20 @@ final class VMLibraryViewModel {
         runEdit(on: instance) {
             try self.commands.setSharedDirectoryReadOnly(
                 .id(instance.id), directory: directory, readOnly: readOnly)
+        }
+    }
+
+    func addPortForwardingRule(_ rule: PortForwardingRule, to instance: VMInstance) {
+        runEdit(on: instance) {
+            try self.commands.addPortForwardingRule(.id(instance.id), rule: rule)
+        }
+    }
+
+    func removePortForwardingRule(
+        _ claim: PortForwardingHostClaim, from instance: VMInstance
+    ) {
+        runEdit(on: instance) {
+            try self.commands.removePortForwardingRule(.id(instance.id), claim: claim)
         }
     }
 
@@ -477,6 +510,7 @@ final class VMLibraryViewModel {
             preferences: preferences
         )
         self.commands = core
+        self.core = core
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)

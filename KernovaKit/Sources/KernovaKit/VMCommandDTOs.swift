@@ -157,6 +157,8 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     /// Detaching one storage disk or removable medium and trashing the file
     /// behind it.
     case removeAttachment
+    /// Letting the guest read whatever is copied on the host, continuously.
+    case enableClipboardPassthrough
 }
 
 /// A second way to satisfy a confirmation, beside its own confirm action.
@@ -233,6 +235,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.
     case confirmationRequired(prompt: ConfirmationPrompt)
+    /// An argument named something the verb does not offer, or carried a value
+    /// it cannot use. `message` is the whole refusal.
+    case invalidArgument(message: String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
     /// Running the VM would put two guests on one identity.
@@ -264,7 +269,8 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .ambiguous, .busy, .unsupported, .invalidState, .timedOut:
+        case .notFound, .ambiguous, .busy, .unsupported, .invalidState, .timedOut,
+            .invalidArgument:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -272,6 +278,7 @@ extension CommandErrorDTO {
             switch reason {
             case .machineIdentity: "Duplicate Machine ID"
             case .macAddress: "Duplicate MAC Address"
+            case .macAddressInUse: "MAC Address In Use"
             }
         case .operationFailed(_, let title, _, _):
             title ?? "Error"
@@ -304,10 +311,16 @@ extension CommandErrorDTO {
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
         case .confirmationRequired(let prompt):
             prompt.message
+        case .invalidArgument(let message):
+            message
         case .unsupported(let capability):
             "This virtual machine does not support \(capability)."
         case .conflict(let vm, let other, let reason):
             switch reason {
+            case .macAddressInUse(let address):
+                "\u{201C}\(other.name)\u{201D} already uses \(address). "
+                    + "Each virtual machine needs its own MAC address. "
+                    + "Change or delete \u{201C}\(other.name)\u{201D} first to move this address to \u{201C}\(vm.name)\u{201D}."
             case .machineIdentity:
                 "\u{201C}\(vm.name)\u{201D} has the same machine ID as \u{201C}\(other.name)\u{201D}, which is active. "
                     + "Two virtual machines with the same machine ID must not run at once. "

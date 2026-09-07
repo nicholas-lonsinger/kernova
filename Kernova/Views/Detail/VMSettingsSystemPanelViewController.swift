@@ -613,20 +613,17 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     /// persists it.
     private func applyDisplaySizeFieldEdit() {
         // The fields are only editable in manual mode, where intent and stored
-        // density agree; pairing with the stored one keeps the write the exact
-        // inverse of the `displayBaseSize` that filled them.
-        let hiDPI = displayResolutionIsHiDPI
-        // A HiDPI base is doubled before it reaches VZ, so it clamps to half
-        // the pixel ceiling.
-        let base = DisplayBootSizing.clamped(
-            width: displayWidthField.integerValue, height: displayHeightField.integerValue,
-            ppi: DisplayBootSizing.standardPixelsPerInch,
-            maximum: hiDPI ? DisplayBootSizing.maximumDimension / 2 : DisplayBootSizing.maximumDimension)
-        writeDisplayResolution(hiDPI ? DisplayBootSizing.doubled(base) : base)
+        // density agree; `setDisplayBaseSize` pairs with the stored one, which
+        // keeps the write the exact inverse of the `displayBaseSize` that
+        // filled them — and is the same helper the `display.width` and
+        // `display.height` keys write through.
+        let width = displayWidthField.integerValue
+        let height = displayHeightField.integerValue
+        writeDisplayBaseSize(width: width, height: height)
     }
 
-    private func writeDisplayResolution(_ resolution: DisplayBootSizing.Resolution) {
-        writeConfig { $0.displayResolution = resolution }
+    private func writeDisplayBaseSize(width: Int, height: Int) {
+        writeConfig { $0.setDisplayBaseSize(width: width, height: height) }
         // A clamped-back-to-current edit writes nothing, so the fields and popup
         // are reconciled here rather than by the configuration observation.
         refreshDisplay()

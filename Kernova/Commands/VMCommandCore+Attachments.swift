@@ -58,7 +58,7 @@ extension VMCommandCore {
         try require(.editStorageDisks, on: instance)
         guard !files.isEmpty else { return }
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             var known = Set(disks.map(\.path))
             for file in files where known.insert(file.path).inserted {
@@ -98,7 +98,7 @@ extension VMCommandCore {
         // the live config, so two rapid creates can't read the same snapshot and
         // land on the same "… 2" suffix.
         var createdLabel = "\(sizeInGB) GB Disk"
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             let label = StorageDisk.uniqueLabel(
                 base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
@@ -165,7 +165,7 @@ extension VMCommandCore {
                         label: disk.label, isInternal: disk.isInternal, isGuestAgent: false,
                         sharedVMNames: shared)))
         }
-        detachStorageDisk(id, from: instance)
+        try detachStorageDisk(id, from: instance)
 
         guard trashFile else { return }
         guard shared.isEmpty else {
@@ -234,7 +234,7 @@ extension VMCommandCore {
         try require(.editStorageDisks, on: instance)
         let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
             let disks = config.effectiveStorageDisks(layout: layout)
             config.setStorageDisks(
                 disks.enumerated()
@@ -256,7 +256,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
         guard !files.isEmpty else { return }
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editRemovableMedia) { config in
             var items = config.removableMedia ?? []
             var known = Set(items.map(\.path))
             for file in files where known.insert(file.path).inserted {
@@ -360,7 +360,7 @@ extension VMCommandCore {
                         label: item.label, isInternal: false,
                         isGuestAgent: isAgentInstaller, sharedVMNames: shared)))
         }
-        detachRemovableMedia(id, from: instance)
+        try detachRemovableMedia(id, from: instance)
 
         guard trashFile else { return }
         // The bundled Guest Agent installer is app-owned: removing it only
@@ -396,7 +396,7 @@ extension VMCommandCore {
         Self.logger.notice(
             "Ejecting removable media '\(item.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
         )
-        detachRemovableMedia(id, from: instance)
+        try detachRemovableMedia(id, from: instance)
     }
 
     /// Replaces a removable medium's user-facing label; an empty label is
@@ -444,10 +444,12 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.editSharedDirectories, on: instance)
         guard !files.isEmpty else { return }
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
-            var known = Set(directories.map(\.path))
-            for file in files where known.insert(file.path).inserted {
+            // The one spelling the core compares folder paths in, so a pick of
+            // `/x/` finds the `/x` this VM already shares.
+            var known = Set(directories.map { Self.comparablePath($0.path) })
+            for file in files where known.insert(Self.comparablePath(file.path)).inserted {
                 directories.append(SharedDirectory(path: file.path, bookmark: file.bookmark))
             }
             config.sharedDirectories = directories.isEmpty ? nil : directories
@@ -464,7 +466,7 @@ extension VMCommandCore {
         guard sharedDirectory(id: id, on: instance) != nil else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
             directories.removeAll { $0.id == id }
             config.sharedDirectories = directories.isEmpty ? nil : directories
@@ -481,7 +483,7 @@ extension VMCommandCore {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
         guard current.readOnly != readOnly else { return }
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
             guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
             directories[index].readOnly = readOnly
@@ -524,7 +526,7 @@ extension VMCommandCore {
         }
         Self.logger.notice(
             "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .guestAgentDisk) { config in
             config.removableMedia =
                 (config.removableMedia ?? [])
                 + [
@@ -792,7 +794,7 @@ extension VMCommandCore {
         edit(&edited)
         guard edited != current else { return }
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             guard let index = disks.firstIndex(where: { $0.id == id }) else { return }
             disks[index] = edited
@@ -811,7 +813,7 @@ extension VMCommandCore {
         var edited = current
         edit(&edited)
         guard edited != current else { return }
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editRemovableMedia) { config in
             var items = config.removableMedia ?? []
             guard let index = items.firstIndex(where: { $0.id == id }) else { return }
             items[index] = edited
@@ -820,9 +822,9 @@ extension VMCommandCore {
     }
 
     /// Drops one storage disk's entry, leaving its file alone.
-    private func detachStorageDisk(_ id: UUID, from instance: VMInstance) {
+    private func detachStorageDisk(_ id: UUID, from instance: VMInstance) throws {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        library.updateConfiguration(of: instance) { config in
+        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             disks.removeAll { $0.id == id }
             config.setStorageDisks(disks)
@@ -830,8 +832,8 @@ extension VMCommandCore {
     }
 
     /// Drops one removable medium's entry, leaving its file alone.
-    private func detachRemovableMedia(_ id: UUID, from instance: VMInstance) {
-        library.updateConfiguration(of: instance) { config in
+    private func detachRemovableMedia(_ id: UUID, from instance: VMInstance) throws {
+        try writeConfiguration(of: instance, verb: .editRemovableMedia) { config in
             var items = config.removableMedia ?? []
             items.removeAll { $0.id == id }
             config.removableMedia = items.isEmpty ? nil : items

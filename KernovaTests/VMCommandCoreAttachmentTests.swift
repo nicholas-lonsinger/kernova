@@ -704,6 +704,24 @@ struct VMCommandCoreAttachmentTests {
         #expect(directories.first?.bookmark == Data([1]))
     }
 
+    @Test("A pick spelling a folder differently is still the folder the VM shares")
+    func addSharedDirectoriesComparesFoldersNotSpellings() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let folder = externalPath("sites")
+
+        try harness.core.addSharedDirectories(
+            .id(instance.id), paths: [PickedFile(path: folder, bookmark: Data([1]))])
+        // A trailing separator names the same folder, and the core compares
+        // every share in one spelling whichever verb asks.
+        try harness.core.addSharedDirectories(
+            .id(instance.id), paths: [PickedFile(path: folder + "/", bookmark: nil)])
+
+        let directories = instance.configuration.sharedDirectories ?? []
+        #expect(directories.map(\.path) == [folder])
+        #expect(directories.first?.bookmark == Data([1]))
+    }
+
     @Test("An empty pick writes nothing")
     func addSharedDirectoriesIgnoresAnEmptyPick() throws {
         let harness = makeHarness()

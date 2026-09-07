@@ -89,6 +89,19 @@ struct VMSnapshotManifest: Codable, Sendable, Equatable {
         snapshots.first { $0.id == id }
     }
 
+    /// The snapshot an Ephemeral Mode enable pins as the baseline: the choice
+    /// already recorded while it still lists, else the one the VM's state
+    /// descends from, else the newest — and `nil` when there is nothing to fall
+    /// back to, which is what bars the mode.
+    ///
+    /// Every surface that turns the mode on resolves the baseline through this,
+    /// so none of them can pin a different one.
+    func defaultEphemeralBaseline(preferring chosen: UUID?) -> UUID? {
+        if let chosen, snapshot(id: chosen) != nil { return chosen }
+        if let currentID, snapshot(id: currentID) != nil { return currentID }
+        return ordered.first?.id
+    }
+
     /// A default name for a new snapshot that doesn't collide with an existing
     /// one — `"Snapshot"`, then `"Snapshot 2"`, `"Snapshot 3"`, …
     var defaultNewName: String {

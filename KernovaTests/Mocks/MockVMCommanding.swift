@@ -74,6 +74,10 @@ final class MockVMCommanding: VMCommanding {
     /// The row `importVM` answers with, synthesized from the source URL when
     /// unset.
     var importResult: VMSummary?
+    /// What `configurationKeys()` answers with.
+    var configurationKeyDescriptors: [ConfigurationKeyDescriptor] = []
+    /// What `configuration(_:keys:)` answers with.
+    var configurationEntries: [ConfigurationEntry] = []
     /// The settled row `awaitPreparing` answers with; the library's own row when
     /// unset.
     var awaitPreparingResult: VMSummary?
@@ -150,7 +154,15 @@ final class MockVMCommanding: VMCommanding {
     private(set) var setRemovableMediaNotesCalls: [(selector: VMSelector, item: UUID, notes: String)] = []
     private(set) var setRemovableMediaReadOnlyCalls: [(selector: VMSelector, item: UUID, readOnly: Bool)] = []
     private(set) var addSharedDirectoriesCalls: [(selector: VMSelector, files: [PickedFile])] = []
+    private(set) var addSharedDirectoryCalls: [(selector: VMSelector, path: String, readOnly: Bool)] = []
     private(set) var removeSharedDirectoryCalls: [(selector: VMSelector, directory: UUID)] = []
+    private(set) var removeSharedDirectoryPathCalls: [(selector: VMSelector, path: String)] = []
+    private(set) var addPortForwardingRuleCalls: [(selector: VMSelector, rule: PortForwardingRule)] = []
+    private(set) var removePortForwardingRuleCalls: [(selector: VMSelector, claim: PortForwardingHostClaim)] = []
+    private(set) var configurationCalls: [(selector: VMSelector, keys: [String]?)] = []
+    private(set) var setConfigurationCalls:
+        [(selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool)] = []
+    private(set) var configurationKeysCallCount = 0
     private(set) var setSharedDirectoryReadOnlyCalls: [(selector: VMSelector, directory: UUID, readOnly: Bool)] = []
     private(set) var mountGuestAgentDiskSelectors: [VMSelector] = []
     private(set) var unmountGuestAgentDiskSelectors: [VMSelector] = []
@@ -158,6 +170,9 @@ final class MockVMCommanding: VMCommanding {
     // MARK: - Error injection
 
     var infoError: (any Error)?
+    var portForwardingEditError: (any Error)?
+    var configurationError: (any Error)?
+    var setConfigurationError: (any Error)?
     var ipAddressError: (any Error)?
     var snapshotsError: (any Error)?
     var snapshotOnDiskBytesError: (any Error)?
@@ -444,6 +459,10 @@ final class MockVMCommanding: VMCommanding {
         }
     }
 
+    func importVM(atPath path: String) async throws -> VMSummary {
+        try importVM(from: URL(fileURLWithPath: path))
+    }
+
     func importVM(from url: URL) throws -> VMSummary {
         importURLs.append(url)
         if let importError { throw importError }
@@ -564,8 +583,18 @@ final class MockVMCommanding: VMCommanding {
         if let sharedDirectoryEditError { throw sharedDirectoryEditError }
     }
 
+    func addSharedDirectory(_ selector: VMSelector, path: String, readOnly: Bool) async throws {
+        addSharedDirectoryCalls.append((selector, path, readOnly))
+        if let sharedDirectoryEditError { throw sharedDirectoryEditError }
+    }
+
     func removeSharedDirectory(_ selector: VMSelector, directory: UUID) throws {
         removeSharedDirectoryCalls.append((selector, directory))
+        if let sharedDirectoryEditError { throw sharedDirectoryEditError }
+    }
+
+    func removeSharedDirectory(_ selector: VMSelector, path: String) throws {
+        removeSharedDirectoryPathCalls.append((selector, path))
         if let sharedDirectoryEditError { throw sharedDirectoryEditError }
     }
 
@@ -574,6 +603,40 @@ final class MockVMCommanding: VMCommanding {
     ) throws {
         setSharedDirectoryReadOnlyCalls.append((selector, directory, readOnly))
         if let sharedDirectoryEditError { throw sharedDirectoryEditError }
+    }
+
+    // MARK: - Port Forwarding
+
+    func addPortForwardingRule(_ selector: VMSelector, rule: PortForwardingRule) throws {
+        addPortForwardingRuleCalls.append((selector, rule))
+        if let portForwardingEditError { throw portForwardingEditError }
+    }
+
+    func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws {
+        removePortForwardingRuleCalls.append((selector, claim))
+        if let portForwardingEditError { throw portForwardingEditError }
+    }
+
+    // MARK: - Configuration
+
+    func configurationKeys() -> [ConfigurationKeyDescriptor] {
+        configurationKeysCallCount += 1
+        return configurationKeyDescriptors
+    }
+
+    func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
+        configurationCalls.append((selector, keys))
+        if let configurationError { throw configurationError }
+        return configurationEntries
+    }
+
+    @discardableResult
+    func setConfiguration(
+        _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
+    ) throws -> [ConfigurationEntry] {
+        setConfigurationCalls.append((selector, assignments, confirmed))
+        if let setConfigurationError { throw setConfigurationError }
+        return assignments
     }
 
     func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome {

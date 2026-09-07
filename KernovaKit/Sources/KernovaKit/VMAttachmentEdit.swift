@@ -45,13 +45,20 @@ public enum RemovableMediaEdit: Codable, Sendable, Hashable {
 
 /// One change to a VM's shared-directory list.
 ///
-/// Adding a share is absent for the reason ``StorageDiskEdit`` states — a
-/// picked folder carries a security-scoped bookmark only an in-process open
-/// panel can mint. A share carries no label or note of its own: its name is the
-/// folder's, which is also what the guest mounts by.
+/// A share carries no label or note of its own: its name is the folder's, which
+/// is also what the guest mounts by — so `path` identifies a share as well as
+/// its id does, and is what a client with no ids to hand names one by.
+///
+/// Adding is on the wire where a picked disk is not: the app obtains the grant
+/// for `path` and mints the bookmark, which a sandboxed client holds nothing to
+/// hand over.
 public enum SharedDirectoryEdit: Codable, Sendable, Hashable {
+    /// Shares `path` with the guest, skipping a folder the VM already shares.
+    case add(path: String, readOnly: Bool)
     /// Drops the entry. The folder itself is never touched.
     case remove(directory: UUID)
+    /// Drops the entry the folder at `path` fills.
+    case removePath(path: String)
     /// Marks the share read-only, or writable again.
     case setReadOnly(directory: UUID, readOnly: Bool)
 }

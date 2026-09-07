@@ -35,6 +35,10 @@ enum VMCapability: CaseIterable, Hashable {
     case editStorageDisks
     case editRemovableMedia
     case editSharedDirectories
+    case editPortForwarding
+    case editConfiguration
+    case editLiveConfiguration
+    case switchNetworkMode
     case clone
     case rename
     case delete
@@ -74,6 +78,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .editStorageDisks: .editStorageDisk
         case .editRemovableMedia: .editRemovableMedia
         case .editSharedDirectories: .editSharedDirectory
+        case .editPortForwarding: .editPortForwarding
+        case .editConfiguration, .editLiveConfiguration, .switchNetworkMode: .setConfiguration
         case .clone: .clone
         case .rename: .rename
         case .delete: .delete
@@ -102,7 +108,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
             .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .editStorageDisks,
-            .editRemovableMedia, .editSharedDirectories, .clone, .rename, .delete, .showInFinder,
+            .editRemovableMedia, .editSharedDirectories, .editPortForwarding, .editConfiguration,
+            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .showInFinder,
             .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
             false
@@ -126,8 +133,9 @@ enum VMCapability: CaseIterable, Hashable {
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia,
-            .editSharedDirectories, .clone, .rename, .delete, .cancelPreparing, .showInFinder,
-            .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
+            .editSharedDirectories, .editPortForwarding, .editConfiguration,
+            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .cancelPreparing,
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
             false
         }
@@ -151,7 +159,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editRemovableMedia, .editSharedDirectories, .clone, .rename, .cancelPreparing,
+            .editRemovableMedia, .editSharedDirectories, .editPortForwarding, .editConfiguration,
+            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .cancelPreparing,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
             false
@@ -218,6 +227,21 @@ struct VMCapabilityCatalog {
             // A VM's virtiofs device set is fixed at boot, so a share edit lands
             // only on a VM that can still be reconfigured.
             instance.canEditSettings
+        case .editPortForwarding, .editConfiguration:
+            instance.canEditSettings
+        case .editLiveConfiguration:
+            // The settings this gates are read at moments other than boot — the
+            // Ephemeral flag at power-off, the clipboard flags and the display
+            // policy by the running session — so no state pins them.
+            true
+        case .switchNetworkMode:
+            // While the pane is read-only its Mode picker stays live as the
+            // hot-swap surface: swapping the attachment needs a session and a
+            // device to swap on. None-mode VMs have no device, and devices
+            // cannot be added or removed at runtime.
+            instance.canEditSettings
+                || (instance.configuration.networkEnabled
+                    && (instance.status == .running || instance.isLivePaused))
         case .clone:
             instance.canEditSettings
         case .rename:
@@ -324,7 +348,8 @@ struct VMCapabilityCatalog {
         case .info, .ipAddress, .snapshots, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone, .delete,
+            .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editPortForwarding,
+            .editConfiguration, .editLiveConfiguration, .switchNetworkMode, .clone, .delete,
             .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleGuestAgentDisk, .toggleSettingsPane:
             return isApplicable(capability, to: instance)

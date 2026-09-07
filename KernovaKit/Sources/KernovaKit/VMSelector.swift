@@ -59,6 +59,10 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case editStorageDisk
     case editRemovableMedia
     case editSharedDirectory
+    case editPortForwarding
+    case configurationKeys
+    case configuration
+    case setConfiguration
     case guestAgentDisk
     case quit
 
@@ -99,6 +103,10 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .editStorageDisk: "Edit Storage Disks"
         case .editRemovableMedia: "Edit Removable Media"
         case .editSharedDirectory: "Edit Shared Directories"
+        case .editPortForwarding: "Edit Port Forwarding"
+        case .configurationKeys: "List Settings Keys"
+        case .configuration: "Get Settings"
+        case .setConfiguration: "Change Settings"
         case .guestAgentDisk: "Guest Agent Disk"
         case .quit: "Quit"
         }
@@ -111,15 +119,22 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// front of the user whatever state it is in, the Finder reveal and the
     /// settle wait, which address the bundle rather than the guest, and the
     /// quit, which addresses no VM at all.
+    ///
+    /// The settings write is here too, for a different reason: every state
+    /// takes a write of *some* key — the clipboard and Ephemeral Mode flags are
+    /// read at moments other than boot — so naming it says nothing about the
+    /// key that was refused. ``ConfigurationKeyDescriptor/editableWhileRunning``
+    /// is what answers that.
     public var isAdmittedInEveryState: Bool {
         switch self {
         case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .events, .reveal,
-            .showInFinder, .awaitPreparing, .quit:
+            .showInFinder, .awaitPreparing, .configurationKeys, .configuration, .setConfiguration,
+            .quit:
             true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,
-            .editRemovableMedia, .editSharedDirectory, .guestAgentDisk:
+            .editRemovableMedia, .editSharedDirectory, .editPortForwarding, .guestAgentDisk:
             false
         }
     }
@@ -148,7 +163,15 @@ public enum CloneMachineIdentity: String, Codable, Sendable, Hashable, CaseItera
 }
 
 /// What two VMs collide on.
-public enum ConflictReason: String, Codable, Sendable, Hashable, CaseIterable {
+public enum ConflictReason: Codable, Sendable, Hashable {
     case machineIdentity
+    /// Two VMs would run at once on one network with one address, which both
+    /// of them already carry.
     case macAddress
+    /// A second VM in the library already holds `address`, whatever state
+    /// either is in — the uniqueness every writer of an address preserves.
+    /// It travels here because it is the address the caller asked for, which
+    /// the VM being refused does not carry: nothing else in the refusal names
+    /// which one collided.
+    case macAddressInUse(address: String)
 }

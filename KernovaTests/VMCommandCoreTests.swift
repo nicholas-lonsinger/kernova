@@ -23,6 +23,7 @@ struct VMCommandCoreTests {
         let snapshots: MockVMSnapshotStore
         let fileSystem: MockFileSystem
         let vmnet: MockVmnetNetworkProvider
+        let authority: MockSandboxSourceAuthority
     }
 
     private func makeHarness(
@@ -62,10 +63,12 @@ struct VMCommandCoreTests {
             preferences: preferences,
             clock: clock
         )
+        let authority = MockSandboxSourceAuthority()
+        core.sourceAuthority = authority
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
             virtualization: virtualization, snapshots: snapshots, fileSystem: fileSystem,
-            vmnet: vmnet)
+            vmnet: vmnet, authority: authority)
     }
 
     private struct SuspendingHarness {
@@ -605,7 +608,8 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: stopped) == [
                 .info, .ipAddress, .snapshots, .start, .reveal, .takeSnapshot, .deleteSnapshot,
                 .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
-                .editSharedDirectory, .clone, .rename, .delete, .showInFinder,
+                .editSharedDirectory, .editPortForwarding, .setConfiguration, .clone, .rename,
+                .delete, .showInFinder,
             ])
 
         let running = makeInstance(
@@ -614,7 +618,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: running) == [
                 .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .editRemovableMedia, .rename, .showInFinder,
+                .editRemovableMedia, .setConfiguration, .rename, .showInFinder,
             ])
     }
 
@@ -630,7 +634,8 @@ struct VMCommandCoreTests {
         #expect(
             harness.core.allowedVerbs(for: instance) == [
                 .info, .ipAddress, .snapshots, .stop, .resume, .open, .reveal, .deleteSnapshot,
-                .renameSnapshot, .setSnapshotNotes, .rename, .delete, .showInFinder,
+                .renameSnapshot, .setSnapshotNotes, .setConfiguration, .rename, .delete,
+                .showInFinder,
             ])
     }
 
@@ -1634,6 +1639,56 @@ struct VMCommandCoreTests {
         #expect(harness.fileSystem.removedURLs.map(\.path) == [externalPath])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
         #expect(harness.storage.permanentlyDeleteVMBundleCallCount == 1)
+    }
+
+    /// A `.kernova`-shaped source the mocked `loadConfiguration(from:)` answers
+    /// for, under a per-call temp parent and created on disk because the import
+    /// copies real files. The caller removes the parent, not this leaf.
+    private func makeImportSource(name: String, storage: MockVMStorageService) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(name).kernova", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        storage.bundles[url] = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        return url
+    }
+
+    @Test("An import takes the bundle the authority answered with, not the path asked about")
+    func importGoesThroughTheAuthority() async throws {
+        let harness = makeHarness()
+        let picked = try makeImportSource(name: "Picked", storage: harness.storage)
+        defer { try? FileManager.default.removeItem(at: picked.deletingLastPathComponent()) }
+        harness.authority.substitute = picked
+
+        let summary = try await harness.core.importVM(
+            atPath: "/Users/somebody/Desktop/Asked.kernova")
+
+        #expect(harness.authority.requests.map(\.source) == [.vmBundle])
+        #expect(
+            harness.authority.requestedURLs.map { $0.path(percentEncoded: false) }
+                == ["/Users/somebody/Desktop/Asked.kernova"])
+        // Nothing answers for the asked-about path, so an import that read it
+        // instead of the picked bundle would have failed rather than named one.
+        #expect(summary.name == "Picked")
+        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
+            await task.value
+        }
+        #expect(harness.library.instances.map(\.name) == ["Picked"])
+    }
+
+    @Test("An import whose panel was dismissed adds nothing")
+    func importRefusesADismissedPanel() async throws {
+        let harness = makeHarness()
+        harness.authority.error = CommandError.operationFailed(
+            verb: .importVM,
+            message: "Kernova was not given permission to read \u{201C}Asked.kernova\u{201D}.")
+
+        await #expect(throws: CommandError.self) {
+            _ = try await harness.core.importVM(atPath: "/Users/somebody/Desktop/Asked.kernova")
+        }
+
+        #expect(harness.library.instances.isEmpty)
+        #expect(harness.storage.publishBundleCallCount == 0)
     }
 
     // MARK: - Storage Disk Lookup

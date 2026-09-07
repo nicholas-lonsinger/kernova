@@ -4,7 +4,7 @@ import KernovaKit
 
 extension KernovaCommand {
     /// `kernova list` — every virtual machine, in the order the sidebar shows.
-    public struct List: ParsableCommand {
+    public struct List: VerbCommand {
         /// What `kernova list --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "list",
@@ -16,12 +16,15 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .list
+        }
+
         /// Reads the library and writes it.
         public func run() throws {
-            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-            defer { client.close() }
-            let answer = try client.send(.list).payload()
-            guard case .summaries(let rows) = answer else { throw answer.unexpectedAnswer }
+            let result = try answer()
+            guard case .summaries(let rows) = result else { throw result.unexpectedAnswer }
             Console.out(
                 options.format == .json
                     ? try JSONRenderer.render(rows)
@@ -30,7 +33,7 @@ extension KernovaCommand {
     }
 
     /// `kernova info <vm>` — everything one virtual machine reports.
-    public struct Info: ParsableCommand {
+    public struct Info: VerbCommand {
         /// What `kernova info --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "info",
@@ -46,13 +49,15 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .info(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
         /// Reads the VM and writes it.
         public func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-            defer { client.close() }
-            let answer = try client.send(.info(selector)).payload()
-            guard case .info(let info) = answer else { throw answer.unexpectedAnswer }
+            let result = try answer()
+            guard case .info(let info) = result else { throw result.unexpectedAnswer }
             Console.out(
                 options.format == .json
                     ? try JSONRenderer.render(info)
@@ -61,7 +66,7 @@ extension KernovaCommand {
     }
 
     /// `kernova ip <vm>` — the guest's address, or why there isn't one.
-    public struct IP: ParsableCommand {
+    public struct IP: VerbCommand {
         /// What `kernova ip --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "ip",
@@ -90,11 +95,15 @@ extension KernovaCommand {
             try TimeoutOption.validate(timeout)
         }
 
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .ipAddress(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
         /// Reads the address and writes it, or refuses with what stands in its
         /// way.
         public func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let address = try resolve(selector)
+            let address = try resolve()
             // Classified before either renderer runs, so both formats exit the
             // same way: an answer that is not an address refuses whether or not
             // JSON could have described it.
@@ -110,11 +119,12 @@ extension KernovaCommand {
         /// `pending` is worth waiting on — `unavailable` and
         /// `externallyAssigned` are answers rather than delays, and polling
         /// them to the deadline would turn a clear refusal into a long silence.
-        private func resolve(_ selector: VMSelector) throws -> GuestIPAddress {
+        private func resolve() throws -> GuestIPAddress {
+            let request = try verb()
             let deadline = Date().addingTimeInterval(timeout)
             while true {
                 let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-                let answer = try client.send(.ipAddress(selector)).payload()
+                let answer = try client.send(request).payload()
                 client.close()
                 guard case .ipAddress(let address) = answer else { throw answer.unexpectedAnswer }
                 guard wait, case .pending = address else { return address }

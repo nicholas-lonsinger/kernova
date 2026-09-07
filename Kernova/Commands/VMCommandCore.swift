@@ -70,6 +70,15 @@ final class VMCommandCore: VMCommanding {
     /// caller — the removable attachment a start failure names, above all.
     var onFailure: ((_ failure: CommandError, _ instance: VMInstance?) -> Void)?
 
+    /// Turns a path an out-of-process client named into a URL this sandboxed
+    /// process may read.
+    ///
+    /// A hook rather than a call, for the reason ``surfaceDisplay`` states: the
+    /// grant comes from an open panel, and the core presents none. Only the two
+    /// verbs that take a path from a client with no file access of its own —
+    /// the import and the shared-directory add — consult it.
+    var sourceAuthority: (any SandboxSourceAuthorizing)?
+
     /// Takes the app down the way the status item's Quit does.
     ///
     /// A hook rather than a call, for the reason ``surfaceDisplay`` states: the
@@ -184,7 +193,7 @@ final class VMCommandCore: VMCommanding {
     /// ``VMStatus/preparingWireName`` while a create, clone or import is still
     /// writing its bundle, its real `VMStatus` otherwise.
     func wireStatus(_ instance: VMInstance) -> String {
-        instance.isPreparing ? VMStatus.preparingWireName : instance.status.rawValue
+        instance.wireStatus
     }
 
     /// ``ObservedState``'s wire status, by the same rule as ``wireStatus(_:)``.
@@ -193,8 +202,7 @@ final class VMCommandCore: VMCommanding {
     }
 
     func summary(_ instance: VMInstance) -> VMSummary {
-        VMSummary(
-            id: instance.instanceID, name: instance.name, status: wireStatus(instance),
+        instance.summary(
             ipAddress: library.networkSlots.reservedAddress(for: instance.configuration))
     }
 
@@ -267,9 +275,47 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// Refuses while a create, clone or import is still writing the VM's bundle.
+    ///
+    /// For the verbs that take no capability gate of their own; everything gated
+    /// through ``require(_:on:)`` already inherits this, because no capability
+    /// that writes the bundle survives preparing.
     func refuseIfPreparing(_ instance: VMInstance) throws {
         guard let state = instance.preparingState else { return }
         throw preparingBusyError(instance, state: state)
+    }
+
+    /// The authority for a path a client named, or the refusal a process that
+    /// never wired one owes.
+    func requireSourceAuthority(_ verb: VMVerb) throws -> any SandboxSourceAuthorizing {
+        guard let sourceAuthority else {
+            Self.logger.fault(
+                "No sandbox source authority is wired; \(String(describing: verb), privacy: .public) cannot reach a named path"
+            )
+            assertionFailure("No sandbox source authority is wired for \(verb)")
+            throw CommandError.operationFailed(
+                verb: verb,
+                message: "Kernova cannot ask for permission to read that file right now.")
+        }
+        return sourceAuthority
+    }
+
+    /// Applies `mutate` to the VM's configuration, refusing when the result did
+    /// not reach disk.
+    ///
+    /// The one write convention every verb in the core shares. A failed save
+    /// leaves the new value in memory and the old one on disk, so the next
+    /// library read takes it back — answering `ok` would report a change the
+    /// user is about to lose. A mutation the write funnel *refused* returns the
+    /// same `false` and is refused here too, having changed nothing.
+    func writeConfiguration(
+        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
+    ) throws {
+        guard library.updateConfiguration(of: instance, mutate: mutate) else {
+            throw CommandError.operationFailed(
+                verb: verb,
+                message:
+                    "The change to \u{201C}\(instance.name)\u{201D} was not saved.")
+        }
     }
 
     /// The refusal a verb gets while `instance` is still copying, shared by

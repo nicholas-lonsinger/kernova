@@ -108,8 +108,22 @@ struct VMCommandEnvelopeTests {
             .editRemovableMedia(selector, .rename(item: diskID, newLabel: "Installer")),
             .editRemovableMedia(selector, .setNotes(item: diskID, notes: "from the mirror")),
             .editRemovableMedia(selector, .setReadOnly(item: diskID, readOnly: false)),
+            .editSharedDirectory(selector, .add(path: "/Users/somebody/Sites", readOnly: false)),
             .editSharedDirectory(selector, .remove(directory: diskID)),
+            .editSharedDirectory(selector, .removePath(path: "/Users/somebody/Sites")),
             .editSharedDirectory(selector, .setReadOnly(directory: diskID, readOnly: true)),
+            .editPortForwarding(
+                selector,
+                .add(rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80))),
+            .editPortForwarding(
+                selector,
+                .remove(claim: PortForwardingHostClaim(transport: .udp, hostPort: 5353))),
+            .configurationKeys,
+            .configuration(selector, keys: nil),
+            .configuration(selector, keys: ["cpus", "memory"]),
+            .setConfiguration(
+                selector, assignments: [ConfigurationEntry(key: "cpus", value: "4")],
+                confirmed: true),
             .guestAgentDisk(selector, .mount),
             .guestAgentDisk(selector, .unmount),
             .quit,
@@ -163,10 +177,13 @@ struct VMCommandEnvelopeTests {
     }
 
     /// Every shared-directory edit the wire offers, named exhaustively for the
-    /// reason ``name(of:)`` states — an add is what needs the panel grant here.
+    /// reason ``name(of:)`` states — the add is here because the app obtains
+    /// the grant for the path itself.
     private func name(of edit: SharedDirectoryEdit) -> String {
         switch edit {
+        case .add: "add"
         case .remove: "remove"
+        case .removePath: "removePath"
         case .setReadOnly: "setReadOnly"
         }
     }
@@ -176,6 +193,7 @@ struct VMCommandEnvelopeTests {
         #expect(name(of: .create(sizeInGB: 32)) == "create")
         #expect(name(of: .eject(item: diskID)) == "eject")
         #expect(name(of: .remove(directory: diskID)) == "remove")
+        #expect(name(of: .add(path: "/Users/somebody/Sites", readOnly: true)) == "add")
         #expect(GuestAgentDiskEdit.allCases == [.mount, .unmount])
     }
 
@@ -234,6 +252,13 @@ struct VMCommandEnvelopeTests {
             .event(.statusChanged(id: vmID, name: "Alpha", from: "stopped", to: "running")),
             .event(.agentStatusChanged(id: vmID, name: "Alpha", status: "current")),
             .event(.failure(id: vmID, name: "Alpha", message: "the disk went away")),
+            .configurationKeys([
+                ConfigurationKeyDescriptor(
+                    name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
+            ]),
+            .configurationKeys([]),
+            .configuration([ConfigurationEntry(key: "cpus", value: "4")]),
+            .configuration([]),
             .refused(.authorizationRefused(reason: "not this team")),
             .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
             .refused(.undecodableRequest("the bytes are not JSON")),
@@ -265,6 +290,10 @@ struct VMCommandEnvelopeTests {
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),
             .conflict(vm: summary, with: summary, reason: .macAddress),
+            .conflict(
+                vm: summary, with: summary,
+                reason: .macAddressInUse(address: "aa:bb:cc:dd:ee:0f")),
+            .invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."),
             .timedOut(vm: summary, verb: .stop, seconds: 60),
             .timedOut(vm: summary, verb: .restart, seconds: 12.5),
             .operationFailed(
@@ -300,6 +329,19 @@ struct VMCommandEnvelopeTests {
         #expect(
             CommandErrorDTO.timedOut(vm: summary, verb: .stop, seconds: 2.5).message
                 .contains("2.5 seconds"))
+    }
+
+    @Test("A taken MAC address names itself, its holder, and the VM asking for it")
+    func macAddressInUseCopyNamesTheAddress() {
+        let holder = VMSummary(
+            id: vmID, name: "Holder", status: "stopped", ipAddress: .unavailable)
+        let failure = CommandErrorDTO.conflict(
+            vm: summary, with: holder, reason: .macAddressInUse(address: "aa:bb:cc:dd:ee:0f"))
+
+        #expect(failure.title == "MAC Address In Use")
+        #expect(failure.message.contains("aa:bb:cc:dd:ee:0f"))
+        #expect(failure.message.contains("Holder"))
+        #expect(failure.message.contains("Alpha"))
     }
 
     @Test("A failure's own heading survives the wire")

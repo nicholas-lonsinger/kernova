@@ -1,4 +1,5 @@
 import AVFoundation
+import KernovaKit
 import Testing
 
 @testable import Kernova

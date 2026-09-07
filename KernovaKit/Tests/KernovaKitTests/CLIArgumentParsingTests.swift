@@ -202,23 +202,233 @@ struct CLIArgumentParsingTests {
         #expect(rename.newName == "Older")
     }
 
-    @Test("A relative import path is made absolute, and a standardized one stays as it is")
-    func importPathIsAbsoluteAndStandardized() {
+    @Test("A relative path argument is made absolute, and a standardized one stays as it is")
+    func pathArgumentsAreAbsoluteAndStandardized() {
         // The shell's directory, not the process's: a sandboxed tool's own is
         // its container.
         #expect(
-            KernovaCommand.Import.wirePath(
+            PathParsing.wirePath(
                 for: "VMs/../VMs/Alpha.kernova", workingDirectory: "/Users/me/Desktop")
                 == "/Users/me/Desktop/VMs/Alpha.kernova")
-        let fallback = KernovaCommand.Import.wirePath(
-            for: "Alpha.kernova", workingDirectory: nil)
+        let fallback = PathParsing.wirePath(for: "Alpha.kernova", workingDirectory: nil)
         #expect(fallback == FileManager.default.currentDirectoryPath + "/Alpha.kernova")
         // Nothing is read: the tool is sandboxed, so a path naming no file
         // still crosses the wire for the app to answer for.
         #expect(
-            KernovaCommand.Import.wirePath(
+            PathParsing.wirePath(
                 for: "/a/b/../c/Alpha.kernova", workingDirectory: "/Users/me/Desktop")
                 == "/a/c/Alpha.kernova")
+    }
+
+    // MARK: - Configuration
+
+    @Test("Each configuration verb parses to its own subcommand")
+    func configurationVerbsResolve() throws {
+        #expect(try parse(["get", "Alpha"]) is KernovaCommand.Get)
+        #expect(try parse(["set", "Alpha", "cpus=4"]) is KernovaCommand.Set)
+        #expect(try parse(["share", "add", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Add)
+        #expect(
+            try parse(["share", "remove", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Remove)
+        #expect(try parse(["forward", "add", "Alpha", "8080:80"]) is KernovaCommand.Forward.Add)
+        #expect(
+            try parse(["forward", "remove", "Alpha", "8080:80"]) is KernovaCommand.Forward.Remove)
+    }
+
+    @Test("get takes any number of keys, and all of them when given none")
+    func getParsesItsKeys() throws {
+        let everything = try #require(try parse(["get", "Alpha"]) as? KernovaCommand.Get)
+        #expect(everything.vm == "Alpha")
+        #expect(everything.keys.isEmpty)
+        #expect(!everything.listingKeys)
+        // Nothing named is the whole set, which is a different request from
+        // naming zero keys explicitly — there is no way to type the latter.
+        #expect(try everything.verb() == .configuration(.idOrName("Alpha"), keys: nil))
+
+        let named = try #require(
+            try parse(["get", "Alpha", "cpus", "memory"]) as? KernovaCommand.Get)
+        #expect(named.keys == ["cpus", "memory"])
+        #expect(
+            try named.verb() == .configuration(.idOrName("Alpha"), keys: ["cpus", "memory"]))
+    }
+
+    @Test("get --keys names no virtual machine, and refuses one that is named anyway")
+    func getKeysNamesNoVirtualMachine() throws {
+        let listing = try #require(try parse(["get", "--keys"]) as? KernovaCommand.Get)
+        #expect(listing.listingKeys)
+        #expect(listing.vm == nil)
+        #expect(try listing.verb() == .configurationKeys)
+
+        // The keyspace is the same for every virtual machine, so an argument
+        // here is a line that meant something else.
+        #expect(throws: (any Error).self) { try parse(["get", "--keys", "Alpha"]) }
+        #expect(throws: (any Error).self) { try parse(["get", "--keys", "Alpha", "cpus"]) }
+    }
+
+    @Test("get without --keys refuses without a virtual machine")
+    func getNeedsAVirtualMachineWithoutTheKeysFlag() {
+        #expect(throws: (any Error).self) { try parse(["get"]) }
+    }
+
+    @Test("An assignment is split at its first =, and an empty value is a value")
+    func assignmentsSplitAtTheFirstEquals() throws {
+        #expect(
+            try KernovaCommand.Set.entries(from: ["cpus=4", "network.mode=shared"]) == [
+                ConfigurationEntry(key: "cpus", value: "4"),
+                ConfigurationEntry(key: "network.mode", value: "shared"),
+            ])
+        // The first `=` and no other: a value carrying one arrives whole.
+        #expect(
+            try KernovaCommand.Set.entries(from: ["notes=a=b"]) == [
+                ConfigurationEntry(key: "notes", value: "a=b")
+            ])
+        // Empty is how the settings that take a spelled-out name are cleared.
+        #expect(
+            try KernovaCommand.Set.entries(from: ["network.mac="]) == [
+                ConfigurationEntry(key: "network.mac", value: "")
+            ])
+    }
+
+    @Test("An argument that is not a key=value assignment exits 2, naming what was typed")
+    func malformedAssignmentsAreUsageErrors() {
+        for argument in ["cpus", "", "=4", "=", " "] {
+            do {
+                _ = try KernovaCommand.Set.entries(from: ["cpus=4", argument])
+                Issue.record("expected a usage refusal for \u{201C}\(argument)\u{201D}")
+            } catch let failure as CLIFailure {
+                #expect(failure.code == .usage)
+                #expect(argument.isEmpty || failure.message.contains(argument))
+            } catch {
+                Issue.record("expected a CLIFailure, got \(error)")
+            }
+        }
+    }
+
+    @Test("set refuses a line that assigns nothing")
+    func setNeedsAnAssignment() {
+        #expect(throws: (any Error).self) { try parse(["set", "Alpha"]) }
+        #expect(throws: (any Error).self) { try parse(["set"]) }
+    }
+
+    @Test("set carries --yes as the consent one setting asks for")
+    func setCarriesItsConsent() throws {
+        let bare = try #require(try parse(["set", "Alpha", "cpus=4"]) as? KernovaCommand.Set)
+        #expect(
+            try bare.verb()
+                == .setConfiguration(
+                    .idOrName("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "4")],
+                    confirmed: false))
+
+        let consented = try #require(
+            try parse(["set", "Alpha", "clipboard.passthrough=true", "--yes"])
+                as? KernovaCommand.Set)
+        #expect(
+            try consented.verb()
+                == .setConfiguration(
+                    .idOrName("Alpha"),
+                    assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
+                    confirmed: true))
+    }
+
+    @Test("A share is writable unless --read-only says otherwise, and its path is made absolute")
+    func shareAddParsesItsFlags() throws {
+        let writable = try #require(
+            try parse(["share", "add", "Alpha", "/tmp/Work"]) as? KernovaCommand.Share.Add)
+        #expect(!writable.readOnly)
+        #expect(
+            try writable.verb()
+                == .editSharedDirectory(.idOrName("Alpha"), .add(path: "/tmp/Work", readOnly: false)))
+
+        let readOnly = try #require(
+            try parse(["share", "add", "Alpha", "/tmp/Work/", "--read-only"])
+                as? KernovaCommand.Share.Add)
+        #expect(readOnly.readOnly)
+        #expect(
+            try readOnly.verb()
+                == .editSharedDirectory(.idOrName("Alpha"), .add(path: "/tmp/Work", readOnly: true)))
+    }
+
+    @Test("A share is dropped by the path that names it, standardized the same way")
+    func shareRemoveNamesThePath() throws {
+        let command = try #require(
+            try parse(["share", "remove", "Alpha", "/tmp/../tmp/Work"])
+                as? KernovaCommand.Share.Remove)
+        #expect(
+            try command.verb()
+                == .editSharedDirectory(.idOrName("Alpha"), .removePath(path: "/tmp/Work")))
+    }
+
+    @Test("A mapping is read as host:guest, on TCP unless --udp says otherwise")
+    func forwardParsesItsMapping() throws {
+        let tcp = try #require(
+            try parse(["forward", "add", "Alpha", "8080:80"]) as? KernovaCommand.Forward.Add)
+        #expect(!tcp.udp)
+        #expect(
+            try tcp.verb()
+                == .editPortForwarding(
+                    .idOrName("Alpha"),
+                    .add(rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80))))
+
+        let udp = try #require(
+            try parse(["forward", "add", "Alpha", "5353:53", "--udp"])
+                as? KernovaCommand.Forward.Add)
+        #expect(udp.udp)
+        #expect(
+            try udp.verb()
+                == .editPortForwarding(
+                    .idOrName("Alpha"),
+                    .add(rule: PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53))))
+    }
+
+    @Test("A rule is dropped by its host-side claim, which the transport is half of")
+    func forwardRemoveNamesTheHostClaim() throws {
+        let tcp = try #require(
+            try parse(["forward", "remove", "Alpha", "8080:80"]) as? KernovaCommand.Forward.Remove)
+        #expect(
+            try tcp.verb()
+                == .editPortForwarding(
+                    .idOrName("Alpha"),
+                    .remove(claim: PortForwardingHostClaim(transport: .tcp, hostPort: 8080))))
+
+        let udp = try #require(
+            try parse(["forward", "remove", "Alpha", "5353:53", "--udp"])
+                as? KernovaCommand.Forward.Remove)
+        #expect(
+            try udp.verb()
+                == .editPortForwarding(
+                    .idOrName("Alpha"),
+                    .remove(claim: PortForwardingHostClaim(transport: .udp, hostPort: 5353))))
+    }
+
+    @Test("Every port a mapping names is one a service can answer on")
+    func mappingsRefuseAPortNoServiceAnswersOn() throws {
+        #expect(
+            try PortMapping.rule(from: "1:65535", transport: .tcp)
+                == PortForwardingRule(transport: .tcp, hostPort: 1, guestPort: 65535))
+
+        // Port 0 addresses no service, so it is refused rather than clamped
+        // into the range like the rest.
+        for mapping in ["8080", "8080:", ":80", "8080:80:90", "a:80", "0:80", "80:0", "70000:80"] {
+            do {
+                _ = try PortMapping.rule(from: mapping, transport: .tcp)
+                Issue.record("expected a usage refusal for \u{201C}\(mapping)\u{201D}")
+            } catch let failure as CLIFailure {
+                #expect(failure.code == .usage)
+                #expect(failure.message.contains(mapping))
+            } catch {
+                Issue.record("expected a CLIFailure, got \(error)")
+            }
+        }
+    }
+
+    @Test("--id reads a configuration verb's virtual machine as an identifier")
+    func configurationVerbsCarryTheIDFlag() throws {
+        let identifier = UUID()
+        let command = try #require(
+            try parse(["get", identifier.uuidString, "cpus", "--id"]) as? KernovaCommand.Get)
+        #expect(try command.verb() == .configuration(.id(identifier), keys: ["cpus"]))
+
+        let named = try #require(try parse(["get", "Alpha", "--id"]) as? KernovaCommand.Get)
+        #expect(throws: CLIFailure.self) { try named.verb() }
     }
 
     @Test("quit parses, and names no virtual machine")

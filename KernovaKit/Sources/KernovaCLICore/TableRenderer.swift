@@ -78,6 +78,34 @@ public enum TableRenderer {
             })
     }
 
+    /// A virtual machine's settings, one per line, in the order they were
+    /// asked for.
+    ///
+    /// `quiet` prints the values alone, which is what a script reading one
+    /// setting wants — and a whole listing stays line-for-line alongside the
+    /// keys that produced it.
+    public static func render(_ entries: [ConfigurationEntry], quiet: Bool) -> String {
+        guard !quiet else { return entries.map(\.value).joined(separator: "\n") }
+        guard !entries.isEmpty else { return "" }
+        return columns(
+            headings: ["KEY", "VALUE"], rows: entries.map { [$0.key, $0.value] })
+    }
+
+    /// The settings keyspace itself, one key per line.
+    ///
+    /// The gate is a column rather than a footnote: which settings a running
+    /// guest still takes is the thing a person consults this listing for.
+    /// `quiet` prints the names alone, which `get` and `set` both accept back.
+    public static func render(_ keys: [ConfigurationKeyDescriptor], quiet: Bool) -> String {
+        guard !quiet else { return keys.map(\.name).joined(separator: "\n") }
+        guard !keys.isEmpty else { return "" }
+        return columns(
+            headings: ["KEY", "WHILE RUNNING", "SUMMARY"],
+            rows: keys.map {
+                [$0.name, $0.editableWhileRunning ? "Yes" : "No", $0.summary]
+            })
+    }
+
     /// A guest address in the words this surface states it in.
     ///
     /// Each non-address case is a different answer to "what is its address",

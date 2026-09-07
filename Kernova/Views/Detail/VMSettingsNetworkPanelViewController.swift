@@ -1,5 +1,5 @@
 import AppKit
-import Virtualization
+import KernovaKit
 
 /// The Network category: the Mode picker and the address, MAC and
 /// port-forwarding rows behind it.
@@ -348,42 +348,27 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         return row
     }
 
-    /// Every (transport, host port) pair any VM in the library claims.
+    /// Re-renders after a rule edit.
     ///
-    /// The claim is held by the persisted configuration, not by the mode: a rule
-    /// survives a switch away from Shared Network and takes its host port back
-    /// on the way in, so a VM in another mode counts too — otherwise two VMs end
-    /// up holding the same port and one of them silently stops forwarding.
-    private func takenHostPortClaims() -> Set<PortForwardingHostClaim> {
-        var claims = Set(instance.configuration.portForwardingRules.map(\.hostClaim))
-        for other in viewModel.instances where other.id != instance.id {
-            claims.formUnion(other.configuration.portForwardingRules.map(\.hostClaim))
-        }
-        return claims
-    }
-
-    #if DEBUG
-    /// The claim set the Add Rule sheet is built with, for tests.
-    var takenHostPortClaimsForTesting: Set<PortForwardingHostClaim> { takenHostPortClaims() }
-    #endif
-
-    private func writePortForwardingRules(_ rules: [PortForwardingRule]) {
-        viewModel.updateConfiguration(of: instance) { $0.portForwardingRules = rules }
-        // The rows are built from the configuration, so re-render with the
-        // write rather than waiting for the model-observation pass — and the
-        // card counts the same rules.
+    /// The rows are built from the configuration, so this runs with the write
+    /// rather than waiting for the model-observation pass — and the card counts
+    /// the same rules.
+    private func portForwardingRulesChanged() {
         refreshResolved()
         refreshPortForwardingRows()
     }
 
     /// While the pane is read-only, whether the Mode picker stays live as the
-    /// hot-swap surface: swapping the attachment needs a running or live-paused
-    /// session and a network device to swap on — None-mode VMs have no device,
-    /// and devices cannot be added or removed at runtime.
+    /// hot-swap surface.
+    ///
+    /// Both terms come from the catalog, so the picker and the verb behind it
+    /// agree: the mode takes an edit, and not because the VM is at rest — that
+    /// case is the one the pane's own lock already covers.
     private var networkModeIsLiveSwitchable: Bool {
         guard isReadOnly else { return false }
-        return instance.configuration.networkEnabled
-            && (instance.status == .running || instance.isLivePaused)
+        let capabilities = viewModel.capabilities
+        return capabilities.isAvailable(.switchNetworkMode, on: instance)
+            && !capabilities.isAvailable(.editConfiguration, on: instance)
     }
 
     private func makeNetworkModePopUp() -> NSPopUpButton {
@@ -535,39 +520,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         addGroupedFormFullWidth(banner, to: networkWarningContainer)
     }
 
-    /// Gives a VM turning networking on its first MAC address.
-    ///
-    /// A VM created with networking off carries none, and VZ then generates a
-    /// fresh random one at every start — so the address the LAN sees, and any
-    /// DHCP reservation keyed on it, would change from one boot to the next.
-    private static func mintMACAddressIfNeeded(_ config: inout VMConfiguration) {
-        guard config.macAddress == nil else { return }
-        config.macAddress = VZMACAddress.randomLocallyAdministered().string
-    }
-
-    /// The canonical form of the MAC address `text` names — lowercase,
-    /// colon-separated — or `nil` when it names none a guest can use.
-    ///
-    /// `VZMACAddress(string:)` takes six colon-separated hex pairs in either
-    /// case and rejects every other spelling, so case is the only thing left to
-    /// normalize. It also accepts the all-zero address and multicast/broadcast
-    /// addresses, none of which a station can send from: a guest configured
-    /// with one gets no link, and the app would key its reservation and
-    /// forwarding rules on an address no frame can source
-    /// (docs/NETWORKING.md principle 3 — refuse at entry what cannot take
-    /// effect).
-    static func normalizedMACAddress(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let address = VZMACAddress(string: trimmed), address.isUnicastAddress,
-            address.string != Self.unspecifiedMACAddress
-        else { return nil }
-        return address.string
-    }
-
-    /// The all-zero address, which parses and reads as unicast but addresses
-    /// nothing.
-    private static let unspecifiedMACAddress = "00:00:00:00:00:00"
-
     @objc private func generateMACAddressTapped() {
         // Clicking a push button takes no first responder, so an edit open in
         // the field would outlive the write and commit over it on the way out.
@@ -575,7 +527,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // whatever was typed, so committing first would only refuse a typed
         // duplicate with an alert about an address no longer in play.
         macAddressField.abortEditing()
-        writeConfig { $0.macAddress = VZMACAddress.randomLocallyAdministered().string }
+        writeConfig { $0.macAddress = GuestMACAddress.random() }
         refreshResolved()
         refreshNetwork()
     }
@@ -586,27 +538,17 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let accepted: Bool
         switch choice {
         case .shared:
-            // `bridgedInterfaceIdentifier` is left alone so switching back to
-            // Bridged remembers the interface.
-            accepted = writeConfig {
-                $0.networkEnabled = true
-                $0.networkMode = .shared
-                Self.mintMACAddressIfNeeded(&$0)
-            }
+            accepted = writeConfig { $0.applyNetworkMode(.shared) }
         case .hostOnly:
-            accepted = writeConfig {
-                $0.networkEnabled = true
-                $0.networkMode = .hostOnly
-                Self.mintMACAddressIfNeeded(&$0)
-            }
+            accepted = writeConfig { $0.applyNetworkMode(.hostOnly) }
         case .none:
-            accepted = writeConfig { $0.networkEnabled = false }
+            accepted = writeConfig { $0.applyNetworkMode(nil) }
         case .bridged(let identifier):
             accepted = writeConfig {
-                $0.networkEnabled = true
-                $0.networkMode = .bridged
+                // Assigned before the mode, so a picker choice that only
+                // changes the interface still lands.
                 $0.bridgedInterfaceIdentifier = identifier
-                Self.mintMACAddressIfNeeded(&$0)
+                $0.applyNetworkMode(.bridged)
             }
         }
         // A refused switch leaves the configuration untouched, so nothing marks
@@ -624,17 +566,17 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             return
         }
         let sheet = PortForwardingRuleSheetContentViewController(
-            takenHostClaims: takenHostPortClaims())
+            takenHostClaims: viewModel.takenHostPortClaims)
         sheet.delegate = self
         portForwardingSheetPresenter.show(content: sheet, in: window)
     }
 
     @objc private func removePortForwardingRuleTapped(_ sender: NSButton) {
         guard !isReadOnly else { return }
-        var rules = instance.configuration.portForwardingRules
+        let rules = instance.configuration.portForwardingRules
         guard rules.indices.contains(sender.tag) else { return }
-        rules.remove(at: sender.tag)
-        writePortForwardingRules(rules)
+        viewModel.removePortForwardingRule(rules[sender.tag].hostClaim, from: instance)
+        portForwardingRulesChanged()
     }
 
     /// Persists the typed MAC in canonical form, then shows the address the VM
@@ -646,7 +588,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
     /// refresh defers to is the very one being reconciled away.
     private func applyMACAddressFieldEdit() {
-        if let normalized = Self.normalizedMACAddress(macAddressField.stringValue) {
+        if let normalized = GuestMACAddress.normalized(macAddressField.stringValue) {
             writeConfig { $0.macAddress = normalized }
         }
         macAddressField.stringValue = instance.configuration.macAddress ?? ""
@@ -725,7 +667,11 @@ extension VMSettingsNetworkPanelViewController:
         _ vc: PortForwardingRuleSheetContentViewController, didAdd rule: PortForwardingRule
     ) {
         portForwardingSheetPresenter.close()
-        writePortForwardingRules(instance.configuration.portForwardingRules + [rule])
+        // Through the verb, not the configuration: the range and the
+        // network-wide host-port claim are enforced in one place, and the sheet
+        // only decides when to light its Add button up.
+        viewModel.addPortForwardingRule(rule, to: instance)
+        portForwardingRulesChanged()
     }
 
     func portForwardingRuleSheetDidCancel(_ vc: PortForwardingRuleSheetContentViewController) {

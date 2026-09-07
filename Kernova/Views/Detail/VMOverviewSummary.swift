@@ -236,12 +236,10 @@ enum VMOverviewSummary {
                 case 1: "1 shared folder"
                 default: "\(count) shared folders"
                 }
-            // Passthrough runs only while clipboard sharing carries it, and
-            // turning sharing off leaves the stored flag set — so the line
+            // Turning sharing off leaves the stored flag set, so the line
             // states what is running, as the panel dims the switch that isn't.
-            let passthroughRuns =
-                config.clipboardSharingEnabled && config.clipboardPassthroughEnabled
-            return "Passthrough \(passthroughRuns ? "on" : "off") \u{00B7} \(folders)"
+            let passthrough = config.clipboardPassthroughIsEffective ? "on" : "off"
+            return "Passthrough \(passthrough) \u{00B7} \(folders)"
         case .general, .system, .storage, .network, .snapshots:
             return nil
         }

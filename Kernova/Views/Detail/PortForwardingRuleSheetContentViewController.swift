@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Delegate for ``PortForwardingRuleSheetContentViewController``.
 @MainActor
@@ -19,9 +20,10 @@ protocol PortForwardingRuleSheetContentViewControllerDelegate: AnyObject {
 /// port.
 ///
 /// **Add** stays disabled until the fields describe a rule the network can
-/// carry — both ports in range, and the host port not already claimed
-/// (docs/NETWORKING.md: a rule that cannot take effect is refused when the user
-/// enters it, never accepted and left to fail at VM start).
+/// carry — both ports in range, and the host port not already claimed. It reads
+/// the claims from the registry the add verb enforces them from, so the button
+/// and the verb behind it agree; the refusal itself is the verb's, and this only
+/// decides when to offer the button.
 @MainActor
 final class PortForwardingRuleSheetContentViewController: NSViewController {
     weak var delegate: PortForwardingRuleSheetContentViewControllerDelegate?

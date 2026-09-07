@@ -46,6 +46,19 @@ struct DisplayBootSizing: Sendable {
             ppi: scale >= 2 ? hiDPIPixelsPerInch : standardPixelsPerInch)
     }
 
+    /// The boot resolution a "looks like" size of `width` × `height` produces
+    /// at the density `hiDPI` names.
+    ///
+    /// The one place a chosen size becomes a stored trio: it fits the pair to
+    /// the ceiling the density leaves — a HiDPI base is doubled before it
+    /// reaches VZ, so it clamps to half of it — and doubles it from there.
+    static func resolution(base width: Int, height: Int, hiDPI: Bool) -> Resolution {
+        let base = clamped(
+            width: width, height: height, ppi: standardPixelsPerInch,
+            maximum: hiDPI ? maximumDimension / 2 : maximumDimension)
+        return hiDPI ? doubled(base) : base
+    }
+
     /// `resolution` at twice the pixel count and HiDPI density — the rewrite
     /// that turns a "looks like" size into a Retina one.
     static func doubled(_ resolution: Resolution) -> Resolution {

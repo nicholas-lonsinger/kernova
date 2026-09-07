@@ -72,7 +72,19 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case editStorageDisk(VMSelector, StorageDiskEdit)
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
         case editSharedDirectory(VMSelector, SharedDirectoryEdit)
+        case editPortForwarding(VMSelector, PortForwardingEdit)
         case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
+
+        /// Every configuration key `configuration` and `setConfiguration`
+        /// address, in the order they are presented. Addresses no VM: the
+        /// keyspace is the same for all of them.
+        case configurationKeys
+        /// The VM's values for `keys`, or for every key when `keys` is `nil`.
+        case configuration(VMSelector, keys: [String]?)
+        /// Applies every assignment or none, in the order given, answering the
+        /// values the keys ended up holding.
+        case setConfiguration(
+            VMSelector, assignments: [ConfigurationEntry], confirmed: Bool)
 
         /// Quits Kernova the way the status item's Quit does, save-suspending
         /// running and paused VMs on the way out.
@@ -96,7 +108,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
                 .cancelGuestSetup, .stop, .pause, .suspend, .showInFinder, .takeSnapshot,
                 .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
                 .rename, .delete, .importVM, .cancelPreparing, .awaitPreparing, .editStorageDisk,
-                .editRemovableMedia, .editSharedDirectory, .guestAgentDisk, .quit:
+                .editRemovableMedia, .editSharedDirectory, .editPortForwarding, .guestAgentDisk,
+                .configurationKeys, .configuration, .setConfiguration, .quit:
                 false
             }
         }
@@ -134,7 +147,11 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .editStorageDisk: .editStorageDisk
             case .editRemovableMedia: .editRemovableMedia
             case .editSharedDirectory: .editSharedDirectory
+            case .editPortForwarding: .editPortForwarding
             case .guestAgentDisk: .guestAgentDisk
+            case .configurationKeys: .configurationKeys
+            case .configuration: .configuration
+            case .setConfiguration: .setConfiguration
             case .quit: .quit
             }
         }

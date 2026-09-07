@@ -27,6 +27,12 @@ struct CLIExitCodeTests {
                         confirmTitle: "Force Stop", dismissTitle: "Cancel")),
                 .refusedByState
             ),
+            (
+                .conflict(
+                    vm: vm, with: vm, reason: .macAddressInUse(address: "aa:bb:cc:dd:ee:0f")),
+                .refusedByState
+            ),
+            (.invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."), .usage),
             (.busy(vm: vm, operation: "starting"), .busy),
             (.timedOut(vm: vm, verb: .stop, seconds: 60), .timedOut),
             (

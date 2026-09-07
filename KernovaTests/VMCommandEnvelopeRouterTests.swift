@@ -35,21 +35,16 @@ struct VMCommandEnvelopeRouterTests {
     private struct Harness {
         let transport: TestTransport
         let core: VMCommandCore
-        let authority: MockImportSourceAuthority
+        let authority: MockSandboxSourceAuthority
         let library: VMLibrary
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
         let snapshots: MockVMSnapshotStore
     }
 
-    /// A transport over anything that speaks the facade, with an authority that
-    /// answers every import source unchanged unless the test says otherwise.
-    private func makeTransport(
-        over commands: any VMCommanding,
-        authority: MockImportSourceAuthority = MockImportSourceAuthority()
-    ) -> TestTransport {
-        TestTransport(
-            router: VMCommandEnvelopeRouter(commands: commands, importAuthority: authority))
+    /// A transport over anything that speaks the facade.
+    private func makeTransport(over commands: any VMCommanding) -> TestTransport {
+        TestTransport(router: VMCommandEnvelopeRouter(commands: commands))
     }
 
     private func makeHarness(
@@ -88,9 +83,10 @@ struct VMCommandEnvelopeRouterTests {
             preferences: preferences,
             clock: clock
         )
-        let authority = MockImportSourceAuthority()
+        let authority = MockSandboxSourceAuthority()
+        core.sourceAuthority = authority
         return Harness(
-            transport: makeTransport(over: core, authority: authority),
+            transport: makeTransport(over: core),
             core: core, authority: authority,
             library: library, storage: storage, virtualization: virtualization,
             snapshots: snapshots)
@@ -593,15 +589,10 @@ struct VMCommandEnvelopeRouterTests {
 
     // MARK: - Import
 
-    @Test("An import copies the bundle the authority made readable, not the path sent")
-    func importGoesThroughTheAuthority() async throws {
+    @Test("An import crosses the wire as the path the client named")
+    func importCrossesTheWire() async throws {
         let double = MockVMCommanding()
-        let authority = MockImportSourceAuthority()
-        // What a user picking in the panel produces: the grant is on the file
-        // they clicked, so their click is what the import has to act on.
-        let picked = URL(fileURLWithPath: "/Users/somebody/Desktop/Picked.kernova")
-        authority.substitute = picked
-        let transport = makeTransport(over: double, authority: authority)
+        let transport = makeTransport(over: double)
 
         let response = try await transport.send(
             .importVM(path: "/Users/somebody/Desktop/Named.kernova"))
@@ -610,21 +601,19 @@ struct VMCommandEnvelopeRouterTests {
             Issue.record("expected a summary, got \(response.result)")
             return
         }
-        #expect(summary.name == "Picked")
+        #expect(summary.name == "Named")
         #expect(
-            authority.requestedURLs.map(\.path)
+            double.importURLs.map { $0.path(percentEncoded: false) }
                 == ["/Users/somebody/Desktop/Named.kernova"])
-        #expect(double.importURLs == [picked])
     }
 
-    @Test("An import nobody granted comes back as the authority's refusal, importing nothing")
-    func importRefusedByTheAuthorityCrossesTheWire() async throws {
+    @Test("An import nobody granted comes back as the verb's own refusal")
+    func importRefusalCrossesTheWire() async throws {
         let double = MockVMCommanding()
-        let authority = MockImportSourceAuthority()
-        authority.error = CommandError.operationFailed(
+        double.importError = CommandError.operationFailed(
             verb: .importVM,
             message: "Kernova was not given permission to read \u{201C}Named.kernova\u{201D}.")
-        let transport = makeTransport(over: double, authority: authority)
+        let transport = makeTransport(over: double)
 
         let response = try await transport.send(
             .importVM(path: "/Users/somebody/Desktop/Named.kernova"))
@@ -635,7 +624,6 @@ struct VMCommandEnvelopeRouterTests {
         }
         #expect(verb == .importVM)
         #expect(message.contains("was not given permission"))
-        #expect(double.importURLs.isEmpty)
     }
 
     // MARK: - Preparing Copies
@@ -910,6 +898,115 @@ struct VMCommandEnvelopeRouterTests {
         #expect(try await transport.send(.quit).result == .ok)
 
         #expect(double.quitCallCount == 1)
+    }
+
+    // MARK: - Configuration
+
+    @Test("The keyspace, a read and a write each cross the wire as their own payload")
+    func configurationVerbsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        double.configurationKeyDescriptors = [
+            ConfigurationKeyDescriptor(
+                name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
+        ]
+        double.configurationEntries = [ConfigurationEntry(key: "cpus", value: "4")]
+        let transport = makeTransport(over: double)
+
+        #expect(
+            try await transport.send(.configurationKeys).result
+                == .configurationKeys(double.configurationKeyDescriptors))
+        #expect(double.configurationKeysCallCount == 1)
+
+        #expect(
+            try await transport.send(.configuration(.name("Alpha"), keys: ["cpus"])).result
+                == .configuration(double.configurationEntries))
+        #expect(double.configurationCalls.map(\.keys) == [["cpus"]])
+
+        let assignments = [ConfigurationEntry(key: "cpus", value: "3")]
+        #expect(
+            try await transport.send(
+                .setConfiguration(.name("Alpha"), assignments: assignments, confirmed: true)
+            ).result == .configuration(assignments))
+        #expect(double.setConfigurationCalls.map(\.confirmed) == [true])
+        #expect(double.setConfigurationCalls.map(\.assignments) == [assignments])
+    }
+
+    @Test("A configuration refusal comes back as the refusal, not as a failed operation")
+    func configurationRefusalsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        double.setConfigurationError = CommandError.invalidArgument("There is no setting called \u{201C}cpu\u{201D}.")
+        let transport = makeTransport(over: double)
+
+        let response = try await transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpu", value: "3")],
+                confirmed: false))
+
+        #expect(
+            response.failure
+                == .invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."))
+    }
+
+    @Test("A share add crosses the wire as the path the client named and its flag")
+    func shareAddCrossesTheWire() async throws {
+        let double = MockVMCommanding()
+        let transport = makeTransport(over: double)
+
+        #expect(
+            try await transport.send(
+                .editSharedDirectory(
+                    .name("Alpha"), .add(path: "/Users/somebody/Asked", readOnly: true))
+            ).result == .ok)
+
+        // The grant the path needs belongs to the verb, not to the wire: the
+        // router hands the string over untouched.
+        #expect(double.addSharedDirectoryCalls.map(\.path) == ["/Users/somebody/Asked"])
+        #expect(double.addSharedDirectoryCalls.map(\.readOnly) == [true])
+    }
+
+    @Test("A share nobody granted comes back as the verb's own refusal")
+    func shareAddRefusalCrossesTheWire() async throws {
+        let double = MockVMCommanding()
+        double.sharedDirectoryEditError = CommandError.operationFailed(
+            verb: .editSharedDirectory, message: "Kernova was not given permission.")
+        let transport = makeTransport(over: double)
+
+        let response = try await transport.send(
+            .editSharedDirectory(
+                .name("Alpha"), .add(path: "/Users/somebody/Asked", readOnly: false)))
+
+        #expect(response.failure != nil)
+    }
+
+    @Test("A share removal names the folder by path")
+    func shareRemovalByPathCrossesTheWire() async throws {
+        let double = MockVMCommanding()
+        let transport = makeTransport(over: double)
+
+        #expect(
+            try await transport.send(
+                .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites"))
+            ).result == .ok)
+
+        #expect(double.removeSharedDirectoryPathCalls.map(\.path) == ["/Users/somebody/Sites"])
+    }
+
+    @Test("Both port-forwarding edits cross the wire as the rule and the claim")
+    func portForwardingEditsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let transport = makeTransport(over: double)
+        let rule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
+
+        #expect(
+            try await transport.send(.editPortForwarding(.name("Alpha"), .add(rule: rule))).result
+                == .ok)
+        #expect(double.addPortForwardingRuleCalls.map(\.rule) == [rule])
+
+        let claim = PortForwardingHostClaim(transport: .udp, hostPort: 5353)
+        #expect(
+            try await transport.send(.editPortForwarding(.name("Alpha"), .remove(claim: claim)))
+                .result == .ok)
+        #expect(double.removePortForwardingRuleCalls.map(\.claim) == [claim])
     }
 
     @Test("The router drives anything that speaks the facade, not just the core")

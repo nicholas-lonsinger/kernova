@@ -59,7 +59,13 @@ struct VMCapabilityCatalogTests {
     /// adds.
     private static let universal: Set<VMCapability> = [
         .info, .ipAddress, .snapshots, .reveal, .showInFinder, .deleteSnapshot, .renameSnapshot,
-        .setSnapshotNotes,
+        .setSnapshotNotes, .editLiveConfiguration,
+    ]
+
+    /// The configuration edits every at-rest phase adds, named once — the
+    /// settings whose values are pinned by a live session or a saved state.
+    private static let atRestConfiguration: Set<VMCapability> = [
+        .editConfiguration, .editPortForwarding, .switchNetworkMode,
     ]
 
     // MARK: - Applicability by state
@@ -71,10 +77,10 @@ struct VMCapabilityCatalogTests {
         let cases: [(label: String, phase: VMLifecyclePhase, added: Set<VMCapability>)] = [
             (
                 "stopped", .stopped,
-                [
+                Self.atRestConfiguration.union([
                     .start, .takeSnapshot, .editStorageDisks, .editRemovableMedia,
                     .editSharedDirectories, .clone, .rename, .delete,
-                ]
+                ])
             ),
             (
                 "running", .running(sessionID: id),
@@ -113,17 +119,17 @@ struct VMCapabilityCatalogTests {
             ("installing, no VM yet", .installing(sessionID: nil), []),
             (
                 "failed", .failed(message: "Boot failed."),
-                [
+                Self.atRestConfiguration.union([
                     .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone,
                     .rename, .delete,
-                ]
+                ])
             ),
             (
                 "initialBoot", .initialBoot,
-                [
+                Self.atRestConfiguration.union([
                     .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone,
                     .rename, .delete,
-                ]
+                ])
             ),
         ]
 
@@ -199,6 +205,14 @@ struct VMCapabilityCatalogTests {
         // A snapshot exists and the phase is settled, so only `isPreparing`
         // keeps Revert to Snapshot from applying to a bundle still copying.
         #expect(!harness.catalog.isApplicable(.revertToSnapshot, to: instance))
+        // The settings read at moments other than boot apply in every state, so
+        // `survivesPreparing` is the whole of what keeps a configuration write
+        // off a bundle still being copied — and it is the level a verb guard
+        // reads, which is why no verb needs a preparing check of its own.
+        #expect(harness.catalog.isApplicable(.editLiveConfiguration, to: instance))
+        #expect(!harness.catalog.accepts(.editLiveConfiguration, on: instance))
+        #expect(!harness.catalog.accepts(.editConfiguration, on: instance))
+        #expect(!harness.catalog.accepts(.switchNetworkMode, on: instance))
     }
 
     @Test("Clone stays available while a different VM is being copied")
