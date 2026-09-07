@@ -93,7 +93,15 @@ protocol VMCommanding: AnyObject {
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
     /// there refuses for confirmation and offers the two dispositions that can.
     /// `.force` always asks: it discards unsaved guest state.
-    func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws
+    ///
+    /// `timeout` seconds bounds a wait for the guest to actually power off,
+    /// refusing with ``CommandError/timedOut(vm:verb:seconds:)`` and touching
+    /// nothing when it expires; `nil` returns as soon as the guest has been
+    /// asked to go down.
+    func stop(
+        _ selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+        timeout: TimeInterval?
+    ) async throws
 
     func pause(_ selector: VMSelector) async throws
 
@@ -106,7 +114,13 @@ protocol VMCommanding: AnyObject {
 
     /// Shuts the guest down and starts it again once it has powered off,
     /// bringing it back up the way ``start(_:recovery:presentation:)`` would.
-    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws
+    ///
+    /// `timeout` seconds bounds the shutdown half alone. A guest still up when
+    /// it expires refuses with ``CommandError/timedOut(vm:verb:seconds:)`` and
+    /// is not started again; `nil` waits as long as the guest takes.
+    func restart(
+        _ selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?
+    ) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
@@ -303,6 +317,23 @@ extension VMCommanding {
     }
 
     func restart(_ selector: VMSelector) async throws {
-        try await restart(selector, presentation: .surface)
+        try await restart(selector, presentation: .surface, timeout: nil)
+    }
+}
+
+/// The unbounded spellings of the two verbs that can wait for a guest to power
+/// off.
+///
+/// Only a door whose caller is sitting there waiting supplies a deadline — the
+/// `kernova` tool's `--timeout`. An in-process door spells the verb without
+/// one: a user watching a window can see the guest is taking its time and stop
+/// it themselves.
+extension VMCommanding {
+    func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {
+        try await stop(selector, disposition: disposition, confirmed: confirmed, timeout: nil)
+    }
+
+    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
+        try await restart(selector, presentation: presentation, timeout: nil)
     }
 }

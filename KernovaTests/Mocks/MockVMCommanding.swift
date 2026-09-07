@@ -45,12 +45,16 @@ final class MockVMCommanding: VMCommanding {
         []
     private(set) var removeStartFailedAttachmentCalls: [(selector: VMSelector, attachment: StartFailedAttachment)] = []
     private(set) var startCalls: [(selector: VMSelector, recovery: Bool, presentation: VMDisplayPresentation)] = []
-    private(set) var stopCalls: [(selector: VMSelector, disposition: StopDisposition, confirmed: Bool)] =
-        []
+    private(set) var stopCalls:
+        [(
+            selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+            timeout: TimeInterval?
+        )] = []
     private(set) var pauseSelectors: [VMSelector] = []
     private(set) var resumeCalls: [(selector: VMSelector, presentation: VMDisplayPresentation)] = []
     private(set) var suspendSelectors: [VMSelector] = []
-    private(set) var restartCalls: [(selector: VMSelector, presentation: VMDisplayPresentation)] = []
+    private(set) var restartCalls:
+        [(selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?)] = []
     private(set) var openSelectors: [VMSelector] = []
     private(set) var revealSelectors: [VMSelector] = []
     private(set) var cancelGuestSetupCalls: [(selector: VMSelector, confirmed: Bool)] = []
@@ -245,8 +249,11 @@ final class MockVMCommanding: VMCommanding {
         }
     }
 
-    func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {
-        stopCalls.append((selector, disposition, confirmed))
+    func stop(
+        _ selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+        timeout: TimeInterval?
+    ) async throws {
+        stopCalls.append((selector, disposition, confirmed, timeout))
         if let stopError { throw stopError }
         if let stopConsentPrompt, !confirmed {
             throw CommandError.confirmationRequired(stopConsentPrompt)
@@ -268,8 +275,10 @@ final class MockVMCommanding: VMCommanding {
         if let suspendError { throw suspendError }
     }
 
-    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
-        restartCalls.append((selector, presentation))
+    func restart(
+        _ selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?
+    ) async throws {
+        restartCalls.append((selector, presentation, timeout))
         if let restartError { throw restartError }
     }
 

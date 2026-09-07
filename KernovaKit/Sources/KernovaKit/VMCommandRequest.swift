@@ -33,11 +33,17 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
         case start(VMSelector, recovery: Bool, presentation: VMDisplayPresentation)
         case cancelGuestSetup(VMSelector, confirmed: Bool)
-        case stop(VMSelector, disposition: StopDisposition, confirmed: Bool)
+        /// `timeout` bounds the wait for the guest to power off, in seconds;
+        /// `nil` returns as soon as the guest has been asked to go down.
+        case stop(
+            VMSelector, disposition: StopDisposition, confirmed: Bool, timeout: TimeInterval?)
         case pause(VMSelector)
         case resume(VMSelector, presentation: VMDisplayPresentation)
         case suspend(VMSelector)
-        case restart(VMSelector, presentation: VMDisplayPresentation)
+        /// `timeout` bounds the shutdown half, in seconds; a guest still up
+        /// when it expires is not started again.
+        case restart(
+            VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?)
         case open(VMSelector)
         case reveal(VMSelector)
 
@@ -75,7 +81,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .open, .reveal:
                 true
             case .start(_, _, let presentation), .resume(_, let presentation),
-                .restart(_, let presentation):
+                .restart(_, let presentation, _):
                 presentation == .surface
             case .list, .info, .ipAddress, .snapshots, .events, .cancelGuestSetup, .stop, .pause,
                 .suspend, .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot,

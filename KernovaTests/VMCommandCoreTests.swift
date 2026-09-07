@@ -27,7 +27,8 @@ struct VMCommandCoreTests {
 
     private func makeHarness(
         virtualization: MockVirtualizationService = MockVirtualizationService(),
-        diskImages: MockDiskImageService = MockDiskImageService()
+        diskImages: MockDiskImageService = MockDiskImageService(),
+        clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
@@ -58,7 +59,8 @@ struct VMCommandCoreTests {
             snapshotStore: snapshots,
             diskImageService: diskImages,
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            clock: clock
         )
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
@@ -76,7 +78,9 @@ struct VMCommandCoreTests {
 
     /// A core whose virtualization service holds one operation suspended, so a
     /// test can look at the world while a VZ call is still in flight.
-    private func makeSuspendingHarness() -> SuspendingHarness {
+    private func makeSuspendingHarness(
+        clock: any EngineClock = makePlatformEngineClock()
+    ) -> SuspendingHarness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
@@ -106,7 +110,8 @@ struct VMCommandCoreTests {
             snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            clock: clock
         )
         return SuspendingHarness(
             core: core, library: library, storage: storage, virtualization: virtualization,
@@ -2089,6 +2094,213 @@ struct VMCommandCoreTests {
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
         try await harness.core.restart(.id(instance.id))
+
+        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
+    // MARK: - Deadlines on the power-off
+
+    @Test("A stop deadline that expires refuses and escalates nothing")
+    func stopRefusesWhenTheGuestIgnoresTheShutdown() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let error = await commandError {
+            try await harness.core.stop(
+                .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+        }
+
+        guard case .timedOut(let vm, let verb, let seconds) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(vm.name == "Stubborn")
+        #expect(verb == .stop)
+        #expect(seconds == 60)
+        // The shutdown was asked for once and nothing followed it: the VM is
+        // exactly where the expiry found it, and a force stop stays the
+        // caller's own decision.
+        #expect(virtualization.stopCallCount == 1)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A stop that lands inside its deadline answers on the power-off, not the clock")
+    func stopWithinItsDeadlineSucceeds() async throws {
+        // Nothing releases this clock, so the deadline can never be what ends
+        // the wait: reaching the assertions at all proves the power-off did.
+        let harness = makeHarness(clock: GatedEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Prompt", phase: .running(sessionID: UUID()))
+
+        try await harness.core.stop(
+            .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+
+        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A restart deadline expires on the shutdown half, leaving the guest unstarted")
+    func restartRefusesWhenTheShutdownOutlastsItsDeadline() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let error = await commandError {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 30)
+        }
+
+        guard case .timedOut(_, let verb, let seconds) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(verb == .restart)
+        #expect(seconds == 30)
+        // The bring-up half never ran: a guest that would not shut down is not
+        // restarted, and it is not terminated to make the restart happen.
+        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A stop settles on the power-off, not on the baseline revert behind it")
+    func stopSettlesWhileAnEphemeralRevertIsStillWriting() async throws {
+        // The clock is already past the deadline the moment the wait arms, so a
+        // stop that waited for anything beyond the guest going down would refuse
+        // here — an Ephemeral VM's revert is Kernova's own work, not a guest
+        // that would not shut down.
+        let harness = makeSuspendingHarness(clock: TestEngineClock())
+        harness.virtualization.shouldSuspendOnRevert = true
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        try await harness.core.stop(
+            .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+
+        // The stop answered on the power-off; the revert it started is parked
+        // mid-copy behind it.
+        await harness.virtualization.waitUntilSuspended()
+        #expect(instance.status == .stopped)
+        #expect(harness.library.hasRevertInFlight(for: instance.id))
+
+        harness.virtualization.resumeSuspended()
+        try await waitForChange { [library = harness.library] in
+            !library.hasRevertInFlight(for: instance.id)
+        }
+    }
+
+    @Test("A pause landing mid-wait is not the power-off a stop is waiting for")
+    func stopIsNotSettledByAPauseWhileItWaits() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let stop = Task {
+            try await harness.core.stop(
+                .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+        }
+        // The parked sleep is the deadline: once it exists the wait is armed,
+        // and nothing but the predicate or that sleep can end it.
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+
+        try await harness.core.pause(.id(instance.id))
+        #expect(instance.status == .paused)
+
+        // A pause leaves the guest's memory live and the VM resumable. Letting
+        // the deadline expire is what proves the wait was still running: had the
+        // pause settled it, the stop would already have returned successfully.
+        clock.release(try #require(clock.parked.first))
+        let error = await commandError { try await stop.value }
+        guard case .timedOut(_, let verb, _) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(verb == .stop)
+        #expect(virtualization.forceStopCallCount == 0)
+    }
+
+    @Test("A pause landing mid-wait does not let a restart resume the session it was rebooting")
+    func restartIsNotSettledByAPauseWhileItWaits() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let restart = Task {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+        }
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+
+        try await harness.core.pause(.id(instance.id))
+        #expect(instance.status == .paused)
+
+        clock.release(try #require(clock.parked.first))
+        let error = await commandError { try await restart.value }
+        guard case .timedOut(_, let verb, _) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(verb == .restart)
+        // Resuming the paused session would have handed back the same guest
+        // the caller asked to reboot, and reported it as a restart.
+        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.resumeCallCount == 0)
+    }
+
+    @Test("A restart deadline covers the power-off, not the baseline revert behind it")
+    func restartWaitsOutAnEphemeralRevertPastItsDeadline() async throws {
+        // The clock is past the deadline the moment anything waits on it, so
+        // only a wait the revert is not part of survives to bring the VM up.
+        let harness = makeSuspendingHarness(clock: TestEngineClock())
+        harness.virtualization.shouldSuspendOnRevert = true
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        let restart = Task {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        #expect(instance.status == .stopped)
+        #expect(harness.library.hasRevertInFlight(for: instance.id))
+        #expect(harness.virtualization.startCallCount == 0)
+
+        harness.virtualization.resumeSuspended()
+        try await restart.value
+
+        // The baseline handed the VM back suspended, so the restart resumed it
+        // — and only once the revert had finished writing.
+        #expect(instance.status == .running)
+        #expect(!harness.library.hasRevertInFlight(for: instance.id))
+    }
+
+    @Test("A restart inside its deadline boots the guest as an unbounded one does")
+    func restartWithinItsDeadlineBootsTheGuest() async throws {
+        let harness = makeHarness(clock: GatedEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Plain", phase: .running(sessionID: UUID()))
+
+        try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)

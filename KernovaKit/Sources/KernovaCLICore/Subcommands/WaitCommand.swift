@@ -61,6 +61,11 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// Refuses a deadline that names no wait.
+        public func validate() throws {
+            try TimeoutOption.validate(timeout)
+        }
+
         /// Waits, or refuses with what stood in the way.
         public func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)

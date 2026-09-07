@@ -108,4 +108,40 @@ struct EngineClockTests {
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
+
+    @Test(
+        "An interval past what the arithmetic can hold suspends instead of trapping",
+        arguments: EngineClockKind.allCases)
+    func hugeIntervalIsClamped(kind: EngineClockKind) async throws {
+        let clock = kind.makeClock()
+        // A deadline arrives from whatever a caller typed, and both the instant
+        // arithmetic and the UInt64 conversion under these clocks trap on a
+        // number this size — which would take the app down, not the wait.
+        let ceiling = MonotonicEngineClock.maximumSleepInterval
+        #expect(clock.schedulable(.greatestFiniteMagnitude) == ceiling)
+        #expect(clock.schedulable(.infinity) == ceiling)
+        #expect(clock.schedulable(-1) == 0)
+
+        let started = AsyncGate()
+        let running = Box(false)
+        let task = Task {
+            running.value = true
+            started.notify()
+            try await clock.sleep(for: .greatestFiniteMagnitude)
+        }
+        try await started.wait { running.value }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test("A manually advanced clock takes an unschedulable interval too")
+    func testClocksClampTheirAdvance() async throws {
+        let test = TestEngineClock()
+        try await test.sleep(for: .greatestFiniteMagnitude)
+        #expect(test.seconds(since: EngineInstant(nanoseconds: 0)) > 0)
+
+        let gated = GatedEngineClock()
+        gated.advance(seconds: .infinity)
+        #expect(gated.seconds(since: EngineInstant(nanoseconds: 0)) > 0)
+    }
 }

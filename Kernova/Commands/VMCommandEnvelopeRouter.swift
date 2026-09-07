@@ -136,8 +136,9 @@ struct VMCommandEnvelopeRouter {
         case .cancelGuestSetup(let selector, let confirmed):
             try commands.cancelGuestSetup(selector, confirmed: confirmed)
             return .ok
-        case .stop(let selector, let disposition, let confirmed):
-            try await commands.stop(selector, disposition: disposition, confirmed: confirmed)
+        case .stop(let selector, let disposition, let confirmed, let timeout):
+            try await commands.stop(
+                selector, disposition: disposition, confirmed: confirmed, timeout: timeout)
             return .ok
         case .pause(let selector):
             try await commands.pause(selector)
@@ -148,8 +149,8 @@ struct VMCommandEnvelopeRouter {
         case .suspend(let selector):
             try await commands.suspend(selector)
             return .ok
-        case .restart(let selector, let presentation):
-            try await commands.restart(selector, presentation: presentation)
+        case .restart(let selector, let presentation, let timeout):
+            try await commands.restart(selector, presentation: presentation, timeout: timeout)
             return .ok
         case .open(let selector):
             try commands.open(selector)

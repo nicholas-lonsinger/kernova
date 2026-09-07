@@ -70,15 +70,16 @@ struct VMCommandEnvelopeTests {
             .start(selector, recovery: false, presentation: .headless),
             .cancelGuestSetup(selector, confirmed: false),
             .cancelGuestSetup(selector, confirmed: true),
-            .stop(selector, disposition: .graceful, confirmed: false),
-            .stop(selector, disposition: .resumeThenShutDown, confirmed: true),
-            .stop(selector, disposition: .force, confirmed: true),
+            .stop(selector, disposition: .graceful, confirmed: false, timeout: nil),
+            .stop(selector, disposition: .graceful, confirmed: false, timeout: 90),
+            .stop(selector, disposition: .resumeThenShutDown, confirmed: true, timeout: nil),
+            .stop(selector, disposition: .force, confirmed: true, timeout: 0.5),
             .pause(selector),
             .resume(selector, presentation: .surface),
             .resume(selector, presentation: .headless),
             .suspend(selector),
-            .restart(selector, presentation: .surface),
-            .restart(selector, presentation: .headless),
+            .restart(selector, presentation: .surface, timeout: nil),
+            .restart(selector, presentation: .headless, timeout: 120),
             .open(selector),
             .reveal(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
@@ -182,7 +183,7 @@ struct VMCommandEnvelopeTests {
             .reveal(selector),
             .start(selector, recovery: false, presentation: .surface),
             .resume(selector, presentation: .surface),
-            .restart(selector, presentation: .surface),
+            .restart(selector, presentation: .surface, timeout: nil),
         ]
         for verb in surfacing {
             #expect(verb.surfacesInterface, "\(verb)")
@@ -195,7 +196,7 @@ struct VMCommandEnvelopeTests {
             .info(selector),
             .start(selector, recovery: false, presentation: .headless),
             .resume(selector, presentation: .headless),
-            .restart(selector, presentation: .headless),
+            .restart(selector, presentation: .headless, timeout: nil),
         ]
         for verb in silent {
             #expect(!verb.surfacesInterface, "\(verb)")
@@ -251,6 +252,8 @@ struct VMCommandEnvelopeTests {
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),
             .conflict(vm: summary, with: summary, reason: .macAddress),
+            .timedOut(vm: summary, verb: .stop, seconds: 60),
+            .timedOut(vm: summary, verb: .restart, seconds: 12.5),
             .operationFailed(
                 verb: .start, title: nil, message: "could not open the disk", recovery: nil),
             .operationFailed(
@@ -266,6 +269,24 @@ struct VMCommandEnvelopeTests {
             #expect(decoded == response)
             #expect(decoded.failure == failure)
         }
+    }
+
+    @Test("A timeout states the deadline it observed and claims no state beyond it")
+    func timeoutCopyStatesOnlyWhatItObserved() {
+        let stop = CommandErrorDTO.timedOut(vm: summary, verb: .stop, seconds: 60)
+        let restart = CommandErrorDTO.timedOut(vm: summary, verb: .restart, seconds: 60)
+
+        #expect(stop.message.contains("did not power off within 60 seconds"))
+        #expect(restart.message.contains("was not started again"))
+        // The VM's state at the expiry is its own read: a suspended VM whose
+        // saved state the stop already discarded is not "running unchanged",
+        // and a sentence here cannot be right for both.
+        #expect(!stop.message.contains("running"))
+        // A fractional deadline reads back the way it was typed rather than
+        // rounding to a number the caller never asked for.
+        #expect(
+            CommandErrorDTO.timedOut(vm: summary, verb: .stop, seconds: 2.5).message
+                .contains("2.5 seconds"))
     }
 
     @Test("A failure's own heading survives the wire")

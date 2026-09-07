@@ -63,6 +63,53 @@ struct CLIArgumentParsingTests {
         #expect(resumed.method.disposition == .resumeThenShutDown)
     }
 
+    @Test("stop takes --timeout, and waits for nothing without one")
+    func stopParsesTimeout() throws {
+        let bare = try #require(try parse(["stop", "Alpha"]) as? KernovaCommand.Stop)
+        #expect(bare.timeout == nil)
+
+        let bounded = try #require(
+            try parse(["stop", "Alpha", "--timeout", "45"]) as? KernovaCommand.Stop)
+        #expect(bounded.timeout == 45)
+    }
+
+    @Test("A deadline rides any stop method, including --force")
+    func stopTimeoutRidesEveryMethod() throws {
+        // The deadline bounds the wait for the guest to actually power off,
+        // which every disposition has to travel — a force stop simply gets
+        // there in one step.
+        for method in ["--force", "--graceful", "--resume-first"] {
+            let stop = try #require(
+                try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)
+            #expect(stop.timeout == 5)
+        }
+    }
+
+    @Test("restart takes --timeout, and waits out the shutdown without one")
+    func restartParsesTimeout() throws {
+        let bare = try #require(try parse(["restart", "Alpha"]) as? KernovaCommand.Restart)
+        #expect(bare.timeout == nil)
+
+        let bounded = try #require(
+            try parse(["restart", "Alpha", "--timeout", "20"]) as? KernovaCommand.Restart)
+        #expect(bounded.timeout == 20)
+    }
+
+    @Test("A deadline that names no wait is a usage error on every verb that takes one")
+    func everyTimeoutRefusesANonPositiveDeadline() {
+        let lines: [[String]] = [
+            ["stop", "Alpha", "--timeout", "0"],
+            ["stop", "Alpha", "--timeout", "-5"],
+            ["restart", "Alpha", "--timeout", "0"],
+            ["restart", "Alpha", "--timeout", "-5"],
+            ["wait", "Alpha", "--until", "stopped", "--timeout", "0"],
+            ["ip", "Alpha", "--wait", "--timeout", "-1"],
+        ]
+        for line in lines {
+            #expect(throws: (any Error).self, "\(line)") { try parse(line) }
+        }
+    }
+
     @Test("Two stop methods at once is a usage error, not a silent winner")
     func stopMethodsAreExclusive() {
         #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--force", "--graceful"]) }

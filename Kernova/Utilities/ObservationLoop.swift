@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Handle to a recurring observation started by ``observeRecurring(track:apply:)``.
 ///
@@ -58,10 +59,43 @@ func observeRecurring(
     ObservationLoop(track: track, apply: apply)
 }
 
-/// Holds the loop so the `apply` closure can cancel the very loop it belongs to.
+/// How long an observed-change wait may last, and the clock that measures it.
+struct ObservedChangeDeadline: Sendable {
+    /// Seconds from the start of the wait.
+    let seconds: TimeInterval
+    /// What measures them.
+    let clock: any EngineClock
+}
+
+/// Holds the loop, the deadline's timer, and the continuation the two race to
+/// resume, so either can end the wait and neither can end it twice.
 @MainActor
 private final class ObservationLoopBox {
     var loop: ObservationLoop?
+    private var timer: Task<Void, Never>?
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    /// Adopts the continuation the wait suspends on.
+    func arm(_ continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    /// Adopts the timer that ends the wait at its deadline.
+    func arm(_ timer: Task<Void, Never>) {
+        self.timer = timer
+    }
+
+    /// Ends the wait, reporting whether the predicate held; later calls do
+    /// nothing.
+    func settle(_ satisfied: Bool) {
+        guard let continuation else { return }
+        self.continuation = nil
+        loop?.cancel()
+        loop = nil
+        timer?.cancel()
+        timer = nil
+        continuation.resume(returning: satisfied)
+    }
 }
 
 /// Suspends until `predicate` holds, waking on each change to an `@Observable`
@@ -73,20 +107,39 @@ private final class ObservationLoopBox {
 /// through an `@Observable` getter, or nothing wakes the wait.
 @MainActor
 func waitForObservedChange(until predicate: @escaping @MainActor () -> Bool) async {
-    guard !predicate() else { return }
+    _ = await waitForObservedChange(until: predicate, before: nil)
+}
+
+/// Suspends until `predicate` holds or `deadline` passes, answering whether the
+/// predicate held.
+///
+/// A `nil` deadline is the unbounded wait above. Contract on `predicate` is the
+/// same; the deadline re-reads it before answering, so a change landing in the
+/// same instant is a satisfied wait rather than an expiry.
+@MainActor
+func waitForObservedChange(
+    until predicate: @escaping @MainActor () -> Bool, before deadline: ObservedChangeDeadline?
+) async -> Bool {
+    guard !predicate() else { return true }
     let box = ObservationLoopBox()
-    // The pre-arm check above and `observeRecurring` both run without suspending,
-    // so no change can slip between them, and cancelling inside `apply` stops any
-    // further fire — the continuation resumes exactly once.
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+    // The pre-arm check above, `observeRecurring`, and the timer all run without
+    // suspending, so no change can slip between them; `settle` resumes once and
+    // tears down whichever of the two lost the race.
+    return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        box.arm(continuation)
         box.loop = observeRecurring(
             track: { _ = predicate() },
             apply: {
                 guard predicate() else { return }
-                box.loop?.cancel()
-                box.loop = nil
-                continuation.resume()
+                box.settle(true)
             }
         )
+        guard let deadline else { return }
+        box.arm(
+            Task { @MainActor in
+                try? await deadline.clock.sleep(for: deadline.seconds)
+                guard !Task.isCancelled else { return }
+                box.settle(predicate())
+            })
     }
 }

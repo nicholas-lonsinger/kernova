@@ -23,7 +23,8 @@ public final class TestEngineClock: EngineClock, @unchecked Sendable {
 
     /// Moves the reading forward by `seconds`.
     public func advance(seconds: TimeInterval) {
-        lock.withLock { nanoseconds &+= UInt64(max(0, seconds) * 1_000_000_000) }
+        let span = schedulable(seconds)
+        lock.withLock { nanoseconds &+= UInt64(span * 1_000_000_000) }
     }
 
     /// Advances the reading by `interval` and returns, without suspending.

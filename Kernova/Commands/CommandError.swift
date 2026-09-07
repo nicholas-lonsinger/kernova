@@ -39,6 +39,9 @@ enum CommandError: Error, Sendable, Equatable {
     case unsupported(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
+    /// The guest had not powered off `seconds` after the shutdown request, so
+    /// the verb stopped waiting and left the VM as it was.
+    case timedOut(vm: VMSummary, verb: VMVerb, seconds: TimeInterval)
     /// The verb ran and did not complete. `title` is the alert heading when the
     /// failure names its own; `recovery` is what the caller can do about it.
     case operationFailed(
@@ -92,6 +95,8 @@ extension CommandError {
             .unsupported(capability: capability)
         case .conflict(let vm, let other, let reason):
             .conflict(vm: vm, with: other, reason: reason)
+        case .timedOut(let vm, let verb, let seconds):
+            .timedOut(vm: vm, verb: verb, seconds: seconds)
         case .operationFailed(let verb, let title, let message, let recovery):
             .operationFailed(
                 verb: verb, title: title, message: message, recovery: recovery?.dto)
