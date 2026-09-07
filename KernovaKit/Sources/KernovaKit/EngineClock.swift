@@ -58,6 +58,24 @@ extension EngineClock {
     public func seconds(since start: EngineInstant) -> TimeInterval {
         start.seconds(to: now)
     }
+
+    /// The longest span any clock here will suspend for — decades of wall
+    /// clock, past every wait a caller means and far below where the
+    /// arithmetic below it wraps.
+    public static var maximumSleepInterval: TimeInterval { 1_000_000_000 }
+
+    /// `interval` reduced to a span this clock can schedule — what every
+    /// ``sleep(for:)`` does with the number it is handed, before anything else.
+    ///
+    /// An interval arrives from a caller (a `--timeout` somebody typed), and
+    /// turning an unbounded one into an instant traps: `Instant + Duration`
+    /// overflows, and `UInt64(_: Double)` traps above `UInt64.max`. A clock
+    /// that suspends for the ceiling instead is a caller waiting forever, which
+    /// is what they asked for; a trap takes the process down.
+    public func schedulable(_ interval: TimeInterval) -> TimeInterval {
+        guard interval.isFinite else { return Self.maximumSleepInterval }
+        return min(max(interval, 0), Self.maximumSleepInterval)
+    }
 }
 
 /// The platform-default engine clock — `ContinuousClock` on macOS 13+,
@@ -85,7 +103,7 @@ public struct ContinuousEngineClock: EngineClock {
 
     /// Suspends via `ContinuousClock.sleep(until:)`.
     public func sleep(for interval: TimeInterval) async throws {
-        try await clock.sleep(until: clock.now + .seconds(interval))
+        try await clock.sleep(until: clock.now + .seconds(schedulable(interval)))
     }
 }
 
@@ -106,8 +124,8 @@ public struct MonotonicEngineClock: EngineClock {
     /// caps the post-resume overshoot at one slice.
     public func sleep(for interval: TimeInterval) async throws {
         try Task.checkCancellation()
-        let clamped = min(max(interval, 0), 1_000_000_000)
-        let deadline = EngineInstant(nanoseconds: now.nanoseconds &+ UInt64(clamped * 1_000_000_000))
+        let deadline = EngineInstant(
+            nanoseconds: now.nanoseconds &+ UInt64(schedulable(interval) * 1_000_000_000))
         while true {
             let remaining = now.seconds(to: deadline)
             guard remaining > 0 else { return }

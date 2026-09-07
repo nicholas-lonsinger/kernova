@@ -77,8 +77,7 @@ struct CLIArgumentParsingTests {
     func stopTimeoutRidesEveryMethod() throws {
         // The deadline bounds the wait for the guest to actually power off,
         // which every disposition has to travel — a force stop simply gets
-        // there in one step. Refusing the pair would be a special case that
-        // buys a script nothing.
+        // there in one step.
         for method in ["--force", "--graceful", "--resume-first"] {
             let stop = try #require(
                 try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)

@@ -78,7 +78,9 @@ struct VMCommandCoreTests {
 
     /// A core whose virtualization service holds one operation suspended, so a
     /// test can look at the world while a VZ call is still in flight.
-    private func makeSuspendingHarness() -> SuspendingHarness {
+    private func makeSuspendingHarness(
+        clock: any EngineClock = makePlatformEngineClock()
+    ) -> SuspendingHarness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
@@ -108,7 +110,8 @@ struct VMCommandCoreTests {
             snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            clock: clock
         )
         return SuspendingHarness(
             core: core, library: library, storage: storage, virtualization: virtualization,
@@ -2165,6 +2168,69 @@ struct VMCommandCoreTests {
         #expect(virtualization.startCallCount == 0)
         #expect(virtualization.forceStopCallCount == 0)
         #expect(instance.status == .running)
+    }
+
+    @Test("A stop settles on the power-off, not on the baseline revert behind it")
+    func stopSettlesWhileAnEphemeralRevertIsStillWriting() async throws {
+        // The clock is already past the deadline the moment the wait arms, so a
+        // stop that waited for anything beyond the guest going down would refuse
+        // here — an Ephemeral VM's revert is Kernova's own work, not a guest
+        // that would not shut down.
+        let harness = makeSuspendingHarness(clock: TestEngineClock())
+        harness.virtualization.shouldSuspendOnRevert = true
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        try await harness.core.stop(
+            .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+
+        // The stop answered on the power-off; the revert it started is parked
+        // mid-copy behind it.
+        await harness.virtualization.waitUntilSuspended()
+        #expect(instance.status == .stopped)
+        #expect(harness.library.hasRevertInFlight(for: instance.id))
+
+        harness.virtualization.resumeSuspended()
+        try await waitForChange { [library = harness.library] in
+            !library.hasRevertInFlight(for: instance.id)
+        }
+    }
+
+    @Test("A pause landing mid-wait is not the power-off a stop is waiting for")
+    func stopIsNotSettledByAPauseWhileItWaits() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let stop = Task {
+            try await harness.core.stop(
+                .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+        }
+        // The parked sleep is the deadline: once it exists the wait is armed,
+        // and nothing but the predicate or that sleep can end it.
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+
+        try await harness.core.pause(.id(instance.id))
+        #expect(instance.status == .paused)
+
+        // A pause leaves the guest's memory live and the VM resumable. Letting
+        // the deadline expire is what proves the wait was still running: had the
+        // pause settled it, the stop would already have returned successfully.
+        clock.release(try #require(clock.parked.first))
+        let error = await commandError { try await stop.value }
+        guard case .timedOut(_, let verb, _) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(verb == .stop)
+        #expect(virtualization.forceStopCallCount == 0)
     }
 
     @Test("A restart inside its deadline boots the guest as an unbounded one does")

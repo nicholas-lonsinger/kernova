@@ -468,7 +468,14 @@ extension VMCommandCore {
     ) async throws {
         try await requestStop(instance, disposition: disposition, confirmed: confirmed)
         guard let timeout else { return }
-        try await awaitPowerOff(instance, within: timeout, verb: .stop)
+        // Settles on the guest's `VZVirtualMachine` being gone and nothing else.
+        // A stop promises the guest is off, so an Ephemeral baseline revert
+        // still writing behind it is not this caller's wait — and a pause
+        // landing mid-wait keeps the memory live, which is not a power-off
+        // however resumable it leaves the VM.
+        try await awaitPowerOff(instance, within: timeout, verb: .stop) {
+            !instance.hasLiveVirtualMachine
+        }
     }
 
     private func requestStop(
@@ -673,7 +680,15 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.restart, on: instance)
         try await stop(instance, disposition: .graceful, confirmed: true)
-        try await awaitPowerOff(instance, within: timeout, verb: .restart)
+        // Outlasts the power-off `stop` waits for, and `.stopped` with it:
+        // `resetToStopped()` settles the status and *then* fires the power-off
+        // hook, so an Ephemeral VM's baseline revert is registered a turn later
+        // — and bringing the VM up there would either be refused as busy or
+        // boot off disks the revert is still overwriting.
+        try await awaitPowerOff(instance, within: timeout, verb: .restart) { [library] in
+            !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
+                && (instance.canStart || instance.canResume)
+        }
         // The bring-up half inherits the caller's presentation: a restart from a
         // door with nowhere to present is still a restart, not a request for a
         // window.
@@ -684,25 +699,18 @@ extension VMCommandCore {
         }
     }
 
-    /// Suspends until the guest is off and the library has settled around it,
-    /// bounded by `seconds` when the caller named one.
+    /// Suspends until `isOff`, bounded by `seconds` when the caller named one.
     ///
-    /// The wait outlasts `.stopped`, which arrives first: `resetToStopped()`
-    /// settles the status and *then* fires the power-off hook, so an Ephemeral
-    /// VM's baseline revert is registered a turn later — and reading the VM as
-    /// off there would either race a busy refusal or hand back disks the revert
-    /// is still overwriting.
+    /// The deadline and its refusal are shared; how far past the shutdown a
+    /// verb has to wait is not, so each states its own `isOff`.
     ///
     /// - Throws: ``CommandError/timedOut(vm:verb:seconds:)`` when the deadline
     ///   passes first. Nothing is undone and nothing is escalated: the VM is
     ///   exactly where the expiry found it.
     private func awaitPowerOff(
-        _ instance: VMInstance, within seconds: TimeInterval?, verb: VMVerb
+        _ instance: VMInstance, within seconds: TimeInterval?, verb: VMVerb,
+        until isOff: @escaping @MainActor () -> Bool
     ) async throws {
-        let isOff: @MainActor () -> Bool = { [library] in
-            !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
-                && (instance.canStart || instance.canResume)
-        }
         guard let seconds else {
             await waitForObservedChange(until: isOff)
             return

@@ -60,20 +60,11 @@ func observeRecurring(
 }
 
 /// How long an observed-change wait may last, and the clock that measures it.
-///
-/// The clock is a parameter so a test crosses the window in one call instead of
-/// sleeping through it, as `docs/TESTING.md` requires.
 struct ObservedChangeDeadline: Sendable {
     /// Seconds from the start of the wait.
     let seconds: TimeInterval
     /// What measures them.
     let clock: any EngineClock
-
-    /// Bounds a wait at `seconds` on `clock`.
-    init(seconds: TimeInterval, clock: any EngineClock) {
-        self.seconds = seconds
-        self.clock = clock
-    }
 }
 
 /// Holds the loop, the deadline's timer, and the continuation the two race to

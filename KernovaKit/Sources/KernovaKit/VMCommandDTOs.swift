@@ -318,12 +318,14 @@ extension CommandErrorDTO {
                     + "Stop \u{201C}\(other.name)\u{201D} first, or give one of them a new address in Network settings."
             }
         case .timedOut(let vm, let verb, let seconds):
-            "\u{201C}\(vm.name)\u{201D} did not shut down within "
+            // Only what the expiry observed. What state the VM is in is a
+            // separate read, and any sentence guessing it here is wrong for
+            // some VM that reached the deadline another way.
+            "\u{201C}\(vm.name)\u{201D} did not power off within "
                 + "\(Self.deadlineText(seconds)) seconds"
-                + (verb == .restart
-                    ? ", so it was not started again. " : " and is running unchanged. ")
-                + "A force stop terminates a guest that ignores a shutdown request, losing "
-                + "anything unsaved inside it."
+                + (verb == .restart ? ", so it was not started again. " : ". ")
+                + "A force stop terminates a guest that will not shut down, losing anything "
+                + "unsaved inside it."
         case .operationFailed(_, _, let message, _):
             message
         }

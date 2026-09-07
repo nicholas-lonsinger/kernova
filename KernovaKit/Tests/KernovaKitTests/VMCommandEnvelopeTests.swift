@@ -271,14 +271,17 @@ struct VMCommandEnvelopeTests {
         }
     }
 
-    @Test("A timeout names its deadline and what the expiry left behind")
-    func timeoutCopyNamesWhatWasLeftBehind() {
+    @Test("A timeout states the deadline it observed and claims no state beyond it")
+    func timeoutCopyStatesOnlyWhatItObserved() {
         let stop = CommandErrorDTO.timedOut(vm: summary, verb: .stop, seconds: 60)
         let restart = CommandErrorDTO.timedOut(vm: summary, verb: .restart, seconds: 60)
 
-        #expect(stop.message.contains("60 seconds"))
-        #expect(stop.message.contains("running unchanged"))
+        #expect(stop.message.contains("did not power off within 60 seconds"))
         #expect(restart.message.contains("was not started again"))
+        // The VM's state at the expiry is its own read: a suspended VM whose
+        // saved state the stop already discarded is not "running unchanged",
+        // and a sentence here cannot be right for both.
+        #expect(!stop.message.contains("running"))
         // A fractional deadline reads back the way it was typed rather than
         // rounding to a number the caller never asked for.
         #expect(

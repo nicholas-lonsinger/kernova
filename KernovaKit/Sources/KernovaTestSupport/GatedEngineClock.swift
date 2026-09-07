@@ -73,7 +73,8 @@ public final class GatedEngineClock: EngineClock, @unchecked Sendable {
     /// Moves the reading forward by `seconds`, ageing every deadline measured
     /// against this clock without releasing anything parked on it.
     public func advance(seconds: TimeInterval) {
-        lock.withLock { nanoseconds &+= UInt64(max(0, seconds) * 1_000_000_000) }
+        let span = schedulable(seconds)
+        lock.withLock { nanoseconds &+= UInt64(span * 1_000_000_000) }
     }
 
     /// The sleeps currently parked, in the order they were requested.

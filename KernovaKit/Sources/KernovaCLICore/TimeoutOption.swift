@@ -4,8 +4,7 @@ import Foundation
 /// What every `--timeout` on the tool accepts.
 ///
 /// One rule rather than one per verb, so a deadline means the same thing
-/// wherever it is typed — and a number naming no wait is a usage error at parse
-/// time rather than a deadline that has already expired.
+/// wherever it is typed.
 enum TimeoutOption {
     /// Refuses a deadline that is not a positive, finite number of seconds.
     ///
