@@ -23,7 +23,7 @@ extension KernovaCommand {
 
 extension KernovaCommand.Snapshot {
     /// `kernova snapshot list <vm>` — every restore point the bundle holds.
-    public struct List: ParsableCommand {
+    public struct List: GlobalOptionsCommand {
         /// What `kernova snapshot list --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "list",
@@ -33,7 +33,7 @@ extension KernovaCommand.Snapshot {
                 + "the snapshot would free.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.
@@ -56,7 +56,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot take <vm>` — capture the state to come back to.
-    public struct Take: ParsableCommand {
+    public struct Take: GlobalOptionsCommand {
         /// What `kernova snapshot take --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "take",
@@ -68,7 +68,7 @@ extension KernovaCommand.Snapshot {
                 + "the new snapshot as one row of `snapshot list`.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// What to call the capture; empty leaves the naming to Kernova.
@@ -106,7 +106,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot revert <vm> <snapshot>` — put the VM back.
-    public struct Revert: ParsableCommand {
+    public struct Revert: SnapshotCommandLine {
         /// What `kernova snapshot revert --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "revert",
@@ -116,11 +116,11 @@ extension KernovaCommand.Snapshot {
                 + "Refuses without --yes, because everything since the snapshot goes.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// Which snapshot, by name or identifier.
-        @Argument(help: "The snapshot's name or identifier.")
+        @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         public var snapshot: String
 
         /// Whether to capture the current state before rolling back.
@@ -154,7 +154,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot delete <vm> <snapshot>` — drop one restore point.
-    public struct Delete: ParsableCommand {
+    public struct Delete: SnapshotCommandLine {
         /// What `kernova snapshot delete --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "delete",
@@ -164,11 +164,11 @@ extension KernovaCommand.Snapshot {
                 + "return the virtual machine to that state afterwards.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// Which snapshot, by name or identifier.
-        @Argument(help: "The snapshot's name or identifier.")
+        @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         public var snapshot: String
 
         /// The options every subcommand carries.
@@ -191,7 +191,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot rename <vm> <snapshot> <new-name>` — relabel one.
-    public struct Rename: ParsableCommand {
+    public struct Rename: SnapshotCommandLine {
         /// What `kernova snapshot rename --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "rename",
@@ -201,11 +201,11 @@ extension KernovaCommand.Snapshot {
                 + "later command naming it exits 4 rather than choosing between them.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// Which snapshot, by name or identifier.
-        @Argument(help: "The snapshot's name or identifier.")
+        @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         public var snapshot: String
 
         /// What to call it instead.

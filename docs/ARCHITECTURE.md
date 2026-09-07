@@ -558,8 +558,10 @@ context) and one release point (`VMSessionContext.tearDown`).
   and relaunches through `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
 - **KernovaCLI** — the `kernova` tool, embedded at `Contents/Helpers/kernova` ([BUILD.md](BUILD.md)
-  says why not `Contents/MacOS`) and installed as a symlink from Settings → Advanced by
-  `CommandLineToolInstaller`. It is sandboxed with `app-sandbox` plus the app group and nothing
+  says why not `Contents/MacOS`) and installed from Settings → Advanced by two services:
+  `CommandLineToolInstaller` writes the symlink to the binary, and `ShellCompletionInstaller` writes
+  a per-shell file that loads the tool's completions from the tool itself. It is sandboxed with
+  `app-sandbox` plus the app group and nothing
   else — deliberately not `inherit`, which is for a child the app spawns, where this is started by
   the user's shell. Everything the tool does lives in `KernovaCLICore`.
 

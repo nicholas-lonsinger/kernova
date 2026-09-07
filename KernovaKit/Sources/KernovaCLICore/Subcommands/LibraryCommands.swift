@@ -33,7 +33,7 @@ extension KernovaCommand {
     }
 
     /// `kernova clone <vm>` — copy a virtual machine into a second one.
-    public struct Clone: ParsableCommand {
+    public struct Clone: GlobalOptionsCommand {
         /// What `kernova clone --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "clone",
@@ -44,7 +44,7 @@ extension KernovaCommand {
                 + "the clone follows Kernova's own clone preference.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// What the clone does with the source's machine identity; absent
@@ -77,7 +77,7 @@ extension KernovaCommand {
     }
 
     /// `kernova import <path>` — copy a bundle on this Mac into the library.
-    public struct Import: ParsableCommand {
+    public struct Import: GlobalOptionsCommand {
         /// What `kernova import --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "import",
@@ -91,7 +91,9 @@ extension KernovaCommand {
                 + "already under way finishes in Kernova, the way --no-wait leaves it.")
 
         /// The bundle to copy, as this Mac names it.
-        @Argument(help: "The path of the virtual machine bundle to import.")
+        @Argument(
+            help: "The path of the virtual machine bundle to import.",
+            completion: .file(extensions: [VMBundleFormat.fileExtension]))
         public var path: String
 
         /// Return as soon as the copy has started.
@@ -136,7 +138,7 @@ extension KernovaCommand {
                 + "exits 4 rather than choosing between them.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// What to call it instead.
@@ -173,7 +175,7 @@ extension KernovaCommand {
                 + "is.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// Delete the bundle outright rather than moving it to the Trash.
@@ -216,7 +218,7 @@ extension KernovaCommand {
                 + "so it refuses until then.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.

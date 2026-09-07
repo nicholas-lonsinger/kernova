@@ -35,7 +35,7 @@ public enum WaitCondition: String, ExpressibleByArgument, Sendable, CaseIterable
 
 extension KernovaCommand {
     /// `kernova wait <vm> --until <condition>` — block until a VM gets there.
-    public struct Wait: ParsableCommand {
+    public struct Wait: GlobalOptionsCommand {
         /// What `kernova wait --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "wait",
@@ -44,7 +44,7 @@ extension KernovaCommand {
                 + "subscribes before it answers, so nothing can land in between and be missed.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The state to wait for.

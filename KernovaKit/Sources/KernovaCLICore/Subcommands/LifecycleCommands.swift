@@ -41,7 +41,7 @@ extension KernovaCommand {
                 + "verb that puts a display in front of you.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// Cold-boot a stopped macOS guest into macOS Recovery.
@@ -80,7 +80,7 @@ extension KernovaCommand {
                 + "as it is when the guest is still up; --force is the escalation from there.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// How the stop should reach the guest.
@@ -124,7 +124,7 @@ extension KernovaCommand {
             abstract: "Save a running guest's session and stop it.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.
@@ -152,7 +152,7 @@ extension KernovaCommand {
             abstract: "Pause a running guest, holding it in memory.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.
@@ -182,7 +182,7 @@ extension KernovaCommand {
                 + "verb that puts a display in front of you.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.
@@ -216,7 +216,7 @@ extension KernovaCommand {
                 + "and is not started again.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// How long to wait for the guest to power off, or `nil` to wait as
@@ -259,7 +259,7 @@ extension KernovaCommand {
             abstract: "Bring a running guest's display to the front.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.

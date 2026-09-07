@@ -9,10 +9,7 @@ import KernovaKit
 /// a command line turns into rather than only what it printed. A verb the tool
 /// can only build after a round trip — a snapshot named rather than
 /// identified, a copy waited out — is not one of these.
-protocol VerbCommand: ParsableCommand {
-    /// The options every subcommand carries.
-    var options: GlobalOptions { get }
-
+protocol VerbCommand: GlobalOptionsCommand {
     /// The request this command line stands for.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/usage`` for an argument the

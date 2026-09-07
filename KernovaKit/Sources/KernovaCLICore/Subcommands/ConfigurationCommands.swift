@@ -17,11 +17,13 @@ extension KernovaCommand {
 
         /// Which virtual machine, by name or identifier; absent only with
         /// `--keys`.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String?
 
         /// Which settings to print; none prints every one the guest has.
-        @Argument(help: "The settings to print; all of them when none is named.")
+        @Argument(
+            help: "The settings to print; all of them when none is named.",
+            completion: CompletionSource.configurationKey)
         public var keys: [String] = []
 
         /// List the settings themselves rather than one virtual machine's
@@ -86,11 +88,13 @@ extension KernovaCommand {
                 + "them.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The changes to apply, each written `key=value`; at least one.
-        @Argument(help: "One or more key=value assignments.")
+        @Argument(
+            help: "One or more key=value assignments.",
+            completion: CompletionSource.configurationAssignment)
         public var assignments: [String]
 
         /// The options every subcommand carries.
@@ -179,11 +183,11 @@ extension KernovaCommand.Share {
                 + "the virtual machine already shares is left as it is.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The folder to share, as this Mac names it.
-        @Argument(help: "The path of the folder to share.")
+        @Argument(help: "The path of the folder to share.", completion: .directory)
         public var path: String
 
         /// Mount the folder read-only in the guest.
@@ -219,11 +223,11 @@ extension KernovaCommand.Share {
                 + "does not share exits 2.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The folder to stop sharing, as this Mac names it.
-        @Argument(help: "The path of the folder to stop sharing.")
+        @Argument(help: "The path of the folder to stop sharing.", completion: .directory)
         public var path: String
 
         /// The options every subcommand carries.
@@ -258,7 +262,7 @@ extension KernovaCommand.Forward {
                 + "so it takes effect the next time that network is declared.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The mapping to add, written `<host-port>:<guest-port>`.
@@ -300,7 +304,7 @@ extension KernovaCommand.Forward {
                 + "does not carry exits 2.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The mapping to drop, written `<host-port>:<guest-port>`.

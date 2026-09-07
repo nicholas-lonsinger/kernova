@@ -5,7 +5,7 @@ import KernovaKit
 
 extension KernovaCommand {
     /// `kernova quit` — take Kernova down, saving whatever is running.
-    public struct Quit: ParsableCommand {
+    public struct Quit: GlobalOptionsCommand {
         /// What `kernova quit --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "quit",

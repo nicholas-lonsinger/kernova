@@ -204,17 +204,8 @@ func wizardVerificationSummary(sha256: String?) -> String {
 /// `NSHomeDirectory()`.
 func wizardAbbreviateWithTilde(_ path: String) -> String {
     let processHome = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
-    for home in [processHome, realUserHomePath] where path.hasPrefix(home) {
+    for home in [processHome, UserHome.path] where path.hasPrefix(home) {
         return "~" + path.dropFirst(home.count)
     }
     return path
-}
-
-/// The user's real home directory, which differs from the process home (the
-/// sandbox container) in a sandboxed app.
-private var realUserHomePath: String {
-    guard let dir = getpwuid(getuid())?.pointee.pw_dir else {
-        return FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
-    }
-    return String(cString: dir)
 }
