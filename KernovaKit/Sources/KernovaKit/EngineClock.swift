@@ -67,11 +67,10 @@ extension EngineClock {
     /// `interval` reduced to a span this clock can schedule — what every
     /// ``sleep(for:)`` does with the number it is handed, before anything else.
     ///
-    /// An interval arrives from a caller (a `--timeout` somebody typed), and
-    /// turning an unbounded one into an instant traps: `Instant + Duration`
-    /// overflows, and `UInt64(_: Double)` traps above `UInt64.max`. A clock
-    /// that suspends for the ceiling instead is a caller waiting forever, which
-    /// is what they asked for; a trap takes the process down.
+    /// Turning an unbounded interval into an instant traps: `Instant + Duration`
+    /// overflows, and `UInt64(_: Double)` traps above `UInt64.max`. Suspending
+    /// for the ceiling instead leaves the caller waiting, which is what an
+    /// interval that size asked for; a trap takes the process down.
     public func schedulable(_ interval: TimeInterval) -> TimeInterval {
         guard interval.isFinite else { return Self.maximumSleepInterval }
         return min(max(interval, 0), Self.maximumSleepInterval)

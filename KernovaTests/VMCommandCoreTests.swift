@@ -2233,6 +2233,67 @@ struct VMCommandCoreTests {
         #expect(virtualization.forceStopCallCount == 0)
     }
 
+    @Test("A pause landing mid-wait does not let a restart resume the session it was rebooting")
+    func restartIsNotSettledByAPauseWhileItWaits() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let restart = Task {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+        }
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+
+        try await harness.core.pause(.id(instance.id))
+        #expect(instance.status == .paused)
+
+        clock.release(try #require(clock.parked.first))
+        let error = await commandError { try await restart.value }
+        guard case .timedOut(_, let verb, _) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(verb == .restart)
+        // Resuming the paused session would have handed back the same guest
+        // the caller asked to reboot, and reported it as a restart.
+        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.resumeCallCount == 0)
+    }
+
+    @Test("A restart deadline covers the power-off, not the baseline revert behind it")
+    func restartWaitsOutAnEphemeralRevertPastItsDeadline() async throws {
+        // The clock is past the deadline the moment anything waits on it, so
+        // only a wait the revert is not part of survives to bring the VM up.
+        let harness = makeSuspendingHarness(clock: TestEngineClock())
+        harness.virtualization.shouldSuspendOnRevert = true
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        let restart = Task {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        #expect(instance.status == .stopped)
+        #expect(harness.library.hasRevertInFlight(for: instance.id))
+        #expect(harness.virtualization.startCallCount == 0)
+
+        harness.virtualization.resumeSuspended()
+        try await restart.value
+
+        // The baseline handed the VM back suspended, so the restart resumed it
+        // — and only once the revert had finished writing.
+        #expect(instance.status == .running)
+        #expect(!harness.library.hasRevertInFlight(for: instance.id))
+    }
+
     @Test("A restart inside its deadline boots the guest as an unbounded one does")
     func restartWithinItsDeadlineBootsTheGuest() async throws {
         let harness = makeHarness(clock: GatedEngineClock())

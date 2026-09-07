@@ -468,14 +468,7 @@ extension VMCommandCore {
     ) async throws {
         try await requestStop(instance, disposition: disposition, confirmed: confirmed)
         guard let timeout else { return }
-        // Settles on the guest's `VZVirtualMachine` being gone and nothing else.
-        // A stop promises the guest is off, so an Ephemeral baseline revert
-        // still writing behind it is not this caller's wait — and a pause
-        // landing mid-wait keeps the memory live, which is not a power-off
-        // however resumable it leaves the VM.
-        try await awaitPowerOff(instance, within: timeout, verb: .stop) {
-            !instance.hasLiveVirtualMachine
-        }
+        try await awaitPowerOff(instance, within: timeout, verb: .stop)
     }
 
     private func requestStop(
@@ -664,10 +657,17 @@ extension VMCommandCore {
     /// Shuts the guest down and starts it again once it has powered off.
     ///
     /// Composed rather than a VZ operation of its own, so it inherits every
-    /// gate and refusal the two verbs already state. Without a `timeout` the
-    /// wait for the power-off is unbounded, matching what a graceful shutdown
-    /// means: a guest that refuses to shut down is not restarted behind the
-    /// user's back, and it is not terminated behind their back either.
+    /// gate and refusal the two verbs already state.
+    ///
+    /// Two waits, because only the first is the guest's to refuse. The
+    /// power-off is what a `timeout` bounds; without one it is unbounded,
+    /// matching what a graceful shutdown means — a guest that will not go down
+    /// is neither restarted nor terminated behind the user's back. The settle
+    /// after it is always unbounded: `resetToStopped()` fires the power-off hook
+    /// a turn after the status, so an Ephemeral VM's baseline revert registers
+    /// there, and bringing the VM up mid-revert would either be refused as busy
+    /// or boot off disks the revert is still overwriting. No guest can withhold
+    /// that work, so no deadline belongs on it.
     ///
     /// Where the VM lands decides which verb brings it back up. A power-off
     /// normally lands it stopped, but an Ephemeral VM's baseline revert can hand
@@ -680,12 +680,8 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.restart, on: instance)
         try await stop(instance, disposition: .graceful, confirmed: true)
-        // Outlasts the power-off `stop` waits for, and `.stopped` with it:
-        // `resetToStopped()` settles the status and *then* fires the power-off
-        // hook, so an Ephemeral VM's baseline revert is registered a turn later
-        // — and bringing the VM up there would either be refused as busy or
-        // boot off disks the revert is still overwriting.
-        try await awaitPowerOff(instance, within: timeout, verb: .restart) { [library] in
+        try await awaitPowerOff(instance, within: timeout, verb: .restart)
+        await waitForObservedChange { [library] in
             !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
                 && (instance.canStart || instance.canResume)
         }
@@ -699,18 +695,22 @@ extension VMCommandCore {
         }
     }
 
-    /// Suspends until `isOff`, bounded by `seconds` when the caller named one.
+    /// Suspends until the guest is off — its `VZVirtualMachine` gone from
+    /// memory — bounded by `seconds` when the caller named one.
     ///
-    /// The deadline and its refusal are shared; how far past the shutdown a
-    /// verb has to wait is not, so each states its own `isOff`.
+    /// The power-off is the whole of what a shutdown request achieves and the
+    /// whole of what a guest can refuse, so it is all a deadline here measures.
+    /// A pause or a save keeps the memory live and satisfies nothing; work
+    /// Kernova does behind the power-off is waited out separately, and without a
+    /// deadline.
     ///
     /// - Throws: ``CommandError/timedOut(vm:verb:seconds:)`` when the deadline
     ///   passes first. Nothing is undone and nothing is escalated: the VM is
     ///   exactly where the expiry found it.
     private func awaitPowerOff(
-        _ instance: VMInstance, within seconds: TimeInterval?, verb: VMVerb,
-        until isOff: @escaping @MainActor () -> Bool
+        _ instance: VMInstance, within seconds: TimeInterval?, verb: VMVerb
     ) async throws {
+        let isOff: @MainActor () -> Bool = { !instance.hasLiveVirtualMachine }
         guard let seconds else {
             await waitForObservedChange(until: isOff)
             return
