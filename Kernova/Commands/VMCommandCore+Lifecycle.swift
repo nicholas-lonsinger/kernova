@@ -13,11 +13,24 @@ extension VMCommandCore {
     }
 
     /// The start every surface reaches, with the instance already resolved.
+    ///
+    /// The join stated in ``VMCommanding/start(_:recovery:presentation:)`` is
+    /// what makes a cold launch deterministic: the launch auto-start pass and
+    /// the socket verb that woke the app resume off the same first library
+    /// read, and either order now ends with the VM running.
     func start(
         _ instance: VMInstance, recovery: Bool = false,
         presentation: VMDisplayPresentation = .surface
     ) async throws {
         try require(.start, on: instance)
+        if case .starting = instance.phase {
+            guard !recovery else {
+                throw CommandError.busy(vm: summary(instance), operation: "starting")
+            }
+            if presentation == .surface { surfaceDisplay?(instance) }
+            try await joinBringUp(instance, verb: .start)
+            return
+        }
         if recovery, !capabilities.accepts(.startInRecovery, on: instance) {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
         }
@@ -45,6 +58,34 @@ extension VMCommandCore {
             try await lifecycle.start(instance, bootIntoRecovery: recovery)
         } catch {
             throw startFailure(error, on: instance)
+        }
+    }
+
+    // MARK: - Joining a Bring-Up
+
+    /// Waits out the bring-up already in flight for `instance` and answers by
+    /// where it left the VM.
+    ///
+    /// The wait is on the operation still running its body, not on the claim: a
+    /// cold boot retrying VZ file-lock contention rests at
+    /// ``VMLifecyclePhase/starting(sessionID:)`` with no session between
+    /// attempts, and a claim that `stop` released is not an operation that has
+    /// finished.
+    private func joinBringUp(_ instance: VMInstance, verb: VMVerb) async throws {
+        Self.logger.notice(
+            "Joining the bring-up already in flight for '\(instance.name, privacy: .public)'")
+        await waitForObservedChange { [lifecycle] in
+            !lifecycle.hasUnsettledOperation(for: instance.id)
+        }
+        guard instance.hasLiveSession else {
+            let state = instance.status.displayName.lowercased()
+            let message =
+                instance.phase.errorMessage
+                ?? "The operation already under way left '\(instance.name)' \(state)."
+            Self.logger.error(
+                "Joined bring-up of '\(instance.name, privacy: .public)' did not leave it running: \(message, privacy: .public)"
+            )
+            throw CommandError.operationFailed(verb: verb, message: message)
         }
     }
 
@@ -534,6 +575,12 @@ extension VMCommandCore {
     func resume(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
         let instance = try resolve(selector)
         try require(.resume, on: instance)
+
+        if case .restoringSavedState = instance.phase {
+            if presentation == .surface { surfaceDisplay?(instance) }
+            try await joinBringUp(instance, verb: .resume)
+            return
+        }
 
         // A cold resume builds a fresh VZVirtualMachine from the save file, so it
         // claims the machine identity — and puts its MAC address back on a

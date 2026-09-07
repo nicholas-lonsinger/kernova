@@ -442,6 +442,92 @@ struct VMCommandCoreTests {
         #expect(revealed == 0)
     }
 
+    // MARK: - Joining a bring-up
+
+    @Test("A start arriving while one is in flight joins it instead of issuing a second")
+    func startJoinsTheBringUpAlreadyInFlight() async throws {
+        // The cold-launch race: the launch auto-start pass and the socket verb
+        // resume off the same library read, and whichever runs first claims the
+        // VM. The loser used to be refused against a `.starting` VM although the
+        // boot it asked for was already happening.
+        let harness = makeSuspendingHarness()
+        let instance = makeInstance(in: harness, name: "Joining")
+
+        let first = Task { @MainActor in
+            try await harness.core.start(.id(instance.id), recovery: false)
+        }
+        await harness.virtualization.waitUntilSuspended()
+        #expect(instance.status == .starting)
+
+        // The join is entered synchronously from the call below and parks with
+        // its observation armed before the main actor is given up, so this
+        // release cannot land ahead of it.
+        Task { @MainActor in harness.virtualization.resumeSuspended() }
+        try await harness.core.start(.id(instance.id), recovery: false)
+        try await first.value
+
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A joined start reports a boot that failed as an operation failure")
+    func joinedStartReportsTheFailedBoot() async throws {
+        let harness = makeSuspendingHarness()
+        let instance = makeInstance(in: harness, name: "Joining a failure")
+        harness.virtualization.startError = VirtualizationError.noVirtualMachine
+
+        let first = Task { @MainActor in
+            try await harness.core.start(.id(instance.id), recovery: false)
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        Task { @MainActor in harness.virtualization.resumeSuspended() }
+        let joined = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+
+        #expect(joined.isOperationFailure)
+        #expect(await commandError { try await first.value }?.isOperationFailure == true)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status != .running)
+    }
+
+    @Test("A start into Recovery refuses a VM already booting as busy")
+    func recoveryStartRefusesAStartingVM() async throws {
+        // A different target than the boot in flight, so there is nothing to
+        // join — the honest answer is that the VM is busy coming up.
+        let harness = makeSuspendingHarness()
+        let instance = makeInstance(in: harness, name: "Booting")
+
+        let first = Task { @MainActor in
+            try await harness.core.start(.id(instance.id), recovery: false)
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        let error = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: true) })
+        #expect(error.isBusy)
+
+        harness.virtualization.resumeSuspended()
+        try await first.value
+    }
+
+    @Test("A resume arriving while a restore is in flight joins it")
+    func resumeJoinsTheRestoreAlreadyInFlight() async throws {
+        let harness = makeSuspendingHarness()
+        harness.virtualization.shouldSuspendOnResume = true
+        let instance = makeInstance(in: harness, name: "Restoring", phase: .suspended)
+
+        let first = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
+        await harness.virtualization.waitUntilSuspended()
+        #expect(instance.status == .restoring)
+
+        Task { @MainActor in harness.virtualization.resumeSuspended() }
+        try await harness.core.resume(.id(instance.id))
+        try await first.value
+
+        #expect(instance.status == .running)
+    }
+
     // MARK: - Allowed verbs
 
     @Test("allowedVerbs reads out in a fixed order, reads first")

@@ -60,7 +60,10 @@ protocol VMCommanding: AnyObject {
 
     /// Starts the VM, running whatever guest setup it still owes first.
     ///
-    /// `recovery` cold-boots a stopped macOS guest into macOS Recovery.
+    /// A VM already coming up is not refused: the call joins the bring-up in
+    /// flight and answers by its outcome. `recovery` cold-boots a stopped macOS
+    /// guest into macOS Recovery, and asks for a different guest than a boot
+    /// already under way, so it refuses that one as busy rather than joining.
     /// `presentation` is `.headless` only where a window would be wrong — the
     /// launch auto-start pass of a process that came up with no GUI.
     func start(
@@ -95,7 +98,7 @@ protocol VMCommanding: AnyObject {
     func pause(_ selector: VMSelector) async throws
 
     /// Resumes the VM, surfacing its display as ``start(_:recovery:presentation:)``
-    /// does.
+    /// does — and joining a restore already in flight the same way.
     func resume(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws
 
     /// Save-suspends the VM to its bundle's suspend slot.

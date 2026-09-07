@@ -213,11 +213,11 @@ struct VMLibraryViewModelTests {
         let resume = Task { @MainActor in try await viewModel.lifecycle.resume(instance) }
         await suspending.waitUntilSuspended()
 
-        // A real cold resume holds `.paused` with no live VM while it builds its
-        // configuration, so the enablement predicate still reads deletable — only
-        // the lifecycle lock can refuse here.
-        #expect(instance.isColdPaused)
-        #expect(instance.canDelete)
+        // A cold resume stands in `.restoringSavedState` for the whole of the
+        // configuration build, which is where the bundle it would trash is being
+        // read from.
+        #expect(instance.status == .restoring)
+        #expect(!instance.canDelete)
 
         await viewModel.delete(instance)
 

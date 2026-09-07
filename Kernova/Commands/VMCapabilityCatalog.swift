@@ -262,9 +262,23 @@ struct VMCapabilityCatalog {
     /// Whether a commit of `capability` is taken now — what a verb's own guard
     /// asks, and what a refusal names as accepted.
     ///
-    /// Identical to ``isAvailable(_:on:)`` everywhere but rename.
+    /// Identical to ``isAvailable(_:on:)`` everywhere but rename and the two
+    /// bring-up verbs, each of which takes a state it is not offered in.
     func accepts(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         switch capability {
+        case .start:
+            // A start committed against a VM already coming up is asking for
+            // the state that bring-up is producing, so it joins it
+            // (``VMCommandCore/start(_:recovery:presentation:)``) instead of
+            // refusing a VM that is on its way to running. Offering it is a
+            // different question: ``isAvailable(_:on:)`` is unchanged, so the
+            // GUI's Start stays disabled for the whole boot.
+            if case .starting = instance.phase { return true }
+            return isAvailable(capability, on: instance)
+        case .resume:
+            // The restore's counterpart of the start join above.
+            if case .restoringSavedState = instance.phase { return true }
+            return isAvailable(capability, on: instance)
         case .rename:
             // Offering a rename and taking one are deliberately different
             // states. A rename rewrites the name and nothing a running
@@ -274,8 +288,8 @@ struct VMCapabilityCatalog {
             // configuration back over this one refuses
             // (``VMLifecyclePhase/renamePersists``).
             return !instance.isPreparing && instance.renamePersists
-        case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
+        case .info, .ipAddress, .snapshots, .startInRecovery, .cancelGuestSetup, .stop,
+            .restart, .forceStop, .discardSavedState, .pause, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone, .delete,
             .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,

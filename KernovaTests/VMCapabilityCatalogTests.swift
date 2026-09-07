@@ -4,8 +4,8 @@ import Testing
 @testable import Kernova
 
 /// The one place per-VM command capability is derived: what each state admits,
-/// what a transient blocker takes away, and the one capability whose commit is
-/// deliberately wider than its offer.
+/// what a transient blocker takes away, and the three capabilities whose commit
+/// is deliberately wider than their offer.
 @Suite("VMCapabilityCatalog Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCapabilityCatalogTests {
@@ -302,6 +302,36 @@ struct VMCapabilityCatalogTests {
         #expect(Set(waiting) == Set([.takeSnapshot, .revertToSnapshot, .deleteSnapshot]))
     }
 
+    // MARK: - Bring-up: offer versus accept
+
+    @Test("A start is taken against a VM already coming up, and offered on none")
+    func startAcceptsAVMAlreadyStarting() {
+        // What lets the CLI verb that cold-launched the app join the boot the
+        // launch auto-start pass began, in whichever order the two resumed.
+        for phase: VMLifecyclePhase in [.starting(sessionID: nil), .starting(sessionID: UUID())] {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+
+            #expect(harness.catalog.accepts(.start, on: instance), "\(phase)")
+            #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
+            #expect(!harness.catalog.isAvailable(.start, on: instance), "\(phase)")
+        }
+    }
+
+    @Test("A resume is taken against a VM already restoring, and offered on none")
+    func resumeAcceptsAVMAlreadyRestoring() {
+        for phase: VMLifecyclePhase in [
+            .restoringSavedState(sessionID: nil), .restoringSavedState(sessionID: UUID()),
+        ] {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+
+            #expect(harness.catalog.accepts(.resume, on: instance), "\(phase)")
+            #expect(!harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
+            #expect(!harness.catalog.isAvailable(.resume, on: instance), "\(phase)")
+        }
+    }
+
     // MARK: - Rename: offer versus accept
 
     @Test("A rename typed while the VM began a transient is offered no longer but still taken")
@@ -333,13 +363,22 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.accepts(.rename, on: instance))
     }
 
-    @Test("Every capability but rename accepts exactly what it makes available")
+    @Test("Outside the three offer-versus-accept exceptions, a commit is exactly an offer")
     func acceptanceMatchesAvailabilityElsewhere() {
+        /// The pairs the two levels are deliberately allowed to disagree on:
+        /// rename in every phase, and each bring-up verb in the phase it joins.
+        func isAnException(_ capability: VMCapability, in phase: VMLifecyclePhase) -> Bool {
+            switch (capability, phase) {
+            case (.rename, _), (.start, .starting), (.resume, .restoringSavedState): true
+            default: false
+            }
+        }
+
         for phase in VMLifecyclePhaseFixtures.all {
             for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
                 let harness = makeHarness()
                 let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
-                for capability in VMCapability.allCases where capability != .rename {
+                for capability in VMCapability.allCases where !isAnException(capability, in: phase) {
                     #expect(
                         harness.catalog.accepts(capability, on: instance)
                             == harness.catalog.isAvailable(capability, on: instance),
