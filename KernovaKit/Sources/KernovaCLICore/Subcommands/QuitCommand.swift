@@ -9,7 +9,10 @@ extension KernovaCommand {
         /// What `kernova quit --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "quit",
-            abstract: "Quit Kernova, saving any running virtual machines.")
+            abstract: "Quit Kernova, saving any running virtual machines.",
+            discussion: "Quitting a Kernova that is not running has already happened, so this is "
+                + "the one verb that never starts it. Returns once macOS has released the app, so "
+                + "a line after this one is free to open it again.")
 
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
@@ -19,9 +22,6 @@ extension KernovaCommand {
 
         /// Quits the app and returns once it has gone, or reports success when
         /// there is none to quit.
-        ///
-        /// The one verb that never starts Kernova: quitting an app that is not
-        /// running has already happened.
         public func run() throws {
             guard let client = try CommandConnection.openIfRunning() else { return }
             defer { client.close() }

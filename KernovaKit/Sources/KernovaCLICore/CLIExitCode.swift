@@ -8,26 +8,41 @@ import KernovaKit
 /// outcome and every refusal maps here rather than at the call site that
 /// raised it.
 public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
-    /// The verb ran and did what was asked.
     case success = 0
-    /// The verb ran and did not complete.
     case operationFailed = 1
-    /// The command line could not be parsed, or an argument was not valid.
     case usage = 2
-    /// No VM answers to the selector.
     case notFound = 3
-    /// More than one VM answers to the selector.
     case ambiguous = 4
-    /// The VM's state, this build, or a missing consent refused the verb.
     case refusedByState = 5
-    /// The VM has work in flight the verb would race.
     case busy = 6
-    /// A deadline expired before the state arrived.
     case timedOut = 7
-    /// The app would not accept this process as a peer.
     case authorizationRefused = 8
-    /// There is no app to talk to, or this build cannot talk to one.
     case unavailable = 9
+
+    /// What this code means, in the words `kernova --help` prints.
+    ///
+    /// A `switch` rather than a table, so a code added without a line to
+    /// describe it does not compile.
+    public var summary: String {
+        switch self {
+        case .success: "The verb ran and did what was asked."
+        case .operationFailed: "The verb ran and did not complete."
+        case .usage: "The command line could not be parsed, or an argument was not valid."
+        case .notFound: "No VM answers to the selector."
+        case .ambiguous: "More than one VM answers to the selector."
+        case .refusedByState: "The VM's state, this build, or a missing consent refused the verb."
+        case .busy: "The VM has work in flight the verb would race."
+        case .timedOut: "A deadline expired before the state arrived."
+        case .authorizationRefused: "The app would not accept this process as a peer."
+        case .unavailable: "There is no app to talk to, or this build cannot talk to one."
+        }
+    }
+
+    /// Every code and what it means, as the root command's help prints it.
+    static var contract: String {
+        "Every verb exits with one of these codes:\n\n"
+            + allCases.map { "  \($0.rawValue)  \($0.summary)" }.joined(separator: "\n")
+    }
 
     /// The code a verb's own refusal exits with.
     public init(_ failure: CommandErrorDTO) {

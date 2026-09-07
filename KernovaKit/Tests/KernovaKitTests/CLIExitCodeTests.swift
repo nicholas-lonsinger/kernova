@@ -1,3 +1,4 @@
+import ArgumentParser
 import Foundation
 import KernovaKit
 import Testing
@@ -59,6 +60,27 @@ struct CLIExitCodeTests {
         #expect(Set(CLIExitCode.allCases.map(\.rawValue)).count == CLIExitCode.allCases.count)
         // ArgumentParser's own EX_USAGE must never escape as one of ours.
         #expect(!CLIExitCode.allCases.map(\.rawValue).contains(64))
+    }
+
+    @Test("Every code reaches the help, so none can ship undocumented")
+    func everyCodeIsInTheRootHelp() {
+        let discussion = KernovaCommand.configuration.discussion
+        for code in CLIExitCode.allCases {
+            #expect(
+                discussion.contains("\(code.rawValue)  \(code.summary)"),
+                "exit code \(code.rawValue) is missing from kernova --help")
+        }
+    }
+
+    @Test("Every summary fits the help's line, so none wraps back to column zero")
+    func everySummaryFitsOneLine() {
+        // ArgumentParser wraps the whole discussion to the terminal width, 80
+        // when nothing is attached, and re-flows an over-long line to column
+        // zero rather than under the summary. The rendered line spends five
+        // characters on its `  N  ` prefix; 72 keeps the rest inside a margin.
+        for code in CLIExitCode.allCases {
+            #expect(code.summary.count <= 72, "\(code.rawValue): \(code.summary.count) characters")
+        }
     }
 
     @Test("A quit is a success even when the app hangs up instead of answering")
