@@ -34,6 +34,11 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// hands a VM off to a boot be asserted on the state it hands over.
     var statusAtStart: VMStatus?
 
+    /// Whether the guest ignores the ACPI shutdown `stop` sends, as a macOS
+    /// guest resting at its login screen does: the request is delivered and the
+    /// VM keeps running.
+    var guestIgnoresShutdownRequest = false
+
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
@@ -71,6 +76,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     func stop(_ instance: VMInstance) async throws {
         stopCallCount += 1
         if let error = stopError { throw error }
+        guard !guestIgnoresShutdownRequest else { return }
         instance.resetToStopped()
     }
 

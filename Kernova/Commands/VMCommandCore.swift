@@ -27,6 +27,11 @@ final class VMCommandCore: VMCommanding {
     let fileSystem: any FileSystemOperating
     let preferences: AppPreferences
 
+    /// What a bounded wait for a guest to power off measures itself against —
+    /// injected so a test crosses the deadline in one call rather than sleeping
+    /// through it.
+    let clock: any EngineClock
+
     /// Where every per-VM capability predicate is derived — this core's verb
     /// guards and every surface's enablement read the same one.
     var capabilities: VMCapabilityCatalog { library.capabilities }
@@ -109,7 +114,8 @@ final class VMCommandCore: VMCommanding {
         snapshotStore: any VMSnapshotStoring,
         diskImageService: any DiskImageProviding,
         fileSystem: any FileSystemOperating,
-        preferences: AppPreferences
+        preferences: AppPreferences,
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
         self.library = library
         self.lifecycle = lifecycle
@@ -118,6 +124,7 @@ final class VMCommandCore: VMCommanding {
         self.diskImageService = diskImageService
         self.fileSystem = fileSystem
         self.preferences = preferences
+        self.clock = clock
 
         // An Ephemeral Mode VM goes back to its baseline on every power-off,
         // however it got there — so the handler belongs with the revert verb

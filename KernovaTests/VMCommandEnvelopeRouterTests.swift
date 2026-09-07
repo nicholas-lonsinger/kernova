@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 
@@ -40,10 +41,11 @@ struct VMCommandEnvelopeRouterTests {
     }
 
     private func makeHarness(
-        installService: any MacOSInstallProviding = MockMacOSInstallService()
+        installService: any MacOSInstallProviding = MockMacOSInstallService(),
+        virtualization: MockVirtualizationService = MockVirtualizationService(),
+        clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let storage = MockVMStorageService()
-        let virtualization = MockVirtualizationService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let lifecycle = VMLifecycleCoordinator(
@@ -71,7 +73,8 @@ struct VMCommandEnvelopeRouterTests {
             snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            clock: clock
         )
         return Harness(
             transport: TestTransport(router: VMCommandEnvelopeRouter(commands: core)),
@@ -139,6 +142,27 @@ struct VMCommandEnvelopeRouterTests {
 
         #expect(response.result == .ok)
         #expect(harness.virtualization.startCallCount == 1)
+    }
+
+    @Test("A stop deadline crosses the wire and comes back as a timeout failure")
+    func stopDeadlineCrossesTheWire() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let response = try await harness.transport.send(
+            .stop(.id(instance.id), disposition: .graceful, confirmed: false, timeout: 60))
+
+        guard case .timedOut(let vm, let verb, let seconds) = response.failure else {
+            Issue.record("expected a timeout failure, got \(response.result)")
+            return
+        }
+        #expect(vm.id == instance.id)
+        #expect(verb == .stop)
+        #expect(seconds == 60)
+        #expect(instance.status == .running)
     }
 
     @Test("A snapshot capture answers with the snapshot that landed")

@@ -71,7 +71,10 @@ extension KernovaCommand {
         /// What `kernova stop --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "stop",
-            abstract: "Stop a virtual machine.")
+            abstract: "Stop a virtual machine.",
+            discussion: "Returns as soon as the guest has been asked to shut down. --timeout "
+                + "waits for it to power off instead, and exits 7 leaving the virtual machine "
+                + "as it is when the guest is still up; --force is the escalation from there.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.")
@@ -81,18 +84,28 @@ extension KernovaCommand {
         @Flag(exclusivity: .exclusive)
         public var method: StopMethod = .graceful
 
+        /// How long to wait for the guest to power off, or `nil` to return
+        /// without waiting.
+        @Option(name: .long, help: "Seconds to wait for the guest to power off before giving up.")
+        public var timeout: Double?
+
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
 
         /// Creates the subcommand.
         public init() {}
 
+        /// Refuses a deadline that names no wait.
+        public func validate() throws {
+            try TimeoutOption.validate(timeout)
+        }
+
         /// Stops the VM.
         public func run() throws {
             try CommandConnection.perform(
                 .stop(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    disposition: method.disposition, confirmed: options.yes),
+                    disposition: method.disposition, confirmed: options.yes, timeout: timeout),
                 launchIfNeeded: !options.noLaunch)
         }
     }
@@ -182,11 +195,18 @@ extension KernovaCommand {
         public static let configuration = CommandConfiguration(
             commandName: "restart",
             abstract: "Shut a guest down and start it again.",
-            discussion: "The guest comes back up without surfacing its display, as `start` does.")
+            discussion: "The guest comes back up without surfacing its display, as `start` does. "
+                + "--timeout bounds the shutdown half: a guest still up when it expires exits 7 "
+                + "and is not started again.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.")
         public var vm: String
+
+        /// How long to wait for the guest to power off, or `nil` to wait as
+        /// long as it takes.
+        @Option(name: .long, help: "Seconds to wait for the guest to shut down before giving up.")
+        public var timeout: Double?
 
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
@@ -194,12 +214,17 @@ extension KernovaCommand {
         /// Creates the subcommand.
         public init() {}
 
+        /// Refuses a deadline that names no wait.
+        public func validate() throws {
+            try TimeoutOption.validate(timeout)
+        }
+
         /// Restarts the VM.
         public func run() throws {
             try CommandConnection.perform(
                 .restart(
                     try SelectorParsing.selector(from: vm, forcingID: options.id),
-                    presentation: .headless),
+                    presentation: .headless, timeout: timeout),
                 launchIfNeeded: !options.noLaunch)
         }
     }

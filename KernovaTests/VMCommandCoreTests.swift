@@ -27,7 +27,8 @@ struct VMCommandCoreTests {
 
     private func makeHarness(
         virtualization: MockVirtualizationService = MockVirtualizationService(),
-        diskImages: MockDiskImageService = MockDiskImageService()
+        diskImages: MockDiskImageService = MockDiskImageService(),
+        clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
@@ -58,7 +59,8 @@ struct VMCommandCoreTests {
             snapshotStore: snapshots,
             diskImageService: diskImages,
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            clock: clock
         )
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
@@ -2089,6 +2091,89 @@ struct VMCommandCoreTests {
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
         try await harness.core.restart(.id(instance.id))
+
+        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
+    // MARK: - Deadlines on the power-off
+
+    @Test("A stop deadline that expires refuses and escalates nothing")
+    func stopRefusesWhenTheGuestIgnoresTheShutdown() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let error = await commandError {
+            try await harness.core.stop(
+                .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+        }
+
+        guard case .timedOut(let vm, let verb, let seconds) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(vm.name == "Stubborn")
+        #expect(verb == .stop)
+        #expect(seconds == 60)
+        // The shutdown was asked for once and nothing followed it: the VM is
+        // exactly where the expiry found it, and a force stop stays the
+        // caller's own decision.
+        #expect(virtualization.stopCallCount == 1)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A stop that lands inside its deadline answers on the power-off, not the clock")
+    func stopWithinItsDeadlineSucceeds() async throws {
+        // Nothing releases this clock, so the deadline can never be what ends
+        // the wait: reaching the assertions at all proves the power-off did.
+        let harness = makeHarness(clock: GatedEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Prompt", phase: .running(sessionID: UUID()))
+
+        try await harness.core.stop(
+            .id(instance.id), disposition: .graceful, confirmed: false, timeout: 60)
+
+        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A restart deadline expires on the shutdown half, leaving the guest unstarted")
+    func restartRefusesWhenTheShutdownOutlastsItsDeadline() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+
+        let error = await commandError {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 30)
+        }
+
+        guard case .timedOut(_, let verb, let seconds) = try #require(error) else {
+            Issue.record("Expected a timeout refusal, got \(String(describing: error))")
+            return
+        }
+        #expect(verb == .restart)
+        #expect(seconds == 30)
+        // The bring-up half never ran: a guest that would not shut down is not
+        // restarted, and it is not terminated to make the restart happen.
+        #expect(virtualization.startCallCount == 0)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A restart inside its deadline boots the guest as an unbounded one does")
+    func restartWithinItsDeadlineBootsTheGuest() async throws {
+        let harness = makeHarness(clock: GatedEngineClock())
+        let instance = makeInstance(
+            in: harness, name: "Plain", phase: .running(sessionID: UUID()))
+
+        try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)

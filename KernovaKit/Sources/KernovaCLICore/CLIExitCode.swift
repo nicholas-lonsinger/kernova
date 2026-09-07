@@ -36,6 +36,7 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .ambiguous: self = .ambiguous
         case .invalidState, .unsupported, .conflict, .confirmationRequired: self = .refusedByState
         case .busy: self = .busy
+        case .timedOut: self = .timedOut
         case .operationFailed: self = .operationFailed
         }
     }

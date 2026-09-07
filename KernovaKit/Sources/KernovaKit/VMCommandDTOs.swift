@@ -237,6 +237,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case unsupported(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
+    /// The guest had not powered off `seconds` after the shutdown request, so
+    /// the verb stopped waiting and left the VM as it was.
+    case timedOut(vm: VMSummary, verb: VMVerb, seconds: TimeInterval)
     /// The verb ran and did not complete. `title` is the heading the failure
     /// names for itself, `nil` when it has none of its own.
     case operationFailed(
@@ -261,7 +264,7 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .ambiguous, .busy, .unsupported, .invalidState:
+        case .notFound, .ambiguous, .busy, .unsupported, .invalidState, .timedOut:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -314,8 +317,22 @@ extension CommandErrorDTO {
                     + "Two virtual machines with the same MAC address must not run on the same network at once. "
                     + "Stop \u{201C}\(other.name)\u{201D} first, or give one of them a new address in Network settings."
             }
+        case .timedOut(let vm, let verb, let seconds):
+            "\u{201C}\(vm.name)\u{201D} did not shut down within "
+                + "\(Self.deadlineText(seconds)) seconds"
+                + (verb == .restart
+                    ? ", so it was not started again. " : " and is running unchanged. ")
+                + "A force stop terminates a guest that ignores a shutdown request, losing "
+                + "anything unsaved inside it."
         case .operationFailed(_, _, let message, _):
             message
         }
+    }
+
+    /// `seconds` written the way a person types a deadline: whole where it is
+    /// whole, one decimal otherwise.
+    private static func deadlineText(_ seconds: TimeInterval) -> String {
+        seconds == seconds.rounded()
+            ? String(format: "%.0f", seconds) : String(format: "%.1f", seconds)
     }
 }

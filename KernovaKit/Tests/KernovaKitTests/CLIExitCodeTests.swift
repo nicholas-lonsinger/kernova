@@ -28,6 +28,7 @@ struct CLIExitCodeTests {
                 .refusedByState
             ),
             (.busy(vm: vm, operation: "starting"), .busy),
+            (.timedOut(vm: vm, verb: .stop, seconds: 60), .timedOut),
             (
                 .operationFailed(verb: .start, title: nil, message: "no disk", recovery: nil),
                 .operationFailed
