@@ -61,10 +61,26 @@ suite="${2:-}"
 out_dir="${KERNOVA_VERDICT_DIR:-artifacts/make-verdict}"
 
 # <target>.verdict is the completion signal for a caller whose shell call
-# outlived its timeout: removed before a run starts, written on every exit —
-# setup errors included — so a wait on it always ends.
+# outlived its timeout: removed before a run starts, renamed into place whole
+# on every exit — setup errors included — so a wait on it always ends and
+# never reads a partial file.
 verdict_file="$out_dir/${target:-setup}.verdict"
-[ -n "$from_log" ] || rm -f "$verdict_file"
+
+# One run at a time: a second start while one runs is refused here, before it
+# can touch the running run's log or verdict, so a caller never needs to look
+# for a running instance first.
+pid_file="$out_dir/make-verdict.pid"
+if [ -z "$from_log" ]; then
+    mkdir -p "$out_dir" 2>/dev/null || true
+    if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+        echo "make-verdict.sh: a run is already in progress (pid $(cat "$pid_file"))" >&2
+        printf 'make-verdict: verdict=setup-error reason=already-running target=%s suite=%s\n' "${target:--}" "${suite:--}"
+        exit 5
+    fi
+    printf '%s\n' "$$" >"$pid_file"
+    trap 'rm -f "$pid_file"' EXIT
+    rm -f "$verdict_file"
+fi
 
 setup_error() {
     echo "make-verdict.sh: $1" >&2
@@ -158,7 +174,7 @@ tail_section() {
 verdict=
 status=0
 body="$(mktemp)"
-trap 'rm -f "$body"' EXIT
+trap 'rm -f "$body" "$pid_file"' EXIT
 extra=""
 xcresult="-"
 
@@ -247,7 +263,9 @@ esac
         "$verdict" "$target" "${suite:--}" "$extra" "$log" "$xcresult"
 } >"$body.out"
 if [ -z "$from_log" ]; then
-    cp "$body.out" "$verdict_file" 2>/dev/null || true
+    # Renamed into place so the file exists only once it is complete.
+    mv "$body.out" "$verdict_file"
+    cp "$verdict_file" "$body.out"
 fi
 cat "$body.out"
 rm -f "$body.out"
