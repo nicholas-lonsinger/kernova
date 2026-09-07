@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import os
 
 /// Manages VM bundle directories on disk under `~/Library/Application Support/Kernova/VMs/`.
@@ -8,11 +9,9 @@ import os
 struct VMStorageService: Sendable {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMStorageService")
 
-    static let bundleExtension = "kernova"
-
     /// Whether `url` looks like a `.kernova` bundle, by extension.
     static func isBundleURL(_ url: URL) -> Bool {
-        url.pathExtension == bundleExtension
+        url.pathExtension == VMBundleFormat.fileExtension
     }
 
     // MARK: - Directory Helpers
@@ -45,7 +44,7 @@ struct VMStorageService: Sendable {
 
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
         try vmsDirectory.appendingPathComponent(
-            "\(configuration.id.uuidString).\(Self.bundleExtension)",
+            "\(configuration.id.uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
     }
@@ -77,7 +76,7 @@ struct VMStorageService: Sendable {
     /// The directory does not exist, which import's `copyItem` requires.
     func makeStagedBundleURL() throws -> URL {
         try stagingDirectory.appendingPathComponent(
-            "\(UUID().uuidString).\(Self.bundleExtension)",
+            "\(UUID().uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
     }
