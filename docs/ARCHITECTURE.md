@@ -342,6 +342,13 @@ session down without that hook, so a suspended session survives to revert at its
   follows `events()` from the first library read on: each batch writes the VMs it added, renamed,
   or removed to the Spotlight index through `VMEntityIndexing`, the index Spotlight search matches
   a VM name in.
+- `VMURLGateway` — the `kernova:` link boundary, built and held by `AppResidencyController` and
+  reached from `application(_:open:)`, which tells a link from a `.kernova` bundle by scheme
+  before the import path sees either. `VMURLRoute` reads the URL — a pure function over it — into
+  the `open` or `reveal` verb and a `.idOrName` selector, so a name several VMs answer to refuses
+  as ambiguous here. It awaits the app's first library read before the verb, since a clicked link
+  is what launched the app, and presents its own refusals through `VMLibraryViewModel`: a link has
+  no caller to answer to.
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommanding` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the
@@ -461,6 +468,8 @@ kernova (CLI) ──NSWorkspace hidden launch of its enclosing bundle──→ K
 
 Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
                                        VMIntentGateway ──writes─→ Spotlight index (VMEntityIndexing)
+
+kernova: link ──application(_:open:)──→ VMURLGateway ──calls──→ VMCommanding
 
 VMCommandCore ──reads/writes──→ VMLibrary
               ──delegates────→ VMLifecycleCoordinator ──→ Services

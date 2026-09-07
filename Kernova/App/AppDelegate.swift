@@ -249,10 +249,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         termination.requestFullQuit()
     }
 
-    // MARK: - Open URLs (Finder double-click / dock icon drop)
+    // MARK: - Open URLs (Finder double-click / dock icon drop / kernova link)
 
+    /// Takes both of what Launch Services delivers here: `.kernova` bundles to
+    /// import, and `kernova:` links the automation front door answers.
+    ///
+    /// Only the files present the library here. A link opens the one surface it
+    /// asked for — its own activation and its verb's hook are what put that on
+    /// screen — and dragging the library up behind it would surface a window
+    /// nobody asked for, the same rule the status item's per-VM open follows.
+    /// A link with a refusal to show summons the library itself.
     func application(_ application: NSApplication, open urls: [URL]) {
-        importVMs(from: urls)
+        let (links, files) = VMURLRoute.partition(urls)
+        for link in links {
+            lifecycle.openAutomationLink(link)
+        }
+        guard !files.isEmpty else { return }
+        importVMs(from: files)
         // A double-click while the app is already resident+headless gets no
         // reopen — macOS sends no reopen for a document open — so surface the
         // window here. Presentation only: a launch document open and a later

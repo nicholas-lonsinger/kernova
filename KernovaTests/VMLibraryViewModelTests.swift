@@ -1042,6 +1042,42 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
     }
 
+    /// The inline display lives inside the library window, so focusing it in a
+    /// window that is buried, miniaturized, or on another Space surfaces
+    /// nothing a person can see — `focusGuestDisplay` only moves the first
+    /// responder.
+    @Test("Surfacing an inline VM asks for the library even with a window attached")
+    func openOfAnInlineVMAlwaysAsksForTheLibrary() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = makeInstance(name: "Wanted")
+        wanted.enter(.running(sessionID: UUID()))
+        viewModel.instances.append(wanted)
+        // `makeViewModel` attaches the presenter, standing in for a window that
+        // exists — the case that used to skip the request.
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        try viewModel.commands.open(.id(wanted.id))
+
+        #expect(libraryRequests == 1)
+        #expect(presenter.focusGuestDisplayInstances.last === wanted)
+    }
+
+    @Test("Surfacing a pop-out VM's display asks for no library window")
+    func openOfAPopOutVMAsksForNoLibrary() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = makeInstance(name: "Wanted")
+        wanted.enter(.running(sessionID: UUID()))
+        wanted.configuration.displayPreference = .popOut
+        viewModel.instances.append(wanted)
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        try viewModel.commands.open(.id(wanted.id))
+
+        #expect(libraryRequests == 0)
+    }
+
     /// The inline display lives inside the main window, so an intent surfacing
     /// one on a process that has never opened a window — the headless launch
     /// path — has nowhere to land and used to do nothing at all.
@@ -1100,7 +1136,7 @@ struct VMLibraryViewModelTests {
         #expect(libraryRequests == 1)
     }
 
-    @Test("Revealing a running VM surfaces its display, not its library row")
+    @Test("Revealing a running VM focuses its display, not just its library row")
     func revealOfARunningVMSurfacesTheDisplay() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = makeInstance(name: "Wanted")
@@ -1111,8 +1147,10 @@ struct VMLibraryViewModelTests {
 
         try viewModel.commands.reveal(.id(wanted.id))
 
+        // The library window carries the inline display, so it is asked for
+        // either way; the focus is what separates this from a bare reveal.
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
-        #expect(libraryRequests == 0)
+        #expect(libraryRequests == 1)
     }
 
     @Test("A buffered surface request is dropped when its VM leaves before the window arrives")
