@@ -251,6 +251,18 @@ final class VMCommandConnection: @unchecked Sendable {
     private var timeoutSource: DispatchSourceTimer?
     private var pendingWrite = Data()
     private var subscription: Task<Void, Never>?
+
+    /// The verbs this connection has accepted and not yet answered.
+    ///
+    /// Held so ``closeNow()`` can cancel them: a client that hangs up mid-verb
+    /// is waiting for nothing, and a verb that suspends on something only the
+    /// caller wanted — an import's permission panel above all — would otherwise
+    /// outlive every trace of the request that asked for it.
+    private var inFlight: [Int: Task<Void, Never>] = [:]
+
+    /// Names the next tracked request, so each removes its own entry.
+    private var nextRequestID = 0
+
     private var onClose: (@Sendable () -> Void)?
     private var isClosed = false
 
@@ -388,7 +400,7 @@ final class VMCommandConnection: @unchecked Sendable {
             let router = self.router
             let awaitReady = self.awaitReady
             if case .events = request.verb {
-                Task { @MainActor [self] in
+                track { [self] in
                     await awaitReady()
                     let (snapshot, events) = router.snapshotAndEvents()
                     send(router.encode(snapshot))
@@ -401,7 +413,7 @@ final class VMCommandConnection: @unchecked Sendable {
                 }
             } else {
                 let onSurfaceRequested = self.onSurfaceRequested
-                Task { @MainActor [self] in
+                track { [self] in
                     // The library read has to have landed: a verb run against a
                     // library that has not is not refused, it is answered wrong.
                     await awaitReady()
@@ -411,6 +423,20 @@ final class VMCommandConnection: @unchecked Sendable {
                     send(router.encode(await router.respond(to: request)))
                 }
             }
+        }
+    }
+
+    /// Runs one request's main-actor work as a task ``closeNow()`` can cancel.
+    ///
+    /// Called on ``queue``, the only isolation ``inFlight`` is touched from —
+    /// including the removal, which hops back once `body` returns.
+    private func track(_ body: @MainActor @Sendable @escaping () async -> Void) {
+        guard !isClosed else { return }
+        let id = nextRequestID
+        nextRequestID += 1
+        inFlight[id] = Task { @MainActor [self] in
+            await body()
+            queue.async { [self] in inFlight[id] = nil }
         }
     }
 
@@ -468,6 +494,9 @@ final class VMCommandConnection: @unchecked Sendable {
         writeSource = nil
         subscription?.cancel()
         subscription = nil
+        let running = inFlight.values
+        inFlight.removeAll()
+        for task in running { task.cancel() }
         pendingWrite = Data()
 
         if let readSource {

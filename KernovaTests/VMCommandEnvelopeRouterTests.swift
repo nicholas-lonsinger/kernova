@@ -700,6 +700,41 @@ struct VMCommandEnvelopeRouterTests {
         #expect(message == cloneError.localizedDescription)
     }
 
+    @Test("A wait that lands after the failed copy's row is gone still answers with its failure")
+    func awaitPreparingAfterTheFailedRowIsGone() async throws {
+        let harness = makeHarness()
+        let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
+        harness.storage.cloneVMBundleError = cloneError
+        let instance = makeInstance(in: harness, name: "Source")
+        let started = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let phantom) = started.result else {
+            Issue.record("expected a summary, got \(started.result)")
+            return
+        }
+        // The wire's second round trip can land after the copy has settled, and
+        // a failed copy evicts its row — so the wait is driven here from a
+        // library that has already forgotten the identifier it names.
+        guard
+            let task = harness.library.instances.first(where: { $0.id == phantom.id })?
+                .preparingState?.task
+        else {
+            Issue.record("expected the clone's row to be preparing")
+            return
+        }
+        await task.value
+        #expect(!harness.library.instances.contains { $0.id == phantom.id })
+
+        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
+
+        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
+            return
+        }
+        #expect(verb == .clone)
+        #expect(message == cloneError.localizedDescription)
+    }
+
     @Test("A wait on a cancelled copy answers that it was cancelled")
     func awaitPreparingOnACancelledCopy() async throws {
         let harness = makeHarness()

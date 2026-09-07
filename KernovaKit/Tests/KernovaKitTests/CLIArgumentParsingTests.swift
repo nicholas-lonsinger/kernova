@@ -124,6 +124,20 @@ struct CLIArgumentParsingTests {
         #expect(immediate.path == "/tmp/Alpha.kernova")
     }
 
+    @Test("import takes --timeout, and waits as long as it takes without one")
+    func importParsesTimeout() throws {
+        // Absent is unbounded on purpose: the wait covers a permission panel a
+        // person is answering, and no deadline can guess how long that takes.
+        let bare = try #require(
+            try parse(["import", "/tmp/Alpha.kernova"]) as? KernovaCommand.Import)
+        #expect(bare.timeout == nil)
+
+        let bounded = try #require(
+            try parse(["import", "/tmp/Alpha.kernova", "--timeout", "90"])
+                as? KernovaCommand.Import)
+        #expect(bounded.timeout == 90)
+    }
+
     @Test("delete moves the bundle to the Trash unless --permanent says otherwise")
     func deleteParsesPermanent() throws {
         let trashed = try #require(try parse(["delete", "Alpha"]) as? KernovaCommand.Delete)
@@ -277,6 +291,8 @@ struct CLIArgumentParsingTests {
             ["restart", "Alpha", "--timeout", "-5"],
             ["wait", "Alpha", "--until", "stopped", "--timeout", "0"],
             ["ip", "Alpha", "--wait", "--timeout", "-1"],
+            ["import", "/tmp/Alpha.kernova", "--timeout", "0"],
+            ["import", "/tmp/Alpha.kernova", "--timeout", "-5"],
         ]
         for line in lines {
             #expect(throws: (any Error).self, "\(line)") { try parse(line) }

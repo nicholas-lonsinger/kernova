@@ -57,6 +57,38 @@ struct CLIPreparingWaitTests {
         }
     }
 
+    @Test("An import gives up at --timeout rather than waiting on an answer that never comes")
+    func anImportGivesUpAtItsDeadline() throws {
+        let source = "/Users/somebody/Alpha.kernova"
+        let listener = try TestCommandSocket(tag: "prep-deadline")
+        defer { listener.close() }
+        let client = try VMCommandClient(socketPath: listener.path)
+        defer { client.close() }
+        // The import is answered and the wait for the copy never is: the app
+        // took the request and has not come back to it, which is what the
+        // permission panel on a mistyped path leaves a script holding.
+        listener.serve(
+            [VMCommandResponse(result: .summary(phantom))], holdingOpen: true)
+
+        do {
+            // The deadline is the assertion here, so it is the one place a
+            // small injected timeout is the correct value.
+            _ = try PreparingCopy.importing(
+                source, waitingForTheCopy: true, within: 1, on: client)
+            Issue.record("expected the import to give up at its deadline")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .timedOut)
+            #expect(failure.message.contains("was not imported within 1 seconds"))
+        }
+
+        // Ends the double's held-open read the way the tool exiting would.
+        client.close()
+        #expect(
+            listener.requests().map(\.verb) == [
+                .importVM(path: source), .awaitPreparing(.id(phantom.id)),
+            ])
+    }
+
     @Test("An answer of the wrong shape refuses rather than being printed as a row")
     func anUnexpectedAnswerRefuses() throws {
         let listener = try TestCommandSocket(tag: "prep-shape")

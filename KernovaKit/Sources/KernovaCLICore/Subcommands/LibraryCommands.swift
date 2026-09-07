@@ -71,7 +71,8 @@ extension KernovaCommand {
                 .clone(selector, machineIdentity: identity?.machineIdentity ?? .followPreference)
             ).payload()
             guard case .summary(let created) = answer else { throw answer.unexpectedAnswer }
-            try PreparingCopy.write(created, waitingForIt: !noWait, on: client, options: options)
+            let row = noWait ? created : try PreparingCopy.settle(created, on: client)
+            try PreparingCopy.write(row, options: options)
         }
     }
 
@@ -85,7 +86,9 @@ extension KernovaCommand {
                 + "the path is not one Kernova may already read, it asks for permission on this "
                 + "Mac's screen and this command waits for the answer. Returns once the copy has "
                 + "finished, printing the imported virtual machine the way `list` prints one row; "
-                + "--no-wait returns as soon as the copy has started.")
+                + "--no-wait returns as soon as the copy has started. --timeout bounds the whole "
+                + "wait, the permission answer included, and exits 7 when it runs out — a copy "
+                + "already under way finishes in Kernova, the way --no-wait leaves it.")
 
         /// The bundle to copy, as this Mac names it.
         @Argument(help: "The path of the virtual machine bundle to import.")
@@ -95,19 +98,30 @@ extension KernovaCommand {
         @Flag(name: .long, help: "Return without waiting for the copy to finish.")
         public var noWait = false
 
+        /// How long to wait before giving up; absent waits as long as it takes,
+        /// which is what a person answering the permission panel needs.
+        @Option(name: .long, help: "Seconds to wait before giving up.")
+        public var timeout: Double?
+
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
 
         /// Creates the subcommand.
         public init() {}
 
+        /// Refuses a deadline that names no wait.
+        public func validate() throws {
+            try TimeoutOption.validate(timeout)
+        }
+
         /// Imports the bundle and writes the row the copy produced.
         public func run() throws {
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
-            let answer = try client.send(.importVM(path: Self.wirePath(for: path))).payload()
-            guard case .summary(let created) = answer else { throw answer.unexpectedAnswer }
-            try PreparingCopy.write(created, waitingForIt: !noWait, on: client, options: options)
+            let row = try PreparingCopy.importing(
+                Self.wirePath(for: path), waitingForTheCopy: !noWait, within: timeout,
+                on: client)
+            try PreparingCopy.write(row, options: options)
         }
 
         /// `path` as an absolute path, which is the only form the app can act
@@ -236,17 +250,67 @@ extension KernovaCommand {
 /// The half a clone and an import share: a row answered while the copy behind
 /// it is still being written, and the wait that turns it into the settled one.
 enum PreparingCopy {
-    /// Waits for `created`'s copy to settle unless `waiting` says not to, then
-    /// writes the row.
-    static func write(
-        _ created: VMSummary, waitingForIt waiting: Bool, on client: VMCommandClient,
-        options: GlobalOptions
-    ) throws {
-        let row = waiting ? try settle(created, on: client) : created
+    /// Writes `row` the way `list` writes one row.
+    static func write(_ row: VMSummary, options: GlobalOptions) throws {
         Console.out(
             options.format == .json
                 ? try JSONRenderer.render(row)
                 : TableRenderer.render([row], quiet: options.quiet))
+    }
+
+    /// The row an import settles into, bounded end to end by `timeout`.
+    ///
+    /// One deadline covers both round trips, because the first is where the
+    /// wait can be unbounded: a path the sandbox does not admit puts a
+    /// permission panel on the Mac's screen, and a script has nobody there to
+    /// answer it.
+    ///
+    /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when `timeout`
+    ///   runs out first. A copy the app has already started finishes there —
+    ///   the deadline bounds this tool's wait, not Kernova's work.
+    static func importing(
+        _ wirePath: String, waitingForTheCopy waiting: Bool, within timeout: Double?,
+        on client: VMCommandClient
+    ) throws -> VMSummary {
+        let deadline = timeout.map { ImportDeadline(seconds: $0, path: wirePath) }
+        let answer = try bounded(by: deadline, on: client) {
+            try client.send(.importVM(path: wirePath)).payload()
+        }
+        guard case .summary(let created) = answer else { throw answer.unexpectedAnswer }
+        guard waiting else { return created }
+        return try bounded(by: deadline, on: client) { try settle(created, on: client) }
+    }
+
+    /// When an import's `--timeout` runs out, and what it says when it does.
+    private struct ImportDeadline {
+        let expiresAt: Date
+        let expiry: CLIFailure
+
+        init(seconds: Double, path: String) {
+            expiresAt = Date(timeIntervalSinceNow: seconds)
+            expiry = CLIFailure(
+                .timedOut,
+                "\u{201C}\(path)\u{201D} was not imported within \(Int(seconds)) seconds.")
+        }
+    }
+
+    /// Runs `body` with `client`'s read deadline armed to whatever is left of
+    /// `deadline`, and the socket's own expiry reworded as what was waited for.
+    ///
+    /// A deadline already spent never reaches the socket: `SO_RCVTIMEO` reads a
+    /// zero interval as no deadline at all.
+    private static func bounded<T>(
+        by deadline: ImportDeadline?, on client: VMCommandClient, _ body: () throws -> T
+    ) throws -> T {
+        guard let deadline else { return try body() }
+        let remaining = deadline.expiresAt.timeIntervalSinceNow
+        guard remaining > 0 else { throw deadline.expiry }
+        client.waitForFrames(upTo: remaining)
+        do {
+            return try body()
+        } catch let failure as CLIFailure where failure.code == .timedOut {
+            throw deadline.expiry
+        }
     }
 
     /// The row `created`'s copy settled into.

@@ -49,7 +49,16 @@ final class PowerboxImportAuthority: ImportSourceAuthorizing {
         panel.message =
             "Kernova needs your permission to read \u{201C}\(url.lastPathComponent)\u{201D} before it can import it."
 
-        guard await panel.begin() == .OK, let picked = panel.url else {
+        let dismissal = PanelDismissal(panel)
+        let response = await withTaskCancellationHandler {
+            await panel.begin()
+        } onCancel: {
+            // The caller is gone, and a panel nobody is waiting on is a
+            // question left on the Mac's screen that no answer reaches.
+            dismissal.dismiss()
+        }
+
+        guard response == .OK, let picked = panel.url else {
             throw CommandError.operationFailed(
                 verb: .importVM,
                 message:
@@ -57,5 +66,24 @@ final class PowerboxImportAuthority: ImportSourceAuthorizing {
             )
         }
         return picked
+    }
+}
+
+/// Takes a panel back down from wherever a cancellation lands.
+///
+/// `@unchecked Sendable`: a cancellation handler is isolated to nothing and
+/// `NSOpenPanel` is main-actor bound, so this box is what crosses — the panel
+/// itself is only ever touched back on the main actor.
+private struct PanelDismissal: @unchecked Sendable {
+    private let panel: NSOpenPanel
+
+    init(_ panel: NSOpenPanel) {
+        self.panel = panel
+    }
+
+    /// Ends the panel the way its Cancel button does, which answers the
+    /// `begin()` still in flight with `.cancel`.
+    func dismiss() {
+        Task { @MainActor in panel.cancel(nil) }
     }
 }

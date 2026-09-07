@@ -5,7 +5,7 @@ import os
 /// The headless implementation of every VM verb, beneath the AppKit UI and
 /// every automation surface.
 ///
-/// Holds no state of its own — ``VMLibrary`` owns which VMs exist and
+/// Holds no VM state of its own — ``VMLibrary`` owns which VMs exist and
 /// ``VMLifecycleCoordinator`` owns per-VM operation serialization — so it is
 /// deliberately *not* `@Observable`: there is nothing here for a view to watch.
 ///
@@ -442,6 +442,17 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Failure Surfacing
 
+    /// Why each settled create, clone or import copy failed, keyed by the
+    /// preparing row it was writing.
+    ///
+    /// The row is evicted before the failure is reported, so it cannot carry
+    /// this: a wait that arrives after the copy failed resolves nothing, and
+    /// ``awaitPreparing(_:)`` reads what happened from here instead of
+    /// answering ``CommandError/notFound(_:)``. The wait that reads an entry
+    /// removes it; one nobody ever waits on stays until the app quits — one
+    /// `CommandError` per failed copy.
+    var settledFailures: [UUID: CommandError] = [:]
+
     /// Hands a failure that no command call is waiting on to ``onFailure``.
     func report(_ failure: CommandError, on instance: VMInstance?) {
         onFailure?(failure, instance)
@@ -459,7 +470,7 @@ final class VMCommandCore: VMCommanding {
             verb: verb, message: error.localizedDescription)
         // The same failure `awaitPreparing` throws, so a caller waiting on the
         // copy and one that was not are told the same thing.
-        phantom.preparingFailure = failure
+        settledFailures[phantom.instanceID] = failure
         broadcaster.emit([
             .failure(
                 id: phantom.instanceID, name: phantom.name,
