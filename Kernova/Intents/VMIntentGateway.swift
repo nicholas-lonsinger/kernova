@@ -294,6 +294,24 @@ final class VMIntentGateway {
         }
     }
 
+    /// Copies a bundle outside the library into it, answering the row the copy
+    /// filled once it has settled.
+    ///
+    /// The one library verb here that waits, and the security-scoped bracket is
+    /// why: the authority to read `url` is the caller's, held only for the span
+    /// of this call, and the copy reads the source for as long as it runs.
+    /// Answering the phantom row the way ``clone(_:machineIdentity:)`` does
+    /// would drop that authority out from under a copy still reading through it.
+    func importVM(from url: URL) async throws -> VMEntity {
+        try await perform(.importVM, on: nil) {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let phantom = try self.commands.importVM(from: url)
+            let settled = try await self.commands.awaitPreparing(.id(phantom.id))
+            return VMEntity(try self.commands.info(.id(settled.id)))
+        }
+    }
+
     func rename(_ id: UUID, to newName: String) async throws {
         try await perform(.rename, on: id) { try self.commands.rename(.id(id), to: newName) }
     }
@@ -324,15 +342,20 @@ final class VMIntentGateway {
     /// The log line is the only trace an App Intents failure leaves: the
     /// framework shows it to whoever ran the intent and reports it nowhere
     /// else — no alert, no window, nothing a later session can read back.
+    ///
+    /// `id` names the VM the verb addresses, and is `nil` for one that
+    /// addresses none: an import names a file, and the row it fills has no
+    /// identifier until the core has registered it.
     private func perform<T>(
-        _ verb: VMVerb, on id: UUID, _ body: () async throws -> T
+        _ verb: VMVerb, on id: UUID?, _ body: () async throws -> T
     ) async throws -> T {
         await ready()
         do {
             return try await body()
         } catch let failure as CommandError {
+            let subject = id.map { " for \($0.uuidString)" } ?? ""
             Self.logger.notice(
-                "Intent \(verb.rawValue, privacy: .public) refused for \(id.uuidString, privacy: .public): \(failure.message, privacy: .public)"
+                "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message, privacy: .public)"
             )
             throw failure
         }

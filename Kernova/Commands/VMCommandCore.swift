@@ -5,7 +5,7 @@ import os
 /// The headless implementation of every VM verb, beneath the AppKit UI and
 /// every automation surface.
 ///
-/// Holds no state of its own — ``VMLibrary`` owns which VMs exist and
+/// Holds no VM state of its own — ``VMLibrary`` owns which VMs exist and
 /// ``VMLifecycleCoordinator`` owns per-VM operation serialization — so it is
 /// deliberately *not* `@Observable`: there is nothing here for a view to watch.
 ///
@@ -53,6 +53,12 @@ final class VMCommandCore: VMCommanding {
     /// and a second hook rather than a flag on that one, because the two land
     /// on different surfaces and only the adapter knows either.
     var revealInLibrary: ((VMInstance) -> Void)?
+
+    /// Selects a VM's bundle in the Finder, bringing the Finder forward.
+    ///
+    /// A hook rather than a call, for the reason ``surfaceDisplay`` states:
+    /// what a file lands in front of the user through is an AppKit question.
+    var revealInFinder: ((VMInstance) -> Void)?
 
     /// Receives every failure raised with no command call waiting on it — an
     /// Ephemeral baseline revert a power-off started, an external file that
@@ -436,6 +442,17 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Failure Surfacing
 
+    /// Why each settled create, clone or import copy failed, keyed by the
+    /// preparing row it was writing.
+    ///
+    /// The row is evicted before the failure is reported, so it cannot carry
+    /// this: a wait that arrives after the copy failed resolves nothing, and
+    /// ``awaitPreparing(_:)`` reads what happened from here instead of
+    /// answering ``CommandError/notFound(_:)``. The wait that reads an entry
+    /// removes it; one nobody ever waits on stays until the app quits — one
+    /// `CommandError` per failed copy.
+    var settledFailures: [UUID: CommandError] = [:]
+
     /// Hands a failure that no command call is waiting on to ``onFailure``.
     func report(_ failure: CommandError, on instance: VMInstance?) {
         onFailure?(failure, instance)
@@ -449,11 +466,16 @@ final class VMCommandCore: VMCommanding {
     /// reaches no observable field and no diff can ever produce it, which is
     /// why it is emitted directly rather than left to the loop.
     func reportPreparingFailure(_ error: Error, verb: VMVerb, phantom: VMInstance) {
+        let failure = CommandError.operationFailed(
+            verb: verb, message: error.localizedDescription)
+        // The same failure `awaitPreparing` throws, so a caller waiting on the
+        // copy and one that was not are told the same thing.
+        settledFailures[phantom.instanceID] = failure
         broadcaster.emit([
             .failure(
                 id: phantom.instanceID, name: phantom.name,
                 message: error.localizedDescription)
         ])
-        report(.operationFailed(verb: verb, message: error.localizedDescription), on: nil)
+        report(failure, on: nil)
     }
 }

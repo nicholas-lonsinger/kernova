@@ -1,7 +1,52 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 
 @testable import Kernova
+
+/// A wait a verb parks in until the task running it is cancelled.
+///
+/// Lock-guarded and isolation-free rather than `@MainActor`: a cancellation
+/// handler is isolated to nothing, and a cancel that lands *before* the park
+/// still has to release it.
+final class CancellationPark: @unchecked Sendable {
+    /// Fires when a park is released, so a test awaits the cancellation rather
+    /// than polling for it.
+    let released = AsyncGate()
+
+    private let lock = NSLock()
+    private var parked: CheckedContinuation<Void, Never>?
+    private var cancelled = false
+
+    /// Whether the task that parked here has been cancelled.
+    var wasCancelled: Bool { lock.withLock { cancelled } }
+
+    /// Suspends until the calling task is cancelled.
+    func park() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let alreadyCancelled = lock.withLock { () -> Bool in
+                    guard !cancelled else { return true }
+                    parked = continuation
+                    return false
+                }
+                if alreadyCancelled { continuation.resume() }
+            }
+        } onCancel: {
+            release()
+        }
+    }
+
+    private func release() {
+        let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            cancelled = true
+            defer { parked = nil }
+            return parked
+        }
+        waiting?.resume()
+        released.notify()
+    }
+}
 
 /// In-memory mock for `VMCommanding` that records what each verb was asked to
 /// do without a library, a lifecycle coordinator, or a VM behind it.
@@ -26,6 +71,18 @@ final class MockVMCommanding: VMCommanding {
     var snapshotsByVM: [UUID: [SnapshotSummary]] = [:]
     /// The row `clone` answers with, synthesized from the source when unset.
     var cloneResult: VMSummary?
+    /// The row `importVM` answers with, synthesized from the source URL when
+    /// unset.
+    var importResult: VMSummary?
+    /// The settled row `awaitPreparing` answers with; the library's own row when
+    /// unset.
+    var awaitPreparingResult: VMSummary?
+    /// Parks `awaitPreparing` until its task is cancelled — the verb still in
+    /// flight when whoever asked for it goes away.
+    var awaitPreparingPark: CancellationPark?
+    /// Fires as `awaitPreparing` is entered, so a test can act against a verb
+    /// that is provably running.
+    let awaitPreparingEntered = AsyncGate()
     /// What `snapshotOnDiskBytes(of:)` answers with.
     var snapshotBytes: [UUID: UInt64] = [:]
     /// What `externalAttachments(of:)` answers with.
@@ -57,6 +114,7 @@ final class MockVMCommanding: VMCommanding {
         [(selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?)] = []
     private(set) var openSelectors: [VMSelector] = []
     private(set) var revealSelectors: [VMSelector] = []
+    private(set) var showInFinderSelectors: [VMSelector] = []
     private(set) var cancelGuestSetupCalls: [(selector: VMSelector, confirmed: Bool)] = []
     private(set) var takeSnapshotCalls: [(selector: VMSelector, name: String, notes: String)] = []
     private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool)] = []
@@ -71,7 +129,9 @@ final class MockVMCommanding: VMCommanding {
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
     private(set) var deleteCalls:
         [(selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool)] = []
+    private(set) var importURLs: [URL] = []
     private(set) var cancelPreparingCalls: [(selector: VMSelector, confirmed: Bool)] = []
+    private(set) var awaitPreparingSelectors: [VMSelector] = []
     private(set) var attachStorageDiskCalls: [(selector: VMSelector, files: [PickedFile])] = []
     private(set) var createStorageDiskCalls: [(selector: VMSelector, sizeInGB: Int)] = []
     private(set) var removeStorageDiskCalls: [(selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool)] = []
@@ -111,6 +171,7 @@ final class MockVMCommanding: VMCommanding {
     var restartError: (any Error)?
     var openError: (any Error)?
     var revealError: (any Error)?
+    var showInFinderError: (any Error)?
     var cancelGuestSetupError: (any Error)?
     var takeSnapshotError: (any Error)?
     var revertError: (any Error)?
@@ -121,7 +182,9 @@ final class MockVMCommanding: VMCommanding {
     var cloneError: (any Error)?
     var renameError: (any Error)?
     var deleteError: (any Error)?
+    var importError: (any Error)?
     var cancelPreparingError: (any Error)?
+    var awaitPreparingError: (any Error)?
     var storageDiskEditError: (any Error)?
     var removableMediaEditError: (any Error)?
     var sharedDirectoryEditError: (any Error)?
@@ -292,6 +355,12 @@ final class MockVMCommanding: VMCommanding {
         if let revealError { throw revealError }
     }
 
+    func showInFinder(_ selector: VMSelector) throws {
+        showInFinderSelectors.append(selector)
+        if let showInFinderError { throw showInFinderError }
+        _ = try resolve(selector)
+    }
+
     // MARK: - Snapshots
 
     func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
@@ -376,7 +445,17 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func importVM(from url: URL) throws -> VMSummary {
-        throw CommandError.unsupported(capability: "importing")
+        importURLs.append(url)
+        if let importError { throw importError }
+        let imported =
+            importResult
+            ?? VMSummary(
+                id: UUID(), name: url.deletingPathExtension().lastPathComponent,
+                status: VMStatus.preparingWireName, ipAddress: .unavailable)
+        // The core registers the imported row's phantom before answering, so a
+        // caller that reads it back on the same turn finds it.
+        library.append(imported)
+        return imported
     }
 
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
@@ -385,6 +464,15 @@ final class MockVMCommanding: VMCommanding {
         if let cancelPreparingConsentPrompt, !confirmed {
             throw CommandError.confirmationRequired(cancelPreparingConsentPrompt)
         }
+    }
+
+    func awaitPreparing(_ selector: VMSelector) async throws -> VMSummary {
+        awaitPreparingSelectors.append(selector)
+        awaitPreparingEntered.notify()
+        if let awaitPreparingError { throw awaitPreparingError }
+        if let awaitPreparingPark { await awaitPreparingPark.park() }
+        let row = try resolve(selector)
+        return awaitPreparingResult ?? row
     }
 
     // MARK: - Attachments

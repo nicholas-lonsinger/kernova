@@ -59,6 +59,25 @@ public enum TableRenderer {
             .joined(separator: "\n")
     }
 
+    /// A VM's restore points, in the order the app listed them (newest first).
+    ///
+    /// The current snapshot carries a `*`, beside the name it marks rather than
+    /// after the identifier nobody reads. `quiet` prints names alone, which is
+    /// what the snapshot verbs accept back.
+    public static func render(_ rows: [SnapshotRow], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(\.snapshot.name).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        return columns(
+            headings: ["NAME", "CURRENT", "KIND", "TAKEN", "SIZE", "ID"],
+            rows: rows.map {
+                [
+                    $0.snapshot.name, $0.snapshot.isCurrent ? "*" : "", $0.snapshot.kind,
+                    taken($0.snapshot.createdAt), size($0.onDiskBytes),
+                    $0.snapshot.id.uuidString,
+                ]
+            })
+    }
+
     /// A guest address in the words this surface states it in.
     ///
     /// Each non-address case is a different answer to "what is its address",
@@ -70,6 +89,19 @@ public enum TableRenderer {
         case .externallyAssigned: "Assigned by your network"
         case .unavailable: "None"
         }
+    }
+
+    /// When a capture was taken, in this Mac's own locale and time zone.
+    private static func taken(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// What a snapshot's files occupy, in the unit Finder's Get Info would
+    /// state it in, or `Unknown` for a snapshot the size read did not answer
+    /// for.
+    private static func size(_ bytes: UInt64?) -> String {
+        guard let bytes else { return "Unknown" }
+        return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
     /// Memory in the unit a person reads it in.

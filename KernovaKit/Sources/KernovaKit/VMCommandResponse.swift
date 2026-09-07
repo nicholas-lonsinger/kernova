@@ -32,6 +32,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case snapshots([SnapshotSummary])
         /// One restore point a capture produced.
         case snapshot(SnapshotSummary)
+        /// Bytes each of a VM's snapshots occupies on disk, by snapshot id.
+        case snapshotSizes([UUID: UInt64])
         /// One library change, for a transport streaming them.
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.

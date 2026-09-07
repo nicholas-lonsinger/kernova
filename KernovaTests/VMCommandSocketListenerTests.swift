@@ -85,7 +85,8 @@ struct VMCommandSocketListenerTests {
         let readiness = LibraryReadiness(landed: libraryHasLanded)
         let path = temporarySocketPath()
         let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: commands),
+            router: VMCommandEnvelopeRouter(
+                commands: commands, importAuthority: MockImportSourceAuthority()),
             authorizer: authorizer,
             socketPath: path,
             awaitReady: { await readiness.wait() },
@@ -200,6 +201,34 @@ struct VMCommandSocketListenerTests {
         #expect(harness.surfaceCount.value == 1)
     }
 
+    @Test("A client that hangs up cancels the verb it left running")
+    func closingAConnectionCancelsItsRequest() async throws {
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "preparing", ipAddress: .unavailable)
+        let harness = makeHarness(library: [alpha])
+        let park = CancellationPark()
+        harness.commands.awaitPreparingPark = park
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.send(VMCommandRequest(verb: .awaitPreparing(.id(alpha.id))))
+        // The verb has to be running before the hang-up, or the close would be
+        // cancelling nothing and the test would prove nothing.
+        try await harness.commands.awaitPreparingEntered.wait {
+            harness.commands.awaitPreparingSelectors.count == 1
+        }
+
+        client.close()
+
+        // A verb suspended on something only the caller wanted — an import's
+        // permission panel — would otherwise outlive the request that asked.
+        try await park.released.wait { park.wasCancelled }
+        #expect(park.wasCancelled)
+    }
+
     // MARK: - Envelope refusals
 
     @Test("An unauthorized peer is told so, then disconnected")
@@ -293,7 +322,8 @@ struct VMCommandSocketListenerTests {
     @Test("A build with no group container publishes no socket")
     func noContainerBindsNothing() {
         let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
+            router: VMCommandEnvelopeRouter(
+                commands: MockVMCommanding(), importAuthority: MockImportSourceAuthority()),
             authorizer: MockPeerAuthorizer(),
             socketPath: nil,
             awaitReady: {},
@@ -307,7 +337,8 @@ struct VMCommandSocketListenerTests {
     func noAuthorizerBindsNothing() {
         let path = temporarySocketPath()
         let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
+            router: VMCommandEnvelopeRouter(
+                commands: MockVMCommanding(), importAuthority: MockImportSourceAuthority()),
             authorizer: nil,
             socketPath: path,
             awaitReady: {},

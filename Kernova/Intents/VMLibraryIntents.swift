@@ -2,6 +2,47 @@ import AppIntents
 import Foundation
 import KernovaKit
 
+/// Copies a bundle a workflow holds into the library.
+///
+/// The one action here that waits for its copy. A clone reads a bundle the app
+/// already owns and can carry on writing after the action reports; an import
+/// reads a file outside the container, through an authority that lasts only as
+/// long as this call — so the VM it answers is the settled one.
+struct ImportVMIntent: AppIntent {
+    static let title: LocalizedStringResource = "Import Virtual Machine"
+    static let description: IntentDescription? = IntentDescription(
+        "Copies a virtual machine bundle into the library and returns the imported virtual machine once the copy is complete.",
+        categoryName: "Virtual Machines",
+        resultValueName: "Virtual Machine")
+
+    /// The bundle to copy. What a workflow may hand it is
+    /// ``VMBundleFile/supportedContentTypes``, which is the whole of what an
+    /// import accepts — there is nothing narrower for this parameter to say.
+    @Parameter(title: "Virtual Machine Bundle")
+    var file: VMBundleFile
+
+    @Dependency private var gateway: VMIntentGateway
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Import \(\.$file)")
+    }
+
+    /// A file the framework can name but not locate is the one failure worded
+    /// here: the read that would say why answered `nil` rather than throwing,
+    /// so there is no system reason to pass on.
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<VMEntity> {
+        guard let url = try await file.id.fileURL else {
+            throw CommandError.operationFailed(
+                verb: .importVM,
+                message:
+                    "The chosen virtual machine bundle could not be opened. Choose it again in "
+                    + "this shortcut, then run it.")
+        }
+        return .result(value: try await gateway.importVM(from: url))
+    }
+}
+
 struct CloneVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Clone Virtual Machine"
     // The copy is dispatched and the new row answered immediately, so this

@@ -17,6 +17,8 @@ public struct KernovaCommand: ParsableCommand {
             List.self, Info.self, IP.self,
             Start.self, Stop.self, Suspend.self, Pause.self, Resume.self, Restart.self, Open.self,
             Wait.self,
+            Snapshot.self,
+            Clone.self, Import.self, Rename.self, Delete.self, Reveal.self,
             Quit.self,
             Version.self,
         ],

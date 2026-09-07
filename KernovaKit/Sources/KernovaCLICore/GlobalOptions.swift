@@ -23,8 +23,11 @@ public struct GlobalOptions: ParsableArguments {
     @Flag(name: [.customShort("q"), .long], help: "Print only the values, with no headings.")
     public var quiet = false
 
-    /// Read the VM argument as an identifier, never as a display name.
-    @Flag(name: .long, help: "Read the virtual machine argument as an identifier only.")
+    /// Read the VM and snapshot arguments as identifiers, never as display
+    /// names.
+    @Flag(
+        name: .long,
+        help: "Read the virtual machine and snapshot arguments as identifiers only.")
     public var id = false
 
     /// Supply the consent a destructive verb refuses without.

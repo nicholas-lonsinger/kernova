@@ -34,6 +34,193 @@ struct CLIArgumentParsingTests {
         #expect(try parse(["open", "Alpha"]) is KernovaCommand.Open)
     }
 
+    @Test("Each library verb parses to its own subcommand")
+    func libraryVerbsResolve() throws {
+        #expect(try parse(["clone", "Alpha"]) is KernovaCommand.Clone)
+        #expect(try parse(["rename", "Alpha", "Beta"]) is KernovaCommand.Rename)
+        #expect(try parse(["delete", "Alpha"]) is KernovaCommand.Delete)
+        #expect(try parse(["import", "/tmp/Alpha.kernova"]) is KernovaCommand.Import)
+        #expect(try parse(["reveal", "Alpha"]) is KernovaCommand.Reveal)
+    }
+
+    @Test("Each snapshot verb parses to its own subcommand under `snapshot`")
+    func snapshotVerbsResolve() throws {
+        #expect(try parse(["snapshot", "list", "Alpha"]) is KernovaCommand.Snapshot.List)
+        #expect(try parse(["snapshot", "take", "Alpha"]) is KernovaCommand.Snapshot.Take)
+        #expect(
+            try parse(["snapshot", "revert", "Alpha", "Base"]) is KernovaCommand.Snapshot.Revert)
+        #expect(
+            try parse(["snapshot", "delete", "Alpha", "Base"]) is KernovaCommand.Snapshot.Delete)
+        #expect(
+            try parse(["snapshot", "rename", "Alpha", "Base", "Older"])
+                is KernovaCommand.Snapshot.Rename)
+        // The library verbs of the same name stay themselves.
+        #expect(try parse(["delete", "Alpha"]) is KernovaCommand.Delete)
+        #expect(try parse(["list"]) is KernovaCommand.List)
+    }
+
+    @Test("A snapshot verb this build does not have is a usage error")
+    func unknownSnapshotVerbIsRefused() {
+        #expect(throws: (any Error).self) { try parse(["snapshot", "restore", "Alpha", "Base"]) }
+    }
+
+    @Test("Every snapshot verb refuses without the arguments it acts on")
+    func snapshotVerbsNeedTheirArguments() {
+        let lines: [[String]] = [
+            ["snapshot", "list"],
+            ["snapshot", "take"],
+            ["snapshot", "revert", "Alpha"],
+            ["snapshot", "delete", "Alpha"],
+            ["snapshot", "rename", "Alpha", "Base"],
+            ["rename", "Alpha"],
+            ["import"],
+        ]
+        for line in lines {
+            #expect(throws: (any Error).self, "\(line)") { try parse(line) }
+        }
+    }
+
+    @Test("clone follows the app's preference unless an identity flag says otherwise")
+    func cloneParsesItsIdentityFlags() throws {
+        let byDefault = try #require(try parse(["clone", "Alpha"]) as? KernovaCommand.Clone)
+        #expect(byDefault.identity == nil)
+        #expect(!byDefault.noWait)
+
+        let fresh = try #require(
+            try parse(["clone", "Alpha", "--new-identity"]) as? KernovaCommand.Clone)
+        #expect(fresh.identity?.machineIdentity == .new)
+
+        let kept = try #require(
+            try parse(["clone", "Alpha", "--keep-identity"]) as? KernovaCommand.Clone)
+        #expect(kept.identity?.machineIdentity == .keep)
+    }
+
+    @Test("Two clone identities at once is a usage error, not a silent winner")
+    func cloneIdentitiesAreExclusive() {
+        #expect(throws: (any Error).self) {
+            try parse(["clone", "Alpha", "--new-identity", "--keep-identity"])
+        }
+    }
+
+    @Test("Every clone identity flag maps onto a wire choice, and neither means the preference")
+    func everyCloneIdentityMaps() {
+        let mapped = Set(KernovaCommand.CloneIdentity.allCases.map(\.machineIdentity))
+        #expect(mapped == Set(CloneMachineIdentity.allCases).subtracting([.followPreference]))
+    }
+
+    @Test("clone and import take --no-wait, and wait for the copy without it")
+    func copyingVerbsParseNoWait() throws {
+        let clone = try #require(
+            try parse(["clone", "Alpha", "--no-wait"]) as? KernovaCommand.Clone)
+        #expect(clone.noWait)
+
+        let waiting = try #require(
+            try parse(["import", "/tmp/Alpha.kernova"]) as? KernovaCommand.Import)
+        #expect(!waiting.noWait)
+
+        let immediate = try #require(
+            try parse(["import", "/tmp/Alpha.kernova", "--no-wait"]) as? KernovaCommand.Import)
+        #expect(immediate.noWait)
+        #expect(immediate.path == "/tmp/Alpha.kernova")
+    }
+
+    @Test("import takes --timeout, and waits as long as it takes without one")
+    func importParsesTimeout() throws {
+        // Absent is unbounded on purpose: the wait covers a permission panel a
+        // person is answering, and no deadline can guess how long that takes.
+        let bare = try #require(
+            try parse(["import", "/tmp/Alpha.kernova"]) as? KernovaCommand.Import)
+        #expect(bare.timeout == nil)
+
+        let bounded = try #require(
+            try parse(["import", "/tmp/Alpha.kernova", "--timeout", "90"])
+                as? KernovaCommand.Import)
+        #expect(bounded.timeout == 90)
+    }
+
+    @Test("delete moves the bundle to the Trash unless --permanent says otherwise")
+    func deleteParsesPermanent() throws {
+        let trashed = try #require(try parse(["delete", "Alpha"]) as? KernovaCommand.Delete)
+        #expect(!trashed.permanent)
+        #expect(!trashed.options.yes)
+
+        let outright = try #require(
+            try parse(["delete", "Alpha", "--permanent", "--yes"]) as? KernovaCommand.Delete)
+        #expect(outright.permanent)
+        #expect(outright.options.yes)
+    }
+
+    @Test("A revert check-points by default, and --no-checkpoint is how that is given up")
+    func revertParsesItsCheckpoint() throws {
+        let safe = try #require(
+            try parse(["snapshot", "revert", "Alpha", "Base"]) as? KernovaCommand.Snapshot.Revert)
+        #expect(safe.checkpoint)
+        #expect(safe.snapshot == "Base")
+
+        let asked = try #require(
+            try parse(["snapshot", "revert", "Alpha", "Base", "--checkpoint"])
+                as? KernovaCommand.Snapshot.Revert)
+        #expect(asked.checkpoint)
+
+        let bare = try #require(
+            try parse(["snapshot", "revert", "Alpha", "Base", "--no-checkpoint", "--yes"])
+                as? KernovaCommand.Snapshot.Revert)
+        #expect(!bare.checkpoint)
+        #expect(bare.options.yes)
+    }
+
+    @Test("Asking for both check-point answers at once is a usage error")
+    func revertCheckpointIsExclusive() {
+        #expect(throws: (any Error).self) {
+            try parse(["snapshot", "revert", "Alpha", "Base", "--checkpoint", "--no-checkpoint"])
+        }
+    }
+
+    @Test("A capture takes its name and note, and leaves both to Kernova when unnamed")
+    func takeParsesItsNameAndNotes() throws {
+        let unnamed = try #require(
+            try parse(["snapshot", "take", "Alpha"]) as? KernovaCommand.Snapshot.Take)
+        // Empty rather than a name computed here: the app holds the manifest
+        // the default has to avoid colliding with.
+        #expect(unnamed.name.isEmpty)
+        #expect(unnamed.notes.isEmpty)
+
+        let named = try #require(
+            try parse([
+                "snapshot", "take", "Alpha", "--name", "Before Upgrade", "--notes", "26.1 beta",
+            ]) as? KernovaCommand.Snapshot.Take)
+        #expect(named.name == "Before Upgrade")
+        #expect(named.notes == "26.1 beta")
+    }
+
+    @Test("--id reads both arguments of a snapshot verb as identifiers")
+    func snapshotVerbsCarryTheIDFlag() throws {
+        let rename = try #require(
+            try parse(["snapshot", "rename", "Alpha", "Base", "Older", "--id"])
+                as? KernovaCommand.Snapshot.Rename)
+        #expect(rename.options.id)
+        #expect(rename.newName == "Older")
+    }
+
+    @Test("A relative import path is made absolute, and a standardized one stays as it is")
+    func importPathIsAbsoluteAndStandardized() {
+        // The shell's directory, not the process's: a sandboxed tool's own is
+        // its container.
+        #expect(
+            KernovaCommand.Import.wirePath(
+                for: "VMs/../VMs/Alpha.kernova", workingDirectory: "/Users/me/Desktop")
+                == "/Users/me/Desktop/VMs/Alpha.kernova")
+        let fallback = KernovaCommand.Import.wirePath(
+            for: "Alpha.kernova", workingDirectory: nil)
+        #expect(fallback == FileManager.default.currentDirectoryPath + "/Alpha.kernova")
+        // Nothing is read: the tool is sandboxed, so a path naming no file
+        // still crosses the wire for the app to answer for.
+        #expect(
+            KernovaCommand.Import.wirePath(
+                for: "/a/b/../c/Alpha.kernova", workingDirectory: "/Users/me/Desktop")
+                == "/a/c/Alpha.kernova")
+    }
+
     @Test("quit parses, and names no virtual machine")
     func quitResolves() throws {
         #expect(try parse(["quit"]) is KernovaCommand.Quit)
@@ -104,6 +291,8 @@ struct CLIArgumentParsingTests {
             ["restart", "Alpha", "--timeout", "-5"],
             ["wait", "Alpha", "--until", "stopped", "--timeout", "0"],
             ["ip", "Alpha", "--wait", "--timeout", "-1"],
+            ["import", "/tmp/Alpha.kernova", "--timeout", "0"],
+            ["import", "/tmp/Alpha.kernova", "--timeout", "-5"],
         ]
         for line in lines {
             #expect(throws: (any Error).self, "\(line)") { try parse(line) }

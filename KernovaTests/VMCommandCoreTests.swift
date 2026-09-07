@@ -605,7 +605,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: stopped) == [
                 .info, .ipAddress, .snapshots, .start, .reveal, .takeSnapshot, .deleteSnapshot,
                 .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
-                .editSharedDirectory, .clone, .rename, .delete,
+                .editSharedDirectory, .clone, .rename, .delete, .showInFinder,
             ])
 
         let running = makeInstance(
@@ -614,7 +614,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: running) == [
                 .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .editRemovableMedia, .rename,
+                .editRemovableMedia, .rename, .showInFinder,
             ])
     }
 
@@ -630,7 +630,7 @@ struct VMCommandCoreTests {
         #expect(
             harness.core.allowedVerbs(for: instance) == [
                 .info, .ipAddress, .snapshots, .stop, .resume, .open, .reveal, .deleteSnapshot,
-                .renameSnapshot, .setSnapshotNotes, .rename, .delete,
+                .renameSnapshot, .setSnapshotNotes, .rename, .delete, .showInFinder,
             ])
     }
 

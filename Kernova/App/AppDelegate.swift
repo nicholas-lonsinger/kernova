@@ -107,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)
         }
+        viewModel.onRevealInFinder = { instance in
+            NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
+        }
         viewModel.displayBootGeometryProvider = self
     }
 
@@ -408,7 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func showVMInFinder(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
+        viewModel.showVMInFinder(instance)
     }
 
     @objc func showClipboard(_ sender: Any?) {

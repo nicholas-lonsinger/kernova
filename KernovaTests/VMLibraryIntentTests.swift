@@ -78,6 +78,71 @@ struct VMLibraryIntentTests {
         #expect(copy.status == "preparing")
     }
 
+    // MARK: - Import
+
+    /// The source an import is handed. The mock records the URL rather than
+    /// reading it, so no file has to be there.
+    private let source = URL(fileURLWithPath: "/tmp/Imported.kernova")
+
+    @Test("An import records its source, waits for the copy, and answers the settled row")
+    func importWaitsForTheCopy() async throws {
+        let commands = MockVMCommanding()
+        let imported = UUID()
+        commands.importResult = VMSummary(
+            id: imported, name: "Imported", status: VMStatus.preparingWireName,
+            ipAddress: .unavailable)
+        commands.awaitPreparingResult = VMSummary(
+            id: imported, name: "Imported", status: "stopped", ipAddress: .unavailable)
+        commands.infoByID[imported] = VMIntentFixtures.info(
+            id: imported, name: "Imported", status: "stopped")
+
+        let entity = try await makeGateway(commands).importVM(from: source)
+
+        #expect(commands.importURLs == [source])
+        #expect(commands.awaitPreparingSelectors == [.id(imported)])
+        #expect(entity.id == imported)
+        #expect(entity.name == "Imported")
+        #expect(entity.status == "stopped")
+    }
+
+    @Test("A copy that failed leaves the import as the failure the wait reported")
+    func importSurfacesTheCopysFailure() async throws {
+        let commands = MockVMCommanding()
+        let failure = CommandError.operationFailed(
+            verb: .awaitPreparing, message: "The import was cancelled.")
+        commands.awaitPreparingError = failure
+
+        await #expect(throws: failure) {
+            _ = try await makeGateway(commands).importVM(from: source)
+        }
+    }
+
+    @Test("An import the core refuses waits on no copy")
+    func refusedImportNeverWaits() async throws {
+        let commands = MockVMCommanding()
+        let failure = CommandError.operationFailed(
+            verb: .importVM, message: "The bundle could not be read.")
+        commands.importError = failure
+
+        await #expect(throws: failure) {
+            _ = try await makeGateway(commands).importVM(from: source)
+        }
+        #expect(commands.awaitPreparingSelectors.isEmpty)
+    }
+
+    @Test("A picked bundle resolves to the file it names")
+    func bundleFileNamesItsFile() async throws {
+        let picked = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Imported-\(UUID().uuidString).kernova", isDirectory: true)
+        try FileManager.default.createDirectory(at: picked, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: picked) }
+
+        let resolved = try await VMBundleFile.defaultQuery.entities(
+            for: [try FileEntityIdentifier.file(url: picked)])
+
+        #expect(resolved.map(\.name) == [picked.lastPathComponent])
+    }
+
     // MARK: - Consent
 
     /// The narrowest delete the core offers: the bundle to the Trash, and

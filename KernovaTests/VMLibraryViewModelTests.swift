@@ -866,6 +866,21 @@ struct VMLibraryViewModelTests {
         #expect(quits.count == 1)
     }
 
+    @Test("Showing a VM in the Finder goes through the facade to the delegate's hook")
+    func showInFinderReachesTheFinderHook() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Filed")
+        viewModel.instances.append(instance)
+        var revealed: [URL] = []
+        // What `AppDelegate` answers with `activateFileViewerSelecting`.
+        viewModel.onRevealInFinder = { revealed.append($0.bundleURL) }
+
+        viewModel.showVMInFinder(instance)
+
+        #expect(revealed == [instance.bundleURL])
+        #expect(!presenter.showError)
+    }
+
     @Test("start delegates to lifecycle coordinator")
     func startDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()

@@ -15,8 +15,12 @@ struct VMCommandEnvelopeRouter {
 
     let commands: any VMCommanding
 
-    init(commands: any VMCommanding) {
+    /// What turns the path an import names into a URL this process may read.
+    let importAuthority: any ImportSourceAuthorizing
+
+    init(commands: any VMCommanding, importAuthority: any ImportSourceAuthorizing) {
         self.commands = commands
+        self.importAuthority = importAuthority
     }
 
     // MARK: - Bytes
@@ -120,6 +124,8 @@ struct VMCommandEnvelopeRouter {
             return .ipAddress(try commands.ipAddress(of: selector))
         case .snapshots(let selector):
             return .snapshots(try commands.snapshots(of: selector))
+        case .snapshotOnDiskBytes(let selector):
+            return .snapshotSizes(try await commands.snapshotOnDiskBytes(of: selector))
         case .events:
             // Streaming, not unary: a transport answers `.events` through
             // `snapshotAndEvents()` and never reaches here.
@@ -158,6 +164,9 @@ struct VMCommandEnvelopeRouter {
         case .reveal(let selector):
             try commands.reveal(selector)
             return .ok
+        case .showInFinder(let selector):
+            try commands.showInFinder(selector)
+            return .ok
 
         case .takeSnapshot(let selector, let name, let notes):
             return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))
@@ -187,10 +196,16 @@ struct VMCommandEnvelopeRouter {
                 confirmed: confirmed)
             return .ok
         case .importVM(let path):
-            return .summary(try commands.importVM(from: URL(fileURLWithPath: path)))
+            // The path is a string a client with no file access of its own
+            // named, so the authority is what makes it readable — and the copy
+            // runs against whatever URL it answers with.
+            let source = try await importAuthority.readableURL(for: URL(fileURLWithPath: path))
+            return .summary(try commands.importVM(from: source))
         case .cancelPreparing(let selector, let confirmed):
             try commands.cancelPreparing(selector, confirmed: confirmed)
             return .ok
+        case .awaitPreparing(let selector):
+            return .summary(try await commands.awaitPreparing(selector))
 
         case .editStorageDisk(let selector, let edit):
             try await apply(edit, to: selector)

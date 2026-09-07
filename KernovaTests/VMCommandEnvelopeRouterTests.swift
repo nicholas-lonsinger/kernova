@@ -34,10 +34,22 @@ struct VMCommandEnvelopeRouterTests {
 
     private struct Harness {
         let transport: TestTransport
+        let core: VMCommandCore
+        let authority: MockImportSourceAuthority
         let library: VMLibrary
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
         let snapshots: MockVMSnapshotStore
+    }
+
+    /// A transport over anything that speaks the facade, with an authority that
+    /// answers every import source unchanged unless the test says otherwise.
+    private func makeTransport(
+        over commands: any VMCommanding,
+        authority: MockImportSourceAuthority = MockImportSourceAuthority()
+    ) -> TestTransport {
+        TestTransport(
+            router: VMCommandEnvelopeRouter(commands: commands, importAuthority: authority))
     }
 
     private func makeHarness(
@@ -76,8 +88,10 @@ struct VMCommandEnvelopeRouterTests {
             preferences: preferences,
             clock: clock
         )
+        let authority = MockImportSourceAuthority()
         return Harness(
-            transport: TestTransport(router: VMCommandEnvelopeRouter(commands: core)),
+            transport: makeTransport(over: core, authority: authority),
+            core: core, authority: authority,
             library: library, storage: storage, virtualization: virtualization,
             snapshots: snapshots)
     }
@@ -128,6 +142,19 @@ struct VMCommandEnvelopeRouterTests {
         }
         #expect(info.id == instance.id)
         #expect(info.guestOS == "linux")
+    }
+
+    @Test("Snapshot sizes cross the wire keyed by snapshot")
+    func snapshotOnDiskBytesCrossesTheWire() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Measured")
+        let snapshot = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        harness.snapshots.setSize(12_884_901_888, for: snapshot.id)
+
+        let response = try await harness.transport.send(.snapshotOnDiskBytes(.id(instance.id)))
+
+        #expect(response.result == .snapshotSizes([snapshot.id: 12_884_901_888]))
     }
 
     // MARK: - Verbs
@@ -394,7 +421,7 @@ struct VMCommandEnvelopeRouterTests {
             library: library, lifecycle: lifecycle, storageService: storage,
             snapshotStore: snapshots, diskImageService: MockDiskImageService(),
             fileSystem: fileSystem, preferences: preferences)
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: core))
+        let transport = makeTransport(over: core)
 
         var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
         config.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
@@ -432,7 +459,7 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
         let selector = VMSelector.id(summary.id)
         let disk = UUID()
 
@@ -461,7 +488,7 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
         double.library = [summary]
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
         let selector = VMSelector.id(summary.id)
         let item = UUID()
 
@@ -487,7 +514,7 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
         let selector = VMSelector.id(summary.id)
         let directory = UUID()
 
@@ -507,7 +534,7 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
         double.library = [summary]
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
         let selector = VMSelector.id(summary.id)
 
         #expect(try await transport.send(.guestAgentDisk(selector, .mount)).result == .ok)
@@ -562,6 +589,175 @@ struct VMCommandEnvelopeRouterTests {
                 .id(instance.id), .remove(disk: disk.id, trashFile: true, confirmed: true)))
         #expect(confirmed.result == .ok)
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
+    }
+
+    // MARK: - Import
+
+    @Test("An import copies the bundle the authority made readable, not the path sent")
+    func importGoesThroughTheAuthority() async throws {
+        let double = MockVMCommanding()
+        let authority = MockImportSourceAuthority()
+        // What a user picking in the panel produces: the grant is on the file
+        // they clicked, so their click is what the import has to act on.
+        let picked = URL(fileURLWithPath: "/Users/somebody/Desktop/Picked.kernova")
+        authority.substitute = picked
+        let transport = makeTransport(over: double, authority: authority)
+
+        let response = try await transport.send(
+            .importVM(path: "/Users/somebody/Desktop/Named.kernova"))
+
+        guard case .summary(let summary) = response.result else {
+            Issue.record("expected a summary, got \(response.result)")
+            return
+        }
+        #expect(summary.name == "Picked")
+        #expect(
+            authority.requestedURLs.map(\.path)
+                == ["/Users/somebody/Desktop/Named.kernova"])
+        #expect(double.importURLs == [picked])
+    }
+
+    @Test("An import nobody granted comes back as the authority's refusal, importing nothing")
+    func importRefusedByTheAuthorityCrossesTheWire() async throws {
+        let double = MockVMCommanding()
+        let authority = MockImportSourceAuthority()
+        authority.error = CommandError.operationFailed(
+            verb: .importVM,
+            message: "Kernova was not given permission to read \u{201C}Named.kernova\u{201D}.")
+        let transport = makeTransport(over: double, authority: authority)
+
+        let response = try await transport.send(
+            .importVM(path: "/Users/somebody/Desktop/Named.kernova"))
+
+        guard case .operationFailed(let verb, _, let message, _)? = response.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(verb == .importVM)
+        #expect(message.contains("was not given permission"))
+        #expect(double.importURLs.isEmpty)
+    }
+
+    // MARK: - Preparing Copies
+
+    @Test("A wait on a VM that is not copying answers at once with its row")
+    func awaitPreparingOnASettledVMAnswersAtOnce() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Settled")
+
+        let response = try await harness.transport.send(.awaitPreparing(.id(instance.id)))
+
+        #expect(
+            response.result
+                == .summary(
+                    VMSummary(
+                        id: instance.id, name: "Settled", status: "stopped", ipAddress: .unavailable)))
+    }
+
+    @Test("A wait on a clone still copying answers with the settled row")
+    func awaitPreparingAnswersTheSettledRow() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        let started = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let phantom) = started.result else {
+            Issue.record("expected a summary, got \(started.result)")
+            return
+        }
+        #expect(phantom.status == "preparing")
+
+        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
+
+        guard case .summary(let copy) = settled.result else {
+            Issue.record("expected a summary, got \(settled.result)")
+            return
+        }
+        #expect(copy.id == phantom.id)
+        #expect(copy.status == "stopped")
+    }
+
+    @Test("A wait on a copy that failed answers with the copy's own failure")
+    func awaitPreparingAnswersTheCopysFailure() async throws {
+        let harness = makeHarness()
+        let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
+        harness.storage.cloneVMBundleError = cloneError
+        let instance = makeInstance(in: harness, name: "Source")
+        let started = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let phantom) = started.result else {
+            Issue.record("expected a summary, got \(started.result)")
+            return
+        }
+
+        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
+
+        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
+            return
+        }
+        // The copy's own failure, verb included — not one this wait invented.
+        #expect(verb == .clone)
+        #expect(message == cloneError.localizedDescription)
+    }
+
+    @Test("A wait that lands after the failed copy's row is gone still answers with its failure")
+    func awaitPreparingAfterTheFailedRowIsGone() async throws {
+        let harness = makeHarness()
+        let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
+        harness.storage.cloneVMBundleError = cloneError
+        let instance = makeInstance(in: harness, name: "Source")
+        let started = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let phantom) = started.result else {
+            Issue.record("expected a summary, got \(started.result)")
+            return
+        }
+        // The wire's second round trip can land after the copy has settled, and
+        // a failed copy evicts its row — so the wait is driven here from a
+        // library that has already forgotten the identifier it names.
+        guard
+            let task = harness.library.instances.first(where: { $0.id == phantom.id })?
+                .preparingState?.task
+        else {
+            Issue.record("expected the clone's row to be preparing")
+            return
+        }
+        await task.value
+        #expect(!harness.library.instances.contains { $0.id == phantom.id })
+
+        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
+
+        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
+            return
+        }
+        #expect(verb == .clone)
+        #expect(message == cloneError.localizedDescription)
+    }
+
+    @Test("A wait on a cancelled copy answers that it was cancelled")
+    func awaitPreparingOnACancelledCopy() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        let started = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new))
+        guard case .summary(let phantom) = started.result else {
+            Issue.record("expected a summary, got \(started.result)")
+            return
+        }
+        // Before the copy task has had a turn, so the cancel is what the settle
+        // finds rather than a race with it.
+        try harness.core.cancelPreparing(.id(phantom.id), confirmed: true)
+
+        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
+
+        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
+            return
+        }
+        #expect(verb == .awaitPreparing)
+        #expect(message == "The clone was cancelled.")
+        #expect(!harness.library.instances.contains { $0.id == phantom.id })
     }
 
     // MARK: - Events
@@ -659,7 +855,7 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
         double.library = [summary]
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
 
         #expect(try await transport.send(.reveal(.id(summary.id))).result == .ok)
 
@@ -667,12 +863,49 @@ struct VMCommandEnvelopeRouterTests {
         #expect(double.openSelectors.isEmpty)
     }
 
+    @Test("A Finder reveal crosses the wire onto the hook that opens the Finder")
+    func showInFinderCrossesTheWire() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Filed")
+        var revealed: [UUID] = []
+        var surfaced: [UUID] = []
+        harness.core.revealInFinder = { revealed.append($0.id) }
+        harness.core.surfaceDisplay = { surfaced.append($0.id) }
+
+        #expect(try await harness.transport.send(.showInFinder(.id(instance.id))).result == .ok)
+
+        #expect(revealed == [instance.id])
+        #expect(surfaced.isEmpty)
+    }
+
+    @Test("A Finder reveal of a bundle still being written is refused")
+    func showInFinderRefusesAPreparingVM() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Copying")
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        var revealed: [UUID] = []
+        harness.core.revealInFinder = { revealed.append($0.id) }
+
+        let response = try await harness.transport.send(.showInFinder(.id(instance.id)))
+
+        // The bundle is under a hidden staging path until the copy publishes it,
+        // so there is nothing at `bundleURL` for the Finder to select yet.
+        #expect(
+            response.failure
+                == .busy(
+                    vm: VMSummary(
+                        id: instance.id, name: "Copying", status: "preparing", ipAddress: .unavailable),
+                    operation: "import"))
+        #expect(revealed.isEmpty)
+        instance.preparingState = nil
+    }
+
     @Test("A quit crosses the wire once, and is answered before anything acts on it")
     func quitCrossesTheWire() async throws {
         // Against the double rather than the core: the core's quit fires the
         // adapter hook that takes the process down, which no test may reach.
         let double = MockVMCommanding()
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
 
         #expect(try await transport.send(.quit).result == .ok)
 
@@ -687,7 +920,7 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         double.library = [VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)]
         double.pauseError = CommandError.unsupported(capability: "pausing")
-        let transport = TestTransport(router: VMCommandEnvelopeRouter(commands: double))
+        let transport = makeTransport(over: double)
 
         let listed = try await transport.send(.list)
         #expect(listed.result == .summaries(double.library))

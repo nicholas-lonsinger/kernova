@@ -28,6 +28,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case info(VMSelector)
         case ipAddress(VMSelector)
         case snapshots(VMSelector)
+        /// Bytes each of the VM's snapshots occupies on disk, by snapshot id.
+        case snapshotOnDiskBytes(VMSelector)
         /// Subscribe: a snapshot frame, then one frame per library event.
         case events
 
@@ -46,6 +48,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?)
         case open(VMSelector)
         case reveal(VMSelector)
+        /// Selects the VM's bundle in the Finder, which is what comes forward.
+        case showInFinder(VMSelector)
 
         case takeSnapshot(VMSelector, name: String, notes: String)
         case revertToSnapshot(
@@ -57,8 +61,13 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case clone(VMSelector, machineIdentity: CloneMachineIdentity)
         case rename(VMSelector, newName: String)
         case delete(VMSelector, permanently: Bool, alsoRemoving: [UUID], confirmed: Bool)
+        /// `path` is read as this Mac names it; the app obtains the authority to
+        /// read it, which a sandboxed client cannot hand over.
         case importVM(path: String)
         case cancelPreparing(VMSelector, confirmed: Bool)
+        /// Waits for a clone or import still copying to settle, answering the
+        /// settled row.
+        case awaitPreparing(VMSelector)
 
         case editStorageDisk(VMSelector, StorageDiskEdit)
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
@@ -83,11 +92,11 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .start(_, _, let presentation), .resume(_, let presentation),
                 .restart(_, let presentation, _):
                 presentation == .surface
-            case .list, .info, .ipAddress, .snapshots, .events, .cancelGuestSetup, .stop, .pause,
-                .suspend, .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot,
-                .setSnapshotNotes, .clone, .rename, .delete, .importVM, .cancelPreparing,
-                .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .guestAgentDisk,
-                .quit:
+            case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .events,
+                .cancelGuestSetup, .stop, .pause, .suspend, .showInFinder, .takeSnapshot,
+                .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
+                .rename, .delete, .importVM, .cancelPreparing, .awaitPreparing, .editStorageDisk,
+                .editRemovableMedia, .editSharedDirectory, .guestAgentDisk, .quit:
                 false
             }
         }
@@ -99,6 +108,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .info: .info
             case .ipAddress: .ipAddress
             case .snapshots: .snapshots
+            case .snapshotOnDiskBytes: .snapshotOnDiskBytes
             case .events: .events
             case .start: .start
             case .cancelGuestSetup: .cancelGuestSetup
@@ -109,6 +119,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .restart: .restart
             case .open: .open
             case .reveal: .reveal
+            case .showInFinder: .showInFinder
             case .takeSnapshot: .takeSnapshot
             case .revertToSnapshot: .revertToSnapshot
             case .deleteSnapshot: .deleteSnapshot
@@ -119,6 +130,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .delete: .delete
             case .importVM: .importVM
             case .cancelPreparing: .cancelPreparing
+            case .awaitPreparing: .awaitPreparing
             case .editStorageDisk: .editStorageDisk
             case .editRemovableMedia: .editRemovableMedia
             case .editSharedDirectory: .editSharedDirectory
