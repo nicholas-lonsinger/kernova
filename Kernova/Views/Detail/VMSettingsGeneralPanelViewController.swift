@@ -103,13 +103,16 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private var ephemeralGroup: GroupedFormSubOptionGroup?
     /// Explains that a baseline needs a snapshot first; hidden once the VM has one.
     private var ephemeralNoSnapshotsCaption = NSView()
+    /// Names the state a shutdown comes to rest in, which the selected
+    /// baseline's kind decides; hidden while the mode is off.
+    private var ephemeralBaselineCaption = NSTextField()
     /// One entry of the Baseline snapshot menu, as rendered.
     private struct BaselineMenuItem: Equatable {
         let id: UUID
-        let name: String
+        let title: String
     }
     /// What the baseline menu was last built from, so it rebuilds exactly when
-    /// the list or a listed name changed rather than on every `apply()` pass.
+    /// the list or a rendered title changed rather than on every `apply()` pass.
     private var renderedEphemeralBaselines: [BaselineMenuItem]?
 
     /// The Startup capacity banner's rendered message, on the same terms.
@@ -258,10 +261,17 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         noSnapshots.isHidden = true
         ephemeralNoSnapshotsCaption = noSnapshots
 
+        // Empty until a baseline resolves — the text is the selected snapshot's,
+        // and the mode is off as often as not.
+        let baselineCaption = makeGroupedFormCaption("")
+        baselineCaption.isHidden = true
+        ephemeralBaselineCaption = baselineCaption
+
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Startup"), card,
             makeGroupedFormCaption(Self.autoStartOrderCaption),
             makeGroupedFormCaption(EphemeralModeCopy.settingsCaption),
+            baselineCaption,
             noSnapshots,
             autoStartWarningContainer,
         ])
@@ -316,8 +326,9 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         addGroupedFormFullWidth(banner, to: autoStartWarningContainer)
     }
 
-    /// Renders the Ephemeral Mode toggle, its baseline menu, and the captions
-    /// that stand in for a VM with nothing to use as a baseline.
+    /// Renders the Ephemeral Mode toggle, its baseline menu, the caption naming
+    /// what the chosen baseline returns the VM to, and the one that stands in
+    /// for a VM with nothing to use as a baseline.
     ///
     /// Both controls stay live while the pane is read-only: the flag is read at
     /// power-off, and a running ephemeral VM is exactly where a user reaches for
@@ -333,14 +344,32 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ephemeralNoSnapshotsCaption.isHidden = !manifest.isEmpty
         ephemeralGroup?.isSubOptionHidden = !enabled
 
-        let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, name: $0.name) }
+        let listed = manifest.ordered.map {
+            BaselineMenuItem(id: $0.id, title: EphemeralModeCopy.baselineMenuTitle(for: $0))
+        }
         if listed != renderedEphemeralBaselines {
             renderedEphemeralBaselines = listed
-            ephemeralBaselinePopUp.menu?.removeAllItems()
+            // Items are built and added directly: `addItem(withTitle:)` removes
+            // an existing entry carrying the same title, and nothing keeps two
+            // snapshots from sharing a name — the entry it drops is a baseline
+            // that could then neither be shown as selected nor picked.
+            let menu = NSMenu()
             for item in listed {
-                ephemeralBaselinePopUp.addItem(withTitle: item.name)
-                ephemeralBaselinePopUp.lastItem?.representedObject = item.id
+                let menuItem = NSMenuItem()
+                menuItem.title = item.title
+                menuItem.representedObject = item.id
+                menu.addItem(menuItem)
             }
+            ephemeralBaselinePopUp.menu = menu
+        }
+        // Reads the resolved baseline rather than the popup's selection, so the
+        // caption is never the outgoing VM's while the menu is being rebuilt.
+        if let baseline = instance.ephemeralBaselineSnapshot {
+            ephemeralBaselineCaption.stringValue = EphemeralModeCopy.baselineCaption(
+                for: baseline.kind)
+            ephemeralBaselineCaption.isHidden = false
+        } else {
+            ephemeralBaselineCaption.isHidden = true
         }
         guard
             let index = ephemeralBaselinePopUp.itemArray.firstIndex(where: {

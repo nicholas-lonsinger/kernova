@@ -1,8 +1,8 @@
 import AppKit
 
-/// The user-facing copy for Ephemeral Mode, shared by the Startup setting's
-/// info popover, the sidebar badge, and the window title marker — all three
-/// answer the same question, so they read from one place.
+/// The user-facing copy for Ephemeral Mode, shared by the Startup setting, the
+/// sidebar badge, and the window title marker — they answer the same question,
+/// so they read from one place.
 @MainActor
 enum EphemeralModeCopy {
     /// The word the title marker and the sidebar badge carry.
@@ -16,6 +16,28 @@ enum EphemeralModeCopy {
     /// baseline will discard is live, plain otherwise.
     static func titleName(_ name: String, ephemeralSessionRunning: Bool) -> String {
         ephemeralSessionRunning ? "\(name) (\(self.name))" : name
+    }
+
+    /// The Baseline snapshot menu's entry for `snapshot` — its name beside what
+    /// reverting to it puts back, so the kind is legible while the baseline is
+    /// being chosen rather than only in Get Info.
+    static func baselineMenuTitle(for snapshot: VMSnapshot) -> String {
+        "\(snapshot.name) \u{00B7} \(SnapshotKindCopy.captured(snapshot.kind))"
+    }
+
+    /// The caption naming the state a shutdown comes to rest in, which the
+    /// baseline's kind decides: a warm baseline restores the guest's memory
+    /// along with the disks, so the VM lands suspended on that session instead
+    /// of stopped.
+    static func baselineCaption(for kind: VMSnapshotKind) -> String {
+        switch kind {
+        case .warm:
+            "Shutting down returns this virtual machine to the suspended session the baseline "
+                + "captured, and starting it resumes from there."
+        case .cold:
+            "Shutting down returns this virtual machine to the baseline's disks and leaves it "
+                + "stopped."
+        }
     }
 
     static let popoverParagraphs: [InfoPopoverParagraph] = [

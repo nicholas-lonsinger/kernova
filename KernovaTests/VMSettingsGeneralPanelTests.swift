@@ -305,18 +305,35 @@ struct VMSettingsGeneralPanelTests {
 
     // MARK: - Ephemeral Mode
 
-    /// Builds a settings pane over a VM carrying `snapshotCount` snapshots, the
-    /// oldest of which is the Current one.
+    /// Builds a settings pane over a VM carrying `snapshotCount` snapshots of
+    /// `kind`, the oldest of which is the Current one.
     private func makeEphemeralController(
-        snapshotCount: Int, ephemeral: Bool, isReadOnly: Bool = false
+        snapshotCount: Int, ephemeral: Bool, isReadOnly: Bool = false,
+        kind: VMSnapshotKind = .warm
+    ) -> (VMSettingsViewController, VMInstance) {
+        makeEphemeralController(
+            snapshots: (0..<snapshotCount).map { makeSnapshot(index: $0, kind: kind) },
+            ephemeral: ephemeral, isReadOnly: isReadOnly)
+    }
+
+    /// One snapshot of the series the count-based helper builds: named for its
+    /// index, and a minute newer than the one before it.
+    private func makeSnapshot(
+        index: Int, kind: VMSnapshotKind, name: String? = nil
+    ) -> VMSnapshot {
+        VMSnapshot(
+            name: name ?? "Snapshot \(index)",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index) * 60),
+            kind: kind)
+    }
+
+    /// Builds a settings pane over a VM carrying `snapshots`, the first of which
+    /// is the Current one and, in the mode, the baseline.
+    private func makeEphemeralController(
+        snapshots: [VMSnapshot], ephemeral: Bool, isReadOnly: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux)
-        let snapshots = (0..<snapshotCount).map {
-            VMSnapshot(
-                name: "Snapshot \($0)",
-                createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double($0) * 60))
-        }
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: snapshots, currentID: snapshots.first?.id)
         if ephemeral, let baseline = snapshots.first {
@@ -449,6 +466,89 @@ struct VMSettingsGeneralPanelTests {
     func ephemeralCaptionIsShown() {
         let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
         #expect(visibleLabel(EphemeralModeCopy.settingsCaption, in: vc.view))
+    }
+
+    /// The kind decides what a shutdown comes to rest in, so the menu names it
+    /// where the baseline is chosen rather than only in Get Info.
+    @Test("Each baseline entry names what that snapshot restores")
+    func ephemeralBaselineMenuNamesEachKind() throws {
+        let (vc, _) = makeEphemeralController(
+            snapshots: [
+                makeSnapshot(index: 0, kind: .warm), makeSnapshot(index: 1, kind: .cold),
+            ], ephemeral: true)
+        let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
+
+        // Rows render newest first, so the cold one leads.
+        #expect(
+            popUp.itemArray.map(\.title) == [
+                "Snapshot 1 \u{00B7} \(SnapshotKindCopy.captured(.cold))",
+                "Snapshot 0 \u{00B7} \(SnapshotKindCopy.captured(.warm))",
+            ])
+    }
+
+    /// Nothing keeps two snapshots from sharing a name, and both have to stay
+    /// pickable — an entry dropped for carrying a duplicate title would take a
+    /// baseline out of reach.
+    @Test("Two snapshots sharing a name both list")
+    func ephemeralBaselineMenuKeepsDuplicateNames() throws {
+        let snapshots = [
+            makeSnapshot(index: 0, kind: .warm, name: "Baseline"),
+            makeSnapshot(index: 1, kind: .warm, name: "Baseline"),
+        ]
+        let (vc, instance) = makeEphemeralController(snapshots: snapshots, ephemeral: true)
+        let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
+
+        #expect(popUp.itemArray.count == 2)
+        #expect(
+            (popUp.selectedItem?.representedObject as? UUID)
+                == instance.configuration.ephemeralBaselineSnapshotID)
+    }
+
+    @Test("A warm baseline says the VM comes back suspended")
+    func ephemeralWarmBaselineCaptionIsShown() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true, kind: .warm)
+
+        #expect(visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
+        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
+    }
+
+    @Test("A cold baseline says the VM comes back stopped")
+    func ephemeralColdBaselineCaptionIsShown() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true, kind: .cold)
+
+        #expect(visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
+        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
+    }
+
+    /// There is no baseline to describe while the mode is off, and the caption
+    /// follows the sub-option that holds the choice.
+    @Test("No baseline caption shows while the mode is off")
+    func ephemeralBaselineCaptionHiddenWhenOff() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: false)
+
+        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
+        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
+    }
+
+    /// The caption is the selected baseline's, so moving the choice to a
+    /// different kind moves the caption with it.
+    @Test("Choosing a cold baseline swaps the caption")
+    func ephemeralBaselineCaptionFollowsTheSelection() throws {
+        let (vc, _) = makeEphemeralController(
+            snapshots: [
+                makeSnapshot(index: 0, kind: .warm), makeSnapshot(index: 1, kind: .cold),
+            ], ephemeral: true)
+        let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
+
+        // Newest first, so item 0 is the cold one.
+        popUp.select(popUp.itemArray[0])
+        popUp.sendAction(popUp.action, to: popUp.target)
+        // The written configuration re-enters `apply()` through the model's own
+        // observation in the app; here the render is asked for directly.
+        vc.viewDidAppear()
+
+        #expect(visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
+        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
     }
 
     // MARK: - Startup capacity warning
