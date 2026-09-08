@@ -89,7 +89,7 @@ struct VMSettingsGeneralPanelTests {
     func nameGraysWhenRenameIsUnavailable() throws {
         let viewModel = makeViewModel()
         let instance = makeSettingsInstance(guestOS: .linux, phase: .starting(sessionID: UUID()))
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: true)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -113,7 +113,7 @@ struct VMSettingsGeneralPanelTests {
         let instance = makeInstance(guestOS: guestOS)
         instance.configuration.installedImage = installedImage
         instance.configuration.lastSeenGuestOSVersion = lastSeenGuestOSVersion
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -264,7 +264,7 @@ struct VMSettingsGeneralPanelTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux)
         instance.configuration.startsAutomaticallyOnLaunch = true
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -322,7 +322,7 @@ struct VMSettingsGeneralPanelTests {
         if ephemeral, let baseline = snapshots.first {
             instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
         }
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -474,7 +474,7 @@ struct VMSettingsGeneralPanelTests {
             library.append(other)
         }
         viewModel.instances = library
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

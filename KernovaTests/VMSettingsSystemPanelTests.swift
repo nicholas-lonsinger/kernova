@@ -47,7 +47,7 @@ struct VMSettingsSystemPanelTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL)
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -351,7 +351,7 @@ struct VMSettingsSystemPanelTests {
     ) -> VMSettingsViewController {
         let instance = makeInstance(guestOS: .linux)
         instance.configuration.audioInputEnabled = true
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: makeViewModel(), isReadOnly: false,
             micPermissionStatus: { status }, systemSettings: systemSettings)
         vc.loadViewIfNeeded()
@@ -411,7 +411,7 @@ struct VMSettingsSystemPanelTests {
         let instance = VMInstance(configuration: config, bundleURL: directory)
         FileManager.default.createFile(
             atPath: instance.serialLogURL.path(percentEncoded: false), contents: Data([0]))
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

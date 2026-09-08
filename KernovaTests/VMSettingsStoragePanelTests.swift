@@ -42,7 +42,7 @@ struct VMSettingsStoragePanelTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux)
         instance.configuration.storageDisks = [StorageDisk(path: path, label: "Scratch")]
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -243,7 +243,7 @@ struct VMSettingsStoragePanelTests {
             main,
             StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true),
         ]
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -266,7 +266,7 @@ struct VMSettingsStoragePanelTests {
         instance.configuration.storageDisks = [
             StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         ]
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

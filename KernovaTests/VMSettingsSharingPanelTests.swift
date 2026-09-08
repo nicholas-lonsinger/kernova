@@ -82,7 +82,7 @@ struct VMSettingsSharingPanelTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL)
-        let vc = VMSettingsViewController(instance: instance, viewModel: viewModel, isReadOnly: false)
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.sharing)
@@ -288,7 +288,7 @@ struct VMSettingsSharingPanelTests {
         let instance = makeSettingsInstance(guestOS: .linux, phase: phase)
         instance.configuration.sharedDirectories = directories
         registerSettingsInstance(instance, in: viewModel)
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: phase != .stopped)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

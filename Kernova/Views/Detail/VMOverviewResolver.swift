@@ -251,8 +251,16 @@ final class VMOverviewResolver {
     /// read, so a re-bind to another VM — or another disk — ignores a result
     /// issued for the previous one.
     private func refreshBootDisk() {
-        let key = instance.effectiveStorageDisks.first.map {
-            BootDiskKey(instanceID: instance.id, path: $0.path, isInternal: $0.isInternal)
+        // RATIONALE: `if let`, not `.first.map { … }` — the closure form faulted
+        // here on the app-activation callout, the one site observed to. The same
+        // shape stands elsewhere in the pane by design; #1178 holds the
+        // mechanism, the audit and the evidence (observed 2026-09-08).
+        let key: BootDiskKey?
+        if let disk = instance.effectiveStorageDisks.first {
+            key = BootDiskKey(
+                instanceID: instance.id, path: disk.path, isInternal: disk.isInternal)
+        } else {
+            key = nil
         }
         guard key != bootDiskKey else { return }
         bootDiskKey = key
