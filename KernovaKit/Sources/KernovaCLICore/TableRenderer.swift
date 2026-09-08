@@ -5,7 +5,7 @@ import KernovaKit
 ///
 /// Two-space gutters and no borders, matching what the platform's own tools
 /// print, so `awk`-style column extraction keeps working.
-public enum TableRenderer {
+enum TableRenderer {
     /// A listing, one VM per line.
     ///
     /// Name first because that is what a person scans for, and the identifier
@@ -14,7 +14,7 @@ public enum TableRenderer {
     ///
     /// `quiet` prints names alone — `.idOrName` accepts one back, so a name is
     /// what a shell loop feeds to the next command.
-    public static func render(_ rows: [VMSummary], quiet: Bool) -> String {
+    static func render(_ rows: [VMSummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.name).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
         return columns(
@@ -31,7 +31,7 @@ public enum TableRenderer {
     ///
     /// `quiet` prints the name alone, so the block never has to be parsed for
     /// the one field a script wanted.
-    public static func render(_ info: VMInfo, quiet: Bool) -> String {
+    static func render(_ info: VMInfo, quiet: Bool) -> String {
         guard !quiet else { return info.name }
         var fields: [(String, String)] = [
             ("Name", info.name),
@@ -64,7 +64,7 @@ public enum TableRenderer {
     /// The current snapshot carries a `*`, beside the name it marks rather than
     /// after the identifier nobody reads. `quiet` prints names alone, which is
     /// what the snapshot verbs accept back.
-    public static func render(_ rows: [SnapshotRow], quiet: Bool) -> String {
+    static func render(_ rows: [SnapshotRow], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.snapshot.name).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
         return columns(
@@ -84,7 +84,7 @@ public enum TableRenderer {
     /// `quiet` prints the values alone, which is what a script reading one
     /// setting wants — and a whole listing stays line-for-line alongside the
     /// keys that produced it.
-    public static func render(_ entries: [ConfigurationEntry], quiet: Bool) -> String {
+    static func render(_ entries: [ConfigurationEntry], quiet: Bool) -> String {
         guard !quiet else { return entries.map(\.value).joined(separator: "\n") }
         guard !entries.isEmpty else { return "" }
         return columns(
@@ -96,7 +96,7 @@ public enum TableRenderer {
     /// The gate is a column rather than a footnote: which settings a running
     /// guest still takes is the thing a person consults this listing for.
     /// `quiet` prints the names alone, which `get` and `set` both accept back.
-    public static func render(_ keys: [ConfigurationKeyDescriptor], quiet: Bool) -> String {
+    static func render(_ keys: [ConfigurationKeyDescriptor], quiet: Bool) -> String {
         guard !quiet else { return keys.map(\.name).joined(separator: "\n") }
         guard !keys.isEmpty else { return "" }
         return columns(
@@ -110,7 +110,7 @@ public enum TableRenderer {
     ///
     /// Each non-address case is a different answer to "what is its address",
     /// and collapsing them to a blank would lose the only useful part.
-    public static func render(_ address: GuestIPAddress) -> String {
+    static func render(_ address: GuestIPAddress) -> String {
         switch address {
         case .reserved(let value): value
         case .pending: "Pending"

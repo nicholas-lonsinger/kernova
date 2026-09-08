@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 /// How a subcommand reaches the app.
-public enum CommandConnection {
+enum CommandConnection {
     /// A client connected to Kernova's command socket, starting the app when
     /// nothing is listening and `launchIfNeeded` allows it.
     ///
@@ -15,7 +15,7 @@ public enum CommandConnection {
     ///   build resolves no app-group container — an ad-hoc signature has none,
     ///   so the tool can reach no app at all — when the launch itself is
     ///   refused, or when the app does not answer in time.
-    public static func open(launchIfNeeded: Bool) throws -> VMCommandClient {
+    static func open(launchIfNeeded: Bool) throws -> VMCommandClient {
         let socketPath = try socketPath()
         do {
             return try VMCommandClient(socketPath: socketPath)
@@ -32,14 +32,14 @@ public enum CommandConnection {
     /// A build that resolves no app-group container still throws: it cannot
     /// reach an app whether or not one is running, which is a different answer
     /// from "there is nothing to talk to".
-    public static func openIfRunning() throws -> VMCommandClient? {
+    static func openIfRunning() throws -> VMCommandClient? {
         let socketPath = try socketPath()
         return try? VMCommandClient(socketPath: socketPath)
     }
 
     /// Runs one verb that answers with nothing, reporting whatever refusal it
     /// carries.
-    public static func perform(
+    static func perform(
         _ verb: VMCommandRequest.Verb, launchIfNeeded: Bool
     ) throws {
         let client = try open(launchIfNeeded: launchIfNeeded)
@@ -85,10 +85,10 @@ public enum CommandConnection {
 }
 
 /// Where the tool writes.
-public enum Console {
+enum Console {
     /// Writes `text` and a newline to standard output; an empty string writes
     /// nothing, so a listing with no rows produces no blank line.
-    public static func out(_ text: String) {
+    static func out(_ text: String) {
         guard !text.isEmpty else { return }
         FileHandle.standardOutput.write(Data((text + "\n").utf8))
     }

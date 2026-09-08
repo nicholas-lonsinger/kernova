@@ -39,7 +39,7 @@ public enum StreamFrame {
 }
 
 /// Errors thrown by the framing layer.
-public enum StreamFrameError: Error, Sendable, Equatable {
+enum StreamFrameError: Error, Sendable, Equatable {
     /// A frame's declared payload size exceeds `StreamFrame.maxPayloadSize`.
     /// On the decode side the stream is unrecoverable at this point and the
     /// caller should close the connection.

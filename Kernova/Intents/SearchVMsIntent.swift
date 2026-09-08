@@ -1,6 +1,5 @@
 import AppIntents
 import Foundation
-import KernovaKit
 
 /// Answers a typed search for a virtual machine — Siri's "search for ⟨name⟩ in
 /// Kernova" — by revealing the VM whose name the term matches.

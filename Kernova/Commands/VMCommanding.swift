@@ -395,8 +395,8 @@ extension VMCommanding {
     }
 }
 
-/// The unbounded spellings of the two verbs that can wait for a guest to power
-/// off.
+/// The unbounded spelling of `stop` — `restart`'s is the surfacing one above,
+/// which drops the deadline along with the presentation.
 ///
 /// Only a door whose caller is sitting there waiting supplies a deadline — the
 /// `kernova` tool's `--timeout`. An in-process door spells the verb without
@@ -405,9 +405,5 @@ extension VMCommanding {
 extension VMCommanding {
     func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {
         try await stop(selector, disposition: disposition, confirmed: confirmed, timeout: nil)
-    }
-
-    func restart(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
-        try await restart(selector, presentation: presentation, timeout: nil)
     }
 }

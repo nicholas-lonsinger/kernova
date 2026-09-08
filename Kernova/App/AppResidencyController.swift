@@ -10,14 +10,6 @@ protocol WindowResidencyHosting: AnyObject {
     func prepareToPresentWindow()
     /// Re-decides the activation policy now, rather than on the next runloop turn.
     func syncActivationPolicy()
-    /// Brings the app forward for a surface something outside the process asked
-    /// for.
-    ///
-    /// An in-process gesture needs none of this — the user is already in the
-    /// app — but a request arriving over the command socket carries no
-    /// `NSEvent`, so the window it surfaces would open behind whatever the
-    /// person is looking at.
-    func activateForExternalRequest()
 }
 
 /// Everything ``AppDelegate`` asks of the process's residency — what it is
@@ -666,14 +658,21 @@ final class AppResidencyController: AppResidencyHosting {
         host?.armAutoStartPass(surfacingDisplays: true)
     }
 
-    /// Re-asserts `.regular` before a window is shown, so a window can never be
-    /// presented while the resident app is still headless `.accessory`.
-    func activateForExternalRequest() {
+    /// Brings the app forward for a surface something outside the process asked
+    /// for.
+    ///
+    /// An in-process gesture needs none of this — the user is already in the
+    /// app — but a request arriving over the command socket carries no
+    /// `NSEvent`, so the window it surfaces would open behind whatever the
+    /// person is looking at.
+    private func activateForExternalRequest() {
         unhideForSummon()
         setActivationPolicy(.regular)
         requestSummonActivation()
     }
 
+    /// Re-asserts `.regular` before a window is shown, so a window can never be
+    /// presented while the resident app is still headless `.accessory`.
     func prepareToPresentWindow() {
         // The chokepoint every window that bypasses `presentSummonedInterface`
         // passes through — a display window an `open` verb asked for, a
