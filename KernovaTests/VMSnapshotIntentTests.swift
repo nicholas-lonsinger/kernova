@@ -16,7 +16,7 @@ import Testing
 struct VMSnapshotIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, awaitReady: {},
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}),
             index: MockVMEntityIndex(),
             defaults: makeEphemeralDefaults(suiteName: "test.kernova.intents.snapshot"))
     }
@@ -181,9 +181,9 @@ struct VMSnapshotIntentTests {
             ])
 
         #expect(
-            VMIntentConsent.revertAction(offered, takingCheckpoint: true)
+            VMConsentPolicy.revertAction(offered, takingCheckpoint: true)
                 == "Take Snapshot, Then Revert")
-        #expect(VMIntentConsent.revertAction(offered, takingCheckpoint: false) == "Revert")
+        #expect(VMConsentPolicy.revertAction(offered, takingCheckpoint: false) == "Revert")
     }
 
     /// A VM that can be reverted but can no longer be captured — one that
@@ -196,8 +196,8 @@ struct VMSnapshotIntentTests {
             kind: .revertToSnapshot, title: "Revert?", message: "Guest changes are lost.",
             confirmTitle: "Revert", dismissTitle: "Cancel")
 
-        #expect(VMIntentConsent.revertAction(unoffered, takingCheckpoint: true) == nil)
-        #expect(VMIntentConsent.revertAction(unoffered, takingCheckpoint: false) == "Revert")
+        #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: true) == nil)
+        #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: false) == "Revert")
     }
 
     // MARK: - Consent
@@ -222,7 +222,7 @@ struct VMSnapshotIntentTests {
             let gateway = makeGateway(commands)
             var asked: [ConfirmationPrompt] = []
 
-            try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
+            try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
                 try await gateway.revertToSnapshot(
                     vm, snapshot: snapshot, takingCheckpoint: takingCheckpoint,
                     confirmed: confirmed)
@@ -269,7 +269,7 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
             try await gateway.deleteSnapshot(
                 vm, snapshot: SnapshotEntityID(vm: vm, snapshot: UUID()), confirmed: confirmed)
         }

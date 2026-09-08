@@ -8,7 +8,8 @@ import os
 /// **Readiness:** a link can be delivered while the app's first library read is
 /// still in flight — a cold launch from a link is the ordinary case — and a
 /// verb run against a library that has not landed yet refuses with "no virtual
-/// machine named…", so every route awaits ``ready()`` first. **Addressing:** a
+/// machine named…", so every route awaits ``LibraryReadiness`` first.
+/// **Addressing:** a
 /// link carries text a person wrote, so it addresses VMs by
 /// ``VMSelector/idOrName(_:)`` and the ambiguity refusal can fire here.
 ///
@@ -21,8 +22,8 @@ final class VMURLGateway {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMURLGateway")
 
     private let commands: any VMCommanding
-    /// Awaits the app's first library read.
-    private let awaitReady: @Sendable () async -> Void
+    /// The app's first library read, shared with every other front door.
+    private let readiness: LibraryReadiness
     /// Brings the app forward for a surface something outside the process asked
     /// for.
     private let activate: @MainActor () -> Void
@@ -31,32 +32,18 @@ final class VMURLGateway {
     /// Shows the user what a link was refused for.
     private let present: @MainActor (CommandError) -> Void
 
-    /// The single readiness await, memoized so a burst of links waits on one task.
-    private var readiness: Task<Void, Never>?
-
     init(
         commands: any VMCommanding,
-        awaitReady: @escaping @Sendable () async -> Void,
+        readiness: LibraryReadiness,
         activate: @escaping @MainActor () -> Void,
         summonLibrary: @escaping @MainActor () -> Void,
         present: @escaping @MainActor (CommandError) -> Void
     ) {
         self.commands = commands
-        self.awaitReady = awaitReady
+        self.readiness = readiness
         self.activate = activate
         self.summonLibrary = summonLibrary
         self.present = present
-    }
-
-    /// Returns once the app's first library read has landed.
-    private func ready() async {
-        if let readiness {
-            await readiness.value
-            return
-        }
-        let task = Task { [awaitReady] in await awaitReady() }
-        readiness = task
-        await task.value
     }
 
     /// Answers one `kernova:` link: waits for the first library read, brings the
@@ -78,7 +65,7 @@ final class VMURLGateway {
             Self.logger.notice(
                 "Kernova link asks \(route.verb.rawValue, privacy: .public) of '\(route.selector.displayText, privacy: .private)'"
             )
-            await ready()
+            await readiness.ready()
             // Before the verb, so the window it surfaces opens in front of the
             // person who clicked rather than behind whatever they clicked in.
             activate()

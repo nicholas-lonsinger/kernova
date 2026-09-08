@@ -1,19 +1,20 @@
-import AppIntents
 import Foundation
 import KernovaKit
 
-/// How a destructive verb's consent is gathered on this surface.
+/// How a destructive verb's consent is gathered, whichever door asked.
 ///
 /// The decision — which refusals become a question and which stay failures —
-/// lives here, apart from the framework call that asks it, so it is answerable
-/// without an intent session.
-enum VMIntentConsent {
+/// lives here, apart from the framework call each door asks it with, so it is
+/// answerable without an intent session, an alert, or an Apple event.
+enum VMConsentPolicy {
     /// Runs a destructive verb, gathering the consent it refuses without.
     ///
     /// `body` is called with `confirmed: false` first; a
     /// ``CommandError/confirmationRequired(_:)`` back from it goes to
     /// `prompting`, and returning from there re-runs `body` with
-    /// `confirmed: true`. Every other failure is rethrown untouched.
+    /// `confirmed: true`. Every other failure is rethrown untouched — as is a
+    /// refusal `prompting` itself declines to answer, which is how a door with
+    /// nobody to ask says the consent was never given.
     ///
     /// A prompt confirming to something other than what was asked for is
     /// rethrown instead (``isAnsweredByConfirming(_:)``).
@@ -43,8 +44,8 @@ enum VMIntentConsent {
     /// cannot receive the graceful shutdown that raised it, so confirming
     /// substitutes a resume-then-shut-down and its alternative substitutes a
     /// force stop. Neither is what was asked for, they discard different amounts
-    /// of guest state, and the message names both — so this surface refuses and
-    /// the user re-runs with the stop method they meant. Exhaustive rather than
+    /// of guest state, and the message names both — so the caller is refused and
+    /// re-runs with the stop method they meant. Exhaustive rather than
     /// `default`, so a new kind has to choose a side.
     static func isAnsweredByConfirming(_ prompt: ConfirmationPrompt) -> Bool {
         switch prompt.kind {
@@ -68,35 +69,5 @@ enum VMIntentConsent {
     static func revertAction(_ prompt: ConfirmationPrompt, takingCheckpoint: Bool) -> String? {
         guard takingCheckpoint else { return prompt.confirmTitle }
         return prompt.alternatives.first { $0.takesCheckpoint }?.title
-    }
-}
-
-extension AppIntent {
-    /// Runs a destructive verb, raising the framework's own confirmation for the
-    /// consent it refuses without (``VMIntentConsent/run(prompting:_:)``).
-    ///
-    /// `asking` turns the refusal into the confirm action's label; by default
-    /// that is the one the core named. A verb whose parameters already chose
-    /// among the prompt's routes passes the label for its choice — and refuses
-    /// from there, rather than confirming, when the prompt shows the choice
-    /// cannot be honoured.
-    @MainActor
-    func runWithConsent(
-        asking: (ConfirmationPrompt) throws -> String = { $0.confirmTitle },
-        _ body: (_ confirmed: Bool) async throws -> Void
-    ) async throws {
-        try await VMIntentConsent.run(
-            prompting: { prompt in
-                let accept = try asking(prompt)
-                try await requestConfirmation(
-                    actionName: .custom(
-                        acceptLabel: "\(accept)",
-                        acceptAlternatives: [],
-                        denyLabel: "\(prompt.dismissTitle)",
-                        denyAlternatives: [],
-                        destructive: true),
-                    dialog: IntentDialog(full: "\(prompt.message)", supporting: "\(prompt.title)"))
-            },
-            body)
     }
 }

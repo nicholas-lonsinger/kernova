@@ -21,8 +21,8 @@ final class VMIntentGateway {
     nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     private let commands: any VMCommanding
-    /// Awaits the app's first library read.
-    private let awaitReady: @Sendable () async -> Void
+    /// The app's first library read, shared with every other front door.
+    private let readiness: LibraryReadiness
     /// Where the library is written for Spotlight to match a searched name in.
     private let index: any VMEntityIndexing
     /// Holds the identifiers already written to the index, across launches.
@@ -31,8 +31,6 @@ final class VMIntentGateway {
     /// reveal.
     private let surfaceLibrary: @MainActor () -> Void
 
-    /// The single readiness await, memoized so an intent storm waits on one task.
-    private var readiness: Task<Void, Never>?
     /// The library subscription that keeps the Spotlight index current.
     private var libraryEvents: Task<Void, Never>?
 
@@ -43,13 +41,13 @@ final class VMIntentGateway {
 
     init(
         commands: any VMCommanding,
-        awaitReady: @escaping @Sendable () async -> Void,
+        readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         defaults: UserDefaults = .standard,
         surfaceLibrary: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
-        self.awaitReady = awaitReady
+        self.readiness = readiness
         self.index = index
         self.defaults = defaults
         self.surfaceLibrary = surfaceLibrary
@@ -72,13 +70,7 @@ final class VMIntentGateway {
 
     /// Returns once the app's first library read has landed.
     func ready() async {
-        if let readiness {
-            await readiness.value
-            return
-        }
-        let task = Task { [awaitReady] in await awaitReady() }
-        readiness = task
-        await task.value
+        await readiness.ready()
     }
 
     // MARK: - Reads

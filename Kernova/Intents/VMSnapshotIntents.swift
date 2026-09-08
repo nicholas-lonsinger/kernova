@@ -77,7 +77,7 @@ struct RevertToSnapshotIntent: AppIntent {
     /// the refusal has to name the toggle that is in the way.
     private func checkpointAwareConfirmation(_ prompt: ConfirmationPrompt) throws -> String {
         guard
-            let action = VMIntentConsent.revertAction(prompt, takingCheckpoint: takeCheckpoint)
+            let action = VMConsentPolicy.revertAction(prompt, takingCheckpoint: takeCheckpoint)
         else {
             throw CommandError.operationFailed(
                 verb: .revertToSnapshot,
