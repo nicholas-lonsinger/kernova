@@ -173,13 +173,31 @@ struct VMCommandCoreTests {
         #expect(try harness.core.info(.id(instance.id)).name == "Alpha")
     }
 
-    @Test("A name selector matches exactly and case-sensitively")
+    @Test("A name selector matches the whole name without regard to case")
     func resolvesByName() throws {
         let harness = makeHarness()
         makeInstance(in: harness, name: "Alpha")
 
         #expect(try harness.core.info(.name("Alpha")).name == "Alpha")
-        #expect(commandError { _ = try harness.core.info(.name("alpha")) }?.isNotFound == true)
+        #expect(try harness.core.info(.name("alpha")).name == "Alpha")
+        #expect(try harness.core.info(.name("ALPHA")).name == "Alpha")
+        #expect(commandError { _ = try harness.core.info(.name("Alph")) }?.isNotFound == true)
+    }
+
+    @Test("Names differing only by case are one ambiguous match, never a case-exact pick")
+    func caseVariantsAreAmbiguous() throws {
+        let harness = makeHarness()
+        let upper = makeInstance(in: harness, name: "Sonoma")
+        let lower = makeInstance(in: harness, name: "sonoma")
+
+        for text in ["Sonoma", "sonoma", "SONOMA"] {
+            let error = try #require(commandError { _ = try harness.core.info(.name(text)) })
+            guard case .ambiguous(_, let candidates) = error else {
+                Issue.record("expected an ambiguity refusal for \(text), got \(error)")
+                continue
+            }
+            #expect(candidates.map(\.id) == [upper.id, lower.id])
+        }
     }
 
     @Test("Text is read as an identifier first, then as a name")
@@ -189,6 +207,7 @@ struct VMCommandCoreTests {
 
         #expect(try harness.core.info(.idOrName(instance.id.uuidString)).name == "Alpha")
         #expect(try harness.core.info(.idOrName("Alpha")).name == "Alpha")
+        #expect(try harness.core.info(.idOrName("alpha")).name == "Alpha")
         // A UUID nothing answers to falls back to the name lookup rather than
         // stopping at the identifier.
         #expect(

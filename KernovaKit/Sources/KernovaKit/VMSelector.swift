@@ -8,7 +8,7 @@ import Foundation
 public enum VMSelector: Codable, Sendable, Hashable {
     /// The VM's stable identifier.
     case id(UUID)
-    /// The VM's display name, matched exactly and case-sensitively.
+    /// The VM's display name, matched whole and without regard to case.
     case name(String)
     /// Text typed by a user: read as an identifier when it parses as one and
     /// names a VM, otherwise as a display name.
