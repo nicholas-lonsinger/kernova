@@ -128,7 +128,7 @@ class VMScriptCommand: NSScriptCommand {
         do {
             try await run(gateway, on: try await gateway.address(addressed, for: self))
         } catch let failure as VMScriptEvaluationFailure {
-            failure.record(on: self)
+            failure.record(on: self, addressing: addressed)
         } catch let refusal as CommandError {
             refuse(refusal)
         } catch {
@@ -147,10 +147,6 @@ class VMScriptCommand: NSScriptCommand {
     }
 
     /// Whether the `with`/`without` parameter under `key` was given as `with`.
-    ///
-    /// Read as unpacked: evaluating the arguments would evaluate the direct
-    /// parameter along with them, which is ``answer()``'s to do after the
-    /// library has landed.
     func flag(_ key: String) -> Bool {
         arguments?[key] as? Bool ?? false
     }

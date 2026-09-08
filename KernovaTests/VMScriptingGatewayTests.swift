@@ -330,32 +330,39 @@ struct VMScriptingGatewayTests {
         #expect(gateway.coldReads.map { ObjectIdentifier($0) } == [ObjectIdentifier(command)])
     }
 
-    @Test("A re-issued read answers from the landed library")
+    @Test("A re-issued get every virtual machine answers an empty library rather than refusing it")
     func aReissuedReadAnswers() throws {
         let command = try makeGetCommand()
-        // As Cocoa builds a `get`: the specifier is the direct parameter, and
-        // the receivers follow from it.
+        // As Cocoa builds a `get every virtual machine`: the specifier is the
+        // direct parameter, and `setDirectParameter:` forwards a specifier to
+        // the receivers slot, which is what the re-issue pre-evaluates.
         command.directParameter = NSPropertySpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: nil,
             key: AppDelegate.virtualMachinesKey)
+        #expect(command.receiversSpecifier != nil)
 
         let result = makeGateway(MockVMCommanding()).reissue(command)
 
-        // The test host's element is empty, which is an answer, not a failure.
+        // The test host's element evaluates to nothing, which the pre-evaluation
+        // tells from a failure: the script reads Cocoa's own answer for it.
         #expect(result != nil)
         #expect(command.scriptErrorNumber == 0)
+        #expect(command.scriptErrorOffendingObjectDescriptor == nil)
     }
 
-    @Test("A re-issued read whose specifier fails carries the failure as Cocoa reports it")
+    @Test("A re-issued read of a name no VM answers to carries the failure as Cocoa reports it")
     func aReissuedReadCarriesItsFailure() throws {
         let command = try makeGetCommand()
         let specifier = try makeNameSpecifier("Nope")
         specifier.evaluationErrorNumber = NSInternalSpecifierError
         command.directParameter = specifier
+        #expect(command.receiversSpecifier != nil)
 
         _ = makeGateway(MockVMCommanding()).reissue(command)
 
-        // The stale failure was cleared and the re-evaluation failed afresh.
+        // The stale failure was cleared and the re-evaluation failed afresh —
+        // which `execute()` reports as no receivers, the same as the empty
+        // answer above, so the pre-evaluation is what tells the two apart.
         #expect(command.scriptErrorNumber == Int(errAENoSuchObject))
         #expect(command.scriptErrorOffendingObjectDescriptor != nil)
     }

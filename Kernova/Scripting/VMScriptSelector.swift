@@ -86,24 +86,40 @@ enum VMScriptSelector {
                 // The event named something the dictionary has that is not a
                 // VM, which Cocoa's own dispatch answers as an object with no
                 // handler for the verb.
-                throw VMScriptEvaluationFailure(
-                    number: Int(errAEEventNotHandled), offendingObject: specifier.descriptor)
+                throw VMScriptEvaluationFailure(number: Int(errAEEventNotHandled))
             }
             return vm.selector
         }
     }
+
+    /// The specifier at fault in what an event addressed — one specifier, or a
+    /// list of them — which is what a script names in "Can't get …": the link
+    /// in the container chain whose own evaluation failed, and for a list the
+    /// item that carries one.
+    static func specifierAtFault(in parameter: Any) -> NSScriptObjectSpecifier? {
+        if let specifier = parameter as? NSScriptObjectSpecifier {
+            return specifier.evaluationError ?? specifier
+        }
+        guard let list = parameter as? [Any] else { return nil }
+        let failed = list.lazy
+            .compactMap { $0 as? NSScriptObjectSpecifier }
+            .first { $0.evaluationErrorNumber != 0 }
+        return failed?.evaluationError ?? failed
+    }
 }
 
-/// A specifier the verb could not run on, in the terms a script error carries.
+/// Why a verb could not run on what the event addressed, in the terms a script
+/// error carries.
+///
+/// It carries the number alone: an `Error` is `Sendable` and an Apple event
+/// descriptor is not, so the object at fault is named at the point that records
+/// the failure, which holds the specifier the descriptor comes from.
 struct VMScriptEvaluationFailure: Error {
     /// The Apple event error number.
     let number: Int
-    /// The specifier at fault, for the script to name in "Can't get …".
-    let offendingObject: NSAppleEventDescriptor?
 
-    init(number: Int, offendingObject: NSAppleEventDescriptor?) {
+    init(number: Int) {
         self.number = number
-        self.offendingObject = offendingObject
     }
 
     /// The failure `specifier`'s last evaluation left on it, as the number
@@ -113,13 +129,16 @@ struct VMScriptEvaluationFailure: Error {
         let failed = specifier.evaluationError ?? specifier
         self.init(
             number: failed.evaluationErrorNumber == NSInvalidIndexSpecifierError
-                ? Int(errAEIllegalIndex) : Int(errAENoSuchObject),
-            offendingObject: failed.descriptor)
+                ? Int(errAEIllegalIndex) : Int(errAENoSuchObject))
     }
 
-    /// Records the failure as what `command` answers with.
-    func record(on command: NSScriptCommand) {
+    /// Records the failure as what `command` answers with, naming the specifier
+    /// at fault in `addressed` — one specifier, or a list of them — as the
+    /// object the script could not get.
+    func record(on command: NSScriptCommand, addressing addressed: Any?) {
         command.scriptErrorNumber = number
-        command.scriptErrorOffendingObjectDescriptor = offendingObject
+        command.scriptErrorOffendingObjectDescriptor = addressed.flatMap {
+            VMScriptSelector.specifierAtFault(in: $0)?.descriptor
+        }
     }
 }

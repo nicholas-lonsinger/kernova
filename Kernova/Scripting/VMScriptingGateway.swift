@@ -43,9 +43,11 @@ final class VMScriptingGateway {
     /// current command.
     var answeringCommand: NSScriptCommand?
 
+    #if DEBUG
     /// What stands in for `NSScriptCommand.current()`. Tests only, which have
     /// no command in flight.
     var currentCommandForTesting: (@MainActor () -> NSScriptCommand?)?
+    #endif
 
     init(
         commands: any VMCommanding, readiness: LibraryReadiness,
@@ -106,7 +108,11 @@ final class VMScriptingGateway {
 
     /// The command Cocoa is executing on this thread, if any.
     private var executing: NSScriptCommand? {
-        currentCommandForTesting?() ?? NSScriptCommand.current()
+        #if DEBUG
+        return currentCommandForTesting?() ?? NSScriptCommand.current()
+        #else
+        return NSScriptCommand.current()
+        #endif
     }
 
     /// The command a read is being answered for: the one Cocoa is executing,
@@ -184,7 +190,7 @@ final class VMScriptingGateway {
         Self.clearEvaluationFailure(receivers)
         let result = answer.execute()
         if answer.scriptErrorNumber == 0, !(answer is NSExistsCommand), let failure {
-            failure.record(on: answer)
+            failure.record(on: answer, addressing: receivers)
         }
         command.scriptErrorNumber = answer.scriptErrorNumber
         command.scriptErrorString = answer.scriptErrorString

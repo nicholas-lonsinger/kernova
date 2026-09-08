@@ -31,6 +31,25 @@ struct VMScriptSelectorTests {
         }
     }
 
+    /// One of the app's own verbs, as the command a failure is recorded on.
+    private func makeCommand() throws -> VMScriptCommand {
+        let description = try #require(
+            NSScriptSuiteRegistry.shared().commandDescription(
+                withAppleEventClass: FourCharCode(scriptingCode: "Krnv"),
+                andAppleEventCode: FourCharCode(scriptingCode: "Paus")))
+        return VMScriptCommand(commandDescription: description)
+    }
+
+    /// The object `failure` names at fault, recorded for what `addressed`
+    /// addressed.
+    private func offendingObject(
+        of failure: VMScriptEvaluationFailure, addressing addressed: Any
+    ) throws -> NSAppleEventDescriptor? {
+        let command = try makeCommand()
+        failure.record(on: command, addressing: addressed)
+        return command.scriptErrorOffendingObjectDescriptor
+    }
+
     @Test("A name of the application's element reaches the core as a name")
     func aNameSpecifierIsReadAsAName() throws {
         let specifier = NSNameSpecifier(
@@ -61,7 +80,7 @@ struct VMScriptSelectorTests {
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
         #expect(failure.number == Int(errAENoSuchObject))
-        #expect(failure.offendingObject != nil)
+        #expect(try offendingObject(of: failure, addressing: specifier) != nil)
     }
 
     @Test("A name under another container is not read as a name of the library")
@@ -77,7 +96,7 @@ struct VMScriptSelectorTests {
 
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
-        #expect(failure.offendingObject != nil)
+        #expect(try offendingObject(of: failure, addressing: specifier) != nil)
     }
 
     @Test("Every virtual machine of an empty library addresses nothing and refuses nothing")
@@ -97,7 +116,7 @@ struct VMScriptSelectorTests {
 
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
-        #expect(failure.offendingObject != nil)
+        #expect(try offendingObject(of: failure, addressing: specifier) != nil)
     }
 
     @Test("An evaluation's failure reads as the number Cocoa's own evaluation reports")
@@ -152,17 +171,37 @@ struct VMScriptSelectorTests {
 
     @Test("A failure records its number and the specifier at fault on the command")
     func aFailureRecordsItselfOnTheCommand() throws {
-        let description = try #require(
-            NSScriptSuiteRegistry.shared().commandDescription(
-                withAppleEventClass: FourCharCode(scriptingCode: "Krnv"),
-                andAppleEventCode: FourCharCode(scriptingCode: "Paus")))
-        let command = VMScriptCommand(commandDescription: description)
-        let offending = NSAppleEventDescriptor(string: "virtual machine 9")
+        let command = try makeCommand()
+        let specifier = NSIndexSpecifier(
+            containerClassDescription: try makeContainer(), containerSpecifier: nil,
+            key: AppDelegate.virtualMachinesKey, index: 9)
+        // A failure is recorded only after an evaluation, which the empty
+        // library has no ninth VM for.
+        #expect(specifier.objectsByEvaluatingSpecifier == nil)
 
-        VMScriptEvaluationFailure(number: Int(errAEIllegalIndex), offendingObject: offending)
-            .record(on: command)
+        VMScriptEvaluationFailure(number: Int(errAEIllegalIndex))
+            .record(on: command, addressing: specifier)
 
         #expect(command.scriptErrorNumber == Int(errAEIllegalIndex))
-        #expect(command.scriptErrorOffendingObjectDescriptor == offending)
+        #expect(command.scriptErrorOffendingObjectDescriptor != nil)
+    }
+
+    @Test("A failure addressing a list names the item at fault, and nothing when none is")
+    func aFailureInAListNamesTheItemAtFault() throws {
+        let named = NSNameSpecifier(
+            containerClassDescription: try makeContainer(), containerSpecifier: nil,
+            key: AppDelegate.virtualMachinesKey, name: "Alpha")
+        let indexed = NSIndexSpecifier(
+            containerClassDescription: try makeContainer(), containerSpecifier: nil,
+            key: AppDelegate.virtualMachinesKey, index: 9)
+        // The name reaches the core unevaluated, so the position is the only
+        // item the empty library fails, as it is for a script.
+        let failure = try #require(
+            evaluationFailure {
+                try VMScriptSelector.selectors(addressing: [named, indexed] as [Any])
+            })
+
+        #expect(try offendingObject(of: failure, addressing: [named, indexed] as [Any]) != nil)
+        #expect(try offendingObject(of: failure, addressing: [named] as [Any]) == nil)
     }
 }

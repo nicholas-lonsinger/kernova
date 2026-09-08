@@ -181,10 +181,12 @@ final class AppTerminationController: NSObject {
         }
     }
 
+    #if DEBUG
     /// What the gate reads as the pending quit's sender, in place of the quit
     /// Apple Event `NSAppleEventManager` is handling. Tests only: a sender PID
     /// is stamped on an event as it is received, never on one built locally.
     var quitSenderPIDForTesting: (@MainActor () -> pid_t?)?
+    #endif
 
     /// Whether `event` is the Standard Suite's quit.
     nonisolated static func isQuitEvent(_ event: NSAppleEventDescriptor) -> Bool {
@@ -204,15 +206,21 @@ final class AppTerminationController: NSObject {
     /// them calls `terminate:` inside the event's callout, where the event is
     /// `currentAppleEvent`.
     private func latchClassificationOfQuitEvent() {
-        let senderPID: pid_t?
-        if let sender = quitSenderPIDForTesting {
-            senderPID = sender()
-        } else {
-            guard let event = NSAppleEventManager.shared().currentAppleEvent,
-                Self.isQuitEvent(event)
-            else { return }
-            senderPID = event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
+        #if DEBUG
+        if let quitSenderPIDForTesting {
+            latchClassificationOfQuit(senderPID: quitSenderPIDForTesting())
+            return
         }
+        #endif
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+            Self.isQuitEvent(event)
+        else { return }
+        latchClassificationOfQuit(
+            senderPID: event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value)
+    }
+
+    /// Latches what a quit delivered by `senderPID` demands.
+    private func latchClassificationOfQuit(senderPID: pid_t?) {
         // Resolved once and fed to `classifyQuit` as fixed values so the same
         // attribution result also drives the logging below. The two probes can't
         // collapse into one: `NSRunningApplication` alone reads a live non-GUI
