@@ -13,6 +13,10 @@ struct CLIConfigurationWireTests {
         ConfigurationEntry(key: "memory", value: "8"),
     ]
 
+    /// A virtual machine identifier, for the lines that force one with `--id`.
+    private let identifier =
+        UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID()
+
     // MARK: - Reads
 
     @Test("A bare get asks for every key, and a named one asks for those")
@@ -115,6 +119,26 @@ struct CLIConfigurationWireTests {
 
     // MARK: - Shares
 
+    @Test("A share list asks for the folders of the virtual machine its argument names")
+    func shareListSendsTheSelector() throws {
+        let shares = [
+            SharedDirectorySummary(path: "/tmp/Work", readOnly: false),
+            SharedDirectorySummary(path: "/tmp/Reference", readOnly: true),
+        ]
+        let named = try CLIWire.exchange(
+            ["share", "list", "Alpha"],
+            answering: VMCommandResponse(result: .sharedDirectories(shares)), tag: "share-list")
+
+        #expect(named.sent == [.sharedDirectories(.idOrName("Alpha"))])
+        #expect(try named.answer.payload() == .sharedDirectories(shares))
+
+        let identified = try CLIWire.exchange(
+            ["share", "list", identifier.uuidString, "--id"],
+            answering: VMCommandResponse(result: .sharedDirectories(shares)),
+            tag: "share-list-id")
+        #expect(identified.sent == [.sharedDirectories(.id(identifier))])
+    }
+
     @Test("A share add crosses with the folder's absolute path and how it mounts")
     func shareAddSendsThePathAndItsAccess() throws {
         let exchanged = try CLIWire.exchange(
@@ -141,6 +165,27 @@ struct CLIConfigurationWireTests {
     }
 
     // MARK: - Forwarding
+
+    @Test("A forward list asks for the rules of the virtual machine its argument names")
+    func forwardListSendsTheSelector() throws {
+        let rules = [
+            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+        ]
+        let named = try CLIWire.exchange(
+            ["forward", "list", "Alpha"],
+            answering: VMCommandResponse(result: .portForwardingRules(rules)),
+            tag: "forward-list")
+
+        #expect(named.sent == [.portForwardingRules(.idOrName("Alpha"))])
+        #expect(try named.answer.payload() == .portForwardingRules(rules))
+
+        let identified = try CLIWire.exchange(
+            ["forward", "list", identifier.uuidString, "--id"],
+            answering: VMCommandResponse(result: .portForwardingRules(rules)),
+            tag: "forward-list-id")
+        #expect(identified.sent == [.portForwardingRules(.id(identifier))])
+    }
 
     @Test("A forward add crosses as a rule on the transport the flags chose")
     func forwardAddSendsTheRule() throws {

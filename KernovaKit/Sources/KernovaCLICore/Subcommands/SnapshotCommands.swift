@@ -106,7 +106,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot revert <vm> <snapshot>` — put the VM back.
-    public struct Revert: SnapshotCommandLine {
+    public struct Revert: VMScopedCommandLine {
         /// What `kernova snapshot revert --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "revert",
@@ -154,7 +154,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot delete <vm> <snapshot>` — drop one restore point.
-    public struct Delete: SnapshotCommandLine {
+    public struct Delete: VMScopedCommandLine {
         /// What `kernova snapshot delete --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "delete",
@@ -191,7 +191,7 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot rename <vm> <snapshot> <new-name>` — relabel one.
-    public struct Rename: SnapshotCommandLine {
+    public struct Rename: VMScopedCommandLine {
         /// What `kernova snapshot rename --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "rename",

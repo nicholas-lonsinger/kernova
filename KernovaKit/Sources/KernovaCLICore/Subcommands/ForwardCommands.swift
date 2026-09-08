@@ -12,7 +12,7 @@ extension KernovaCommand {
             discussion: "Each mapping is written <host-port>:<guest-port>, and covers TCP unless "
                 + "--udp says otherwise. A host port is claimed across every virtual machine on "
                 + "the network, so one another rule already forwards is refused.",
-            subcommands: [Add.self, Remove.self])
+            subcommands: [List.self, Add.self, Remove.self])
 
         /// Creates the parent command; a bare `kernova forward` prints this
         /// help.
@@ -21,6 +21,44 @@ extension KernovaCommand {
 }
 
 extension KernovaCommand.Forward {
+    /// `kernova forward list <vm>` — every mapping the virtual machine carries.
+    public struct List: VerbCommand {
+        /// What `kernova forward list --help` says.
+        public static let configuration = CommandConfiguration(
+            commandName: "list",
+            abstract: "List a virtual machine's forwarded ports.",
+            discussion: "Each rule prints as the <host-port>:<guest-port> mapping `forward "
+                + "remove` takes back, beside the transport it covers. A rule is listed whether "
+                + "or not the network carrying it is declared right now.")
+
+        /// Which virtual machine, by name or identifier.
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
+        public var vm: String
+
+        /// The options every subcommand carries.
+        @OptionGroup public var options: GlobalOptions
+
+        /// Creates the subcommand.
+        public init() {}
+
+        /// The request this command line stands for.
+        public func verb() throws -> VMCommandRequest.Verb {
+            .portForwardingRules(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
+        /// Reads the rules and writes them.
+        public func run() throws {
+            let answered = try answer()
+            guard case .portForwardingRules(let rules) = answered else {
+                throw answered.unexpectedAnswer
+            }
+            Console.out(
+                options.format == .json
+                    ? try JSONRenderer.render(rules)
+                    : TableRenderer.render(rules, quiet: options.quiet))
+        }
+    }
+
     /// `kernova forward add <vm> <host-port>:<guest-port>` — publish a guest
     /// port on this Mac.
     public struct Add: VerbCommand {
@@ -64,7 +102,7 @@ extension KernovaCommand.Forward {
 
     /// `kernova forward remove <vm> <host-port>:<guest-port>` — stop
     /// publishing one.
-    public struct Remove: VerbCommand {
+    public struct Remove: VerbCommand, VMScopedCommandLine {
         /// What `kernova forward remove --help` says.
         public static let configuration = CommandConfiguration(
             commandName: "remove",
@@ -78,7 +116,9 @@ extension KernovaCommand.Forward {
         public var vm: String
 
         /// The mapping to drop, written `<host-port>:<guest-port>`.
-        @Argument(help: "The mapping to drop, as <host-port>:<guest-port>.")
+        @Argument(
+            help: "The mapping to drop, as <host-port>:<guest-port>.",
+            completion: CompletionSource.portMapping)
         public var mapping: String
 
         /// Drop a UDP rule rather than a TCP one.
@@ -107,8 +147,16 @@ extension KernovaCommand.Forward {
     }
 }
 
-/// How the tool reads a `<host-port>:<guest-port>` argument.
+/// How the tool reads and writes a `<host-port>:<guest-port>` argument.
 enum PortMapping {
+    /// `rule` written the way an argument spells one.
+    ///
+    /// The inverse of ``rule(from:transport:)``, so what the tool prints and
+    /// completes is what it parses back.
+    static func text(for rule: PortForwardingRule) -> String {
+        "\(rule.hostPort):\(rule.guestPort)"
+    }
+
     /// The rule `text` names on `transport`.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/usage`` when `text` is not a

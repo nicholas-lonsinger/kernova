@@ -34,6 +34,10 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case snapshot(SnapshotSummary)
         /// Bytes each of a VM's snapshots occupies on disk, by snapshot id.
         case snapshotSizes([UUID: UInt64])
+        /// The folders a VM shares with its guest.
+        case sharedDirectories([SharedDirectorySummary])
+        /// A VM's host→guest port mappings.
+        case portForwardingRules([PortForwardingRule])
         /// Every configuration key the keyspace holds, in presentation order.
         case configurationKeys([ConfigurationKeyDescriptor])
         /// Configuration values, in the order they were asked for.

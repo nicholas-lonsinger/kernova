@@ -153,6 +153,43 @@ struct VMCommandEnvelopeRouterTests {
         #expect(response.result == .snapshotSizes([snapshot.id: 12_884_901_888]))
     }
 
+    @Test("A VM's shares and forwarded ports each cross the wire as their own listing")
+    func theTwoListingsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
+        double.library = [summary]
+        let shares = [SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: true)]
+        let rules = [PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53)]
+        double.sharedDirectoriesByVM = [summary.id: shares]
+        double.portForwardingRulesByVM = [summary.id: rules]
+        let transport = makeTransport(over: double)
+        let selector = VMSelector.id(summary.id)
+
+        let listedShares = try await transport.send(.sharedDirectories(selector)).result
+        #expect(listedShares == .sharedDirectories(shares))
+        let listedRules = try await transport.send(.portForwardingRules(selector)).result
+        #expect(listedRules == .portForwardingRules(rules))
+
+        #expect(double.sharedDirectoriesSelectors == [selector])
+        #expect(double.portForwardingRulesSelectors == [selector])
+    }
+
+    @Test("A listing the facade refuses crosses the wire as that refusal, not as an empty list")
+    func aRefusedListingCrossesTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
+        double.library = [summary]
+        double.sharedDirectoriesError = CommandError.notFound(.name("Typo"))
+        double.portForwardingRulesError = CommandError.notFound(.name("Typo"))
+        let transport = makeTransport(over: double)
+        let selector = VMSelector.id(summary.id)
+
+        let refusedShares = try await transport.send(.sharedDirectories(selector)).result
+        #expect(refusedShares == .failure(.notFound(selector: .name("Typo"))))
+        let refusedRules = try await transport.send(.portForwardingRules(selector)).result
+        #expect(refusedRules == .failure(.notFound(selector: .name("Typo"))))
+    }
+
     // MARK: - Verbs
 
     @Test("A start crosses the wire and reaches the service")

@@ -124,6 +124,10 @@ struct VMCommandEnvelopeRouter {
             return .snapshots(try commands.snapshots(of: selector))
         case .snapshotOnDiskBytes(let selector):
             return .snapshotSizes(try await commands.snapshotOnDiskBytes(of: selector))
+        case .sharedDirectories(let selector):
+            return .sharedDirectories(try commands.sharedDirectories(of: selector))
+        case .portForwardingRules(let selector):
+            return .portForwardingRules(try commands.portForwardingRules(of: selector))
         case .events:
             // Streaming, not unary: a transport answers `.events` through
             // `snapshotAndEvents()` and never reaches here.

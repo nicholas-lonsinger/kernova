@@ -303,6 +303,96 @@ struct CLIRenderingTests {
         }
     }
 
+    // MARK: - Shares
+
+    private let shares = [
+        SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
+        SharedDirectorySummary(path: "/Users/somebody/Reference Material", readOnly: true),
+    ]
+
+    @Test("A share listing names its path and whether the guest may write")
+    func shareListingIsPathAndAccess() {
+        let lines = TableRenderer.render(shares, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        #expect(lines[0].contains("PATH"))
+        #expect(lines[0].contains("READ-ONLY"))
+        #expect(lines[1].hasPrefix("/Users/somebody/Sites"))
+        #expect(lines[1].hasSuffix("No"))
+        #expect(lines[2].hasSuffix("Yes"))
+    }
+
+    @Test("--quiet on a share listing prints exactly what share remove takes back")
+    func quietShareListingIsPathsOnly() {
+        #expect(
+            TableRenderer.render(shares, quiet: true)
+                == "/Users/somebody/Sites\n/Users/somebody/Reference Material")
+    }
+
+    @Test("A virtual machine sharing nothing prints nothing at all")
+    func emptyShareListingIsEmpty() {
+        #expect(TableRenderer.render([SharedDirectorySummary](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([SharedDirectorySummary](), quiet: true).isEmpty)
+    }
+
+    @Test("Share JSON is the wire DTO itself, decodable back")
+    func shareJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(shares)
+
+        #expect(
+            try JSONDecoder().decode([SharedDirectorySummary].self, from: Data(rendered.utf8))
+                == shares)
+        let objects = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
+        for field in ["path", "readOnly"] {
+            #expect(objects.first?[field] != nil, "missing \(field)")
+        }
+    }
+
+    // MARK: - Forwarded ports
+
+    private let rules = [
+        PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+        PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+    ]
+
+    @Test("A forwarding listing names the mapping and the transport it covers")
+    func forwardingListingIsMappingAndTransport() {
+        let lines = TableRenderer.render(rules, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        #expect(lines[0].contains("MAPPING"))
+        #expect(lines[0].contains("TRANSPORT"))
+        #expect(lines[1].hasPrefix("8080:80"))
+        #expect(lines[1].hasSuffix("TCP"))
+        #expect(lines[2].hasPrefix("5353:53"))
+        #expect(lines[2].hasSuffix("UDP"))
+    }
+
+    @Test("--quiet on a forwarding listing prints exactly what forward remove takes back")
+    func quietForwardingListingIsMappingsOnly() {
+        #expect(TableRenderer.render(rules, quiet: true) == "8080:80\n5353:53")
+    }
+
+    @Test("A virtual machine forwarding nothing prints nothing at all")
+    func emptyForwardingListingIsEmpty() {
+        #expect(TableRenderer.render([PortForwardingRule](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([PortForwardingRule](), quiet: true).isEmpty)
+    }
+
+    @Test("Forwarding JSON is the wire DTO itself, decodable back")
+    func forwardingJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(rules)
+
+        #expect(
+            try JSONDecoder().decode([PortForwardingRule].self, from: Data(rendered.utf8)) == rules)
+        let objects = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
+        for field in ["transport", "hostPort", "guestPort"] {
+            #expect(objects.first?[field] != nil, "missing \(field)")
+        }
+    }
+
     // MARK: - Addresses
 
     @Test("Each address case states its own answer, and only one is an address")

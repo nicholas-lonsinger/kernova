@@ -78,6 +78,32 @@ public enum TableRenderer {
             })
     }
 
+    /// The folders a VM shares with its guest, in the order it carries them.
+    ///
+    /// `quiet` prints the paths alone, which is exactly what `share remove`
+    /// takes back.
+    public static func render(_ rows: [SharedDirectorySummary], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(\.path).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        return columns(
+            headings: ["PATH", "READ-ONLY"],
+            rows: rows.map { [$0.path, $0.readOnly ? "Yes" : "No"] })
+    }
+
+    /// A VM's forwarded ports, in the order it carries them.
+    ///
+    /// `quiet` prints the mappings alone, which is what `forward remove` names
+    /// a rule by — with `--udp` for a rule the transport column says is UDP.
+    public static func render(_ rules: [PortForwardingRule], quiet: Bool) -> String {
+        guard !quiet else {
+            return rules.map(PortMapping.text(for:)).joined(separator: "\n")
+        }
+        guard !rules.isEmpty else { return "" }
+        return columns(
+            headings: ["MAPPING", "TRANSPORT"],
+            rows: rules.map { [PortMapping.text(for: $0), $0.transport.displayName] })
+    }
+
     /// A virtual machine's settings, one per line, in the order they were
     /// asked for.
     ///

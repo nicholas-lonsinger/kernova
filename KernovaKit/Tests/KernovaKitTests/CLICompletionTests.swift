@@ -22,6 +22,15 @@ struct CLICompletionTests {
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
         name: "Beta", status: "stopped", ipAddress: .unavailable)
 
+    private let shares = [
+        SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
+        SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
+    ]
+    private let rules = [
+        PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+        PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+    ]
+
     private var checkpoint: SnapshotSummary {
         SnapshotSummary(
             id: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") ?? UUID(),
@@ -43,7 +52,7 @@ struct CLICompletionTests {
 
     @Test("A snapshot completion recovers the virtual machine named before it")
     func snapshotCompletionReadsTheVM() throws {
-        let subject = CompletionLine.snapshotSubject(
+        let subject = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "revert", "Alpha", ""], completingAt: 4)
 
         #expect(subject?.vm == "Alpha")
@@ -52,13 +61,37 @@ struct CLICompletionTests {
 
     @Test("Flags on either side of the virtual machine do not hide it")
     func snapshotCompletionReadsPastFlags() throws {
-        let leading = CompletionLine.snapshotSubject(
+        let leading = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "delete", "--yes", "Alpha", ""], completingAt: 5)
         #expect(leading?.vm == "Alpha")
 
-        let trailing = CompletionLine.snapshotSubject(
+        let trailing = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "revert", "Alpha", "--no-checkpoint", ""], completingAt: 5)
         #expect(trailing?.vm == "Alpha")
+    }
+
+    @Test("A share and a forward removal each recover the virtual machine named before them")
+    func removalCompletionsReadTheVM() throws {
+        let share = CompletionLine.vmSubject(
+            in: ["kernova", "share", "remove", "Alpha", ""], completingAt: 4)
+        #expect(share?.vm == "Alpha")
+        #expect(share?.command is KernovaCommand.Share.Remove)
+
+        let forward = CompletionLine.vmSubject(
+            in: ["kernova", "forward", "remove", "Alpha", ""], completingAt: 4)
+        #expect(forward?.vm == "Alpha")
+        #expect(forward?.command is KernovaCommand.Forward.Remove)
+    }
+
+    @Test("A forward removal's transport flag is read back off the line with its machine")
+    func forwardRemovalReadsItsTransport() throws {
+        let tcp = CompletionLine.vmSubject(
+            in: ["kernova", "forward", "remove", "Alpha", ""], completingAt: 4)
+        #expect((tcp?.command as? KernovaCommand.Forward.Remove)?.udp == false)
+
+        let udp = CompletionLine.vmSubject(
+            in: ["kernova", "forward", "remove", "Alpha", "--udp", ""], completingAt: 5)
+        #expect((udp?.command as? KernovaCommand.Forward.Remove)?.udp == true)
     }
 
     @Test("--id is read off the line, wherever it sits")
@@ -73,7 +106,7 @@ struct CLICompletionTests {
             CompletionLine.forcesIdentifiers(
                 in: ["kernova", "snapshot", "rename", "--id", ""], completingAt: 4))
 
-        let subject = CompletionLine.snapshotSubject(
+        let subject = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "delete", "--id", alpha.id.uuidString, ""],
             completingAt: 5)
         #expect(subject?.byIdentifier == true)
@@ -83,20 +116,20 @@ struct CLICompletionTests {
     func aQuotedNameIsDequoted() throws {
         // The shell hands the word over verbatim, and every clone is named
         // "<base> Copy", so this is the ordinary case rather than a corner.
-        let singleQuoted = CompletionLine.snapshotSubject(
+        let singleQuoted = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "revert", "'Alpha Copy'", ""], completingAt: 4)
         #expect(singleQuoted?.vm == "Alpha Copy")
 
-        let doubleQuoted = CompletionLine.snapshotSubject(
+        let doubleQuoted = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "revert", "\"Alpha Copy\"", ""], completingAt: 4)
         #expect(doubleQuoted?.vm == "Alpha Copy")
 
-        let escaped = CompletionLine.snapshotSubject(
+        let escaped = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "revert", "Alpha\\ Copy", ""], completingAt: 4)
         #expect(escaped?.vm == "Alpha Copy")
 
         // A backslash inside single quotes is a character like any other.
-        let literal = CompletionLine.snapshotSubject(
+        let literal = CompletionLine.vmSubject(
             in: ["kernova", "snapshot", "revert", "'Alpha\\Copy'", ""], completingAt: 4)
         #expect(literal?.vm == "Alpha\\Copy")
     }
@@ -123,12 +156,23 @@ struct CLICompletionTests {
         // `snapshot list` takes one positional, so nothing on it names a
         // snapshot to complete.
         #expect(
-            CompletionLine.snapshotSubject(
+            CompletionLine.vmSubject(
                 in: ["kernova", "snapshot", "list", "Alpha", ""], completingAt: 4) == nil)
         // A snapshot argument reached before its virtual machine was typed.
         #expect(
-            CompletionLine.snapshotSubject(
+            CompletionLine.vmSubject(
                 in: ["kernova", "snapshot", "revert", ""], completingAt: 3) == nil)
+        // The list verbs take the machine and nothing of the machine's, and
+        // both removals reached before their machine was typed name none.
+        #expect(
+            CompletionLine.vmSubject(
+                in: ["kernova", "share", "list", "Alpha", ""], completingAt: 4) == nil)
+        #expect(
+            CompletionLine.vmSubject(
+                in: ["kernova", "share", "remove", ""], completingAt: 3) == nil)
+        #expect(
+            CompletionLine.vmSubject(
+                in: ["kernova", "forward", "remove", ""], completingAt: 3) == nil)
     }
 
     // MARK: - Asking the app
@@ -143,6 +187,14 @@ struct CLICompletionTests {
         #expect(
             CompletionSource.snapshotNames(ofVM: "Alpha", byIdentifier: false, in: unreachable)
                 .isEmpty)
+        #expect(
+            CompletionSource.sharedDirectoryPaths(
+                ofVM: "Alpha", byIdentifier: false, in: unreachable
+            ).isEmpty)
+        #expect(
+            CompletionSource.portMappings(
+                ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: unreachable
+            ).isEmpty)
         #expect(CompletionSource.configurationKeys(in: unreachable).isEmpty)
     }
 
@@ -182,6 +234,67 @@ struct CLICompletionTests {
         // The listing alone: the size walk a `snapshot list` performs would
         // spend a second round trip on a column nobody is completing.
         #expect(listener.requests().map(\.verb) == [.snapshots(.idOrName("Alpha"))])
+    }
+
+    @Test("A share removal offers the folders that machine actually shares")
+    func sharedDirectoryPathsComeFromTheMachine() throws {
+        let listener = try TestCommandSocket(tag: "cmp-shares")
+        defer { listener.close() }
+        listener.serve([VMCommandResponse(result: .sharedDirectories(shares))])
+
+        let paths = CompletionSource.sharedDirectoryPaths(
+            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
+
+        #expect(paths == ["/Users/somebody/Sites", "/Users/somebody/Reference"])
+        #expect(listener.requests().map(\.verb) == [.sharedDirectories(.idOrName("Alpha"))])
+    }
+
+    @Test("zsh is told which of the shared folders the guest may write to")
+    func sharedFoldersCarryTheirAccess() throws {
+        let listener = try TestCommandSocket(tag: "cmp-shares-zsh")
+        defer { listener.close() }
+        listener.serve([VMCommandResponse(result: .sharedDirectories(shares))])
+
+        let paths = CompletionSource.sharedDirectoryPaths(
+            ofVM: "Alpha", byIdentifier: false, in: context(to: listener, asking: .zsh))
+
+        #expect(
+            paths == [
+                "/Users/somebody/Sites:read-write", "/Users/somebody/Reference:read-only",
+            ])
+    }
+
+    @Test("A forward removal offers only the mappings on the transport it will drop from")
+    func portMappingsAreFilteredByTransport() throws {
+        let tcp = try TestCommandSocket(tag: "cmp-fwd-tcp")
+        defer { tcp.close() }
+        tcp.serve([VMCommandResponse(result: .portForwardingRules(rules))])
+        #expect(
+            CompletionSource.portMappings(
+                ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: context(to: tcp))
+                == ["8080:80"])
+        #expect(tcp.requests().map(\.verb) == [.portForwardingRules(.idOrName("Alpha"))])
+
+        let udp = try TestCommandSocket(tag: "cmp-fwd-udp")
+        defer { udp.close() }
+        udp.serve([VMCommandResponse(result: .portForwardingRules(rules))])
+        #expect(
+            CompletionSource.portMappings(
+                ofVM: "Alpha", byIdentifier: false, transport: .udp, in: context(to: udp))
+                == ["5353:53"])
+    }
+
+    @Test("A mapping's colon is escaped for zsh, which reads an unescaped one as the description")
+    func portMappingsKeepTheirColonForZsh() throws {
+        let listener = try TestCommandSocket(tag: "cmp-fwd-zsh")
+        defer { listener.close() }
+        listener.serve([VMCommandResponse(result: .portForwardingRules(rules))])
+
+        let mappings = CompletionSource.portMappings(
+            ofVM: "Alpha", byIdentifier: false, transport: .udp,
+            in: context(to: listener, asking: .zsh))
+
+        #expect(mappings == ["5353\\:53:UDP"])
     }
 
     @Test("Under --id a virtual machine argument that is not one asks nothing")

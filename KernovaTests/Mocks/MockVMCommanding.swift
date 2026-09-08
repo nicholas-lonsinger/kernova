@@ -89,6 +89,10 @@ final class MockVMCommanding: VMCommanding {
     let awaitPreparingEntered = AsyncGate()
     /// What `snapshotOnDiskBytes(of:)` answers with.
     var snapshotBytes: [UUID: UInt64] = [:]
+    /// What `sharedDirectories(of:)` answers per VM.
+    var sharedDirectoriesByVM: [UUID: [SharedDirectorySummary]] = [:]
+    /// What `portForwardingRules(of:)` answers per VM.
+    var portForwardingRulesByVM: [UUID: [PortForwardingRule]] = [:]
     /// What `externalAttachments(of:)` answers with.
     var externalAttachmentsToReturn: [ExternalAttachment] = []
     /// What `sharingVMNames(_:path:bookmark:)` answers with.
@@ -101,6 +105,8 @@ final class MockVMCommanding: VMCommanding {
     private(set) var ipAddressSelectors: [VMSelector] = []
     private(set) var snapshotsSelectors: [VMSelector] = []
     private(set) var snapshotOnDiskBytesSelectors: [VMSelector] = []
+    private(set) var sharedDirectoriesSelectors: [VMSelector] = []
+    private(set) var portForwardingRulesSelectors: [VMSelector] = []
     private(set) var externalAttachmentsSelectors: [VMSelector] = []
     private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
         []
@@ -176,6 +182,8 @@ final class MockVMCommanding: VMCommanding {
     var ipAddressError: (any Error)?
     var snapshotsError: (any Error)?
     var snapshotOnDiskBytesError: (any Error)?
+    var sharedDirectoriesError: (any Error)?
+    var portForwardingRulesError: (any Error)?
     var externalAttachmentsError: (any Error)?
     var sharingVMNamesError: (any Error)?
     var startError: (any Error)?
@@ -286,6 +294,18 @@ final class MockVMCommanding: VMCommanding {
         if let snapshotOnDiskBytesError { throw snapshotOnDiskBytesError }
         _ = try resolve(selector)
         return snapshotBytes
+    }
+
+    func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary] {
+        sharedDirectoriesSelectors.append(selector)
+        if let sharedDirectoriesError { throw sharedDirectoriesError }
+        return sharedDirectoriesByVM[try resolve(selector).id] ?? []
+    }
+
+    func portForwardingRules(of selector: VMSelector) throws -> [PortForwardingRule] {
+        portForwardingRulesSelectors.append(selector)
+        if let portForwardingRulesError { throw portForwardingRulesError }
+        return portForwardingRulesByVM[try resolve(selector).id] ?? []
     }
 
     func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment] {

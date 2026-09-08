@@ -42,6 +42,12 @@ protocol VMCommanding: AnyObject {
     /// actor — the copies live on the same volume and can be many gigabytes.
     func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64]
 
+    /// The folders the VM shares with its guest, in the order it carries them.
+    func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary]
+
+    /// The VM's host→guest port mappings, in the order it carries them.
+    func portForwardingRules(of selector: VMSelector) throws -> [PortForwardingRule]
+
     /// The external (non-bundle) files referenced by the VM that the delete
     /// sheet offers to trash, each annotated with whether it is still there and
     /// which other VMs name the same file.
