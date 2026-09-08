@@ -90,7 +90,10 @@
 
 		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first.">
 			<cocoa class="VMStartScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to start."/>
+			<direct-parameter description="The virtual machine to start, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 			<parameter name="recovery mode" code="Kprc" type="boolean" optional="yes" description="Cold-boot a stopped macOS guest into macOS Recovery.">
 				<cocoa key="RecoveryMode"/>
 			</parameter>
@@ -98,7 +101,10 @@
 
 		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
 			<cocoa class="VMStopScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to stop."/>
+			<direct-parameter description="The virtual machine to stop, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 			<parameter name="by" code="by  " type="VM stop method" optional="yes" description="How to reach a powered-off guest. Shut down by default.">
 				<cocoa key="StopMethod"/>
 			</parameter>
@@ -112,7 +118,10 @@
 
 		<command name="restart" code="KrnvRstr" description="Shut a virtual machine's guest down and start it again. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
 			<cocoa class="VMRestartScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to restart."/>
+			<direct-parameter description="The virtual machine to restart, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>
@@ -120,22 +129,34 @@
 
 		<command name="pause" code="KrnvPaus" description="Freeze a running guest in memory.">
 			<cocoa class="VMPauseScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to pause."/>
+			<direct-parameter description="The virtual machine to pause, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 		</command>
 
 		<command name="resume" code="KrnvResu" description="Run a paused guest again, or read a suspended session back.">
 			<cocoa class="VMResumeScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to resume."/>
+			<direct-parameter description="The virtual machine to resume, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 		</command>
 
 		<command name="suspend" code="KrnvSusp" description="Save the guest's state to the bundle's suspend slot and stop running it.">
 			<cocoa class="VMSuspendScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to suspend."/>
+			<direct-parameter description="The virtual machine to suspend, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 		</command>
 
 		<command name="reveal" code="KrnvRevl" description="Bring a virtual machine in front of the user, whatever state it is in.">
 			<cocoa class="VMRevealScriptCommand"/>
-			<direct-parameter type="virtual machine" description="The virtual machine to reveal."/>
+			<direct-parameter description="The virtual machine to reveal, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
 		</command>
 
 	</suite>

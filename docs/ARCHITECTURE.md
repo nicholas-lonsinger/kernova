@@ -353,9 +353,9 @@ session down without that hook, so a suspended session survives to revert at its
   reached by each `NSScriptCommand` through the app delegate, which Cocoa's scripting root asks for
   the `virtualMachines` element. A name or identifier reaches the core as a `VMSelector`, so a
   duplicate name refuses as ambiguous there — on a verb and on a property read alike — rather than
-  resolving to whichever VM the container listed first. Every command and every element read waits
-  for the app's first library read before it resolves anything. It presents nothing: a refusal
-  becomes the script error the event carries back.
+  resolving to whichever VM the container listed first. Every command, and every element read a
+  command is executing for, waits for the app's first library read before it resolves anything. It
+  presents nothing: a refusal becomes the script error the event carries back.
 - `VMLibraryViewModel` — the AppKit adapter over `VMCommanding` and `VMLibrary`. Runs no verb
   itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
   routes the returned `CommandError` to a surface. It also owns the inline rename state and the

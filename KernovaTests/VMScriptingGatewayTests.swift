@@ -67,11 +67,35 @@ struct VMScriptingGatewayTests {
         return description.createCommandInstance()
     }
 
+    private func makeContainer() throws -> NSScriptClassDescription {
+        try #require(NSScriptClassDescription(for: NSApplication.self))
+    }
+
     private func makeNameSpecifier(_ name: String) throws -> NSNameSpecifier {
         NSNameSpecifier(
-            containerClassDescription: try #require(
-                NSScriptClassDescription(for: NSApplication.self)),
-            containerSpecifier: nil, key: AppDelegate.virtualMachinesKey, name: name)
+            containerClassDescription: try makeContainer(), containerSpecifier: nil,
+            key: AppDelegate.virtualMachinesKey, name: name)
+    }
+
+    /// A specifier whose evaluation reads the library by name through the
+    /// gateway, as Cocoa's evaluation of a name it cannot read unevaluated does
+    /// through the element accessor.
+    private final class NameReadingSpecifier: NSScriptObjectSpecifier {
+        var read: (() -> Any?)?
+
+        override func objectsByEvaluating(withContainers containers: Any) -> Any? {
+            read?()
+        }
+    }
+
+    private func makeNameReadingSpecifier(
+        _ read: @escaping () -> Any?
+    ) throws -> NameReadingSpecifier {
+        let specifier = NameReadingSpecifier(
+            containerClassDescription: try makeContainer(), containerSpecifier: nil,
+            key: AppDelegate.virtualMachinesKey)
+        specifier.read = read
+        return specifier
     }
 
     private func makeSummary(
@@ -117,7 +141,7 @@ struct VMScriptingGatewayTests {
         commands.library = [makeSummary(name: "Alpha"), makeSummary(name: "Alpha")]
         let gateway = makeGateway(commands)
         let command = try makeGetCommand()
-        gateway.reissued = command
+        gateway.answeringCommand = command
 
         // Cocoa's own accessor would answer with the first, describing whichever
         // VM the library happens to list first as though it were the one asked
@@ -137,7 +161,7 @@ struct VMScriptingGatewayTests {
         commands.library = [makeSummary(name: "Alpha")]
         let gateway = makeGateway(commands)
         let command = try makeGetCommand()
-        gateway.reissued = command
+        gateway.answeringCommand = command
 
         #expect(gateway.virtualMachine(named: "Beta") == nil)
 
@@ -257,6 +281,117 @@ struct VMScriptingGatewayTests {
         }
     }
 
+    // MARK: - Addressing
+
+    @Test("A verb's evaluation records what the core refused on the verb's own command")
+    func addressingRecordsRefusalsOnTheCommand() async throws {
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Alpha"), makeSummary(name: "Alpha")]
+        let gateway = makeGateway(commands)
+        let command = try makeGetCommand()
+        let specifier = try makeNameReadingSpecifier { gateway.virtualMachine(named: "Alpha") }
+
+        await #expect(throws: VMScriptEvaluationFailure.self) {
+            try await gateway.address(specifier, for: command)
+        }
+
+        #expect(command.scriptErrorNumber == Int(errAENoSuchObject))
+        #expect(
+            command.scriptErrorString
+                == CommandError.ambiguous(selector: .name("Alpha"), candidates: commands.library)
+                .message)
+        #expect(gateway.answeringCommand == nil)
+    }
+
+    @Test("A list of specifiers addresses each VM it names, in order")
+    func aListAddressesEachVM() async throws {
+        let gateway = makeGateway(MockVMCommanding())
+        let list: [Any] = [try makeNameSpecifier("Alpha"), try makeNameSpecifier("Beta")]
+
+        #expect(try await gateway.address(list, for: try makeGetCommand()) == [.name("Alpha"), .name("Beta")])
+        #expect(try await gateway.address([Any](), for: try makeGetCommand()).isEmpty)
+    }
+
+    // MARK: - A read before the library has landed
+
+    @Test("A read arriving before the library lands is deferred once, however often it reads the element")
+    func aColdReadIsDeferredOnce() throws {
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Alpha")]
+        // Never landed, so the deferred read stays parked: resuming a command
+        // Cocoa never suspended is undefined, and only Cocoa's Apple event
+        // handling can suspend one.
+        let gateway = makeGateway(commands, awaitReady: { await ReadinessGate().wait() })
+        let command = try makeGetCommand()
+        gateway.currentCommandForTesting = { command }
+
+        #expect(gateway.virtualMachines().isEmpty)
+        #expect(gateway.virtualMachine(named: "Alpha") == nil)
+        #expect(gateway.coldReads.map { ObjectIdentifier($0) } == [ObjectIdentifier(command)])
+    }
+
+    @Test("A re-issued read answers from the landed library")
+    func aReissuedReadAnswers() throws {
+        let command = try makeGetCommand()
+        // As Cocoa builds a `get`: the specifier is the direct parameter, and
+        // the receivers follow from it.
+        command.directParameter = NSPropertySpecifier(
+            containerClassDescription: try makeContainer(), containerSpecifier: nil,
+            key: AppDelegate.virtualMachinesKey)
+
+        let result = makeGateway(MockVMCommanding()).reissue(command)
+
+        // The test host's element is empty, which is an answer, not a failure.
+        #expect(result != nil)
+        #expect(command.scriptErrorNumber == 0)
+    }
+
+    @Test("A re-issued read whose specifier fails carries the failure as Cocoa reports it")
+    func aReissuedReadCarriesItsFailure() throws {
+        let command = try makeGetCommand()
+        let specifier = try makeNameSpecifier("Nope")
+        specifier.evaluationErrorNumber = NSInternalSpecifierError
+        command.directParameter = specifier
+
+        _ = makeGateway(MockVMCommanding()).reissue(command)
+
+        // The stale failure was cleared and the re-evaluation failed afresh.
+        #expect(command.scriptErrorNumber == Int(errAENoSuchObject))
+        #expect(command.scriptErrorOffendingObjectDescriptor != nil)
+    }
+
+    @Test("A re-issued exists answers false for what it cannot resolve")
+    func aReissuedExistsAnswersFalse() throws {
+        let description = try #require(
+            NSScriptSuiteRegistry.shared().commandDescription(
+                withAppleEventClass: FourCharCode(scriptingCode: "core"),
+                andAppleEventCode: FourCharCode(scriptingCode: "doex")))
+        let command = description.createCommandInstance()
+        let specifier = try makeNameSpecifier("Nope")
+        command.directParameter = specifier.descriptor
+        command.receiversSpecifier = specifier
+
+        let result = makeGateway(MockVMCommanding()).reissue(command)
+
+        #expect((result as? NSNumber)?.boolValue == false)
+        #expect(command.scriptErrorNumber == 0)
+    }
+
+    @Test("Clearing an evaluation failure clears the whole container chain")
+    func clearingAFailureClearsTheChain() throws {
+        let container = try makeNameSpecifier("Alpha")
+        let property = NSPropertySpecifier(
+            containerClassDescription: try makeContainer(), containerSpecifier: container,
+            key: "name")
+        container.evaluationErrorNumber = NSInternalSpecifierError
+        property.evaluationErrorNumber = NSContainerSpecifierError
+
+        VMScriptingGateway.clearEvaluationFailure(property)
+
+        #expect(property.evaluationErrorNumber == 0)
+        #expect(container.evaluationErrorNumber == 0)
+    }
+
     // MARK: - Activation
 
     @Test("A verb that puts a window up brings the app forward first")
@@ -311,7 +446,8 @@ struct VMScriptingGatewayTests {
         let gateway = makeGateway(MockVMCommanding(), awaitReady: { await readiness.wait() })
         let specifier = try makeNameSpecifier("Alpha")
 
-        let run = Task { try await gateway.address(specifier) }
+        let command = try makeGetCommand()
+        let run = Task { try await gateway.address(specifier, for: command) }
         try await readiness.awaitWaiting()
         readiness.open()
 

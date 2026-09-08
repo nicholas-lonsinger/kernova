@@ -83,11 +83,9 @@ class VMScriptCommand: NSScriptCommand {
     /// that suspends a command to return before the command is resumed, which
     /// the hop cannot violate: it lands on the next pass of the main run loop.
     ///
-    /// A selector hop rather than a task: the closure a task takes would carry
-    /// `self` to the main actor, which region isolation refuses for the
-    /// receiver of a nonisolated method. There is no closure here, and the
-    /// method it lands in is main-actor code entered on the main thread, as
-    /// every Cocoa callback is.
+    /// A selector hop rather than a task: it carries no closure, so nothing
+    /// crosses isolation, and the method it lands in is main-actor code entered
+    /// on the main thread, as every Cocoa callback is.
     nonisolated override func execute() -> Any? {
         suspendExecution()
         perform(#selector(begin), on: .main, with: nil, waitUntilDone: false)
@@ -99,10 +97,11 @@ class VMScriptCommand: NSScriptCommand {
         Task { await answer() }
     }
 
-    /// What the event addressed: its direct parameter, or the `tell` block's
-    /// subject, which Cocoa promotes into the same slot.
-    private var specifier: NSScriptObjectSpecifier? {
-        directParameter as? NSScriptObjectSpecifier ?? receiversSpecifier
+    /// What the event addressed — one specifier or a list of them — as its
+    /// direct parameter, or as the `tell` block's subject, which Cocoa promotes
+    /// into the same slot.
+    private var addressed: Any? {
+        directParameter ?? receiversSpecifier
     }
 
     /// Runs the verb and hands the event back.
@@ -120,14 +119,14 @@ class VMScriptCommand: NSScriptCommand {
             refuse(Int(errAEEventFailed), "Kernova is not ready to answer scripts.")
             return
         }
-        guard let specifier else {
+        guard let addressed else {
             refuse(
                 Int(errAEWrongNumberArgs),
                 "Name the virtual machine to \(commandDescription.commandName).")
             return
         }
         do {
-            try await run(gateway, on: try await gateway.address(specifier))
+            try await run(gateway, on: try await gateway.address(addressed, for: self))
         } catch let failure as VMScriptEvaluationFailure {
             failure.record(on: self)
         } catch let refusal as CommandError {
@@ -148,14 +147,18 @@ class VMScriptCommand: NSScriptCommand {
     }
 
     /// Whether the `with`/`without` parameter under `key` was given as `with`.
+    ///
+    /// Read as unpacked: evaluating the arguments would evaluate the direct
+    /// parameter along with them, which is ``answer()``'s to do after the
+    /// library has landed.
     func flag(_ key: String) -> Bool {
-        evaluatedArguments?[key] as? Bool ?? false
+        arguments?[key] as? Bool ?? false
     }
 
     /// The deadline in seconds the parameter under `key` carries, `nil` when
     /// the script named none — which is a wait as long as the guest takes.
     func seconds(_ key: String) -> TimeInterval? {
-        guard let number = evaluatedArguments?[key] as? NSNumber else { return nil }
+        guard let number = arguments?[key] as? NSNumber else { return nil }
         return number.doubleValue
     }
 }
@@ -185,7 +188,7 @@ final class VMStopScriptCommand: VMScriptCommand {
     /// The stop the `by` parameter asked for, shutting down when the script
     /// named none and `nil` for a code from no vocabulary this app writes.
     private func stopMethod() -> StopDisposition? {
-        guard let named = evaluatedArguments?["StopMethod"] as? NSNumber else { return .graceful }
+        guard let named = arguments?["StopMethod"] as? NSNumber else { return .graceful }
         return VMScriptStopMethod(code: named.uint32Value)?.disposition
     }
 }

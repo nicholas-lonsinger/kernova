@@ -99,9 +99,12 @@ struct KernovaScriptingDefinitionTests {
             let handler = try #require(try values("cocoa", "class", in: command).first)
             let handlerClass: AnyClass = try #require(NSClassFromString(handler))
             #expect(handlerClass is NSScriptCommand.Type, "\(handler) is not a script command")
-            // Every verb addresses a VM, and the direct parameter is what a
-            // script names it with.
-            #expect(try values("direct-parameter", "type", in: command) == ["virtual machine"])
+            // Every verb addresses a VM, or a list of them, and the direct
+            // parameter is what a script names them with.
+            #expect(
+                try values("direct-parameter/type", "type", in: command)
+                    == ["virtual machine", "virtual machine"])
+            #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
         }
     }
 

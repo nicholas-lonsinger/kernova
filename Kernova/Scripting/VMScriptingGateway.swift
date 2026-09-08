@@ -35,11 +35,17 @@ final class VMScriptingGateway {
 
     /// Cocoa's own commands suspended on a read that arrived before the library
     /// landed, each answered once it has.
-    private var coldReads: [NSScriptCommand] = []
+    private(set) var coldReads: [NSScriptCommand] = []
 
-    /// The command standing in for a suspended one while its read is re-issued
-    /// — what a refusal is recorded on while Cocoa has no current command.
-    var reissued: NSScriptCommand?
+    /// The command an evaluation this gateway runs is answering — a verb's own
+    /// while it addresses its specifier, the fresh instance while a cold read
+    /// is re-issued — which is where a refusal is recorded while Cocoa has no
+    /// current command.
+    var answeringCommand: NSScriptCommand?
+
+    /// What stands in for `NSScriptCommand.current()`. Tests only, which have
+    /// no command in flight.
+    var currentCommandForTesting: (@MainActor () -> NSScriptCommand?)?
 
     init(
         commands: any VMCommanding, readiness: LibraryReadiness,
@@ -98,10 +104,15 @@ final class VMScriptingGateway {
         }
     }
 
+    /// The command Cocoa is executing on this thread, if any.
+    private var executing: NSScriptCommand? {
+        currentCommandForTesting?() ?? NSScriptCommand.current()
+    }
+
     /// The command a read is being answered for: the one Cocoa is executing,
-    /// or the one re-issued for a read that arrived before the library landed.
+    /// or the one an evaluation of this gateway's own is answering.
     private var answering: NSScriptCommand? {
-        NSScriptCommand.current() ?? reissued
+        executing ?? answeringCommand
     }
 
     // MARK: - A read before the library has landed
@@ -112,14 +123,13 @@ final class VMScriptingGateway {
     /// Cocoa evaluates a specifier inside the Apple event's own callout,
     /// through synchronous KVC with no suspension of its own to await in — but
     /// the command being executed is `NSScriptCommand.current()`, and a
-    /// command can be suspended from anywhere on its own stack. The evaluation
-    /// then finishes against an empty library and its result is discarded, as
-    /// a suspended command's is; ``answer(coldRead:)`` supplies the real one.
+    /// command can be suspended from anywhere on its own stack.
+    /// ``answer(coldRead:)`` supplies what it answers with.
     ///
     /// - Returns: Whether the read was deferred, which is the caller's cue to
     ///   answer nothing now.
     private func deferUntilLanded() -> Bool {
-        guard !readiness.hasLanded, let command = NSScriptCommand.current() else { return false }
+        guard !readiness.hasLanded, let command = executing else { return false }
         // One evaluation can read the element more than once.
         if coldReads.contains(where: { $0 === command }) { return true }
         coldReads.append(command)
@@ -131,47 +141,60 @@ final class VMScriptingGateway {
         return true
     }
 
-    /// Re-issues a suspended command once the library has landed, and resumes
-    /// it with the answer.
-    ///
-    /// A fresh instance from the same description, because a command evaluates
-    /// its receivers once and keeps the result: re-executing the suspended one
-    /// answers from the empty library its first pass saw. The specifiers are
-    /// shared with that first pass and keep its failure, which a re-evaluation
-    /// repeats rather than retries, so that is cleared first.
-    ///
-    /// What `execute()` leaves behind is the command's own error and the
-    /// specifiers': Cocoa's Apple event handling turns the latter into the
-    /// script error itself, after `execute()` returns, and a resumed command
-    /// gets none of that — so it is turned here, by the same rule. `exists` is
-    /// the one command whose answer *is* that failure, and keeps its `false`.
+    /// Resumes a suspended command with its answer once the library has landed.
     private func answer(coldRead command: NSScriptCommand) async {
         await readiness.ready()
+        let result = reissue(command)
+        coldReads.removeAll { $0 === command }
+        Self.logger.notice(
+            "The library read landed; answering the \(command.commandDescription.commandName, privacy: .public) that waited on it"
+        )
+        command.resumeExecution(withResult: result)
+    }
+
+    /// Runs `command` again against the landed library, recording on it what
+    /// the script reads back, and returns the result to resume it with.
+    ///
+    /// A fresh instance from the same description, because a command evaluates
+    /// its receivers once and keeps the result. The specifiers are shared with
+    /// the first pass and keep its failure, which a re-evaluation repeats
+    /// rather than retries, so that is cleared first.
+    ///
+    /// Cocoa's Apple event handling turns receivers `execute()` could not
+    /// evaluate into the script error itself, after `execute()` returns, and a
+    /// resumed command gets none of that — so it is turned here, by the same
+    /// rule. `execute()` leaves nothing that tells a failed evaluation from an
+    /// empty one: it reports no receivers for either, and a specifier that
+    /// evaluated to nothing keeps an error code whether or not it failed. The
+    /// evaluation itself does — `nil` against an empty list — so the receivers
+    /// are evaluated once beforehand to tell the two apart. `exists` is the one
+    /// command whose answer *is* that failure, and keeps its `false`.
+    func reissue(_ command: NSScriptCommand) -> Any? {
         let answer = command.commandDescription.createCommandInstance()
         answer.directParameter = command.directParameter
         answer.receiversSpecifier = command.receiversSpecifier
         answer.arguments = command.arguments
-        clearEvaluationFailure(answer.receiversSpecifier)
-        clearEvaluationFailure(answer.directParameter as? NSScriptObjectSpecifier)
-        reissued = answer
+        answeringCommand = answer
+        defer { answeringCommand = nil }
+        let receivers = answer.receiversSpecifier
+        Self.clearEvaluationFailure(receivers)
+        let failure = receivers.flatMap { receivers -> VMScriptEvaluationFailure? in
+            receivers.objectsByEvaluatingSpecifier == nil ? VMScriptEvaluationFailure(receivers) : nil
+        }
+        Self.clearEvaluationFailure(receivers)
         let result = answer.execute()
-        reissued = nil
-        coldReads.removeAll { $0 === command }
+        if answer.scriptErrorNumber == 0, !(answer is NSExistsCommand), let failure {
+            failure.record(on: answer)
+        }
         command.scriptErrorNumber = answer.scriptErrorNumber
         command.scriptErrorString = answer.scriptErrorString
         command.scriptErrorOffendingObjectDescriptor = answer.scriptErrorOffendingObjectDescriptor
-        if command.scriptErrorNumber == 0, !(answer is NSExistsCommand),
-            let failed = answer.receiversSpecifier?.evaluationError,
-            failed.evaluationErrorNumber != 0
-        {
-            VMScriptEvaluationFailure(failed).record(on: command)
-        }
-        command.resumeExecution(withResult: result)
+        return result
     }
 
     /// Clears the failure a past evaluation left on `specifier` and every
     /// container above it.
-    private func clearEvaluationFailure(_ specifier: NSScriptObjectSpecifier?) {
+    static func clearEvaluationFailure(_ specifier: NSScriptObjectSpecifier?) {
         var link = specifier
         while let specifier = link {
             specifier.evaluationErrorNumber = 0
@@ -181,10 +204,14 @@ final class VMScriptingGateway {
 
     // MARK: - Addressing
 
-    /// The VMs `specifier` addresses, read once the library has landed.
-    func address(_ specifier: NSScriptObjectSpecifier) async throws -> [VMSelector] {
+    /// The VMs `parameter` addresses — one specifier, or a list of them — read
+    /// once the library has landed, with `command` answering for whatever the
+    /// evaluation refuses.
+    func address(_ parameter: Any, for command: NSScriptCommand) async throws -> [VMSelector] {
         await readiness.ready()
-        return try VMScriptSelector.selectors(addressing: specifier)
+        answeringCommand = command
+        defer { answeringCommand = nil }
+        return try VMScriptSelector.selectors(addressing: parameter)
     }
 
     // MARK: - Lifecycle

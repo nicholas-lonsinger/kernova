@@ -117,6 +117,39 @@ struct VMScriptSelectorTests {
         }
     }
 
+    @Test("A list of specifiers addresses the VMs each names, in order")
+    func aListAddressesEachSpecifier() throws {
+        let id = UUID()
+        let list: [Any] = [
+            NSNameSpecifier(
+                containerClassDescription: try makeContainer(), containerSpecifier: nil,
+                key: AppDelegate.virtualMachinesKey, name: "Alpha"),
+            NSUniqueIDSpecifier(
+                containerClassDescription: try makeContainer(), containerSpecifier: nil,
+                key: AppDelegate.virtualMachinesKey, uniqueID: id.uuidString),
+        ]
+
+        #expect(try VMScriptSelector.selectors(addressing: list) == [.name("Alpha"), .id(id)])
+        #expect(try VMScriptSelector.selectors(addressing: [Any]()).isEmpty)
+    }
+
+    @Test("A list item that is not a specifier is a type error naming the item")
+    func aNonSpecifierListItemIsRefused() throws {
+        let list: [Any] = [
+            NSNameSpecifier(
+                containerClassDescription: try makeContainer(), containerSpecifier: nil,
+                key: AppDelegate.virtualMachinesKey, name: "Alpha"),
+            3,
+        ]
+
+        let refusal = #expect(throws: CommandError.self) {
+            try VMScriptSelector.selectors(addressing: list)
+        }
+
+        #expect(refusal?.appleEventErrorNumber == Int(errAETypeError))
+        #expect(refusal?.message.contains("item 2") == true)
+    }
+
     @Test("A failure records its number and the specifier at fault on the command")
     func aFailureRecordsItselfOnTheCommand() throws {
         let description = try #require(

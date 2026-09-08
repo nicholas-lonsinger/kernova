@@ -11,6 +11,28 @@ import KernovaKit
 /// an index, a range, `every`, a `whose` test — only Cocoa can read, so those
 /// are evaluated and each VM addressed by identifier.
 enum VMScriptSelector {
+    /// The VMs `parameter` addresses: one specifier, or a list of them, each
+    /// read as ``selectors(addressing:)-swift.type.method`` reads one.
+    ///
+    /// - Throws: ``VMScriptEvaluationFailure`` as one specifier's read does, and
+    ///   ``CommandError/invalidArgument(_:)`` for a list item that is not a
+    ///   specifier.
+    static func selectors(addressing parameter: Any) throws -> [VMSelector] {
+        if let specifier = parameter as? NSScriptObjectSpecifier {
+            return try selectors(addressing: specifier)
+        }
+        guard let list = parameter as? [Any] else {
+            throw CommandError.invalidArgument("Name a virtual machine, or a list of them.")
+        }
+        return try list.enumerated().flatMap { index, item in
+            guard let specifier = item as? NSScriptObjectSpecifier else {
+                throw CommandError.invalidArgument(
+                    "A list here names virtual machines only; item \(index + 1) is not one.")
+            }
+            return try selectors(addressing: specifier)
+        }
+    }
+
     /// The VMs `specifier` addresses, in the order it named them.
     ///
     /// Empty when the specifier evaluated to nothing — `every virtual machine`
