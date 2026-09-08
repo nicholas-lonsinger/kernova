@@ -45,7 +45,8 @@ final class AppTerminationController: NSObject {
     /// the reply the finished pass owes it.
     private var owesDeferredTerminationReply = false
 
-    /// Set by `handleQuitAppleEvent` when the sender is System Settings / TCC.
+    /// Latched at the gate when a quit Apple Event's sender is System Settings /
+    /// TCC.
     private var terminationIsTCCRevocation = false
 
     /// Set in ``handleTerminationRequest()`` when TCC revocation is detected AND
@@ -57,9 +58,9 @@ final class AppTerminationController: NSObject {
     /// downgrading the quit to a GUI close.
     private var userRequestedAgentQuit = false
 
-    /// Set by `handleQuitAppleEvent` via `classifyQuit` whenever an external quit
-    /// Apple Event must actually terminate the agent rather than downgrade to a
-    /// GUI close, short of a TCC revocation.
+    /// Latched at the gate via `classifyQuit` whenever an external quit Apple
+    /// Event must actually terminate the agent rather than downgrade to a GUI
+    /// close, short of a TCC revocation.
     ///
     /// Latches for every sender `classifyQuit` maps to `.terminateAndSave`: a
     /// system quit must never leave the system waiting on the agent at logout, a
@@ -71,21 +72,6 @@ final class AppTerminationController: NSObject {
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
-    }
-
-    // MARK: - Install
-
-    /// Intercepts the Quit Apple Event so `classifyQuit` can inspect its sender.
-    ///
-    /// The delegate must hold this controller strongly: `NSAppleEventManager`
-    /// does not retain an event handler.
-    func install() {
-        NSAppleEventManager.shared().setEventHandler(
-            self,
-            andSelector: #selector(handleQuitAppleEvent(_:withReplyEvent:)),
-            forEventClass: AEEventClass(kCoreEventClass),
-            andEventID: AEEventID(kAEQuitApplication)
-        )
     }
 
     /// Takes ownership of a launch task the gate cancels on the way out.
@@ -195,12 +181,38 @@ final class AppTerminationController: NSObject {
         }
     }
 
-    /// Handles the `kAEQuitApplication` Apple Event by classifying its sender.
-    @objc private func handleQuitAppleEvent(
-        _ event: NSAppleEventDescriptor,
-        withReplyEvent _: NSAppleEventDescriptor
-    ) {
-        let senderPID = event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
+    /// What the gate reads as the pending quit's sender, in place of the quit
+    /// Apple Event `NSAppleEventManager` is handling. Tests only: a sender PID
+    /// is stamped on an event as it is received, never on one built locally.
+    var quitSenderPIDForTesting: (@MainActor () -> pid_t?)?
+
+    /// Whether `event` is the Standard Suite's quit.
+    nonisolated static func isQuitEvent(_ event: NSAppleEventDescriptor) -> Bool {
+        event.eventClass == AEEventClass(kCoreEventClass)
+            && event.eventID == AEEventID(kAEQuitApplication)
+    }
+
+    /// Latches what the quit Apple Event being handled demands, if the pending
+    /// quit was delivered by one: the sender is what decides — see
+    /// ``classifyQuit(senderPID:bundleIDResolver:isProcessAlive:)``.
+    ///
+    /// Read at the gate, from the event being handled, rather than by a handler
+    /// of the controller's own: which handler receives a quit changes with the
+    /// process's history. AppKit's own has it until the first scripting Apple
+    /// event loads Cocoa Scripting's suite registry, which installs the Standard
+    /// Suite's `quit` over any handler registered before it — and every one of
+    /// them calls `terminate:` inside the event's callout, where the event is
+    /// `currentAppleEvent`.
+    private func latchClassificationOfQuitEvent() {
+        let senderPID: pid_t?
+        if let sender = quitSenderPIDForTesting {
+            senderPID = sender()
+        } else {
+            guard let event = NSAppleEventManager.shared().currentAppleEvent,
+                Self.isQuitEvent(event)
+            else { return }
+            senderPID = event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
+        }
         // Resolved once and fed to `classifyQuit` as fixed values so the same
         // attribution result also drives the logging below. The two probes can't
         // collapse into one: `NSRunningApplication` alone reads a live non-GUI
@@ -235,8 +247,6 @@ final class AppTerminationController: NSObject {
         }
 
         latchQuitClassification(classification)
-
-        NSApp.terminate(nil)
     }
 
     // MARK: - Termination Gate
@@ -294,11 +304,14 @@ final class AppTerminationController: NSObject {
     /// Answers `applicationShouldTerminate(_:)`.
     ///
     /// Every quit path funnels through `terminate:` and thus this method, so
-    /// this single gate covers them all — see ``shouldTerminateOnQuit``.
+    /// this single gate covers them all — see ``shouldTerminateOnQuit``. A quit
+    /// an Apple Event asked for is classified here by that event, whichever
+    /// handler delivered it.
     ///
     /// `.terminateLater` is reached only by a termination AppKit begins on its
     /// own, and is answered by the save pass — see ``requestFullQuit()``.
     func handleTerminationRequest() -> NSApplication.TerminateReply {
+        latchClassificationOfQuitEvent()
         switch Self.terminationOutcome(
             hasCompletedSavePass: hasCompletedTerminationSavePass,
             shouldTerminateAgent: shouldTerminateOnQuit,

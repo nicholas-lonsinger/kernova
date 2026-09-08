@@ -46,6 +46,14 @@ struct AppTerminationGateTests {
         return (AppTerminationController(viewModel: viewModel), viewModel)
     }
 
+    /// An Apple event of `eventClass`/`eventID`, as one arrives.
+    private func makeEvent(_ eventClass: AEEventClass, _ eventID: AEEventID) -> NSAppleEventDescriptor {
+        NSAppleEventDescriptor(
+            eventClass: eventClass, eventID: eventID,
+            targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID))
+    }
+
     /// Records how each finished save pass ended, and what the gate would
     /// answer at that moment.
     @MainActor
@@ -157,6 +165,41 @@ struct AppTerminationGateTests {
         #expect(controller.shouldTerminateOnQuit)
         #expect(controller.handleTerminationRequest() == .terminateNow)
         #expect(spy.closeCount == 0)
+    }
+
+    @Test("A quit a script sent terminates and saves, whichever handler delivered it")
+    func scriptedQuitTerminates() {
+        let (controller, viewModel) = makeController()
+        let spy = SoftQuitSpy()
+        controller.residency = spy
+        viewModel.keepInMenuBarOnQuit = true
+        // launchd: alive, and no application — the shape of `osascript`'s quit.
+        controller.quitSenderPIDForTesting = { 1 }
+
+        #expect(controller.handleTerminationRequest() == .terminateNow)
+        #expect(controller.shouldTerminateOnQuit)
+        #expect(spy.closeCount == 0)
+    }
+
+    @Test("A quit the app sent itself stays resident")
+    func selfSentQuitStaysResident() async throws {
+        let (controller, viewModel) = makeController()
+        let spy = SoftQuitSpy()
+        controller.residency = spy
+        viewModel.keepInMenuBarOnQuit = true
+        controller.quitSenderPIDForTesting = { getpid() }
+
+        #expect(controller.handleTerminationRequest() == .terminateCancel)
+        #expect(!controller.shouldTerminateOnQuit)
+
+        try await spy.closed.wait { spy.closeCount == 1 }
+    }
+
+    @Test("Only the Standard Suite's quit is read as one")
+    func onlyAQuitEventIsAQuit() {
+        #expect(AppTerminationController.isQuitEvent(makeEvent(kCoreEventClass, kAEQuitApplication)))
+        #expect(!AppTerminationController.isQuitEvent(makeEvent(kCoreEventClass, kAEOpenApplication)))
+        #expect(!AppTerminationController.isQuitEvent(makeEvent(kAEMiscStandards, kAEQuitApplication)))
     }
 
     @Test("A terminate-and-save classification outranks staying in the status bar, and never clears")

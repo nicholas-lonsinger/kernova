@@ -154,8 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // the one moment nothing staged can still be owed to it.
         DropPromiseStaging.reclaimAll()
 
-        termination.install()
-
         lifecycle.start(provenance: readLaunchProvenance())
     }
 
