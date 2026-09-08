@@ -56,6 +56,29 @@ Left-behind worktrees are removable the same way: verify `gh pr list --head
 (add `--force` if Xcode left an `xcuserstate` behind) and `git branch -D
 <worktree-branch>`.
 
+## Delegating to a subagent
+
+Size the model and the effort to the task, never to what the parent runs on,
+and pass `model` explicitly on every launch: a Workflow `agent()` takes `model`
+and `effort:` directly, and its "omit model" default silently inherits the
+parent, while an `Agent` call's effort comes from the agent type it names, so
+pick one whose effort fits.
+
+| Task | Model | Effort |
+|---|---|---|
+| Explore sweep, build or test verdict, fully spec'd mechanical edit, summary | Sonnet | high |
+| Implementing an agreed plan, writing tests, root-causing an ordinary bug, research, ordinary planning | Opus | xhigh |
+| Reviewing a moderate diff | Opus | high |
+| Concurrency, actor-isolation, or cross-subsystem design; adversarial verification; retrying what an Opus attempt got wrong | Fable | xhigh |
+
+Torn between Sonnet and Opus takes Opus; torn between Opus and Fable takes
+Opus, with a shallow or wrong result re-run one tier up rather than absorbed
+inline.
+
+**Name the model and effort in the sentence that announces each delegation**
+("handing the sweep to Sonnet at high") — once per phase for a workflow, not
+per agent.
+
 ## Matching review effort to the diff
 
 `/code-review low` for trivial/mechanical diffs; `medium` (precision-biased —
