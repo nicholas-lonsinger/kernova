@@ -450,6 +450,7 @@ extension VMCommandCore {
         _ selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
         timeout: TimeInterval?
     ) async throws {
+        try Self.requireUsable(timeout)
         try await stop(
             try resolve(selector), disposition: disposition, confirmed: confirmed, timeout: timeout)
     }
@@ -677,6 +678,7 @@ extension VMCommandCore {
     func restart(
         _ selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?
     ) async throws {
+        try Self.requireUsable(timeout)
         let instance = try resolve(selector)
         try require(.restart, on: instance)
         try await stop(instance, disposition: .graceful, confirmed: true)
@@ -693,6 +695,13 @@ extension VMCommandCore {
         } else {
             try await resume(.id(instance.id), presentation: presentation)
         }
+    }
+
+    /// Refuses a deadline no wait can honor, before anything is asked of the
+    /// guest.
+    private static func requireUsable(_ timeout: TimeInterval?) throws {
+        guard let timeout, !CommandTimeout.isUsable(timeout) else { return }
+        throw CommandError.invalidArgument("A timeout is a number of seconds greater than zero.")
     }
 
     /// Suspends until the guest is off — its `VZVirtualMachine` gone from

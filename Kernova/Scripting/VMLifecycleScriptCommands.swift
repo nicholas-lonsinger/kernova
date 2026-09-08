@@ -1,6 +1,7 @@
 import Cocoa
 import CoreServices
 import KernovaKit
+import os
 
 /// The dictionary's `VM stop method` enumeration, in Swift.
 ///
@@ -58,99 +59,92 @@ enum VMScriptStopMethod: CaseIterable {
 
 // MARK: - The shape every VM verb takes
 
-/// One suspended script command, carried from the Apple event's own callout
-/// into the main-actor turn that answers it.
+/// What every Kernova verb an Apple event can ask for is built out of: take
+/// the event over, read who it addressed once the library has landed, run the
+/// verb, and answer once it settles.
 ///
-/// `@unchecked Sendable` is that crossing spelled out rather than inferred:
-/// Cocoa creates and executes every script command on the main thread, this
-/// hands one nowhere else, and between the two the command is suspended — the
-/// turn that resumes it is the only thing touching it.
-private struct SuspendedScriptCommand: @unchecked Sendable {
-    let command: VMScriptCommand
+/// Main-actor isolated because everything it touches is: Cocoa creates and
+/// executes every script command on the main thread, and the gateway a verb
+/// reaches is main-actor state. ``execute()`` is the one door Cocoa calls, so
+/// it stays as nonisolated as the method it overrides and does nothing but
+/// suspend the event and hand the rest to the main actor.
+@MainActor
+class VMScriptCommand: NSScriptCommand {
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMScriptCommand")
 
-    /// Runs the verb and hands the Apple event back.
-    @MainActor
-    func answer(
-        _ body: @MainActor (VMScriptingGateway, [VMSelector]) async throws -> Void
-    ) async {
-        await record(body)
-        // Resuming is what hands the event back, so a refusal not recorded by
-        // now is not reported at all.
-        command.resumeExecution(withResult: nil)
+    /// Takes the event over from Cocoa's own dispatch.
+    ///
+    /// Cocoa's `execute()` evaluates the receivers first and answers a failure
+    /// itself, before any implementation runs: a name that resolves to nothing,
+    /// or to two VMs, is "can't get" and never reaches the core. Overriding it
+    /// is what lets a name reach the core as a name, and what lets the
+    /// resolution wait for the library — nothing is evaluated here; that is
+    /// ``answer()``'s, once the read has landed. Cocoa requires the handler
+    /// that suspends a command to return before the command is resumed, which
+    /// the hop cannot violate: it lands on the next pass of the main run loop.
+    ///
+    /// A selector hop rather than a task: the closure a task takes would carry
+    /// `self` to the main actor, which region isolation refuses for the
+    /// receiver of a nonisolated method. There is no closure here, and the
+    /// method it lands in is main-actor code entered on the main thread, as
+    /// every Cocoa callback is.
+    nonisolated override func execute() -> Any? {
+        suspendExecution()
+        perform(#selector(begin), on: .main, with: nil, waitUntilDone: false)
+        return nil
     }
 
-    /// Runs the verb, recording whatever it refused.
-    @MainActor
-    private func record(
-        _ body: @MainActor (VMScriptingGateway, [VMSelector]) async throws -> Void
-    ) async {
+    /// Where the hop lands: the verb starts here, on the main actor.
+    @objc private func begin() {
+        Task { await answer() }
+    }
+
+    /// What the event addressed: its direct parameter, or the `tell` block's
+    /// subject, which Cocoa promotes into the same slot.
+    private var specifier: NSScriptObjectSpecifier? {
+        directParameter as? NSScriptObjectSpecifier ?? receiversSpecifier
+    }
+
+    /// Runs the verb and hands the event back.
+    ///
+    /// Resuming is what hands the event back, so a refusal not recorded by then
+    /// is not reported at all.
+    private func answer() async {
+        await record()
+        resumeExecution(withResult: nil)
+    }
+
+    /// Runs the verb, recording whatever refused it.
+    private func record() async {
         guard let gateway = (NSApp.delegate as? AppDelegate)?.scriptingGateway else {
-            command.refuse(Int(errAEEventFailed), "Kernova is not ready to answer scripts.")
+            refuse(Int(errAEEventFailed), "Kernova is not ready to answer scripts.")
             return
         }
-        let selectors = command.addressedVMs
-        guard !selectors.isEmpty else {
-            // Cocoa's own evaluation already said which specifier it could not
-            // resolve, in the words a script reads for every other class too.
-            command.refuse(Int(errAENoSuchObject), "")
+        guard let specifier else {
+            refuse(
+                Int(errAEWrongNumberArgs),
+                "Name the virtual machine to \(commandDescription.commandName).")
             return
         }
         do {
-            try await body(gateway, selectors)
-        } catch let failure as CommandError {
-            command.refuse(failure.appleEventErrorNumber, failure.appleEventErrorString)
+            try await run(gateway, on: try await gateway.address(specifier))
+        } catch let failure as VMScriptEvaluationFailure {
+            failure.record(on: self)
+        } catch let refusal as CommandError {
+            refuse(refusal)
         } catch {
-            command.refuse(Int(errAEEventFailed), error.localizedDescription)
+            refuse(Int(errAEEventFailed), error.localizedDescription)
         }
     }
-}
 
-/// What every Kernova verb an Apple event can ask for is built out of: read who
-/// the event addressed, run the verb, and answer once it settles.
-class VMScriptCommand: NSScriptCommand {
-    /// Whether the verb has already been started for this command.
-    private var hasStarted = false
-
-    /// Runs the verb the first time Cocoa dispatches this command to a VM.
+    /// The verb, run on the VMs the event addressed.
     ///
-    /// An object-first command arrives once per VM its specifier resolved to,
-    /// and this command already addresses every one of them, so the arrivals
-    /// after the first do nothing. A specifier that resolves to no VM is
-    /// dispatched to none, and reaches ``performDefaultImplementation()``
-    /// instead — which is what lets a name the core refuses as ambiguous be
-    /// refused in the core's own words.
-    func runOnceForResolvedReceivers() -> Any? {
-        guard !hasStarted else { return nil }
-        hasStarted = true
-        return performDefaultImplementation()
-    }
-
-    /// The VMs this command addresses, in the order it named them.
-    var addressedVMs: [VMSelector] {
-        VMScriptSelector.selectors(
-            addressing: receiversSpecifier ?? (directParameter as? NSScriptObjectSpecifier),
-            resolving: evaluatedReceivers ?? directParameter)
-    }
-
-    /// Runs one Kernova verb for this command, off the Apple event's own
-    /// callout, and reports whatever it refused.
-    ///
-    /// Cocoa requires the handler that suspends a command to return before the
-    /// command is resumed, which is what a main-actor `Task` cannot violate: it
-    /// has no turn to run in until this callout ends.
-    func runVMVerb(
-        _ body: @escaping @MainActor (VMScriptingGateway, [VMSelector]) async throws -> Void
-    ) {
-        let suspended = SuspendedScriptCommand(command: self)
-        suspendExecution()
-        Task { @MainActor in await suspended.answer(body) }
-    }
-
-    /// Records what a script reads back instead of a result.
-    func refuse(_ number: Int, _ message: String) {
-        scriptErrorNumber = number
-        guard !message.isEmpty else { return }
-        scriptErrorString = message
+    /// Every command overrides this; reaching the base is a programming error.
+    func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        Self.logger.fault(
+            "The \(self.commandDescription.commandName, privacy: .public) command runs no verb")
+        assertionFailure("The \(commandDescription.commandName) command runs no verb")
+        throw CommandError.unsupported(capability: "the \(commandDescription.commandName) command")
     }
 
     /// Whether the `with`/`without` parameter under `key` was given as `with`.
@@ -171,30 +165,21 @@ class VMScriptCommand: NSScriptCommand {
 /// `start virtual machine …`
 @objc(VMStartScriptCommand)
 final class VMStartScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
-        let recoveryMode = flag("RecoveryMode")
-        runVMVerb { gateway, selectors in
-            try await gateway.start(selectors, recoveryMode: recoveryMode)
-        }
-        return nil
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.start(selectors, recoveryMode: flag("RecoveryMode"))
     }
 }
 
 /// `stop virtual machine … [by <method>] [with confirmation] [giving up after <seconds>]`
 @objc(VMStopScriptCommand)
 final class VMStopScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         guard let method = stopMethod() else {
-            refuse(Int(errAETypeError), "That is not a way Kernova can stop a guest.")
-            return nil
+            throw CommandError.invalidArgument("That is not a way Kernova can stop a guest.")
         }
-        let confirmed = flag("Confirmation")
-        let timeout = seconds("GivingUpAfter")
-        runVMVerb { gateway, selectors in
-            try await gateway.stop(
-                selectors, method: method, confirmed: confirmed, givingUpAfter: timeout)
-        }
-        return nil
+        try await gateway.stop(
+            selectors, method: method, confirmed: flag("Confirmation"),
+            givingUpAfter: seconds("GivingUpAfter"))
     }
 
     /// The stop the `by` parameter asked for, shutting down when the script
@@ -208,47 +193,39 @@ final class VMStopScriptCommand: VMScriptCommand {
 /// `restart virtual machine … [giving up after <seconds>]`
 @objc(VMRestartScriptCommand)
 final class VMRestartScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
-        let timeout = seconds("GivingUpAfter")
-        runVMVerb { gateway, selectors in
-            try await gateway.restart(selectors, givingUpAfter: timeout)
-        }
-        return nil
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.restart(selectors, givingUpAfter: seconds("GivingUpAfter"))
     }
 }
 
 /// `pause virtual machine …`
 @objc(VMPauseScriptCommand)
 final class VMPauseScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
-        runVMVerb { gateway, selectors in try await gateway.pause(selectors) }
-        return nil
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.pause(selectors)
     }
 }
 
 /// `resume virtual machine …`
 @objc(VMResumeScriptCommand)
 final class VMResumeScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
-        runVMVerb { gateway, selectors in try await gateway.resume(selectors) }
-        return nil
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.resume(selectors)
     }
 }
 
 /// `suspend virtual machine …`
 @objc(VMSuspendScriptCommand)
 final class VMSuspendScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
-        runVMVerb { gateway, selectors in try await gateway.suspend(selectors) }
-        return nil
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.suspend(selectors)
     }
 }
 
 /// `reveal virtual machine …`
 @objc(VMRevealScriptCommand)
 final class VMRevealScriptCommand: VMScriptCommand {
-    override func performDefaultImplementation() -> Any? {
-        runVMVerb { gateway, selectors in try await gateway.reveal(selectors) }
-        return nil
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.reveal(selectors)
     }
 }

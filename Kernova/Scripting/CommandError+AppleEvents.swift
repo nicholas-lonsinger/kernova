@@ -5,9 +5,10 @@ import KernovaKit
 extension CommandError {
     /// The Apple event error number a script reads this refusal as.
     ///
-    /// The same partition ``CLIExitCode`` draws, mapped onto the four numbers
-    /// AppleScript gives meaning to: an object that isn't there, a type it
-    /// cannot use, a deadline, and everything the verb itself refused.
+    /// Coarser than the partition ``CLIExitCode`` draws: AppleScript gives
+    /// meaning to four numbers — an object that isn't there, a type it cannot
+    /// use, a deadline, and everything the verb itself refused — and the
+    /// refusals the tool tells apart by exit code fold into them.
     var appleEventErrorNumber: Int {
         switch self {
         case .notFound, .ambiguous:
@@ -34,5 +35,18 @@ extension CommandError {
             VMConsentPolicy.isAnsweredByConfirming(prompt)
         else { return message }
         return message + "\n\nAdd `with confirmation` to do it anyway."
+    }
+}
+
+extension NSScriptCommand {
+    /// Records what the script reads back instead of a result.
+    func refuse(_ number: Int, _ message: String) {
+        scriptErrorNumber = number
+        scriptErrorString = message
+    }
+
+    /// Records the core's refusal, in the number and words a script reads it as.
+    func refuse(_ refusal: CommandError) {
+        refuse(refusal.appleEventErrorNumber, refusal.appleEventErrorString)
     }
 }

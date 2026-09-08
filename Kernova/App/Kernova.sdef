@@ -86,27 +86,6 @@
 			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
 				<cocoa key="bundlePath"/>
 			</property>
-			<responds-to command="start">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
-			<responds-to command="stop">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
-			<responds-to command="restart">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
-			<responds-to command="pause">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
-			<responds-to command="resume">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
-			<responds-to command="suspend">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
-			<responds-to command="reveal">
-				<cocoa method="handleVMScriptCommand:"/>
-			</responds-to>
 		</class>
 
 		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first.">
@@ -117,7 +96,7 @@
 			</parameter>
 		</command>
 
-		<command name="stop" code="KrnvStop" description="Stop a virtual machine.">
+		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
 			<cocoa class="VMStopScriptCommand"/>
 			<direct-parameter type="virtual machine" description="The virtual machine to stop."/>
 			<parameter name="by" code="by  " type="VM stop method" optional="yes" description="How to reach a powered-off guest. Shut down by default.">
@@ -131,7 +110,7 @@
 			</parameter>
 		</command>
 
-		<command name="restart" code="KrnvRstr" description="Shut a virtual machine's guest down and start it again.">
+		<command name="restart" code="KrnvRstr" description="Shut a virtual machine's guest down and start it again. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
 			<cocoa class="VMRestartScriptCommand"/>
 			<direct-parameter type="virtual machine" description="The virtual machine to restart."/>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">

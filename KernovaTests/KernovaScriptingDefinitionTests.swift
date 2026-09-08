@@ -105,22 +105,31 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    @Test("Every command is one a virtual machine answers to, through a method it has")
-    func everyCommandIsDispatchedToItsReceivers() throws {
-        // A specifier that resolves is dispatched to the objects it named, and
-        // a class with no method for the command answers "doesn't understand"
-        // without the command's own implementation ever running.
+    @Test("Every command takes its event over itself: no class is declared to respond to one")
+    func noCommandIsDispatchedToItsReceivers() throws {
+        // A class declared to respond to a command is one Cocoa dispatches the
+        // command to after evaluating its specifier itself — the evaluation
+        // each command holds until the library has landed, and the one that
+        // answers a duplicate name with "can't get" instead of the core's
+        // refusal.
         let suite = try loadSuite()
-        let verbs = Set(try values("command", "name", in: suite))
-        let classes = try suite.nodes(forXPath: "class[@name='virtual machine']")
-        let vm = try #require(classes.first as? XMLElement)
 
-        #expect(Set(try values("responds-to", "command", in: vm)) == verbs)
-        for handled in try vm.nodes(forXPath: "responds-to").compactMap({ $0 as? XMLElement }) {
-            let method = try #require(try values("cocoa", "method", in: handled).first)
-            #expect(
-                VMScriptObject.instancesRespond(to: NSSelectorFromString(method)),
-                "VMScriptObject answers to no \(method)")
+        #expect(try suite.nodes(forXPath: "class//responds-to").isEmpty)
+        for command in try suite.nodes(forXPath: "command").compactMap({ $0 as? XMLElement }) {
+            let handler = try #require(try values("cocoa", "class", in: command).first)
+            let handlerClass: AnyClass = try #require(NSClassFromString(handler))
+            #expect(handlerClass is VMScriptCommand.Type, "\(handler) does not take its event over")
+        }
+    }
+
+    @Test("The commands that wait on the guest tell a script how to wait longer than AppleScript does")
+    func longWaitsAreDocumented() throws {
+        let suite = try loadSuite()
+
+        for verb in ["stop", "restart"] {
+            let description = try #require(
+                try values("command[@name='\(verb)']", "description", in: suite).first)
+            #expect(description.contains("with timeout"), "\(verb) says nothing about with timeout")
         }
     }
 

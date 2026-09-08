@@ -192,7 +192,8 @@ final class AppResidencyController: AppResidencyHosting {
             })
 
         scriptingGateway = VMScriptingGateway(
-            commands: viewModel.commands, readiness: readiness)
+            commands: viewModel.commands, readiness: readiness,
+            activate: { [weak self] in self?.activateForExternalRequest() })
     }
 
     func openAutomationLink(_ url: URL) {

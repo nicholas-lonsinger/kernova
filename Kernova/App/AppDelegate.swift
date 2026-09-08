@@ -312,9 +312,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Every VM in the library, as the dictionary's `virtual machine` elements.
     ///
     /// Synchronous because KVC is: Cocoa evaluates a specifier inside the Apple
-    /// event's own callout, which has no suspension to await the app's first
-    /// library read in — so a read arriving before that read lands answers from
-    /// the library as it stands then. Only the verbs can wait.
+    /// event's own callout. A read arriving before the app's first library read
+    /// has landed is answered by the gateway suspending the command Cocoa is
+    /// evaluating for and re-issuing it once the read lands.
     @objc var virtualMachines: [VMScriptObject] {
         scriptingGateway?.virtualMachines() ?? []
     }
@@ -325,7 +325,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// case-insensitively — which for two VMs sharing a display name is
     /// whichever the library lists first, described to the script as though it
     /// were the one asked for. ``VMScriptingGateway/virtualMachine(named:)``
-    /// answers with neither instead, and the script reads "can't get".
+    /// resolves the name through the core instead, and a name the core refuses
+    /// — as ambiguous, or as unknown — reads back in the core's words.
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
         scriptingGateway?.virtualMachine(named: name)

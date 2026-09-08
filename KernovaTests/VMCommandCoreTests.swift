@@ -2200,6 +2200,34 @@ struct VMCommandCoreTests {
         #expect(instance.status == .stopped)
     }
 
+    @Test("A deadline no wait can honor is refused before anything is asked of the guest")
+    func anUnusableDeadlineIsRefused() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Prompt", phase: .running(sessionID: UUID()))
+
+        for timeout in [0, -5, .infinity] as [TimeInterval] {
+            let error = await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .graceful, confirmed: false, timeout: timeout)
+            }
+            guard case .invalidArgument = try #require(error) else {
+                Issue.record("Expected an argument refusal for \(timeout), got \(String(describing: error))")
+                continue
+            }
+        }
+        let restart = await commandError {
+            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 0)
+        }
+        guard case .invalidArgument = try #require(restart) else {
+            Issue.record("Expected an argument refusal, got \(String(describing: restart))")
+            return
+        }
+
+        #expect(harness.virtualization.stopCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
     @Test("A restart deadline expires on the shutdown half, leaving the guest unstarted")
     func restartRefusesWhenTheShutdownOutlastsItsDeadline() async throws {
         let virtualization = MockVirtualizationService()

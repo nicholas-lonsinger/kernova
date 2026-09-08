@@ -9,24 +9,21 @@ import Foundation
 /// doors they arrive through — parks on a single task.
 @MainActor
 final class LibraryReadiness {
-    /// Awaits the app's first library read.
-    private let awaitReady: @Sendable () async -> Void
+    /// The single await, started with the instance so the landing is on record
+    /// whether or not a door has asked yet.
+    private let landing: Task<Void, Never>
 
-    /// The single await, memoized.
-    private var readiness: Task<Void, Never>?
+    /// Whether the read has landed — what a door that cannot suspend reads.
+    private(set) var hasLanded = false
 
     init(awaitReady: @escaping @Sendable () async -> Void) {
-        self.awaitReady = awaitReady
+        landing = Task { await awaitReady() }
+        Task { [weak self] in await self?.ready() }
     }
 
     /// Returns once the app's first library read has landed.
     func ready() async {
-        if let readiness {
-            await readiness.value
-            return
-        }
-        let task = Task { [awaitReady] in await awaitReady() }
-        readiness = task
-        await task.value
+        await landing.value
+        hasLanded = true
     }
 }

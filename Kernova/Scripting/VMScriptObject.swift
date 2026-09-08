@@ -69,25 +69,6 @@ final class VMScriptObject: NSObject {
 
     @objc var bundlePath: String { info.bundlePath }
 
-    // MARK: - Commands
-
-    /// Where Cocoa dispatches a verb whose specifier resolved to VMs.
-    ///
-    /// An object-first command is sent to each object its specifier named, and
-    /// the dictionary points every Kernova verb here — the command itself knows
-    /// which verb it is and which VMs it addresses, so this only has to be the
-    /// door Cocoa insists on. Without it a resolved specifier is answered with
-    /// "doesn't understand", never reaching the command's own implementation.
-    @objc(handleVMScriptCommand:)
-    func handleVMScriptCommand(_ command: NSScriptCommand) -> Any? {
-        guard let verb = command as? VMScriptCommand else {
-            Self.logger.fault("A command Kernova did not define was dispatched to a VM")
-            assertionFailure("A command Kernova did not define was dispatched to a VM: \(command)")
-            return nil
-        }
-        return verb.runOnceForResolvedReceivers()
-    }
-
     // MARK: - Specifier
 
     /// How a script names this VM back — `virtual machine id "…"` of the
