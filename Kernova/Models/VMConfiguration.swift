@@ -26,6 +26,17 @@ enum VMInputDeviceMode: String, Codable, Sendable, Equatable {
     case usb
 }
 
+/// When the VM display sends system hot keys to the guest instead of letting
+/// the host act on them.
+enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
+    /// The host keeps every system hot key.
+    case never
+    /// The guest takes them only while its display fills a screen of its own.
+    case fullscreenOnly
+    /// The guest takes them whenever the display has keyboard focus.
+    case always
+}
+
 /// Persistent configuration for a virtual machine, serialized to `config.json`
 /// inside each VM bundle directory.
 ///
@@ -177,6 +188,15 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// next boot, like the rest of the device configuration.
     var inputDeviceMode: VMInputDeviceMode
 
+    /// When the display hands system hot keys to the guest, backing
+    /// `VZVirtualMachineView.capturesSystemKeys`.
+    ///
+    /// Which keys those are is the framework's to decide; this only says when
+    /// it is asked to take them. Read on every observation pass rather than at
+    /// boot, so both a change here and a fullscreen transition under
+    /// ``VMSystemKeyForwarding/fullscreenOnly`` reach a running VM.
+    var systemKeyForwarding: VMSystemKeyForwarding
+
     // MARK: - Guest Agent
 
     /// When `true`, the macOS guest agent forwards `os.Logger` records to the
@@ -326,6 +346,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         audioInputEnabled: Bool = false,
         audioOutputEnabled: Bool = true,
         inputDeviceMode: VMInputDeviceMode = .automatic,
+        systemKeyForwarding: VMSystemKeyForwarding = .always,
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
         lastSeenGuestOSVersion: String? = nil,
@@ -376,6 +397,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.audioInputEnabled = audioInputEnabled
         self.audioOutputEnabled = audioOutputEnabled
         self.inputDeviceMode = inputDeviceMode
+        self.systemKeyForwarding = systemKeyForwarding
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
         self.lastSeenGuestOSVersion = lastSeenGuestOSVersion
@@ -444,6 +466,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.audioOutputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioOutputEnabled) ?? true
         self.inputDeviceMode =
             try c.decodeIfPresent(VMInputDeviceMode.self, forKey: .inputDeviceMode) ?? .automatic
+        self.systemKeyForwarding =
+            try c.decodeIfPresent(VMSystemKeyForwarding.self, forKey: .systemKeyForwarding)
+            ?? .always
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)

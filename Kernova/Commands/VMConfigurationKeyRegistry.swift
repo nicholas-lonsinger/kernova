@@ -217,6 +217,15 @@ enum VMConfigurationKeyRegistry {
                     value, key: "display.preference")
             }),
         VMConfigurationKey(
+            name: "input.systemKeys",
+            summary: "When system hot keys go to the guest: never, fullscreenOnly or always.",
+            gate: .live,
+            read: { $0.systemKeyForwarding.rawValue },
+            write: { value, config, _ in
+                config.systemKeyForwarding = try ConfigurationValue.choice(
+                    value, key: "input.systemKeys")
+            }),
+        VMConfigurationKey(
             name: "network.mode",
             summary: "The network the guest joins: none, shared, bridged or hostOnly.",
             gate: .networkMode,

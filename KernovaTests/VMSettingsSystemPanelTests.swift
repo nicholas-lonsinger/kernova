@@ -340,6 +340,63 @@ struct VMSettingsSystemPanelTests {
         #expect(!visibleLabel(caption, in: editableVC.view))
     }
 
+    // MARK: - Input section
+
+    /// Builds a controller over a stock config for `guestOS`.
+    private func makeInputController(
+        guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false
+    ) -> (VMSettingsViewController, VMInstance) {
+        makeDisplayController(guestOS: guestOS, isReadOnly: isReadOnly)
+    }
+
+    @Test("The system keys row is present for both guest OSes, the devices row is macOS-only")
+    func systemKeysRowIsNotMacOSOnly() {
+        for guestOS in [VMGuestOS.macOS, .linux] {
+            let (vc, _) = makeInputController(guestOS: guestOS)
+            #expect(containsLabel("Input", in: vc.view))
+            #expect(containsLabel("Send system keys to guest", in: vc.view))
+            #expect(firstPopUp(action: "systemKeysChanged", in: vc.view) != nil)
+            // Linux guests always take the USB pair, so they get no picker.
+            #expect(containsLabel("Devices", in: vc.view) == (guestOS == .macOS))
+        }
+    }
+
+    @Test("The system keys popup opens on the VM's stored mode")
+    func systemKeysPopUpShowsStoredMode() {
+        let (vc, instance) = makeInputController()
+        guard let popUp = firstPopUp(action: "systemKeysChanged", in: vc.view) else {
+            Issue.record("Expected the system keys popup")
+            return
+        }
+        #expect(instance.configuration.systemKeyForwarding == .always)
+        #expect(popUp.titleOfSelectedItem == "Always")
+    }
+
+    @Test("Choosing a system keys mode writes it")
+    func systemKeysSelectionWrites() {
+        let (vc, instance) = makeInputController()
+        guard let popUp = firstPopUp(action: "systemKeysChanged", in: vc.view) else {
+            Issue.record("Expected the system keys popup")
+            return
+        }
+        for (title, mode) in [
+            ("In Full Screen", VMSystemKeyForwarding.fullscreenOnly), ("Never", .never),
+            ("Always", .always),
+        ] {
+            popUp.selectItem(withTitle: title)
+            popUp.sendAction(popUp.action, to: popUp.target)
+            #expect(instance.configuration.systemKeyForwarding == mode, "\(title)")
+        }
+    }
+
+    @Test("A running VM can still change system keys while the devices picker locks")
+    func systemKeysStayEditableWhileReadOnly() {
+        let (vc, _) = makeInputController(isReadOnly: true)
+
+        #expect(firstPopUp(action: "systemKeysChanged", in: vc.view)?.isEnabled == true)
+        #expect(firstPopUp(action: "inputDevicesChanged", in: vc.view)?.isEnabled == false)
+    }
+
     // MARK: - Microphone permission
 
     /// Builds a controller whose Audio section is driven by a pinned permission
