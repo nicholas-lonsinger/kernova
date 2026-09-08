@@ -357,7 +357,7 @@ final class SnapshotSectionView: NSView {
     /// that captured no memory, the last only once the size read lands.
     func subtitleText(for snapshot: VMSnapshot) -> String {
         var parts = [SnapshotDateFormat.string(from: snapshot.createdAt)]
-        if snapshot.kind == .cold { parts.append("Disks only") }
+        if snapshot.kind == .cold { parts.append(SnapshotKindCopy.captured(.cold)) }
         if let bytes = sizesByID[snapshot.id] {
             parts.append("\(DataFormatters.formatBytes(bytes)) on disk")
         }
