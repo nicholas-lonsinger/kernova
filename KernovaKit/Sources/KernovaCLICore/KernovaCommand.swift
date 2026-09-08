@@ -12,6 +12,7 @@ public struct KernovaCommand: ParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "kernova",
         abstract: "Drive Kernova's virtual machines from the command line.",
+        discussion: launchNote + "\n\n" + CLIExitCode.contract,
         version: toolVersion,
         subcommands: [
             List.self, Info.self, IP.self,
@@ -25,6 +26,12 @@ public struct KernovaCommand: ParsableCommand {
         ],
         defaultSubcommand: List.self
     )
+
+    /// What every verb does about an app that is not there, printed above the
+    /// exit codes.
+    private static let launchNote =
+        "A verb starts Kernova, hidden and unfocused, when it is not running; `--no-launch` "
+        + "refuses instead. `kernova quit` never starts it."
 
     /// What `kernova --version` prints.
     ///

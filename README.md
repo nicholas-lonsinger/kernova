@@ -74,6 +74,18 @@ Pure AppKit in the Liquid Glass design language: a source-list sidebar with drag
 
 VMs are also drivable without the window: App Intents put start, stop, pause, resume, suspend, restart, open, and snapshot capture in the Shortcuts app and Spotlight, with each VM as a typed entity you pick or search by name.
 
+Kernova also ships a `kernova` command-line tool, bundled inside the app at `Contents/Helpers/kernova`. **Settings → Advanced → Install…** links it into a folder you choose, so a shell always reaches the copy the installed app ships:
+
+```bash
+kernova list
+kernova start Alpha
+kernova snapshot take Alpha --name "before upgrade"
+kernova get Alpha memory
+kernova ip Alpha --wait
+```
+
+A verb starts Kernova hidden when it isn't running; `--no-launch` refuses instead. The same Settings pane installs shell completions for zsh, bash, and fish, which offer your own virtual machines, their snapshots, and the setting keys as candidates. `kernova --help` is the reference — every verb and flag, and the exit codes a script branches on.
+
 ## Development setup
 
 Everything below is for building and working on Kernova itself. You'll need Xcode 26 and Swift 6 on top of the requirements above.
