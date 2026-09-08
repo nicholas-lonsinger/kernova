@@ -94,15 +94,18 @@ public final class VMCommandClient {
         try nextResponse()
     }
 
-    /// Bounds how long a single `nextFrame()` blocks.
+    /// Bounds how long a single exchange blocks.
     ///
     /// The deadline belongs to the socket rather than to a timer beside it, so
-    /// a wait cannot outlive it while parked in `read`.
+    /// a wait cannot outlive it while parked in `read`. Both halves carry it:
+    /// an app that has stopped draining its end would otherwise hold a caller
+    /// in `write` for as long as it liked, past whatever deadline it set.
     public func waitForFrames(upTo seconds: TimeInterval) {
         var deadline = timeval(
             tv_sec: Int(seconds), tv_usec: Int32((seconds - seconds.rounded(.down)) * 1_000_000))
-        _ = setsockopt(
-            fd, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+        for half in [SO_RCVTIMEO, SO_SNDTIMEO] {
+            _ = setsockopt(fd, SOL_SOCKET, half, &deadline, socklen_t(MemoryLayout<timeval>.size))
+        }
     }
 
     /// Closes the connection; idempotent.

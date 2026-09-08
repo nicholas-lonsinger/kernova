@@ -29,14 +29,6 @@ enum CommandLineToolInstaller {
             && FileManager.default.fileExists(atPath: bundledToolURL.path(percentEncoded: false))
     }
 
-    /// Why an install did not happen.
-    enum InstallFailure: Error, Equatable {
-        /// Something is already at the destination.
-        case exists
-        /// The destination cannot be written, grant or no grant.
-        case unwritable(String)
-    }
-
     /// Links `destination` to the bundled tool.
     ///
     /// Nothing is replaced except this installer's own leftovers: a file

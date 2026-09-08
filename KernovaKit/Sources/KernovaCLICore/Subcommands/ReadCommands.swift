@@ -40,7 +40,7 @@ extension KernovaCommand {
             abstract: "Describe one virtual machine.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// The options every subcommand carries.
@@ -73,7 +73,7 @@ extension KernovaCommand {
             abstract: "Print a guest's IP address.")
 
         /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.")
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
 
         /// Keep asking until the guest has an address.

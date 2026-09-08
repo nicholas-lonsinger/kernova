@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import os
 
 /// The set of VMs the app knows about, and the bookkeeping that keeps it in
@@ -541,7 +542,7 @@ final class VMLibrary: VMInstanceRoster {
             existing: onDiskStems + inFlightStems,
             caseInsensitive: true)
         return vmsDir.appendingPathComponent(
-            "\(name).\(VMStorageService.bundleExtension)", isDirectory: true)
+            "\(name).\(VMBundleFormat.fileExtension)", isDirectory: true)
     }
 
     /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.

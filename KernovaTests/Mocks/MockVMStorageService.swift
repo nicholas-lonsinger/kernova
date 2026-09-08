@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 @testable import Kernova
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
@@ -80,14 +81,14 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
         baseDirectory.appendingPathComponent(
-            "\(configuration.id.uuidString).\(VMStorageService.bundleExtension)",
+            "\(configuration.id.uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
     }
 
     func makeStagedBundleURL() throws -> URL {
         let url = try stagingDirectory.appendingPathComponent(
-            "\(UUID().uuidString).\(VMStorageService.bundleExtension)",
+            "\(UUID().uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
         stagedBundleURLs.append(url)

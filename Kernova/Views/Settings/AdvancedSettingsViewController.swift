@@ -1,5 +1,6 @@
 import AppKit
 import KernovaKit
+import os
 
 /// The "Advanced" pane of the Settings window.
 ///
@@ -7,7 +8,8 @@ import KernovaKit
 /// actions (e.g. *Start in Recovery Mode*) are always visible or revealed only
 /// on an Option (⌥) hold — the two machine-identity toggles (blocking duplicate
 /// machine IDs from booting, and whether Clone generates a new machine ID), and
-/// the command-line tool install. The toggles are backed by `AppPreferences`;
+/// the command-line tool's two installs — the symlink, and a shell's completion
+/// file. The toggles are backed by `AppPreferences`;
 /// the menus re-read the preferences each time they open, so no change
 /// notification is needed here.
 ///
@@ -85,6 +87,9 @@ final class AdvancedSettingsViewController: NSViewController {
         // Absent, not disabled, in a build with no group container: the tool
         // installed from there could reach no app.
         let offersCommandLineTool = CommandLineToolInstaller.isAvailable
+        // The `PATH` callout closes the symlink row; the completions row is a
+        // separate setting and reads as one.
+        var pathHintRow: NSView?
         if offersCommandLineTool {
             let installButton = NSButton(
                 title: "Install\u{2026}", target: self, action: #selector(installCommandLineTool))
@@ -94,13 +99,27 @@ final class AdvancedSettingsViewController: NSViewController {
             ])
             let toolCaption = makeGroupedFormCaption(
                 "Links the bundled kernova tool into a folder you choose, so a shell can drive "
-                    + "your virtual machines. Kernova has to be running for it to answer. If the "
-                    + "folder is not already on your PATH, add it:")
+                    + "your virtual machines. A verb starts Kernova when it is not running. If "
+                    + "the folder is not already on your PATH, add it:")
             let pathHint = makeCalloutCode("export PATH=\"/usr/local/bin:$PATH\"")
+            let completionsCard = makeGroupedFormCard(rows: [
+                makeGroupedFormCardRow("Shell completions", control: makeCompletionsButton())
+            ])
+            let completionsCaption = makeGroupedFormCaption(
+                "Writes a small file that loads completions from the tool itself, so they stay "
+                    + "current as Kernova updates. Tab then completes verbs and flags, and your "
+                    + "own virtual machines, snapshots, and setting keys. bash needs the "
+                    + "bash-completion package; the bash macOS ships is too old for it. If the "
+                    + "folder is not already on your fpath, add it to your ~/.zshrc:")
+            let fpathHint = makeCalloutCode("fpath=(~/.zsh/completions $fpath)")
             rows.append(contentsOf: [
                 makeGroupedFormSectionHeader("Command Line Tool"), toolCard, toolCaption, pathHint,
+                completionsCard, completionsCaption, fpathHint,
             ])
-            fullWidthRows.append(contentsOf: [toolCard, toolCaption, pathHint])
+            fullWidthRows.append(contentsOf: [
+                toolCard, toolCaption, pathHint, completionsCard, completionsCaption, fpathHint,
+            ])
+            pathHintRow = pathHint
         }
 
         let section = NSStackView(views: rows)
@@ -113,6 +132,9 @@ final class AdvancedSettingsViewController: NSViewController {
         section.setCustomSpacing(Spacing.section, after: blockCaption)
         if offersCommandLineTool {
             section.setCustomSpacing(Spacing.section, after: cloneCaption)
+        }
+        if let pathHintRow {
+            section.setCustomSpacing(Spacing.section, after: pathHintRow)
         }
         section.translatesAutoresizingMaskIntoConstraints = false
 
@@ -190,31 +212,95 @@ final class AdvancedSettingsViewController: NSViewController {
         do {
             try CommandLineToolInstaller.installSymlink(at: destination)
         } catch {
-            presentInstallFailure(error, at: destination)
+            presentInstallFailure(
+                error, titled: "Couldn\u{2019}t Install the Command Line Tool",
+                offering: "You can create the link yourself:",
+                command: CommandLineToolInstaller.manualCommand(for: destination))
         }
     }
 
-    /// Explains what stopped the install, keeping the equivalent command on
-    /// screen and selectable so the user can run it themselves.
-    private func presentInstallFailure(_ failure: any Error, at destination: URL) {
-        let reason: String =
-            switch failure {
-            case CommandLineToolInstaller.InstallFailure.exists:
-                "Something is already at that path. Kernova does not replace it."
-            case CommandLineToolInstaller.InstallFailure.unwritable(let detail):
-                detail
-            default:
-                failure.localizedDescription
-            }
+    /// The Install… menu that picks which shell to write completions for.
+    ///
+    /// A pull-down rather than three buttons or a shell picker beside one: the
+    /// choice *is* the command, and nothing here has a state to remember. Each
+    /// item carries its own target and action, so what was chosen is the sender
+    /// rather than a selection a pull-down never really holds.
+    private func makeCompletionsButton() -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: true)
+        button.bezelStyle = .push
+        // A pull-down's first item is the button's own title and is never
+        // chosen.
+        button.addItem(withTitle: "Install\u{2026}")
+        for shell in ShellCompletionInstaller.Shell.allCases {
+            let item = NSMenuItem(
+                title: shell.rawValue, action: #selector(installShellCompletions(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = shell
+            button.menu?.addItem(item)
+        }
+        return button
+    }
 
+    /// Asks where the chosen shell's completion file should go, then writes it.
+    ///
+    /// One panel per shell, because the grant a panel mints covers the one file
+    /// it returned: writing three would need three answers whichever way they
+    /// were gathered.
+    @objc private func installShellCompletions(_ sender: NSMenuItem) {
+        guard let shell = sender.representedObject as? ShellCompletionInstaller.Shell else {
+            Self.logger.fault(
+                "Shell completions item '\(sender.title, privacy: .public)' names no shell")
+            assertionFailure("Shell completions item \(sender.title) names no shell")
+            return
+        }
+
+        let directory = shell.defaultDirectory
+        let panel = NSSavePanel()
+        // The panel ignores a directory that is not there and opens wherever it
+        // was last, so it lands on the closest folder that exists and the
+        // message says where the file belongs — New Folder makes the rest.
+        panel.directoryURL = ShellCompletionInstaller.existingAncestor(of: directory)
+        panel.nameFieldStringValue = shell.fileName
+        panel.prompt = "Install"
+        panel.message =
+            "\(shell.rawValue) completions belong at "
+            + "\(directory.appending(path: shell.fileName).path(percentEncoded: false)). "
+            + "New Folder creates a folder that is not there yet."
+        panel.canCreateDirectories = true
+        panel.showsHiddenFiles = true
+
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let destination = panel.url else { return }
+            self?.installCompletions(shell, at: destination)
+        }
+    }
+
+    private func installCompletions(_ shell: ShellCompletionInstaller.Shell, at destination: URL) {
+        do {
+            try ShellCompletionInstaller.install(shell, at: destination)
+        } catch {
+            presentInstallFailure(
+                error, titled: "Couldn\u{2019}t Install the Shell Completions",
+                offering: "You can write the file yourself:",
+                command: ShellCompletionInstaller.manualCommand(for: shell, at: destination))
+        }
+    }
+
+    /// Explains what stopped an install, keeping the equivalent command on
+    /// screen and selectable so the user can run it themselves.
+    private func presentInstallFailure(
+        _ failure: any Error, titled title: String, offering lead: String, command: String
+    ) {
         let alert = NSAlert()
-        alert.messageText = "Couldn\u{2019}t Install the Command Line Tool"
-        alert.informativeText = reason
+        alert.messageText = title
+        alert.informativeText = Self.reason(for: failure)
         alert.addButton(withTitle: "OK")
 
         let hint = NSStackView(views: [
-            makeGroupedFormCaption("You can create the link yourself:"),
-            makeCalloutCode(CommandLineToolInstaller.manualCommand(for: destination)),
+            makeGroupedFormCaption(lead),
+            makeCalloutCode(command),
         ])
         hint.orientation = .vertical
         hint.alignment = .leading
@@ -225,4 +311,19 @@ final class AdvancedSettingsViewController: NSViewController {
         guard let window = view.window else { return }
         alert.beginSheetModal(for: window, completionHandler: nil)
     }
+
+    /// What an install failure says on screen.
+    private static func reason(for failure: any Error) -> String {
+        switch failure {
+        case InstallFailure.exists:
+            "Something is already at that path. Kernova does not replace it."
+        case InstallFailure.unwritable(let detail):
+            detail
+        default:
+            failure.localizedDescription
+        }
+    }
+
+    private static let logger = Logger(
+        subsystem: "app.kernova", category: "AdvancedSettingsViewController")
 }
