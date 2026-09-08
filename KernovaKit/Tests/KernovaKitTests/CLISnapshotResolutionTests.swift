@@ -35,10 +35,11 @@ struct CLISnapshotResolutionTests {
         #expect(try resolve(older.id.uuidString, in: [base, older]) == older)
     }
 
-    @Test("A name matches exactly, and only exactly")
+    @Test("A name matches whole, without regard to case")
     func aNameResolves() throws {
         #expect(try resolve("Base", in: [base, older]) == base)
-        #expect(throws: CLIFailure.self) { try resolve("base", in: [base, older]) }
+        #expect(try resolve("base", in: [base, older]) == base)
+        #expect(try resolve("before upgrade", in: [base, older]) == older)
         #expect(throws: CLIFailure.self) { try resolve("Bas", in: [base, older]) }
     }
 

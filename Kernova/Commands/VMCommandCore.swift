@@ -179,13 +179,13 @@ final class VMCommandCore: VMCommanding {
         case .id(let id):
             return library.instances.filter { $0.instanceID == id }
         case .name(let name):
-            return library.instances.filter { $0.name == name }
+            return library.instances.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
         case .idOrName(let text):
             if let id = UUID(uuidString: text) {
                 let byID = library.instances.filter { $0.instanceID == id }
                 if !byID.isEmpty { return byID }
             }
-            return library.instances.filter { $0.name == text }
+            return library.instances.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
         }
     }
 

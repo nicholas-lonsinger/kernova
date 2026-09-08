@@ -33,7 +33,7 @@ enum SnapshotResolution {
             }
             throw notFound(text, of: vm)
         }
-        let matching = snapshots.filter { $0.name == text }
+        let matching = snapshots.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
         guard matching.count <= 1 else { throw ambiguous(text, of: vm, candidates: matching) }
         guard let match = matching.first else { throw notFound(text, of: vm) }
         return match
