@@ -71,7 +71,7 @@ struct VMURLGatewayTests {
     ) -> VMURLGateway {
         VMURLGateway(
             commands: commands,
-            awaitReady: awaitReady,
+            readiness: LibraryReadiness(awaitReady: awaitReady),
             activate: { trace.record(.activated) },
             summonLibrary: { trace.record(.summoned) },
             present: { trace.record(.presented($0)) })

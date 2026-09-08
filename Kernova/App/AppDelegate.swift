@@ -154,8 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // the one moment nothing staged can still be owed to it.
         DropPromiseStaging.reclaimAll()
 
-        termination.install()
-
         lifecycle.start(provenance: readLaunchProvenance())
     }
 
@@ -291,6 +289,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             await self.libraryLoad?.value
             self.viewModel.importVMs(fromDroppedURLs: urls)
         }
+    }
+
+    // MARK: - Scripting (Apple events)
+
+    /// The Apple event front door every `NSScriptCommand` reaches through here:
+    /// Cocoa builds each command itself and hands it nothing to work with.
+    var scriptingGateway: VMScriptingGateway? { lifecycle.scriptingGateway }
+
+    /// `NSApplication` is the scripting root, and the dictionary gives it a
+    /// `virtual machines` element — a key it forwards here.
+    func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
+        key == Self.virtualMachinesKey
+    }
+
+    /// The literal KVC key the dictionary's `virtual machine` element is
+    /// declared with, which is also the key Cocoa asks this delegate for.
+    nonisolated static let virtualMachinesKey = "virtualMachines"
+
+    /// Every VM in the library, as the dictionary's `virtual machine` elements.
+    ///
+    /// Synchronous because KVC is: Cocoa evaluates a specifier inside the Apple
+    /// event's own callout. A read arriving before the app's first library read
+    /// has landed is answered by the gateway suspending the command Cocoa is
+    /// evaluating for and re-issuing it once the read lands.
+    @objc var virtualMachines: [VMScriptObject] {
+        scriptingGateway?.virtualMachines() ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `virtual machine "…"` through.
+    ///
+    /// Cocoa's own answer, without this, is the first VM whose name matches
+    /// case-insensitively — which for two VMs sharing a display name is
+    /// whichever the library lists first, described to the script as though it
+    /// were the one asked for. ``VMScriptingGateway/virtualMachine(named:)``
+    /// resolves the name through the core instead, and a name the core refuses
+    /// — as ambiguous, or as unknown — reads back in the core's words.
+    @objc(valueInVirtualMachinesWithName:)
+    func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
+        scriptingGateway?.virtualMachine(named: name)
     }
 
     // MARK: - Menu Actions

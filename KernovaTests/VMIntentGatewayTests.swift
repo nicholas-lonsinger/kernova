@@ -29,7 +29,9 @@ struct VMIntentGatewayTests {
         defaults: UserDefaults,
         index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
-        VMIntentGateway(commands: commands, awaitReady: {}, index: index, defaults: defaults)
+        VMIntentGateway(
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: index,
+            defaults: defaults)
     }
 
     /// An isolated defaults store named for one test.
@@ -223,10 +225,10 @@ struct VMIntentGatewayTests {
         let index = MockVMEntityIndex()
         let gateway = VMIntentGateway(
             commands: commands,
-            awaitReady: {
+            readiness: LibraryReadiness(awaitReady: {
                 entered.continuation.yield(())
                 for await _ in release.stream { break }
-            },
+            }),
             index: index, defaults: makeStore("readiness-wait"))
 
         let read = Task { await gateway.vms() }
@@ -247,7 +249,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         let awaits = Counter()
         let gateway = VMIntentGateway(
-            commands: commands, awaitReady: { await awaits.increment() },
+            commands: commands, readiness: LibraryReadiness(awaitReady: { await awaits.increment() }),
             index: MockVMEntityIndex(), defaults: makeStore("readiness-memoized"))
 
         _ = await gateway.vms()
@@ -315,7 +317,7 @@ struct VMIntentGatewayTests {
         surfaced: @escaping @MainActor () -> Void
     ) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, awaitReady: {}, index: MockVMEntityIndex(),
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: MockVMEntityIndex(),
             defaults: defaults, surfaceLibrary: surfaced)
     }
 
@@ -402,7 +404,7 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands, defaults: makeStore("consent-retry"))
         var asked: [ConfirmationPrompt] = []
 
-        try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
             try await gateway.stop(id, disposition: .force, confirmed: confirmed)
         }
 
@@ -428,7 +430,7 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands, defaults: makeStore("consent-force-stop"))
         var asked = 0
 
-        try await VMIntentConsent.run(prompting: { _ in asked += 1 }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
             try await gateway.stop(id, disposition: .force, confirmed: confirmed)
         }
 
@@ -442,7 +444,7 @@ struct VMIntentGatewayTests {
         for kind in ConfirmationKind.allCases {
             let prompt = ConfirmationPrompt(
                 kind: kind, title: "T", message: "M", confirmTitle: "C", dismissTitle: "D")
-            #expect(VMIntentConsent.isAnsweredByConfirming(prompt) == (kind != .stopPaused))
+            #expect(VMConsentPolicy.isAnsweredByConfirming(prompt) == (kind != .stopPaused))
         }
     }
 
@@ -460,7 +462,7 @@ struct VMIntentGatewayTests {
         var asked = 0
 
         await #expect(throws: CommandError.self) {
-            try await VMIntentConsent.run(prompting: { _ in asked += 1 }) { confirmed in
+            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
                 try await gateway.stop(UUID(), disposition: .graceful, confirmed: confirmed)
             }
         }
@@ -477,7 +479,7 @@ struct VMIntentGatewayTests {
         var asked = 0
 
         await #expect(throws: CommandError.self) {
-            try await VMIntentConsent.run(prompting: { _ in asked += 1 }) { confirmed in
+            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
                 try await gateway.stop(UUID(), disposition: .graceful, confirmed: confirmed)
             }
         }
@@ -671,7 +673,7 @@ struct VMIntentGatewayTests {
 }
 
 /// Counts calls arriving from whatever isolation the value under test uses.
-private actor Counter {
+actor Counter {
     private(set) var value = 0
 
     func increment() { value += 1 }

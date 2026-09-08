@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+
+<dictionary title="Kernova Terminology" xmlns:xi="http://www.w3.org/2001/XInclude">
+
+	<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite)"/>
+
+	<suite name="Kernova Suite" code="Krnv" description="Classes and commands for controlling virtual machines.">
+
+		<enumeration name="VM state" code="KvSE" description="What a virtual machine is doing right now.">
+			<enumerator name="stopped" code="KsSt" description="Powered off."/>
+			<enumerator name="starting" code="KsSg" description="Booting."/>
+			<enumerator name="running" code="KsRn" description="The guest is up."/>
+			<enumerator name="paused" code="KsPs" description="The guest is frozen in memory."/>
+			<enumerator name="saving" code="KsSv" description="Writing the guest's state to the bundle's suspend slot."/>
+			<enumerator name="snapshotting" code="KsSn" description="Capturing a named restore point."/>
+			<enumerator name="restoring" code="KsRs" description="Reading a saved session or a restore point back."/>
+			<enumerator name="installing" code="KsIn" description="Running the guest install."/>
+			<enumerator name="initial boot" code="KsIb" description="In the library, but never booted."/>
+			<enumerator name="failed" code="KsEr" description="The last operation left the VM in an error state."/>
+			<enumerator name="preparing" code="KsPr" description="A create, clone or import is still writing the bundle."/>
+		</enumeration>
+
+		<enumeration name="VM stop method" code="KvSM" description="How a stop reaches a powered-off guest.">
+			<enumerator name="shut down" code="KmSd" description="Ask the guest to power itself off."/>
+			<enumerator name="resume then shut down" code="KmRs" description="Resume a paused guest, then ask it to power off."/>
+			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing unsaved guest state."/>
+		</enumeration>
+
+		<class-extension extends="application" description="Kernova's top-level scripting object.">
+			<cocoa class="NSApplication"/>
+			<element type="virtual machine" access="r" description="The virtual machines in the library.">
+				<cocoa key="virtualMachines"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+		</class-extension>
+
+		<class name="virtual machine" code="KvVM" plural="virtual machines" description="One virtual machine in the library.">
+			<cocoa class="VMScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" access="r" description="Its display name, which is not unique.">
+				<cocoa key="name"/>
+			</property>
+			<property name="state" code="KvSt" type="VM state" access="r" description="What it is doing right now.">
+				<cocoa key="state"/>
+			</property>
+			<property name="guest operating system" code="KvOS" type="text" access="r" description="Which guest it runs.">
+				<cocoa key="guestOperatingSystem"/>
+			</property>
+			<property name="processor count" code="KvCP" type="integer" access="r" description="Virtual CPU cores the guest is configured with.">
+				<cocoa key="processorCount"/>
+			</property>
+			<property name="memory" code="KvMm" type="integer" access="r" description="Guest memory in whole gigabytes.">
+				<cocoa key="memory"/>
+			</property>
+			<property name="disk size" code="KvDs" type="integer" access="r" description="The main disk's configured size in gigabytes.">
+				<cocoa key="diskSize"/>
+			</property>
+			<property name="network mode" code="KvNm" type="text" access="r" description="The network it joins, or missing value when networking is off.">
+				<cocoa key="networkMode"/>
+			</property>
+			<property name="MAC address" code="KvMA" type="text" access="r" description="The address the guest presents on that network.">
+				<cocoa key="macAddress"/>
+			</property>
+			<property name="IP address" code="KvIP" type="text" access="r" description="The address Kernova reserved for the guest, or missing value when it reserved none.">
+				<cocoa key="ipAddress"/>
+			</property>
+			<property name="agent status" code="KvAg" type="text" access="r" description="The guest agent's install and connectivity state.">
+				<cocoa key="agentStatus"/>
+			</property>
+			<property name="has saved state" code="KvSs" type="boolean" access="r" description="Whether the bundle holds a suspended session.">
+				<cocoa key="hasSavedState"/>
+			</property>
+			<property name="ephemeral" code="KvEp" type="boolean" access="r" description="Whether it returns to a baseline snapshot on every power-off.">
+				<cocoa key="ephemeral"/>
+			</property>
+			<property name="snapshot count" code="KvSc" type="integer" access="r" description="How many named restore points the bundle holds.">
+				<cocoa key="snapshotCount"/>
+			</property>
+			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
+				<cocoa key="bundlePath"/>
+			</property>
+		</class>
+
+		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first.">
+			<cocoa class="VMStartScriptCommand"/>
+			<direct-parameter description="The virtual machine to start, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="recovery mode" code="Kprc" type="boolean" optional="yes" description="Cold-boot a stopped macOS guest into macOS Recovery.">
+				<cocoa key="RecoveryMode"/>
+			</parameter>
+		</command>
+
+		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
+			<cocoa class="VMStopScriptCommand"/>
+			<direct-parameter description="The virtual machine to stop, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="by" code="by  " type="VM stop method" optional="yes" description="How to reach a powered-off guest. Shut down by default.">
+				<cocoa key="StopMethod"/>
+			</parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a destructive stop refuses without.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and leaving it as it was.">
+				<cocoa key="GivingUpAfter"/>
+			</parameter>
+		</command>
+
+		<command name="restart" code="KrnvRstr" description="Shut a virtual machine's guest down and start it again. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
+			<cocoa class="VMRestartScriptCommand"/>
+			<direct-parameter description="The virtual machine to restart, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
+				<cocoa key="GivingUpAfter"/>
+			</parameter>
+		</command>
+
+		<command name="pause" code="KrnvPaus" description="Freeze a running guest in memory.">
+			<cocoa class="VMPauseScriptCommand"/>
+			<direct-parameter description="The virtual machine to pause, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+		</command>
+
+		<command name="resume" code="KrnvResu" description="Run a paused guest again, or read a suspended session back.">
+			<cocoa class="VMResumeScriptCommand"/>
+			<direct-parameter description="The virtual machine to resume, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+		</command>
+
+		<command name="suspend" code="KrnvSusp" description="Save the guest's state to the bundle's suspend slot and stop running it.">
+			<cocoa class="VMSuspendScriptCommand"/>
+			<direct-parameter description="The virtual machine to suspend, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+		</command>
+
+		<command name="reveal" code="KrnvRevl" description="Bring a virtual machine in front of the user, whatever state it is in.">
+			<cocoa class="VMRevealScriptCommand"/>
+			<direct-parameter description="The virtual machine to reveal, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+		</command>
+
+	</suite>
+
+</dictionary>

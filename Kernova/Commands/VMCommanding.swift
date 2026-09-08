@@ -382,11 +382,11 @@ protocol VMCommanding: AnyObject {
 
 /// The surfacing spellings of the three verbs that can come up headless.
 ///
-/// An in-process front door is a GUI by construction, so the AppKit UI and the
-/// App Intents spell the verb without a presentation and get
-/// ``VMDisplayPresentation/surface``. The launch auto-start pass and the wire
-/// router are the callers that say which they want, because they are the ones
-/// that can be running with nowhere to present.
+/// An in-process front door is a GUI by construction, so a caller that spells
+/// the verb without a presentation gets ``VMDisplayPresentation/surface``. The
+/// launch auto-start pass and the wire router are the callers that say which
+/// they want, because they are the ones that can be running with nowhere to
+/// present.
 extension VMCommanding {
     func start(_ selector: VMSelector, recovery: Bool) async throws {
         try await start(selector, recovery: recovery, presentation: .surface)

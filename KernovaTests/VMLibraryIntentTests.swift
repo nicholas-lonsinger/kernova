@@ -16,7 +16,7 @@ import Testing
 struct VMLibraryIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, awaitReady: {},
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}),
             index: MockVMEntityIndex(),
             defaults: makeEphemeralDefaults(suiteName: "test.kernova.intents.library"))
     }
@@ -163,7 +163,7 @@ struct VMLibraryIntentTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
             try await gateway.delete(vm, confirmed: confirmed)
         }
 
@@ -187,10 +187,10 @@ struct VMLibraryIntentTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
             try await gateway.cancelPreparing(vm, confirmed: confirmed)
         }
-        try await VMIntentConsent.run(prompting: { asked.append($0) }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
             try await gateway.cancelGuestSetup(vm, confirmed: confirmed)
         }
 

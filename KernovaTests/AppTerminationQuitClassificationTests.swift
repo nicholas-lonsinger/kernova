@@ -4,7 +4,7 @@ import Testing
 @testable import Kernova
 
 /// Unit tests for `AppTerminationController.classifyQuit(senderPID:bundleIDResolver:isProcessAlive:)` —
-/// the pure classifier `handleQuitAppleEvent` uses to decide whether a quit Apple
+/// the pure classifier the termination gate uses to decide whether a quit Apple
 /// Event's sender should leave the resident agent running (a user-facing soft
 /// quit), or terminate it (with or without a post-exit relaunch).
 ///
