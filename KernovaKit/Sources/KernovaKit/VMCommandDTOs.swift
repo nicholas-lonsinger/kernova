@@ -136,6 +136,25 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
     }
 }
 
+/// One folder a VM shares with its guest.
+///
+/// The app's `SharedDirectory` without the security-scoped bookmark behind it:
+/// that is authority this process holds and cannot hand over, and no client
+/// could act on it. The path is what the share is addressed by, here and in the
+/// edit that drops it.
+public struct SharedDirectorySummary: Codable, Sendable, Hashable {
+    /// The folder's path, as this Mac names it.
+    public let path: String
+    /// Whether the guest may read the folder but not write to it.
+    public let readOnly: Bool
+
+    /// Describes one share.
+    public init(path: String, readOnly: Bool) {
+        self.path = path
+        self.readOnly = readOnly
+    }
+}
+
 /// What kind of consent a refusal is asking for, so a surface can pick its
 /// native affordance without parsing the copy.
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {

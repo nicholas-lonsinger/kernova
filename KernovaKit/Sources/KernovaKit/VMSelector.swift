@@ -33,6 +33,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case ipAddress
     case snapshots
     case snapshotOnDiskBytes
+    case sharedDirectories
+    case portForwardingRules
     case events
     case start
     case cancelGuestSetup
@@ -77,6 +79,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .ipAddress: "Get IP Address"
         case .snapshots: "List Snapshots"
         case .snapshotOnDiskBytes: "Get Snapshot Sizes"
+        case .sharedDirectories: "List Shared Directories"
+        case .portForwardingRules: "List Forwarded Ports"
         case .events: "Watch Events"
         case .start: "Start"
         case .cancelGuestSetup: "Cancel Setup"
@@ -127,7 +131,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// is what answers that.
     public var isAdmittedInEveryState: Bool {
         switch self {
-        case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .events, .reveal,
+        case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
+            .portForwardingRules, .events, .reveal,
             .showInFinder, .awaitPreparing, .configurationKeys, .configuration, .setConfiguration,
             .quit:
             true

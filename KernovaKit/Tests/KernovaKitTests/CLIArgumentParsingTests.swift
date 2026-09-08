@@ -226,12 +226,41 @@ struct CLIArgumentParsingTests {
     func configurationVerbsResolve() throws {
         #expect(try parse(["get", "Alpha"]) is KernovaCommand.Get)
         #expect(try parse(["set", "Alpha", "cpus=4"]) is KernovaCommand.Set)
+        #expect(try parse(["share", "list", "Alpha"]) is KernovaCommand.Share.List)
         #expect(try parse(["share", "add", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Add)
         #expect(
             try parse(["share", "remove", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Remove)
+        #expect(try parse(["forward", "list", "Alpha"]) is KernovaCommand.Forward.List)
         #expect(try parse(["forward", "add", "Alpha", "8080:80"]) is KernovaCommand.Forward.Add)
         #expect(
             try parse(["forward", "remove", "Alpha", "8080:80"]) is KernovaCommand.Forward.Remove)
+    }
+
+    @Test("Each list verb reads its virtual machine and asks for that machine's own list")
+    func listVerbsNameTheirVM() throws {
+        let shares = try #require(
+            try parse(["share", "list", "Alpha"]) as? KernovaCommand.Share.List)
+        #expect(shares.vm == "Alpha")
+        #expect(try shares.verb() == .sharedDirectories(.idOrName("Alpha")))
+
+        let forwards = try #require(
+            try parse(["forward", "list", "Alpha"]) as? KernovaCommand.Forward.List)
+        #expect(forwards.vm == "Alpha")
+        #expect(!forwards.udp)
+        #expect(try forwards.verb() == .portForwardingRules(.idOrName("Alpha")))
+
+        // The transport rides the same flag `forward remove` takes, and picks
+        // among the rules one read answers rather than asking a second time.
+        let udp = try #require(
+            try parse(["forward", "list", "Alpha", "--udp"]) as? KernovaCommand.Forward.List)
+        #expect(udp.udp)
+        #expect(try udp.verb() == .portForwardingRules(.idOrName("Alpha")))
+    }
+
+    @Test("Every list verb refuses without the virtual machine it lists")
+    func listVerbsNeedAVM() {
+        #expect(throws: (any Error).self) { try parse(["share", "list"]) }
+        #expect(throws: (any Error).self) { try parse(["forward", "list"]) }
     }
 
     @Test("get takes any number of keys, and all of them when given none")

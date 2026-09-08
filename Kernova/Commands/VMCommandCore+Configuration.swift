@@ -1,8 +1,9 @@
 import Foundation
 import KernovaKit
 
-/// The configuration verbs — the dotted keyspace `get` and `set` address, plus
-/// the two list edits a caller names by path rather than by id.
+/// The configuration verbs — the dotted keyspace `get` and `set` address, the
+/// two list edits a caller names by path rather than by id, and the reads that
+/// answer those two lists.
 ///
 /// Every write lands as one ``VMLibrary/updateConfiguration(of:mutate:)``: the
 /// gates and the values are all checked first, so a batch that names one bad
@@ -132,7 +133,17 @@ extension VMCommandCore {
         return key
     }
 
-    // MARK: - Shared Directories by Path
+    // MARK: - Shared Directories
+
+    /// The folders the VM shares with its guest, in the order it carries them.
+    ///
+    /// Each entry is the stored path and its access, without the bookmark
+    /// behind it. Nothing on disk is opened, so a folder that has moved is
+    /// answered the way the VM carries it rather than left out.
+    func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary] {
+        try (resolve(selector).configuration.sharedDirectories ?? [])
+            .map { SharedDirectorySummary(path: $0.path, readOnly: $0.readOnly) }
+    }
 
     /// Shares the folder at `path` with the guest, leaving a folder the VM
     /// already shares as it is.
@@ -222,6 +233,14 @@ extension VMCommandCore {
     }
 
     // MARK: - Port Forwarding
+
+    /// The VM's host→guest mappings, in the order it carries them.
+    ///
+    /// Every rule the VM stores, whether or not the network carrying it is
+    /// declared right now: what the VM would forward is what a caller edits.
+    func portForwardingRules(of selector: VMSelector) throws -> [PortForwardingRule] {
+        try resolve(selector).configuration.portForwardingRules
+    }
 
     /// Adds one host→guest mapping, leaving a rule the VM already carries as it
     /// is.

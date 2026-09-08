@@ -47,10 +47,33 @@ enum CompletionSource {
     /// The snapshots a `<snapshot>` argument offers, of whichever virtual
     /// machine the line already named.
     static let snapshot = CompletionKind.custom { words, index, _ in
-        guard let subject = CompletionLine.snapshotSubject(in: words, completingAt: index) else {
+        guard let subject = CompletionLine.vmSubject(in: words, completingAt: index) else {
             return []
         }
         return snapshotNames(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
+    }
+
+    /// The folders a `share remove` path argument offers, of whichever virtual
+    /// machine the line already named.
+    static let sharedDirectory = CompletionKind.custom { words, index, _ in
+        guard let subject = CompletionLine.vmSubject(in: words, completingAt: index) else {
+            return []
+        }
+        return sharedDirectoryPaths(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
+    }
+
+    /// The mappings a `forward remove` argument offers, of whichever virtual
+    /// machine the line already named and on the transport it asked for.
+    ///
+    /// A rule is addressed by transport as well as by ports, so offering the
+    /// other transport's mappings would offer values the verb then refuses.
+    static let portMapping = CompletionKind.custom { words, index, _ in
+        guard let subject = CompletionLine.vmSubject(in: words, completingAt: index) else {
+            return []
+        }
+        let udp = (subject.command as? KernovaCommand.Forward.Remove)?.udp ?? false
+        return portMappings(
+            ofVM: subject.vm, byIdentifier: subject.byIdentifier, transport: udp ? .udp : .tcp)
     }
 
     /// The settings a `get` key argument offers.
@@ -96,6 +119,39 @@ enum CompletionSource {
             byIdentifier
                 ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)
                 : candidate($0.name, describedBy: $0.kind, for: context.shell)
+        }
+    }
+
+    /// Every folder the virtual machine `vm` names shares with its guest, by
+    /// the path `share remove` takes back.
+    static func sharedDirectoryPaths(
+        ofVM vm: String, byIdentifier: Bool, in context: CompletionContext = .live
+    ) -> [String] {
+        guard let selector = try? SelectorParsing.selector(from: vm, forcingID: byIdentifier),
+            case .sharedDirectories(let shares)? = answer(
+                to: .sharedDirectories(selector), in: context)
+        else { return [] }
+        return shares.map {
+            candidate(
+                $0.path, describedBy: $0.readOnly ? "read-only" : "read-write",
+                for: context.shell)
+        }
+    }
+
+    /// Every mapping the virtual machine `vm` names forwards on `transport`, by
+    /// the `<host-port>:<guest-port>` text `forward remove` takes back.
+    static func portMappings(
+        ofVM vm: String, byIdentifier: Bool, transport: PortForwardingTransport,
+        in context: CompletionContext = .live
+    ) -> [String] {
+        guard let selector = try? SelectorParsing.selector(from: vm, forcingID: byIdentifier),
+            case .portForwardingRules(let rules)? = answer(
+                to: .portForwardingRules(selector), in: context)
+        else { return [] }
+        return rules.filter { $0.transport == transport }.map {
+            candidate(
+                PortMapping.text(for: $0), describedBy: $0.transport.displayName,
+                for: context.shell)
         }
     }
 

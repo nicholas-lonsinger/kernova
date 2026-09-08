@@ -303,6 +303,145 @@ struct CLIRenderingTests {
         }
     }
 
+    // MARK: - Shares
+
+    private let shares = [
+        SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
+        SharedDirectorySummary(path: "/Users/somebody/Reference Material", readOnly: true),
+    ]
+
+    @Test("A share listing names its path and whether the guest may write")
+    func shareListingIsPathAndAccess() {
+        let lines = TableRenderer.render(shares, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        #expect(lines[0].contains("PATH"))
+        #expect(lines[0].contains("READ-ONLY"))
+        #expect(lines[1].hasPrefix("/Users/somebody/Sites"))
+        #expect(lines[1].hasSuffix("No"))
+        #expect(lines[2].hasSuffix("Yes"))
+    }
+
+    @Test("--quiet on a share listing prints exactly what share remove takes back")
+    func quietShareListingIsPathsOnly() {
+        #expect(
+            TableRenderer.render(shares, quiet: true)
+                == "/Users/somebody/Sites\n/Users/somebody/Reference Material")
+    }
+
+    @Test("A virtual machine sharing nothing prints nothing at all")
+    func emptyShareListingIsEmpty() {
+        #expect(TableRenderer.render([SharedDirectorySummary](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([SharedDirectorySummary](), quiet: true).isEmpty)
+    }
+
+    @Test("A cell prints whole, however many UTF-16 units its characters take")
+    func aCellIsNotTruncatedByItsUTF16Length() {
+        // A path read off the disk is decomposed — "Café" arrives as "e" plus a
+        // combining acute — and an emoji is a surrogate pair. Both measure
+        // longer in UTF-16 than in the characters the column is sized by, and a
+        // cell cut to the shorter measure is a path `share remove` refuses.
+        let decomposed = "/Users/somebody/Cafe\u{301}"
+        let nonBMP = "/Users/somebody/\u{1F4C1}"
+        let lines = TableRenderer.render(
+            [
+                SharedDirectorySummary(path: decomposed, readOnly: false),
+                SharedDirectorySummary(path: nonBMP, readOnly: true),
+            ], quiet: false
+        ).components(separatedBy: "\n")
+
+        #expect(lines[1].hasPrefix(decomposed))
+        #expect(lines[2].hasPrefix(nonBMP))
+        // And the column still aligns: each path is widened by characters.
+        let starts = [("READ-ONLY", 0), ("No", 1), ("Yes", 2)].map { name, row -> Int in
+            guard let range = lines[row].range(of: name) else { return -1 }
+            return lines[row].distance(from: lines[row].startIndex, to: range.lowerBound)
+        }
+        #expect(Set(starts).count == 1)
+        #expect(starts[0] > 0)
+    }
+
+    @Test("Share JSON is the wire DTO itself, decodable back")
+    func shareJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(shares)
+
+        #expect(
+            try JSONDecoder().decode([SharedDirectorySummary].self, from: Data(rendered.utf8))
+                == shares)
+        let objects = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
+        for field in ["path", "readOnly"] {
+            #expect(objects.first?[field] != nil, "missing \(field)")
+        }
+    }
+
+    // MARK: - Forwarded ports
+
+    private let rules = [
+        PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+        PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+    ]
+
+    @Test("A forwarding listing names the mappings of the transport it was asked for")
+    func forwardingListingIsMappingsAlone() {
+        let tcp = TableRenderer.render(
+            KernovaCommand.Forward.List.listed(rules, onUDP: false), quiet: false
+        ).components(separatedBy: "\n")
+
+        #expect(tcp == ["MAPPING", "8080:80"])
+        // No transport column: every row of one listing shares one, and the
+        // flag that chose it is the one `forward remove` takes back.
+        #expect(!tcp[0].contains("TRANSPORT"))
+    }
+
+    @Test("--quiet on a forwarding listing prints exactly what forward remove takes back")
+    func quietForwardingListingIsMappingsOnly() {
+        // The same fixture carries both transports, so each spelling of the
+        // verb has to print only the rules that spelling drops — a UDP mapping
+        // fed back without --udp names no rule, and two rules on one host port
+        // would otherwise print as one line twice.
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(rules, onUDP: false), quiet: true) == "8080:80")
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(rules, onUDP: true), quiet: true) == "5353:53")
+    }
+
+    @Test("Two rules on one host port stay two lines, because each is on its own transport")
+    func oneHostPortOnBothTransportsListsSeparately() {
+        let both = [
+            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+            PortForwardingRule(transport: .udp, hostPort: 8080, guestPort: 8080),
+        ]
+
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(both, onUDP: false), quiet: true) == "8080:80")
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(both, onUDP: true), quiet: true) == "8080:8080")
+    }
+
+    @Test("A virtual machine forwarding nothing prints nothing at all")
+    func emptyForwardingListingIsEmpty() {
+        #expect(TableRenderer.render([PortForwardingRule](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([PortForwardingRule](), quiet: true).isEmpty)
+    }
+
+    @Test("Forwarding JSON is the wire DTO itself, decodable back")
+    func forwardingJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(rules)
+
+        #expect(
+            try JSONDecoder().decode([PortForwardingRule].self, from: Data(rendered.utf8)) == rules)
+        let objects = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
+        for field in ["transport", "hostPort", "guestPort"] {
+            #expect(objects.first?[field] != nil, "missing \(field)")
+        }
+    }
+
     // MARK: - Addresses
 
     @Test("Each address case states its own answer, and only one is an address")

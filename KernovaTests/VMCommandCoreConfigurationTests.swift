@@ -652,7 +652,36 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration == before)
     }
 
-    // MARK: - Shared directories by path
+    // MARK: - Shared directories
+
+    @Test("The share listing is what the VM carries, in order, without the bookmark behind it")
+    func sharedDirectoriesAnswerWhatTheVMCarries() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        instance.configuration.sharedDirectories = [
+            SharedDirectory(path: "/Users/somebody/Sites", readOnly: false, bookmark: Data([1, 2])),
+            SharedDirectory(path: "/Users/somebody/Reference", readOnly: true),
+        ]
+
+        let listed = try harness.core.sharedDirectories(of: .name("Alpha"))
+
+        #expect(
+            listed == [
+                SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
+                SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
+            ])
+    }
+
+    @Test("A VM sharing nothing lists nothing, and a selector nothing answers to is refused")
+    func sharedDirectoriesOnAnEmptyAndAMissingVM() throws {
+        let harness = makeHarness()
+        makeInstance(in: harness)
+
+        #expect(try harness.core.sharedDirectories(of: .name("Alpha")).isEmpty)
+        #expect(throws: CommandError.self) {
+            try harness.core.sharedDirectories(of: .name("Typo"))
+        }
+    }
 
     @Test("A share is added by path, and adding the same folder again changes nothing")
     func addSharedDirectoryIsIdempotent() async throws {
@@ -774,6 +803,32 @@ struct VMCommandCoreConfigurationTests {
     }
 
     // MARK: - Port forwarding
+
+    @Test("The forwarding listing is every rule the VM carries, in order")
+    func portForwardingRulesAnswerWhatTheVMCarries() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let rules = [
+            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+        ]
+        instance.configuration.portForwardingRules = rules
+
+        // The VM's networking is off, so a rule is listed whether or not any
+        // network is carrying it right now.
+        #expect(try harness.core.portForwardingRules(of: .name("Alpha")) == rules)
+    }
+
+    @Test("A VM forwarding nothing lists nothing, and a selector nothing answers to is refused")
+    func portForwardingRulesOnAnEmptyAndAMissingVM() throws {
+        let harness = makeHarness()
+        makeInstance(in: harness)
+
+        #expect(try harness.core.portForwardingRules(of: .name("Alpha")).isEmpty)
+        #expect(throws: CommandError.self) {
+            try harness.core.portForwardingRules(of: .name("Typo"))
+        }
+    }
 
     @Test("A rule is added and dropped by its host-side claim")
     func portForwardingRoundTrips() throws {

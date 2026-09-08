@@ -55,7 +55,7 @@ enum TableRenderer {
         let width = fields.map(\.0.count).max() ?? 0
         return
             fields
-            .map { "\($0.0.padding(toLength: width, withPad: " ", startingAt: 0))  \($0.1)" }
+            .map { "\(padded($0.0, to: width))  \($0.1)" }
             .joined(separator: "\n")
     }
 
@@ -76,6 +76,32 @@ enum TableRenderer {
                     $0.snapshot.id.uuidString,
                 ]
             })
+    }
+
+    /// The folders a VM shares with its guest, in the order it carries them.
+    ///
+    /// `quiet` prints the paths alone, which is exactly what `share remove`
+    /// takes back.
+    public static func render(_ rows: [SharedDirectorySummary], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(\.path).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        return columns(
+            headings: ["PATH", "READ-ONLY"],
+            rows: rows.map { [$0.path, $0.readOnly ? "Yes" : "No"] })
+    }
+
+    /// A VM's forwarded ports on one transport, in the order it carries them.
+    ///
+    /// The transport is the caller's filter rather than a column: `forward
+    /// remove` names a rule by transport as well as by ports, so every line —
+    /// under `quiet` above all — has to be one the same spelling of the verb
+    /// takes back.
+    public static func render(_ rules: [PortForwardingRule], quiet: Bool) -> String {
+        guard !quiet else {
+            return rules.map(PortMapping.text(for:)).joined(separator: "\n")
+        }
+        guard !rules.isEmpty else { return "" }
+        return columns(headings: ["MAPPING"], rows: rules.map { [PortMapping.text(for: $0)] })
     }
 
     /// A virtual machine's settings, one per line, in the order they were
@@ -139,6 +165,18 @@ enum TableRenderer {
             ? "\(Int(gigabytes)) GB" : String(format: "%.1f GB", gigabytes)
     }
 
+    /// `cell` widened to `width` characters.
+    ///
+    /// Appends spaces rather than calling `padding(toLength:withPad:startingAt:)`,
+    /// which measures in UTF-16 units and *truncates* a cell longer than
+    /// `width` in them. A path read off the disk is decomposed — `Café` arrives
+    /// as `e` plus a combining acute — and an emoji is a surrogate pair, so
+    /// either measures longer there than in the characters a column is sized
+    /// by, and the cell would be cut to something no verb takes back.
+    private static func padded(_ cell: String, to width: Int) -> String {
+        cell + String(repeating: " ", count: width - cell.count)
+    }
+
     /// `headings` over `rows`, every column padded to its widest cell.
     private static func columns(headings: [String], rows: [[String]]) -> String {
         let widths = headings.indices.map { column in
@@ -146,7 +184,7 @@ enum TableRenderer {
         }
         func line(_ cells: [String]) -> String {
             cells.indices
-                .map { cells[$0].padding(toLength: widths[$0], withPad: " ", startingAt: 0) }
+                .map { padded(cells[$0], to: widths[$0]) }
                 .joined(separator: "  ")
                 // The last column is padded like the others; trailing blanks
                 // would make every line differ from what a reader copied.

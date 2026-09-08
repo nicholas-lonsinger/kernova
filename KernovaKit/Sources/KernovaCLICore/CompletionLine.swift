@@ -100,18 +100,23 @@ enum CompletionLine {
         return words.indices.contains(index - 1) && words[index - 1] == "="
     }
 
-    /// The virtual machine whose snapshots the line is asking for, and whether
-    /// it named that machine by identifier.
+    /// The virtual machine the line is asking about something of, the command
+    /// asking, and whether the machine was named by identifier.
     ///
-    /// - Returns: `nil` when the line is not one that addresses a snapshot, or
-    ///   has not named the virtual machine yet.
-    static func snapshotSubject(
+    /// The command comes back with the machine because a completion may need
+    /// more of the line than the machine — which transport a `forward remove`
+    /// named, say.
+    ///
+    /// - Returns: `nil` when the line is not one that names a virtual machine
+    ///   alongside something of that machine's own, or has not named the
+    ///   machine yet.
+    static func vmSubject(
         in words: [String], completingAt index: Int
-    ) -> (vm: String, byIdentifier: Bool)? {
-        guard let command = command(from: words, completingAt: index) as? any SnapshotCommandLine,
+    ) -> (command: any VMScopedCommandLine, vm: String, byIdentifier: Bool)? {
+        guard let command = command(from: words, completingAt: index) as? any VMScopedCommandLine,
             command.vm != placeholder
         else { return nil }
-        return (command.vm, command.options.id)
+        return (command, command.vm, command.options.id)
     }
 }
 
@@ -125,11 +130,12 @@ protocol GlobalOptionsCommand: ParsableCommand {
     var options: GlobalOptions { get }
 }
 
-/// A subcommand that names a virtual machine and one of its snapshots.
+/// A subcommand that names a virtual machine and something the machine itself
+/// carries — one of its snapshots, a folder it shares, a port it forwards.
 ///
-/// The snapshot argument is completed against that machine's own listing, so
-/// the completion has to reach the machine the line already named.
-protocol SnapshotCommandLine: GlobalOptionsCommand {
+/// That second argument is completed against the machine's own listing, so the
+/// completion has to reach the machine the line already named.
+protocol VMScopedCommandLine: GlobalOptionsCommand {
     /// Which virtual machine, as the line spells it.
     var vm: String { get }
 }
