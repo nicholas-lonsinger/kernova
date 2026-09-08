@@ -156,16 +156,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         termination.install()
 
-        lifecycle.start(provenance: readLaunchProvenance(notification))
+        lifecycle.start(provenance: readLaunchProvenance())
     }
 
     /// Reads what the launch asked for.
     ///
     /// The only place either signal is read: everything downstream takes the
     /// ``AppResidencyController/LaunchProvenance`` this builds.
-    private func readLaunchProvenance(
-        _ notification: Notification
-    ) -> AppResidencyController.LaunchProvenance {
+    private func readLaunchProvenance() -> AppResidencyController.LaunchProvenance {
         let event = NSAppleEventManager.shared().currentAppleEvent
         let isLoginItem =
             event.map { descriptor in

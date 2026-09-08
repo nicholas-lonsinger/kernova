@@ -6,7 +6,7 @@ import KernovaKit
 /// Client-side, because the wire addresses a snapshot by identifier alone: the
 /// listing every snapshot verb already reads is what a typed name is matched
 /// against, so the app needs no second way to name one.
-public enum SnapshotResolution {
+enum SnapshotResolution {
     /// The snapshot `text` names among `snapshots`, where `vm` is what the user
     /// called the virtual machine.
     ///
@@ -20,7 +20,7 @@ public enum SnapshotResolution {
     ///   that is not an identifier, ``CLIExitCode/notFound`` when nothing
     ///   matches, and ``CLIExitCode/ambiguous``, listing the candidates, when
     ///   more than one name does.
-    public static func snapshot(
+    static func snapshot(
         named text: String, of vm: String, in snapshots: [SnapshotSummary], forcingID: Bool
     ) throws -> SnapshotSummary {
         let identifier = UUID(uuidString: text)

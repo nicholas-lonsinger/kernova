@@ -24,11 +24,9 @@ struct AppWindowRegistryPresenceTests {
     private final class StubResidencyHost: WindowResidencyHosting {
         var prepareCount = 0
         var syncCount = 0
-        var activateCount = 0
 
         func prepareToPresentWindow() { prepareCount += 1 }
         func syncActivationPolicy() { syncCount += 1 }
-        func activateForExternalRequest() { activateCount += 1 }
     }
 
     private func makeRegistry() -> AppWindowRegistry {

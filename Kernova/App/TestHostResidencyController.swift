@@ -67,10 +67,6 @@ final class TestHostResidencyController: AppResidencyHosting {
     /// ever delivered to it.
     func openAutomationLink(_ url: URL) {}
 
-    /// Nothing to do: the test host is already a foreground `.regular` app, and
-    /// it opens no command socket to be asked from.
-    func activateForExternalRequest() {}
-
     // MARK: - Residency
 
     /// Nothing to prepare: this is a plain foreground `.regular` app, so a window

@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 /// How the tool turns a typed virtual-machine argument into a selector.
-public enum SelectorParsing {
+enum SelectorParsing {
     /// The selector `text` names.
     ///
     /// Without `--id` this is ``VMSelector/idOrName(_:)``, and the app decides:
@@ -10,7 +10,7 @@ public enum SelectorParsing {
     /// anything else as a display name. `--id` is the escape hatch for a
     /// library where a VM is literally named after another's identifier, and
     /// refuses text that is not one rather than silently searching by name.
-    public static func selector(from text: String, forcingID: Bool) throws -> VMSelector {
+    static func selector(from text: String, forcingID: Bool) throws -> VMSelector {
         guard forcingID else { return .idOrName(text) }
         guard let id = UUID(uuidString: text) else {
             throw CLIFailure(.usage, "\u{201C}\(text)\u{201D} is not a virtual machine identifier.")

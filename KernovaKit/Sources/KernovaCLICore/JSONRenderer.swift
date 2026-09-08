@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 
 /// The wire DTOs as JSON, for a script.
 ///
@@ -7,9 +6,9 @@ import KernovaKit
 /// wire's are one schema, so nothing here can drift from what the app sends.
 /// Keys are sorted and dates are ISO 8601, so a diff of two runs shows what
 /// changed rather than how the encoder felt.
-public enum JSONRenderer {
+enum JSONRenderer {
     /// Encodes any wire payload.
-    public static func render(_ value: some Encodable) throws -> String {
+    static func render(_ value: some Encodable) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601

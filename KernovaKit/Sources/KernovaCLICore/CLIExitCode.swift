@@ -72,14 +72,14 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
 
 /// A refusal on its way to `exit` — the message a user reads and the code a
 /// script reads, carried together.
-public struct CLIFailure: Error, Sendable, Hashable {
+struct CLIFailure: Error, Sendable, Hashable {
     /// What the process exits with.
-    public let code: CLIExitCode
+    let code: CLIExitCode
     /// What is written to standard error, empty when there is nothing to add.
-    public let message: String
+    let message: String
 
     /// Names one outcome and what to say about it.
-    public init(_ code: CLIExitCode, _ message: String = "") {
+    init(_ code: CLIExitCode, _ message: String = "") {
         self.code = code
         self.message = message
     }

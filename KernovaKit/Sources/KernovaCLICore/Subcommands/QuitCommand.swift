@@ -14,6 +14,10 @@ extension KernovaCommand {
                 + "the one verb that never starts it. Returns once macOS has released the app, so "
                 + "a line after this one is free to open it again.")
 
+        // Witnesses `GlobalOptionsCommand.options`, which completion reads through
+        // the protocol; quit itself has no option to act on, and carries the group
+        // so every verb accepts the same flags.
+        // periphery:ignore - protocol witness read only through GlobalOptionsCommand
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
 
