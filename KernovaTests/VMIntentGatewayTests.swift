@@ -673,7 +673,7 @@ struct VMIntentGatewayTests {
 }
 
 /// Counts calls arriving from whatever isolation the value under test uses.
-private actor Counter {
+actor Counter {
     private(set) var value = 0
 
     func increment() { value += 1 }

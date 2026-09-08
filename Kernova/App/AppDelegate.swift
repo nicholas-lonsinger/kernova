@@ -293,6 +293,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    // MARK: - Scripting (Apple events)
+
+    /// The Apple event front door every `NSScriptCommand` reaches through here:
+    /// Cocoa builds each command itself and hands it nothing to work with.
+    var scriptingGateway: VMScriptingGateway? { lifecycle.scriptingGateway }
+
+    /// `NSApplication` is the scripting root, and the dictionary gives it a
+    /// `virtual machines` element — a key it forwards here.
+    func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
+        key == Self.virtualMachinesKey
+    }
+
+    /// The literal KVC key the dictionary's `virtual machine` element is
+    /// declared with, which is also the key Cocoa asks this delegate for.
+    nonisolated static let virtualMachinesKey = "virtualMachines"
+
+    /// Every VM in the library, as the dictionary's `virtual machine` elements.
+    ///
+    /// Synchronous because KVC is: Cocoa evaluates a specifier inside the Apple
+    /// event's own callout, which has no suspension to await the app's first
+    /// library read in — so a read arriving before that read lands answers from
+    /// the library as it stands then. Only the verbs can wait.
+    @objc var virtualMachines: [VMScriptObject] {
+        scriptingGateway?.virtualMachines() ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `virtual machine "…"` through.
+    ///
+    /// Cocoa's own answer, without this, is the first VM whose name matches
+    /// case-insensitively — which for two VMs sharing a display name is
+    /// whichever the library lists first, described to the script as though it
+    /// were the one asked for. ``VMScriptingGateway/virtualMachine(named:)``
+    /// answers with neither instead, and the script reads "can't get".
+    @objc(valueInVirtualMachinesWithName:)
+    func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
+        scriptingGateway?.virtualMachine(named: name)
+    }
+
     // MARK: - Menu Actions
 
     @objc func newVM(_ sender: Any?) {

@@ -67,6 +67,10 @@ final class TestHostResidencyController: AppResidencyHosting {
     /// ever delivered to it.
     func openAutomationLink(_ url: URL) {}
 
+    /// No door, for the reason ``registerAutomationFrontDoors()`` states: the
+    /// test host opens none, so a script has nothing here to address.
+    var scriptingGateway: VMScriptingGateway? { nil }
+
     // MARK: - Residency
 
     /// Nothing to prepare: this is a plain foreground `.regular` app, so a window

@@ -72,7 +72,7 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 
 Pure AppKit in the Liquid Glass design language: a source-list sidebar with drag reordering and inline rename, a customizable toolbar, a Settings window (⌘,), and a deletion sheet that offers to trash a VM's external attachments alongside it.
 
-VMs are also drivable without the window: App Intents put start, stop, pause, resume, suspend, restart, open, and snapshot capture in the Shortcuts app and Spotlight, with each VM as a typed entity you pick or search by name.
+VMs are also drivable without the window: App Intents put start, stop, pause, resume, suspend, restart, open, and snapshot capture in the Shortcuts app and Spotlight, with each VM as a typed entity you pick or search by name, and an AppleScript dictionary puts the lifecycle verbs in Script Editor and Automator.
 
 Kernova also ships a `kernova` command-line tool, bundled inside the app at `Contents/Helpers/kernova`. **Settings → Advanced → Install…** links it into a folder you choose, so a shell always reaches the copy the installed app ships:
 

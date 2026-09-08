@@ -31,6 +31,10 @@ protocol AppResidencyHosting: WindowResidencyHosting {
     func registerAutomationFrontDoors()
     /// Answers one `kernova:` link delivered to `application(_:open:)`.
     func openAutomationLink(_ url: URL)
+    /// The Apple event front door, which every script command reaches through
+    /// the app delegate — Cocoa builds those commands itself and hands them
+    /// nothing.
+    var scriptingGateway: VMScriptingGateway? { get }
     /// Brings the process up for the launch it was given.
     func start(provenance: AppResidencyController.LaunchProvenance)
     /// The answer to `applicationShouldTerminateAfterLastWindowClosed(_:)`.
@@ -88,9 +92,14 @@ final class AppResidencyController: AppResidencyHosting {
     /// `AppDependencyManager` owns the intent gateway copy intents resolve.
     private var commandSocket: VMCommandSocketListener?
 
-    /// The `kernova:` link front door, held for the life of the process: it
-    /// memoizes the readiness await every link shares.
+    /// The `kernova:` link front door, held for the life of the process:
+    /// nothing else retains it.
     private var urlGateway: VMURLGateway?
+
+    /// The Apple event front door, held for the life of the process: Cocoa
+    /// builds a fresh `NSScriptCommand` per event and this is what each one
+    /// finds through the delegate.
+    private(set) var scriptingGateway: VMScriptingGateway?
 
     /// The menu-bar status item — the "Kernova is running" affordance and the way
     /// to summon the GUI while headless.
@@ -181,6 +190,9 @@ final class AppResidencyController: AppResidencyHosting {
             present: { [weak self] refusal in
                 self?.viewModel.surfaceUnawaitedFailure(refusal)
             })
+
+        scriptingGateway = VMScriptingGateway(
+            commands: viewModel.commands, readiness: readiness)
     }
 
     func openAutomationLink(_ url: URL) {
