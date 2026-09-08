@@ -74,6 +74,27 @@ Pure AppKit in the Liquid Glass design language: a source-list sidebar with drag
 
 VMs are also drivable without the window: App Intents put start, stop, pause, resume, suspend, restart, open, and snapshot capture in the Shortcuts app and Spotlight, with each VM as a typed entity you pick or search by name, and an AppleScript dictionary puts the lifecycle verbs in Script Editor and Automator.
 
+Script Editor's **File → Open Dictionary…** shows everything the dictionary offers — every property a virtual machine answers, and every verb with its parameters. A few idioms the dictionary alone doesn't show:
+
+```applescript
+tell application "Kernova"
+    -- A name matches without regard to case; a `whose` test filters the library.
+    get name of every virtual machine whose state is running
+
+    -- `IP address` is `missing value` until the guest has one.
+    start virtual machine "Alpha"
+    repeat until IP address of virtual machine "Alpha" is not missing value
+        delay 1
+    end repeat
+
+    -- A stop that discards guest state refuses without `with confirmation`.
+    -- AppleScript gives up on a reply after two minutes unless told otherwise.
+    with timeout of 600 seconds
+        stop virtual machine "Alpha" by force with confirmation
+    end timeout
+end tell
+```
+
 Kernova also ships a `kernova` command-line tool, bundled inside the app at `Contents/Helpers/kernova`. **Settings → Advanced → Install…** links it into a folder you choose, so a shell always reaches the copy the installed app ships:
 
 ```bash
