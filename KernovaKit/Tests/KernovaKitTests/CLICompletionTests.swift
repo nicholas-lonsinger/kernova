@@ -308,25 +308,47 @@ struct CLICompletionTests {
 
         let names = CompletionSource.snapshotNames(
             ofVM: "Alpha", byIdentifier: true, in: counting)
+        let paths = CompletionSource.sharedDirectoryPaths(
+            ofVM: "Alpha", byIdentifier: true, in: counting)
+        let mappings = CompletionSource.portMappings(
+            ofVM: "Alpha", byIdentifier: true, transport: .tcp, in: counting)
 
         #expect(names.isEmpty)
+        #expect(paths.isEmpty)
+        #expect(mappings.isEmpty)
         // The selector is refused client-side, so the app is never reached.
         #expect(opened.value == 0)
     }
 
     @Test("A refusal is no candidates, not a refusal printed into the line")
     func aRefusedReadOffersNothing() throws {
-        let listener = try TestCommandSocket(tag: "cmp-refused")
-        defer { listener.close() }
-        listener.serve([
-            VMCommandResponse(
-                result: .failure(.ambiguous(selector: .idOrName("Alpha"), candidates: [alpha, beta])))
-        ])
+        // One connection per double, so each read is refused on its own.
+        let refusal = VMCommandResponse(
+            result: .failure(.ambiguous(selector: .idOrName("Alpha"), candidates: [alpha, beta])))
 
-        let names = CompletionSource.snapshotNames(
-            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
+        let snapshots = try TestCommandSocket(tag: "cmp-refused")
+        defer { snapshots.close() }
+        snapshots.serve([refusal])
+        #expect(
+            CompletionSource.snapshotNames(
+                ofVM: "Alpha", byIdentifier: false, in: context(to: snapshots)
+            ).isEmpty)
 
-        #expect(names.isEmpty)
+        let shares = try TestCommandSocket(tag: "cmp-refused-sh")
+        defer { shares.close() }
+        shares.serve([refusal])
+        #expect(
+            CompletionSource.sharedDirectoryPaths(
+                ofVM: "Alpha", byIdentifier: false, in: context(to: shares)
+            ).isEmpty)
+
+        let forwards = try TestCommandSocket(tag: "cmp-refused-fw")
+        defer { forwards.close() }
+        forwards.serve([refusal])
+        #expect(
+            CompletionSource.portMappings(
+                ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: context(to: forwards)
+            ).isEmpty)
     }
 
     @Test("An app that takes the request and never answers offers nothing")

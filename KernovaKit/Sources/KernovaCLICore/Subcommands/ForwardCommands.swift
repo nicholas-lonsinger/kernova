@@ -28,12 +28,15 @@ extension KernovaCommand.Forward {
             commandName: "list",
             abstract: "List a virtual machine's forwarded ports.",
             discussion: "Each rule prints as the <host-port>:<guest-port> mapping `forward "
-                + "remove` takes back, beside the transport it covers. A rule is listed whether "
-                + "or not the network carrying it is declared right now.")
+                + "remove` takes back \u{2014} the TCP rules, or with `--udp` the UDP ones.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         public var vm: String
+
+        /// List the UDP rules rather than the TCP ones.
+        @Flag(name: .long, help: "List the UDP rules rather than the TCP ones.")
+        public var udp = false
 
         /// The options every subcommand carries.
         @OptionGroup public var options: GlobalOptions
@@ -42,20 +45,37 @@ extension KernovaCommand.Forward {
         public init() {}
 
         /// The request this command line stands for.
+        ///
+        /// One read whichever transport is asked for: the app answers every
+        /// rule and `--udp` picks among them here, the way the completion for
+        /// `forward remove` reads them too.
         public func verb() throws -> VMCommandRequest.Verb {
             .portForwardingRules(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
-        /// Reads the rules and writes them.
+        /// The rules this listing prints, of every rule the virtual machine
+        /// carries.
+        ///
+        /// A rule is addressed by transport as well as by ports, so a listing
+        /// mixing the two would print lines that `forward remove` does not take
+        /// back — and two rules on one host port as the same line.
+        static func listed(
+            _ rules: [PortForwardingRule], onUDP: Bool
+        ) -> [PortForwardingRule] {
+            rules.filter { $0.transport == (onUDP ? .udp : .tcp) }
+        }
+
+        /// Reads the rules and writes the ones this spelling covers.
         public func run() throws {
             let answered = try answer()
             guard case .portForwardingRules(let rules) = answered else {
                 throw answered.unexpectedAnswer
             }
+            let listed = Self.listed(rules, onUDP: udp)
             Console.out(
                 options.format == .json
-                    ? try JSONRenderer.render(rules)
-                    : TableRenderer.render(rules, quiet: options.quiet))
+                    ? try JSONRenderer.render(listed)
+                    : TableRenderer.render(listed, quiet: options.quiet))
         }
     }
 

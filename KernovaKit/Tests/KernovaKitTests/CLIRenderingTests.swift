@@ -335,6 +335,32 @@ struct CLIRenderingTests {
         #expect(TableRenderer.render([SharedDirectorySummary](), quiet: true).isEmpty)
     }
 
+    @Test("A cell prints whole, however many UTF-16 units its characters take")
+    func aCellIsNotTruncatedByItsUTF16Length() {
+        // A path read off the disk is decomposed — "Café" arrives as "e" plus a
+        // combining acute — and an emoji is a surrogate pair. Both measure
+        // longer in UTF-16 than in the characters the column is sized by, and a
+        // cell cut to the shorter measure is a path `share remove` refuses.
+        let decomposed = "/Users/somebody/Cafe\u{301}"
+        let nonBMP = "/Users/somebody/\u{1F4C1}"
+        let lines = TableRenderer.render(
+            [
+                SharedDirectorySummary(path: decomposed, readOnly: false),
+                SharedDirectorySummary(path: nonBMP, readOnly: true),
+            ], quiet: false
+        ).components(separatedBy: "\n")
+
+        #expect(lines[1].hasPrefix(decomposed))
+        #expect(lines[2].hasPrefix(nonBMP))
+        // And the column still aligns: each path is widened by characters.
+        let starts = [("READ-ONLY", 0), ("No", 1), ("Yes", 2)].map { name, row -> Int in
+            guard let range = lines[row].range(of: name) else { return -1 }
+            return lines[row].distance(from: lines[row].startIndex, to: range.lowerBound)
+        }
+        #expect(Set(starts).count == 1)
+        #expect(starts[0] > 0)
+    }
+
     @Test("Share JSON is the wire DTO itself, decodable back")
     func shareJSONIsTheWireDTO() throws {
         let rendered = try JSONRenderer.render(shares)
@@ -356,22 +382,45 @@ struct CLIRenderingTests {
         PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
     ]
 
-    @Test("A forwarding listing names the mapping and the transport it covers")
-    func forwardingListingIsMappingAndTransport() {
-        let lines = TableRenderer.render(rules, quiet: false).components(separatedBy: "\n")
+    @Test("A forwarding listing names the mappings of the transport it was asked for")
+    func forwardingListingIsMappingsAlone() {
+        let tcp = TableRenderer.render(
+            KernovaCommand.Forward.List.listed(rules, onUDP: false), quiet: false
+        ).components(separatedBy: "\n")
 
-        #expect(lines.count == 3)
-        #expect(lines[0].contains("MAPPING"))
-        #expect(lines[0].contains("TRANSPORT"))
-        #expect(lines[1].hasPrefix("8080:80"))
-        #expect(lines[1].hasSuffix("TCP"))
-        #expect(lines[2].hasPrefix("5353:53"))
-        #expect(lines[2].hasSuffix("UDP"))
+        #expect(tcp == ["MAPPING", "8080:80"])
+        // No transport column: every row of one listing shares one, and the
+        // flag that chose it is the one `forward remove` takes back.
+        #expect(!tcp[0].contains("TRANSPORT"))
     }
 
     @Test("--quiet on a forwarding listing prints exactly what forward remove takes back")
     func quietForwardingListingIsMappingsOnly() {
-        #expect(TableRenderer.render(rules, quiet: true) == "8080:80\n5353:53")
+        // The same fixture carries both transports, so each spelling of the
+        // verb has to print only the rules that spelling drops — a UDP mapping
+        // fed back without --udp names no rule, and two rules on one host port
+        // would otherwise print as one line twice.
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(rules, onUDP: false), quiet: true) == "8080:80")
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(rules, onUDP: true), quiet: true) == "5353:53")
+    }
+
+    @Test("Two rules on one host port stay two lines, because each is on its own transport")
+    func oneHostPortOnBothTransportsListsSeparately() {
+        let both = [
+            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+            PortForwardingRule(transport: .udp, hostPort: 8080, guestPort: 8080),
+        ]
+
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(both, onUDP: false), quiet: true) == "8080:80")
+        #expect(
+            TableRenderer.render(
+                KernovaCommand.Forward.List.listed(both, onUDP: true), quiet: true) == "8080:8080")
     }
 
     @Test("A virtual machine forwarding nothing prints nothing at all")

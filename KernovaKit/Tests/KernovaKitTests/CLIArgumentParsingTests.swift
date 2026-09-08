@@ -246,7 +246,15 @@ struct CLIArgumentParsingTests {
         let forwards = try #require(
             try parse(["forward", "list", "Alpha"]) as? KernovaCommand.Forward.List)
         #expect(forwards.vm == "Alpha")
+        #expect(!forwards.udp)
         #expect(try forwards.verb() == .portForwardingRules(.idOrName("Alpha")))
+
+        // The transport rides the same flag `forward remove` takes, and picks
+        // among the rules one read answers rather than asking a second time.
+        let udp = try #require(
+            try parse(["forward", "list", "Alpha", "--udp"]) as? KernovaCommand.Forward.List)
+        #expect(udp.udp)
+        #expect(try udp.verb() == .portForwardingRules(.idOrName("Alpha")))
     }
 
     @Test("Every list verb refuses without the virtual machine it lists")

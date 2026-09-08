@@ -187,6 +187,25 @@ struct CLIConfigurationWireTests {
         #expect(identified.sent == [.portForwardingRules(.id(identifier))])
     }
 
+    @Test("--udp on a forward list changes which rules print, not what is read")
+    func forwardListReadsEveryRuleWhicheverTransportItPrints() throws {
+        let rules = [
+            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+        ]
+        let exchanged = try CLIWire.exchange(
+            ["forward", "list", "Alpha", "--udp"],
+            answering: VMCommandResponse(result: .portForwardingRules(rules)),
+            tag: "forward-list-udp")
+
+        // The read is the same one either spelling sends: the app answers every
+        // rule and the transport picks among them client-side, which is how the
+        // completion for `forward remove` reads them too.
+        #expect(exchanged.sent == [.portForwardingRules(.idOrName("Alpha"))])
+        #expect(try exchanged.answer.payload() == .portForwardingRules(rules))
+        #expect(KernovaCommand.Forward.List.listed(rules, onUDP: true) == [rules[1]])
+    }
+
     @Test("A forward add crosses as a rule on the transport the flags chose")
     func forwardAddSendsTheRule() throws {
         let tcp = try CLIWire.exchange(

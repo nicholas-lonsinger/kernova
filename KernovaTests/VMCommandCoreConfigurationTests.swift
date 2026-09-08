@@ -671,9 +671,6 @@ struct VMCommandCoreConfigurationTests {
                 SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
                 SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
             ])
-        // The folders are never opened, so one that has moved is still listed —
-        // by the path the removal takes back.
-        #expect(!FileManager.default.fileExists(atPath: "/Users/somebody/Sites"))
     }
 
     @Test("A VM sharing nothing lists nothing, and a selector nothing answers to is refused")
