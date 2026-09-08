@@ -70,6 +70,13 @@ verdict_file="$out_dir/${target:-setup}.verdict"
 # can touch the running run's log or verdict, so a caller never needs to look
 # for a running instance first.
 pid_file="$out_dir/make-verdict.pid"
+body="$(mktemp)"
+# Set only once this process holds the lock, so a --from-log report — which
+# takes no lock and may run while a real run is in flight — cannot release one
+# it does not own.
+owned_pid_file=
+trap 'rm -f "$body" "$body.out"; [ -z "$owned_pid_file" ] || rm -f "$owned_pid_file"' EXIT
+
 if [ -z "$from_log" ]; then
     mkdir -p "$out_dir" 2>/dev/null || true
     if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
@@ -78,7 +85,7 @@ if [ -z "$from_log" ]; then
         exit 5
     fi
     printf '%s\n' "$$" >"$pid_file"
-    trap 'rm -f "$pid_file"' EXIT
+    owned_pid_file="$pid_file"
     rm -f "$verdict_file"
 fi
 
@@ -173,8 +180,6 @@ tail_section() {
 
 verdict=
 status=0
-body="$(mktemp)"
-trap 'rm -f "$body" "$pid_file"' EXIT
 extra=""
 xcresult="-"
 
