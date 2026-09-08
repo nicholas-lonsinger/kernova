@@ -66,7 +66,7 @@ struct VMSettingsNetworkPanelTests {
         // reaches the panel through the library, never the panel directly.
         let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
         registerSettingsInstance(instance, in: library)
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: library, isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,
             entitlements: EntitlementService(

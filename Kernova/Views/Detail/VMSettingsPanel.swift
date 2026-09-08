@@ -27,7 +27,7 @@ final class VMSettingsPanelContext {
 
     /// Existence of every attachment file this VM's rows stand for, shared by
     /// the panels that render those rows so one watch serves them all.
-    let fileMonitor = AttachmentFileMonitor()
+    let fileMonitor: AttachmentFileMonitor
 
     /// The shell, which owns the write paths a panel shares with the overview.
     weak var host: (any VMSettingsPanelHost)?
@@ -45,7 +45,8 @@ final class VMSettingsPanelContext {
         bridgedInterfaces: any BridgedInterfaceProviding,
         entitlements: EntitlementService,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus,
-        systemSettings: SystemSettingsLink
+        systemSettings: SystemSettingsLink,
+        activationCenter: NotificationCenter
     ) {
         self.instance = instance
         self.viewModel = viewModel
@@ -54,6 +55,7 @@ final class VMSettingsPanelContext {
         self.entitlements = entitlements
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
+        self.fileMonitor = AttachmentFileMonitor(activationCenter: activationCenter)
         self.overview = VMOverviewResolver(
             instance: instance, viewModel: viewModel, entitlements: entitlements,
             bridgedInterfaces: bridgedInterfaces, micPermissionStatus: micPermissionStatus)

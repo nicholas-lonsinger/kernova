@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Testing
 
@@ -49,6 +50,35 @@ func registerSettingsInstance(_ instance: VMInstance, in viewModel: VMLibraryVie
     viewModel.library.instances.append(instance)
 }
 
+/// The test target's one construction site for the settings pane, which is what
+/// keeps every fixture off the app-wide activation center.
+///
+/// `NSApplication.didBecomeActiveNotification` is posted process-wide, and a
+/// pane subscribes to it in `viewDidAppear()` — which every fixture runs, while
+/// almost none run the `viewWillDisappear()` that unsubscribes. Defaulting to a
+/// fresh center per pane means a click on the test host's own window reaches no
+/// controller a suite is still holding. A test that drives activation itself
+/// passes a center it holds.
+@MainActor
+func makeSettingsPane(
+    instance: VMInstance,
+    viewModel: VMLibraryViewModel,
+    isReadOnly: Bool,
+    bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
+    entitlements: EntitlementService = .shared,
+    micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    },
+    systemSettings: SystemSettingsLink = SystemSettingsLink(),
+    activationCenter: NotificationCenter = NotificationCenter()
+) -> VMSettingsViewController {
+    VMSettingsViewController(
+        instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
+        bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
+        micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
+        activationCenter: activationCenter)
+}
+
 /// Builds the settings pane and runs its appearance lifecycle so `apply()` has
 /// populated control values and enabled state.
 ///
@@ -61,7 +91,7 @@ func makeSettingsController(
 ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
     let viewModel = makeSettingsViewModel(preferences: preferences)
     let instance = makeSettingsInstance(guestOS: guestOS, phase: phase)
-    let vc = VMSettingsViewController(
+    let vc = makeSettingsPane(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
     vc.loadViewIfNeeded()
     vc.viewDidAppear()

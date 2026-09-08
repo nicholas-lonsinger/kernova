@@ -29,7 +29,7 @@ struct VMSettingsOverviewTests {
     ) {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: guestOS)
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -215,7 +215,7 @@ struct VMSettingsOverviewTests {
     func drillInSettlesAnOpenFieldEditor() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -397,7 +397,7 @@ struct VMSettingsOverviewTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: true)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -438,7 +438,7 @@ struct VMSettingsOverviewTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
         instance.enter(.running(sessionID: UUID()))
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: true)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -618,7 +618,7 @@ struct VMSettingsOverviewTests {
         let other = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
         other.configuration.name = "Twin"
         viewModel.instances = [instance, other]
-        let vc = VMSettingsViewController(
+        let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

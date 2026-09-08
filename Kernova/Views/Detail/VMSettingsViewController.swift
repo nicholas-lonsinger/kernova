@@ -63,8 +63,15 @@ final class VMSettingsViewController: NSViewController {
     /// The open category, or `nil` for the overview.
     private(set) var selectedCategory: VMSettingsCategory?
 
+    private let activationCenter: NotificationCenter
+
     // MARK: - Init
 
+    /// `activationCenter` is where app activation is observed, by this
+    /// controller and by the pane's file monitor alike. A test passes its own
+    /// center so the notification reaches only the pane under test — the
+    /// app-wide name is posted process-wide, so a click on the test host's
+    /// window would otherwise re-enter every controller a suite is holding.
     init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
@@ -74,15 +81,18 @@ final class VMSettingsViewController: NSViewController {
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },
-        systemSettings: SystemSettingsLink = SystemSettingsLink()
+        systemSettings: SystemSettingsLink = SystemSettingsLink(),
+        activationCenter: NotificationCenter = .default
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
+        self.activationCenter = activationCenter
         self.panelContext = VMSettingsPanelContext(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
             bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
-            micPermissionStatus: micPermissionStatus, systemSettings: systemSettings)
+            micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
+            activationCenter: activationCenter)
         super.init(nibName: nil, bundle: nil)
         panelContext.host = self
         panelContext.overview.onCategoryResolved = { [weak self] category in
@@ -206,7 +216,7 @@ final class VMSettingsViewController: NSViewController {
         panelContext.fileMonitor.revalidate()
         if modelObservation == nil {
             restartModelObservation()
-            NotificationCenter.default.addObserver(
+            activationCenter.addObserver(
                 self, selector: #selector(appDidBecomeActive),
                 name: NSApplication.didBecomeActiveNotification, object: nil)
         }
@@ -254,7 +264,7 @@ final class VMSettingsViewController: NSViewController {
         panelContext.overview.prepareForDisappearance()
         modelObservation?.cancel()
         modelObservation = nil
-        NotificationCenter.default.removeObserver(
+        activationCenter.removeObserver(
             self, name: NSApplication.didBecomeActiveNotification, object: nil)
     }
 

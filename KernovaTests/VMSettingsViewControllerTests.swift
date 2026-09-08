@@ -130,4 +130,45 @@ struct VMSettingsViewControllerTests {
 
         #expect(instance.configuration.clipboardSharingEnabled == true)
     }
+
+    // MARK: - App activation
+
+    /// Carries a microphone status the test moves between activations, which is
+    /// what makes the re-read `appDidBecomeActive()` performs observable.
+    @MainActor
+    private final class MicStatus {
+        var value: AVAuthorizationStatus
+        init(_ value: AVAuthorizationStatus) { self.value = value }
+    }
+
+    @Test("Activation refreshes the pane only through the center it was given")
+    func activationArrivesOnlyThroughTheInjectedCenter() {
+        let center = NotificationCenter()
+        // Stands in for every center that is not this pane's, `.default`
+        // included. Posting the app-wide name into `NotificationCenter.default`
+        // is what this seam exists to make unnecessary: it reaches every live
+        // monitor and settings shell in the process, so it would drive a
+        // concurrently-running suite's fixtures.
+        let otherCenter = NotificationCenter()
+        let mic = MicStatus(.authorized)
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = makeSettingsInstance(guestOS: .linux)
+        instance.configuration.audioInputEnabled = true
+        let vc = makeSettingsPane(
+            instance: instance, viewModel: viewModel, isReadOnly: false,
+            micPermissionStatus: { mic.value }, activationCenter: center)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        #expect(vc.resolvedForTesting.micWarning == .none)
+
+        // Permission revoked in System Settings while Kernova was away — a
+        // change only an activation re-reads.
+        mic.value = .denied
+
+        otherCenter.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        #expect(vc.resolvedForTesting.micWarning == .none)
+
+        center.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        #expect(vc.resolvedForTesting.micWarning == .denied)
+    }
 }
