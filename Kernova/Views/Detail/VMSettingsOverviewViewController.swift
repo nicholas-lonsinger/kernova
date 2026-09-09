@@ -12,7 +12,7 @@ protocol VMSettingsOverviewDelegate: AnyObject {
 /// the pane's column in category order, each stating the category's current
 /// facts and offering the drill-in to its panel.
 ///
-/// Holds no VM state — ``configure(instance:isReadOnly:resolved:)`` paints every
+/// Holds no VM state — ``configure(instance:resolved:)`` paints every
 /// card from the model on the settings pane's own refresh pass.
 @MainActor
 final class VMSettingsOverviewViewController: NSViewController {
@@ -70,17 +70,16 @@ final class VMSettingsOverviewViewController: NSViewController {
     }
 
     /// Paints every card from the model.
-    func configure(instance: VMInstance, isReadOnly: Bool, resolved: VMOverviewResolved) {
+    func configure(instance: VMInstance, resolved: VMOverviewResolved) {
         rebuild(instance: instance)
         for category in cards.keys {
-            configureCard(category, instance: instance, isReadOnly: isReadOnly, resolved: resolved)
+            configureCard(category, instance: instance, resolved: resolved)
         }
     }
 
     /// Paints one card, for an async read that moved only that category's value.
     func configureCard(
-        _ category: VMSettingsCategory, instance: VMInstance, isReadOnly: Bool,
-        resolved: VMOverviewResolved
+        _ category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
     ) {
         guard let card = cards[category] else { return }
         card.configure(
@@ -90,9 +89,6 @@ final class VMSettingsOverviewViewController: NSViewController {
             action: VMOverviewSummary.action(for: category, resolved: resolved),
             headerSummary: VMOverviewSummary.headerSummary(
                 for: category, instance: instance, resolved: resolved),
-            // The claim is scoped to the rows that actually lock, so it stands
-            // beside the live controls on the same card.
-            showsLockHint: isReadOnly && category.lockHint != nil,
             warning: resolved.warnings[category])
     }
 

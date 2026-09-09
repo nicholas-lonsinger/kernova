@@ -457,9 +457,7 @@ extension VMSettingsViewController {
     }
 
     private func refreshOverview() {
-        overviewVC.configure(
-            instance: instance, isReadOnly: isReadOnly,
-            resolved: panelContext.overview.resolved)
+        overviewVC.configure(instance: instance, resolved: panelContext.overview.resolved)
     }
 
     /// Repaints the one surface an async read moved, rather than the whole pane.
@@ -473,8 +471,7 @@ extension VMSettingsViewController {
         if category == .storage { refreshHeader() }
         guard selectedCategory == nil else { return }
         overviewVC.configureCard(
-            category, instance: instance, isReadOnly: isReadOnly,
-            resolved: panelContext.overview.resolved)
+            category, instance: instance, resolved: panelContext.overview.resolved)
     }
 }
 
