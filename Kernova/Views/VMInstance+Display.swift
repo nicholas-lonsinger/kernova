@@ -173,22 +173,50 @@ extension VMInstance {
         return .start
     }
 
-    /// Menu item title for the stop slot.
+    /// What the stop slot — the toolbar segment and the menu item sharing it —
+    /// performs for a VM, and the words each surface renders it with.
     ///
-    /// A stop that discards the saved state has no live `VZVirtualMachine` to
-    /// shut down gracefully, so the title names that consequence instead; the
-    /// ellipsis is there because the discard variant confirms. Callers pass
-    /// what the catalog answers for ``VMCapability/discardSavedState``, so the
-    /// title and the command the slot invokes come from one derivation.
-    static func stopActionMenuTitle(discardingSavedState: Bool) -> String {
-        discardingSavedState ? "Discard Saved State…" : "Stop"
-    }
+    /// Resolved by ``VMCapabilityCatalog/stopAction(for:)`` from what the
+    /// catalog answers, so the title, the tooltip and the command the slot
+    /// invokes come from one derivation and a VM is never offered a word its
+    /// state won't honour.
+    enum StopAction {
+        /// A live guest, which takes a graceful shutdown request.
+        case stop
+        /// No live guest to shut down: the slot deletes the bundle's saved state.
+        case discardSavedState
+        /// An Ephemeral VM's suspended session, whose discard is a revert to the
+        /// baseline — so the slot names the outcome the revert produces rather
+        /// than a deletion the VM never performs.
+        case revertToBaseline
 
-    /// Toolbar label for the stop segment — same wording as
-    /// ``stopActionMenuTitle(discardingSavedState:)`` without the trailing
-    /// ellipsis, which is a menu-only convention.
-    static func stopActionToolbarLabel(discardingSavedState: Bool) -> String {
-        discardingSavedState ? "Discard Saved State" : "Stop"
+        /// Menu title; the two confirming variants take the ellipsis.
+        var menuTitle: String {
+            switch self {
+            case .stop: "Stop"
+            case .discardSavedState: "Discard Saved State…"
+            case .revertToBaseline: "Revert to Baseline…"
+            }
+        }
+
+        /// Toolbar label — the menu title without the trailing ellipsis, which
+        /// is a menu-only convention.
+        var toolbarLabel: String {
+            switch self {
+            case .stop: "Stop"
+            case .discardSavedState: "Discard Saved State"
+            case .revertToBaseline: "Revert to Baseline"
+            }
+        }
+
+        /// Toolbar tooltip for the slot while it can be invoked.
+        var toolTip: String {
+            switch self {
+            case .stop: "Stop the virtual machine"
+            case .discardSavedState: "Discard the virtual machine's saved state"
+            case .revertToBaseline: "Return the virtual machine to its baseline snapshot"
+            }
+        }
     }
 
     /// `true` when this VM's pending setup fetches its image, a

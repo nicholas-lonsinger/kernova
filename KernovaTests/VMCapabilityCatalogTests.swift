@@ -184,6 +184,40 @@ struct VMCapabilityCatalogTests {
         }
     }
 
+    // MARK: - The stop slot
+
+    @Test("The stop slot names a graceful stop, a discard, or an Ephemeral revert")
+    func stopActionNamesWhatTheSlotDoes() {
+        let harness = makeHarness()
+        let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
+        #expect(harness.catalog.stopAction(for: running) == .stop)
+
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        #expect(harness.catalog.stopAction(for: suspended) == .discardSavedState)
+
+        let baseline = VMSnapshot(name: "Ephemeral")
+        let ephemeral = makeInstance(
+            in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline])
+        ephemeral.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        #expect(harness.catalog.stopAction(for: ephemeral) == .revertToBaseline)
+    }
+
+    @Test("The stop slot stands for both capabilities that can fill it")
+    func stopActionAvailabilityCoversBothCapabilities() {
+        let harness = makeHarness()
+        let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
+        #expect(harness.catalog.isAvailable(.stop, on: running))
+        #expect(harness.catalog.isStopActionAvailable(on: running))
+
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        #expect(!harness.catalog.isAvailable(.stop, on: suspended))
+        #expect(harness.catalog.isAvailable(.discardSavedState, on: suspended))
+        #expect(harness.catalog.isStopActionAvailable(on: suspended))
+
+        let stopped = makeInstance(in: harness, name: "Stopped", phase: .stopped)
+        #expect(!harness.catalog.isStopActionAvailable(on: stopped))
+    }
+
     // MARK: - Preparing
 
     @Test("A bundle still being copied offers only its reads, its reveal and its cancel")

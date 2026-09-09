@@ -711,6 +711,19 @@ final class VMInstance {
         ephemeralBaselineSnapshot != nil && hasLiveVirtualMachine
     }
 
+    /// `true` when this VM is resting on its Ephemeral baseline's own saved
+    /// state — the state a revert produces, so reverting again changes nothing.
+    ///
+    /// Read as a computed value rather than tracked: the bundle's suspend slot
+    /// only changes as the VM changes phase — a suspend writes it, a discard
+    /// removes it, a revert clones the baseline's in — so an observer tracking
+    /// `phase` through the guard below re-reads this at every moment it can
+    /// differ.
+    var isRestingAtEphemeralBaseline: Bool {
+        guard isColdPaused, let baseline = ephemeralBaselineSnapshot else { return false }
+        return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
+    }
+
     /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline, which
     /// bars deleting it.
     func isEphemeralBaseline(_ snapshot: VMSnapshot) -> Bool {
