@@ -353,13 +353,13 @@ enum VMSnapshotError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .captureSourceMissing(let path):
-            "The snapshot could not be taken: \u{201C}\(path)\u{201D} is missing from the virtual machine\u{2019}s bundle."
+            "The snapshot could not be taken: \u{201C}\(path)\u{201D} is missing from the virtual machine's bundle."
         case .snapshotMissingSavedState:
-            "This snapshot has no saved state, so it can\u{2019}t be reverted to."
+            "This snapshot has no saved state, so it can't be reverted to."
         case .snapshotMissingConfiguration:
-            "This snapshot has no record of the virtual machine\u{2019}s settings, so it can\u{2019}t be reverted to."
+            "This snapshot has no record of the virtual machine's settings, so it can't be reverted to."
         case .snapshotMissingFile(let path):
-            "This snapshot doesn\u{2019}t include \u{201C}\(path)\u{201D}, so it can\u{2019}t be reverted to."
+            "This snapshot doesn't include \u{201C}\(path)\u{201D}, so it can't be reverted to."
         }
     }
 }

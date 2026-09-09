@@ -51,7 +51,7 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 - A setting rendered on more than one surface keeps one write path: every surface reads its value from the model, every action calls the one shared handler, and a refused or cancelled write is undone by re-rendering all of them — never by poking the control that fired.
 - Navigation list: source-list `NSOutlineView` (`SidebarViewController`).
 - Borderless `NSButton` in lists; `.push` bezel for dialog actions and command rows.
-- `AlertButtonRole.destructive` for delete/stop confirmations (`SheetAlert`).
+- A confirmation alert is drawn from its `ConfirmationPrompt` by `AlertConfiguration(confirming:)` (`SheetAlert`), never assembled button by button, and a destructive action never takes Return. The delete-VM sheet's Move to Trash is the one standing exception, because trashing is recoverable; Delete Immediately in that same sheet is not.
 - `NSProgressIndicator`: `.controlSize = .large` for major operations, `.mini` for inline status.
 
 ### Overlays

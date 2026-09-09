@@ -1,17 +1,27 @@
-import Testing
 import AppKit
+import KernovaKit
+import Testing
+
 @testable import Kernova
 
 @Suite("DeleteVMSheetContentViewController Tests", .admissionGated)
 @MainActor
 struct DeleteVMSheetContentViewControllerTests {
-    @Test("header title includes the VM name")
-    func headerHasVMName() {
-        let vc = make(vmName: "MyVM")
+    @Test("the header and both buttons read from the prompt, not from copy of its own")
+    func headerRendersThePrompt() {
+        let prompt = ConfirmationPrompt(
+            kind: .deleteVM, title: "Move \u{201C}MyVM\u{201D} to the Trash?",
+            message: "\u{201C}MyVM\u{201D} moves to the Trash with its disks.",
+            confirmTitle: "Move to Trash", dismissTitle: "Cancel")
+        let vc = DeleteVMSheetContentViewController(
+            prompt: prompt, bundledDisks: [], externals: [], hasSavedState: false, mode: .trash)
         vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view)
-        #expect(labels.contains { $0.stringValue.contains("MyVM") })
-        #expect(labels.contains { $0.stringValue.contains("to Trash?") })
+
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains(prompt.title))
+        #expect(labels.contains(prompt.message))
+        #expect(findButton(titled: prompt.confirmTitle, in: vc.view) != nil)
+        #expect(findButton(titled: prompt.dismissTitle, in: vc.view) != nil)
     }
 
     @Test("in-bundle disks render read-only under their section header")
@@ -346,62 +356,6 @@ struct DeleteVMSheetContentViewControllerTests {
 
     // MARK: - Immediate-delete mode
 
-    @Test("immediate mode header warns about permanent deletion")
-    func immediateModeHeader() {
-        let vc = make(vmName: "MyVM", mode: .immediate)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains { $0.contains("MyVM") && $0.contains("Immediately?") })
-        #expect(labels.contains { $0.contains("can't undo") })
-        // The reversible "Put Back" framing must not leak into the permanent variant.
-        #expect(!labels.contains { $0.contains("Put Back") })
-    }
-
-    @Test("immediate mode body warns that selected external files are also permanently deleted")
-    func immediateModeBodyNamesExternals() {
-        let externals = [makeAttachment(id: UUID(), label: "Disk", path: "/tmp/ext.img")]
-        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        // The body must name the external files so the user knows they're permanently
-        // removed too — otherwise "this VM and its disks" understates the consequence.
-        #expect(labels.contains { $0.contains("external files") && $0.contains("can't undo") })
-    }
-
-    @Test("immediate mode body omits the external-files clause when none are selectable")
-    func immediateModeBodyOmitsExternalsWhenNoneSelectable() {
-        // The only external is shared (locked off, kept), so there is nothing the
-        // user can select for deletion — the body must not promise removing
-        // external files; it falls back to the plain VM-only wording.
-        let externals = [
-            makeAttachment(id: UUID(), label: "Shared ISO", path: "/tmp/shared.iso", shared: ["Other VM"])
-        ]
-        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains { $0.contains("can't undo") })
-        #expect(!labels.contains { $0.contains("external files you select") })
-    }
-
-    @Test("immediate mode body names the saved state alongside the disks")
-    func immediateModeBodyNamesSavedState() {
-        let vc = make(vmName: "MyVM", hasSavedState: true, mode: .immediate)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        // The sentence enumerates what is destroyed, so omitting the saved state
-        // would understate what deleting a suspended VM costs.
-        #expect(labels.contains { $0.contains("its saved state") && $0.contains("can't undo") })
-    }
-
-    @Test("immediate mode body omits the saved state when the bundle holds none")
-    func immediateModeBodyOmitsSavedState() {
-        let vc = make(vmName: "MyVM", mode: .immediate)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains { $0.contains("This VM and its disks") })
-        #expect(!labels.contains { $0.contains("saved state") })
-    }
-
     @Test("the snapshot store is listed alongside the in-bundle disks")
     func snapshotRowRendered() {
         let vc = make(
@@ -426,20 +380,6 @@ struct DeleteVMSheetContentViewControllerTests {
         let vc = make(vmName: "MyVM")
         vc.loadViewIfNeeded()
         #expect(!collectLabels(in: vc.view).map(\.stringValue).contains("Snapshots"))
-    }
-
-    @Test("immediate mode body names the snapshots alongside the disks")
-    func immediateModeBodyNamesSnapshots() {
-        let vc = make(vmName: "MyVM", hasSavedState: true, snapshotCount: 2, mode: .immediate)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        // The sentence enumerates what is destroyed, so omitting the snapshots
-        // would understate what deleting the VM costs.
-        #expect(
-            labels.contains {
-                $0.contains("its saved state") && $0.contains("its snapshots")
-                    && $0.contains("can't undo")
-            })
     }
 
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
@@ -565,9 +505,27 @@ struct DeleteVMSheetContentViewControllerTests {
         mode: DeleteVMSheetContentViewController.Mode = .trash
     ) -> DeleteVMSheetContentViewController {
         DeleteVMSheetContentViewController(
-            vmName: vmName, bundledDisks: bundledDisks, externals: externals,
+            prompt: makePrompt(vmName: vmName, mode: mode),
+            bundledDisks: bundledDisks, externals: externals,
             hasSavedState: hasSavedState, snapshotCount: snapshotCount, mode: mode
         )
+    }
+
+    /// A confirmation shaped like the one `VMCommandCore.deletePrompt` composes.
+    ///
+    /// This suite covers what the sheet does with a prompt; the words in one are
+    /// the core's, asserted in `VMCommandCoreTests`.
+    private func makePrompt(
+        vmName: String, mode: DeleteVMSheetContentViewController.Mode
+    ) -> ConfirmationPrompt {
+        ConfirmationPrompt(
+            kind: .deleteVM,
+            title: mode == .immediate
+                ? "Delete \u{201C}\(vmName)\u{201D} Immediately?"
+                : "Move \u{201C}\(vmName)\u{201D} to the Trash?",
+            message: "What goes with \u{201C}\(vmName)\u{201D}, in one sentence.",
+            confirmTitle: mode == .immediate ? "Delete Immediately" : "Move to Trash",
+            dismissTitle: "Cancel")
     }
 
     private func makeDisk(label: String, path: String) -> StorageDisk {

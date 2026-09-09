@@ -333,16 +333,10 @@ final class GuestSetupProgressViewController: NSViewController {
 
     @objc private func cancelTapped() {
         guard let window = view.window else { return }
-        let prompt = VMCommandCore.cancelGuestSetupPrompt(instance)
-        let config = AlertConfiguration(
-            title: prompt.title,
-            message: prompt.message,
-            buttons: [
-                AlertButton(prompt.confirmTitle, role: .default) { [weak self] in
-                    self?.onCancel()
-                },
-                AlertButton(prompt.dismissTitle, role: .cancel),
-            ])
-        presentSheetAlert(config, in: window)
+        presentSheetAlert(
+            AlertConfiguration(
+                confirming: VMCommandCore.cancelGuestSetupPrompt(instance),
+                confirm: { [weak self] in self?.onCancel() }),
+            in: window)
     }
 }

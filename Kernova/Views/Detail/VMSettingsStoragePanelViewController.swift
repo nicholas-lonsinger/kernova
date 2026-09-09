@@ -550,13 +550,21 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isInternal: disk.isInternal,
                 isGuestAgent: false,
                 sharedVMNames: shared)
+            let remove: (Bool) -> Void = { [weak self] trashFile in
+                Task { [weak self] in
+                    await self?.viewModel.removeStorageDisk(
+                        disk.id, from: instance, trashFile: trashFile)
+                }
+            }
+            // A `removeAttachment` confirm trashes the file exactly when it is
+            // destructive, so a detach-only confirm keeps it — the promise its
+            // own copy makes, whether or not the sharing that decided it still
+            // holds by the time the user answers.
             presentSheetAlert(
-                makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
-                    Task { [weak self] in
-                        await self?.viewModel.removeStorageDisk(
-                            disk.id, from: instance, trashFile: trashFile)
-                    }
-                },
+                AlertConfiguration(
+                    confirming: prompt,
+                    confirm: { remove(prompt.confirmIsDestructive) },
+                    alternative: { remove(!$0.keepsFile) }),
                 in: window)
         }
     }
@@ -798,23 +806,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         return formatter
     }()
 
-    /// Builds the alert for a decided ``AttachmentDeletePrompt``, appending Cancel.
-    private func makeDeleteAlert(
-        prompt: AttachmentDeletePrompt,
-        perform: @escaping (_ trashFile: Bool) -> Void
-    ) -> AlertConfiguration {
-        var buttons: [AlertButton] = prompt.actions.map { action in
-            switch action {
-            case .moveToTrash:
-                return AlertButton("Move to Trash", role: .destructive) { perform(true) }
-            case .removeFromVM:
-                return AlertButton("Remove from VM", role: .default) { perform(false) }
-            }
-        }
-        buttons.append(AlertButton("Cancel", role: .cancel))
-        return AlertConfiguration(title: prompt.title, message: prompt.message, buttons: buttons)
-    }
-
     // MARK: Removable
 
     @objc private func attachRemovableTapped() {
@@ -875,13 +866,20 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isInternal: false,
                 isGuestAgent: isAgent,
                 sharedVMNames: shared)
+            let remove: (Bool) -> Void = { [weak self] trashFile in
+                Task { [weak self] in
+                    await self?.viewModel.removeRemovableMedia(
+                        item.id, from: instance, trashFile: trashFile)
+                }
+            }
+            // Same rule as the storage rows: the confirm trashes only where the
+            // prompt says it is destructive, so the Guest Agent installer and a
+            // shared image are detached with their file left alone.
             presentSheetAlert(
-                makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
-                    Task { [weak self] in
-                        await self?.viewModel.removeRemovableMedia(
-                            item.id, from: instance, trashFile: trashFile)
-                    }
-                },
+                AlertConfiguration(
+                    confirming: prompt,
+                    confirm: { remove(prompt.confirmIsDestructive) },
+                    alternative: { remove(!$0.keepsFile) }),
                 in: window)
         }
     }

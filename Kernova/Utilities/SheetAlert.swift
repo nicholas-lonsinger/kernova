@@ -1,4 +1,6 @@
 import AppKit
+import KernovaKit
+import os
 
 /// Semantic role for an ``AlertButton``.
 ///
@@ -32,18 +34,95 @@ struct AlertButton {
 
 /// Declarative description of a sheet alert.
 ///
-/// Buttons appear in `NSAlert` in the order listed. AppKit makes the first added
-/// button the default; ``presentSheetAlert(_:in:completion:)`` overrides that
-/// from the roles, so a configuration with no `.default` gets none.
+/// Buttons are added to `NSAlert` in the order listed, which lays them out
+/// right-to-left: the first listed sits on the trailing edge. Each button's
+/// role — not its position — decides its key equivalent and tint, so at most one
+/// carries `.default` and an alert offering none takes no Return at all.
+///
+/// A confirmation the core raised is built with ``init(confirming:confirm:alternative:dismiss:)``
+/// rather than assembled here; the free-form array is for the alerts that
+/// confirm nothing — an acknowledgement, or a question the core never modelled.
 struct AlertConfiguration {
+    private static let logger = Logger(subsystem: "app.kernova", category: "AlertConfiguration")
+
     let title: String
     let message: String
     let buttons: [AlertButton]
+    /// Shown between the message and the buttons; `nil` for a text-only alert.
+    let accessoryView: NSView?
 
-    init(title: String, message: String, buttons: [AlertButton]) {
+    init(
+        title: String, message: String, buttons: [AlertButton], accessoryView: NSView? = nil
+    ) {
         self.title = title
         self.message = message
         self.buttons = buttons
+        self.accessoryView = accessoryView
+    }
+
+    /// Draws a core confirmation.
+    ///
+    /// The trailing edge always holds an action, never the dismiss: the first
+    /// non-destructive one where the confirmation offers any — it takes Return —
+    /// and the destructive confirm where it offers none, which then takes no key
+    /// at all. Any further non-destructive action follows as `.standard`, then
+    /// the dismiss on Escape, then the destructive actions. So a destructive
+    /// button is never Return, a two-button alert reads Cancel then its action,
+    /// and a three-button one lays out as AppKit's own Save / Cancel / Don't
+    /// Save does, the destructive action on the leading edge.
+    init(
+        confirming prompt: ConfirmationPrompt,
+        confirm: @escaping () -> Void,
+        alternative: ((ConfirmationAlternative) -> Void)? = nil,
+        dismiss: @escaping () -> Void = {}
+    ) {
+        if !prompt.alternatives.isEmpty, alternative == nil {
+            Self.logger.fault(
+                "Confirmation '\(prompt.kind.rawValue, privacy: .public)' offers alternatives with no handler"
+            )
+            assertionFailure(
+                "Confirmation '\(prompt.kind.rawValue)' offers alternatives with no handler")
+        }
+        var actions: [(title: String, isDestructive: Bool, action: () -> Void)] = [
+            (prompt.confirmTitle, prompt.confirmIsDestructive, confirm)
+        ]
+        actions += prompt.alternatives.map { offered in
+            (offered.title, offered.isDestructive, { alternative?(offered) })
+        }
+        let safe = actions.filter { !$0.isDestructive }
+        var destructive = actions.filter(\.isDestructive)
+
+        var buttons: [AlertButton] = []
+        if safe.isEmpty {
+            let leading = destructive.removeFirst()
+            buttons.append(
+                AlertButton(leading.title, role: .destructive, action: leading.action))
+        } else {
+            for action in safe {
+                buttons.append(
+                    AlertButton(
+                        action.title, role: buttons.isEmpty ? .default : .standard,
+                        action: action.action))
+            }
+        }
+        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel, action: dismiss))
+        buttons += destructive.map {
+            AlertButton($0.title, role: .destructive, action: $0.action)
+        }
+
+        self.init(title: prompt.title, message: prompt.message, buttons: buttons)
+    }
+
+    /// An alert that states something and is dismissed, with nothing to decide.
+    ///
+    /// Return is the standard key for acknowledging one, so its lone button
+    /// takes `.default`.
+    static func acknowledgement(
+        title: String, message: String, accessoryView: NSView? = nil
+    ) -> AlertConfiguration {
+        AlertConfiguration(
+            title: title, message: message, buttons: [AlertButton("OK", role: .default)],
+            accessoryView: accessoryView)
     }
 }
 
@@ -56,20 +135,18 @@ func presentSheetAlert(
     in window: NSWindow,
     completion: (() -> Void)? = nil
 ) {
+    assert(
+        config.buttons.filter { $0.role == .default }.count <= 1,
+        "An alert takes at most one Return key: '\(config.title)'")
+
     let alert = NSAlert()
     alert.messageText = config.title
     alert.informativeText = config.message
+    alert.accessoryView = config.accessoryView
 
     for button in config.buttons {
         let nsButton = alert.addButton(withTitle: button.title)
         configureNSAlertButton(nsButton, role: button.role)
-    }
-
-    // If no button asked for `.default`, clear the auto-Return on the first
-    // added button so Return is inert — a destructive-only alert (Force Stop,
-    // Delete VM) must be clicked explicitly.
-    if !config.buttons.contains(where: { $0.role == .default }), let first = alert.buttons.first {
-        first.keyEquivalent = ""
     }
 
     alert.beginSheetModal(for: window) { response in

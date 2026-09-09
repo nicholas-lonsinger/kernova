@@ -171,7 +171,7 @@ extension VMCommandCore {
             // otherwise resume into, and the revert writes over it.
             let loss =
                 vm.isColdPaused
-                ? "The suspended session this VM would resume into is replaced by the snapshot\u{2019}s, "
+                ? "The suspended session this VM would resume into is replaced by the snapshot's, "
                     + "and everything changed inside the guest since then will be lost unless you "
                     + "take a snapshot first."
                 : guestLoss
@@ -366,7 +366,7 @@ extension VMCommandCore {
             kind: .deleteSnapshot,
             title: "Delete \u{201C}\(snapshot.name)\u{201D}?",
             message:
-                "Moves this snapshot\u{2019}s saved state and disk copies to the Trash. "
+                "Moves this snapshot's saved state and disk copies to the Trash. "
                 + "\u{201C}\(instance.name)\u{201D} keeps the state it has now.",
             confirmTitle: "Delete",
             dismissTitle: "Cancel")

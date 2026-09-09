@@ -34,6 +34,7 @@ enum ClipboardPassthroughConsent {
                 + "Mac, and its own clipboard will be placed here — with no per-copy "
                 + "confirmation. That includes passwords and other sensitive content.",
             confirmTitle: "Turn On",
+            confirmIsDestructive: false,
             dismissTitle: "Cancel")
     }
 }

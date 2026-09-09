@@ -814,6 +814,8 @@ struct VMCommandCoreTests {
         #expect(install.title == "Cancel Installation?")
         #expect(install.confirmTitle == "Cancel Installation")
         #expect(install.dismissTitle == "Keep Installing")
+        // Only the install throws work away: its progress restarts from zero.
+        #expect(install.confirmIsDestructive)
 
         instance.setupState = .linuxImage(hasVerifyStep: true)
         instance.setupState?.advance(progress: .fraction(0))
@@ -821,17 +823,20 @@ struct VMCommandCoreTests {
         #expect(verify.title == "Cancel Verification?")
         #expect(verify.confirmTitle == "Cancel Verification")
         #expect(verify.dismissTitle == "Keep Verifying")
+        #expect(!verify.confirmIsDestructive)
 
         instance.setupState = .macOSInstall(hasDownloadStep: true)
         let download = VMCommandCore.cancelGuestSetupPrompt(instance)
         #expect(download.title == "Cancel Download?")
         #expect(download.confirmTitle == "Cancel Download")
         #expect(download.dismissTitle == "Keep Downloading")
+        #expect(!download.confirmIsDestructive)
 
         instance.setupState = nil
         let fallback = VMCommandCore.cancelGuestSetupPrompt(instance)
         #expect(fallback.title == "Cancel Download?")
         #expect(fallback.dismissTitle == "Keep Downloading")
+        #expect(!fallback.confirmIsDestructive)
     }
 
     @Test("A cancel accepted as the pipeline finishes stops the chained auto-boot")
@@ -988,10 +993,13 @@ struct VMCommandCoreTests {
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .forceStop)
-        #expect(prompt.title == "Force Stop Virtual Machine")
+        #expect(prompt.title == "Force Stop \u{201C}Runner\u{201D}?")
         #expect(prompt.confirmTitle == "Force Stop")
+        #expect(prompt.confirmIsDestructive)
         #expect(prompt.message.contains("immediately terminated"))
         #expect(prompt.alternatives.map(\.disposition) == [.graceful])
+        // The gentler route is the one Return can safely fire.
+        #expect(prompt.alternatives.map(\.isDestructive) == [false])
         #expect(harness.virtualization.forceStopCallCount == 0)
 
         try await harness.core.stop(.id(instance.id), disposition: .force, confirmed: true)
@@ -1009,7 +1017,7 @@ struct VMCommandCoreTests {
                     .id(instance.id), disposition: .force, confirmed: false)
             })
         let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.title == "Discard Saved State")
+        #expect(prompt.title == "Discard the Saved State of \u{201C}Suspended\u{201D}?")
         #expect(prompt.confirmTitle == "Discard")
         // A paused VM routes its graceful stop through the stop-paused refusal,
         // so this one offers no shutdown alternative.
@@ -1029,8 +1037,13 @@ struct VMCommandCoreTests {
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .stopPaused)
+        #expect(prompt.title == "Stop \u{201C}Paused\u{201D}?")
         #expect(prompt.confirmTitle == "Resume and Shut Down")
+        // Confirming resumes and shuts the guest down cleanly; only the
+        // alternative terminates it where it stands.
+        #expect(!prompt.confirmIsDestructive)
         #expect(prompt.alternatives.map(\.disposition) == [.force])
+        #expect(prompt.alternatives.map(\.isDestructive) == [true])
         #expect(harness.virtualization.stopCallCount == 0)
 
         // Confirming takes the graceful route the guest can only receive awake.
@@ -1053,7 +1066,7 @@ struct VMCommandCoreTests {
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .forceStop)
-        #expect(prompt.title == "Discard Saved State")
+        #expect(prompt.title == "Discard the Saved State of \u{201C}Suspended\u{201D}?")
         #expect(prompt.confirmTitle == "Discard")
         #expect(harness.virtualization.stopCallCount == 0)
 
@@ -1081,7 +1094,7 @@ struct VMCommandCoreTests {
         #expect(prompt.kind == .forceStop)
         // Named for the outcome it produces: this VM's discard is a revert, and
         // the copy says so without claiming a discard of the VM's state.
-        #expect(prompt.title == "Revert to Baseline")
+        #expect(prompt.title == "Revert \u{201C}Ephemeral\u{201D} to \u{201C}Clean install\u{201D}?")
         #expect(prompt.confirmTitle == "Revert to Baseline")
         #expect(prompt.message.contains("is ephemeral, so it returns to"))
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
@@ -1148,6 +1161,111 @@ struct VMCommandCoreTests {
                     .id(instance.id), permanently: true, alsoRemoving: [], confirmed: false)
             })
         #expect(try #require(error.confirmationPrompt).confirmTitle == "Delete Immediately")
+    }
+
+    @Test("The delete confirmation names the bundle's disks and how to get them back")
+    func deletePromptNamesTheDisks() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Doomed")
+
+        let prompt = VMCommandCore.deletePrompt(instance, permanently: false, externals: [])
+
+        #expect(prompt.kind == .deleteVM)
+        #expect(prompt.title == "Move \u{201C}Doomed\u{201D} to the Trash?")
+        #expect(
+            prompt.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks. "
+                + "Restore them with Finder's Put Back, or empty the Trash to delete them "
+                + "permanently.")
+        #expect(prompt.confirmTitle == "Move to Trash")
+        #expect(prompt.confirmIsDestructive)
+        #expect(prompt.dismissTitle == "Cancel")
+        #expect(prompt.alternatives.isEmpty)
+    }
+
+    @Test("The delete confirmation adds the saved state and the snapshots the bundle holds")
+    func deletePromptNamesTheSavedStateAndSnapshots() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Doomed")
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+
+        // A bundle holding neither claims neither, and the VM heads the list it
+        // belongs to rather than sitting in front of it — no comma splice.
+        let bare = VMCommandCore.deletePrompt(instance, permanently: true, externals: [])
+        #expect(bare.title == "Delete \u{201C}Doomed\u{201D} Immediately?")
+        #expect(bare.confirmTitle == "Delete Immediately")
+        #expect(
+            bare.message == "\u{201C}Doomed\u{201D} and its disks will be deleted immediately, "
+                + "bypassing the Trash. You can't undo this action.")
+
+        FileManager.default.createFile(
+            atPath: instance.saveFileURL.path(percentEncoded: false),
+            contents: Data("fake save".utf8))
+
+        let suspended = VMCommandCore.deletePrompt(instance, permanently: true, externals: [])
+        #expect(
+            suspended.message == "\u{201C}Doomed\u{201D}, its disks, and its saved state will be "
+                + "deleted immediately, bypassing the Trash. You can't undo this action.")
+        // The trash sentence keeps the VM as its subject, so the same two items
+        // join behind "with".
+        let suspendedToTrash = VMCommandCore.deletePrompt(
+            instance, permanently: false, externals: [])
+        #expect(
+            suspendedToTrash.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks "
+                + "and its saved state. Restore them with Finder's Put Back, or empty the Trash "
+                + "to delete them permanently.")
+
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Before")])
+
+        let full = VMCommandCore.deletePrompt(instance, permanently: true, externals: [])
+        #expect(full.message.contains("its disks"))
+        #expect(full.message.contains("its saved state"))
+        #expect(full.message.contains("its snapshots"))
+    }
+
+    @Test("The delete confirmation names external files only when one can be chosen")
+    func deletePromptNamesChoosableExternalsOnly() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Doomed")
+        let owned = makeExternalAttachment(label: "Scratch", path: "/tmp/scratch.img")
+        let shared = makeExternalAttachment(
+            label: "Installer", path: "/tmp/installer.iso", sharedWith: ["Other VM"])
+
+        // A locked-off row offers no choice, so promising to take it would be
+        // wrong in both dispositions.
+        for permanently in [true, false] {
+            let none = VMCommandCore.deletePrompt(
+                instance, permanently: permanently, externals: [shared])
+            #expect(!none.message.contains("external files"))
+
+            let offered = VMCommandCore.deletePrompt(
+                instance, permanently: permanently, externals: [shared, owned])
+            #expect(offered.message.contains("any external files you choose"))
+        }
+
+        // The clause sits inside each sentence rather than trailing it.
+        let immediate = VMCommandCore.deletePrompt(
+            instance, permanently: true, externals: [owned])
+        #expect(
+            immediate.message == "\u{201C}Doomed\u{201D} and its disks, plus any external files "
+                + "you choose, will be deleted immediately, bypassing the Trash. You can't undo "
+                + "this action.")
+        let trash = VMCommandCore.deletePrompt(instance, permanently: false, externals: [owned])
+        #expect(
+            trash.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks, and any "
+                + "external files you choose. Restore them with Finder's Put Back, or empty the "
+                + "Trash to delete them permanently.")
+    }
+
+    private func makeExternalAttachment(
+        label: String, path: String, sharedWith: [String] = [], isMissing: Bool = false
+    ) -> ExternalAttachment {
+        ExternalAttachment(
+            reference: ExternalFileReference(
+                id: UUID(), kind: .storageDisk, label: label, path: path, bookmark: nil),
+            sharedWithVMNames: sharedWith,
+            isMissing: isMissing)
     }
 
     @Test("A snapshot delete with no consent refuses, and confirming trashes it")

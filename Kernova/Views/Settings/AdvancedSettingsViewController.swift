@@ -213,7 +213,7 @@ final class AdvancedSettingsViewController: NSViewController {
             try CommandLineToolInstaller.installSymlink(at: destination)
         } catch {
             presentInstallFailure(
-                error, titled: "Couldn\u{2019}t Install the Command Line Tool",
+                error, titled: "Couldn't Install the Command Line Tool",
                 offering: "You can create the link yourself:",
                 command: CommandLineToolInstaller.manualCommand(for: destination))
         }
@@ -282,7 +282,7 @@ final class AdvancedSettingsViewController: NSViewController {
             try ShellCompletionInstaller.install(shell, at: destination)
         } catch {
             presentInstallFailure(
-                error, titled: "Couldn\u{2019}t Install the Shell Completions",
+                error, titled: "Couldn't Install the Shell Completions",
                 offering: "You can write the file yourself:",
                 command: ShellCompletionInstaller.manualCommand(for: shell, at: destination))
         }
@@ -293,11 +293,6 @@ final class AdvancedSettingsViewController: NSViewController {
     private func presentInstallFailure(
         _ failure: any Error, titled title: String, offering lead: String, command: String
     ) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = Self.reason(for: failure)
-        alert.addButton(withTitle: "OK")
-
         let hint = NSStackView(views: [
             makeGroupedFormCaption(lead),
             makeCalloutCode(command),
@@ -306,10 +301,12 @@ final class AdvancedSettingsViewController: NSViewController {
         hint.alignment = .leading
         hint.spacing = Spacing.tight
         hint.setFrameSize(hint.fittingSize)
-        alert.accessoryView = hint
 
         guard let window = view.window else { return }
-        alert.beginSheetModal(for: window, completionHandler: nil)
+        presentSheetAlert(
+            .acknowledgement(
+                title: title, message: Self.reason(for: failure), accessoryView: hint),
+            in: window)
     }
 
     /// What an install failure says on screen.

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Delegate for ``DeleteVMSheetContentViewController``.
 @MainActor
@@ -33,7 +34,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     weak var delegate: DeleteVMSheetContentViewControllerDelegate?
 
-    private let vmName: String
+    /// The confirmation this sheet gathers — its heading, its sentence, and
+    /// both button titles, in the words every other surface asks the delete in.
+    private let prompt: ConfirmationPrompt
     private let bundledDisks: [StorageDisk]
     private let externals: [ExternalAttachment]
     /// Whether the bundle holds a suspended VM's saved state, listed alongside
@@ -83,14 +86,14 @@ final class DeleteVMSheetContentViewController: NSViewController {
     private static let iconColumnWidth: CGFloat = 22
 
     init(
-        vmName: String,
+        prompt: ConfirmationPrompt,
         bundledDisks: [StorageDisk],
         externals: [ExternalAttachment],
         hasSavedState: Bool,
         snapshotCount: Int = 0,
-        mode: Mode = .trash
+        mode: Mode
     ) {
-        self.vmName = vmName
+        self.prompt = prompt
         self.bundledDisks = bundledDisks
         self.externals = externals
         self.hasSavedState = hasSavedState
@@ -166,37 +169,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         // same X as the row labels below the first divider.
         icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
-        let titleText: String
-        let bodyText: String
-        switch mode {
-        case .trash:
-            titleText = "Move \u{201C}\(vmName)\u{201D} to Trash?"
-            bodyText =
-                "The VM moves to the Trash. Restore it with Finder's Put Back, or empty the Trash to delete it permanently."
-        case .immediate:
-            titleText = "Delete \u{201C}\(vmName)\u{201D} Immediately?"
-            // This sentence enumerates what is destroyed, so it names the saved
-            // state and the snapshots too. External files are named only when at
-            // least one is selectable — a list of only locked-off rows offers no
-            // choice, so the plain wording stays accurate.
-            var removedItems = ["This VM", "its disks"]
-            if hasSavedState { removedItems.append("its saved state") }
-            if snapshotCount > 0 { removedItems.append("its snapshots") }
-            let removed = ListFormatter.localizedString(byJoining: removedItems)
-            let externalsClause =
-                externals.contains(where: \.isSelectable)
-                ? ", plus any external files you select below," : ""
-            bodyText =
-                "\(removed)\(externalsClause) will be deleted immediately. You can't undo this action."
-        }
-
-        let title = NSTextField(labelWithString: titleText)
+        let title = NSTextField(labelWithString: prompt.title)
         title.font = .preferredFont(forTextStyle: .headline)
         title.lineBreakMode = .byWordWrapping
         title.maximumNumberOfLines = 0
         title.isSelectable = false
 
-        let body = NSTextField(wrappingLabelWithString: bodyText)
+        let body = NSTextField(wrappingLabelWithString: prompt.message)
         body.font = .preferredFont(forTextStyle: .callout)
         body.textColor = .secondaryLabelColor
         body.lineBreakMode = .byWordWrapping
@@ -531,7 +510,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let container = NSView()
 
         let cancelButton = NSButton(
-            title: "Cancel", target: self, action: #selector(cancelTapped(_:))
+            title: prompt.dismissTitle, target: self, action: #selector(cancelTapped(_:))
         )
         cancelButton.bezelStyle = .push
         cancelButton.keyEquivalent = "\u{1B}"  // Escape
@@ -539,8 +518,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         // No ellipsis on the action buttons themselves (project HIG: "none on alert
         // buttons"); the ellipsis lives on the menu items that open this sheet.
         let confirmButton = NSButton(
-            title: mode == .immediate ? "Delete Immediately" : "Move to Trash",
-            target: self, action: #selector(confirmTapped(_:))
+            title: prompt.confirmTitle, target: self, action: #selector(confirmTapped(_:))
         )
         confirmButton.bezelStyle = .push
         // Trash is recoverable, so confirm is the intentional Return default. Immediate
@@ -615,11 +593,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
 }
 
 extension ExternalAttachment {
-    /// `true` when this external can be individually selected for trashing —
-    /// i.e. it is exclusively owned (not shared with another VM) and present on
-    /// disk.
-    fileprivate var isSelectable: Bool { !isShared && !isMissing }
-
     /// SF Symbol for the row icon, matching the storage settings UI.
     fileprivate var symbolName: String {
         switch kind {

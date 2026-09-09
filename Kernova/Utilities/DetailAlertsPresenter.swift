@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import os
 
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
@@ -280,7 +281,18 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func presentCancelPreparing(for instance: VMInstance) {
-        enqueue { $0.present($0.cancelPreparingConfig(instance)) }
+        // Worded now, while the row is still preparing: the copy can settle
+        // behind another alert, and confirming then is a real cancel — the core
+        // cleans up the settled copy — so the words must not depend on state
+        // that has moved on by the time the alert is drawn.
+        guard let state = instance.preparingState else {
+            Self.logger.fault(
+                "Cancel requested for '\(instance.name, privacy: .public)', which is not preparing")
+            assertionFailure("Cancel requested for a VM that is not preparing: \(instance.name)")
+            return
+        }
+        let prompt = VMCommandCore.cancelPreparingPrompt(state.operation, on: instance)
+        enqueue { $0.present($0.cancelPreparingConfig(prompt, instance)) }
     }
 
     func presentInstallerMounted(
@@ -330,7 +342,9 @@ final class DetailAlertsPresenter: NSObject {
         deleteSheetToken += 1
         let token = deleteSheetToken
         let content = DeleteVMSheetContentViewController(
-            vmName: request.instance.name,
+            prompt: VMCommandCore.deletePrompt(
+                request.instance, permanently: request.permanently,
+                externals: resolved.externals),
             bundledDisks: request.instance.bundledStorageDisks,
             externals: resolved.externals,
             hasSavedState: request.instance.hasSaveFile,
@@ -360,84 +374,74 @@ final class DetailAlertsPresenter: NSObject {
 
     // MARK: - Alert configurations
 
-    private func cancelPreparingConfig(_ instance: VMInstance) -> AlertConfiguration {
-        let prompt = instance.preparingState.map {
-            VMCommandCore.cancelPreparingPrompt($0.operation, on: instance)
-        }
-        return AlertConfiguration(
-            title: prompt?.title ?? "",
-            message: prompt?.message
-                ?? "The operation will be stopped and any partially copied files will be removed.",
-            buttons: [
-                AlertButton(prompt?.confirmTitle ?? "Cancel", role: .destructive) {
-                    [weak self] in self?.viewModel.cancelPreparing(instance)
-                },
-                AlertButton(prompt?.dismissTitle ?? "Continue", role: .cancel),
-            ])
+    /// An alternative the core offered that this alert has no route for — a
+    /// live button that would do nothing, which is a programming error the same
+    /// way a missing handler is.
+    private static func reportUnhandledAlternative(
+        _ alternative: ConfirmationAlternative, on verb: String
+    ) {
+        logger.fault(
+            "No \(verb, privacy: .public) route for alternative '\(alternative.title, privacy: .public)'"
+        )
+        assertionFailure("No \(verb) route for alternative '\(alternative.title)'")
+    }
+
+    /// The cancel confirmation for a create, clone or import, drawn from the
+    /// prompt taken when the gesture was made.
+    private func cancelPreparingConfig(
+        _ prompt: ConfirmationPrompt, _ instance: VMInstance
+    ) -> AlertConfiguration {
+        AlertConfiguration(
+            confirming: prompt,
+            confirm: { [weak self] in self?.viewModel.cancelPreparing(instance) })
     }
 
     /// The revert confirmation.
     ///
-    /// The safe path — check-point the current state, then revert — is the
-    /// default button, so Return never fires the destructive one. Which
-    /// actions exist, and every word of the copy, come from the refusal the
-    /// core raises; this only draws them.
+    /// Which actions exist, and every word of the copy, come from the refusal
+    /// the core raises; this only draws them.
     private func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
-        let prompt = VMCommandCore.revertPrompt(snapshot, on: vm)
-        var buttons: [AlertButton] = prompt.alternatives.map { alternative in
-            AlertButton(alternative.title, role: .default) { [weak self] in
-                guard let self else { return }
-                Task {
-                    await self.viewModel.revert(
-                        vm, to: snapshot, takingCheckpoint: alternative.takesCheckpoint)
-                }
-            }
-        }
-        buttons.append(
-            AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
+        AlertConfiguration(
+            confirming: VMCommandCore.revertPrompt(snapshot, on: vm),
+            confirm: { [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.revert(vm, to: snapshot) }
+            },
+            alternative: { [weak self] alternative in
+                guard let self else { return }
+                guard alternative.takesCheckpoint else {
+                    Self.reportUnhandledAlternative(alternative, on: "revert")
+                    return
+                }
+                Task { await self.viewModel.revert(vm, to: snapshot, takingCheckpoint: true) }
             })
-        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel))
-
-        return AlertConfiguration(
-            title: prompt.title, message: prompt.message, buttons: buttons)
     }
 
     private func deleteSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
-        let prompt = VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm)
-        return AlertConfiguration(
-            title: prompt.title,
-            message: prompt.message,
-            buttons: [
-                AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
-                    self?.viewModel.deleteSnapshot(vm, snapshot: snapshot)
-                },
-                AlertButton(prompt.dismissTitle, role: .cancel),
-            ])
+        AlertConfiguration(
+            confirming: VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm),
+            confirm: { [weak self] in self?.viewModel.deleteSnapshot(vm, snapshot: snapshot) })
     }
 
     private func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
-        let prompt = VMCommandCore.forceStopPrompt(vm)
-        var buttons: [AlertButton] = [
-            AlertButton(prompt.confirmTitle, role: .destructive) { [weak self] in
+        AlertConfiguration(
+            confirming: VMCommandCore.forceStopPrompt(vm),
+            confirm: { [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.forceStop(vm) }
-            }
-        ]
-        buttons += prompt.alternatives.map { alternative in
-            AlertButton(alternative.title, role: .default) { [weak self] in
+            },
+            alternative: { [weak self] alternative in
                 guard let self else { return }
+                guard alternative.disposition == .graceful else {
+                    Self.reportUnhandledAlternative(alternative, on: "force stop")
+                    return
+                }
                 Task { await self.viewModel.stop(vm) }
-            }
-        }
-        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel))
-        return AlertConfiguration(
-            title: prompt.title, message: prompt.message, buttons: buttons)
+            })
     }
 
     private func recoveryBootConfig(_ vm: VMInstance) -> AlertConfiguration {
@@ -460,27 +464,24 @@ final class DetailAlertsPresenter: NSObject {
         // through `requestForceStop`, which would stack a second alert on top
         // of this one. The message text makes the destructive outcome explicit,
         // so one confirmation is sufficient.
-        let prompt = VMCommandCore.stopPausedPrompt(vm)
-        var buttons: [AlertButton] = [
-            AlertButton(prompt.confirmTitle, role: .default) { [weak self] in
+        AlertConfiguration(
+            confirming: VMCommandCore.stopPausedPrompt(vm),
+            confirm: { [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.resumeAndStop(vm) }
-            }
-        ]
-        buttons += prompt.alternatives.map { alternative in
-            AlertButton(alternative.title, role: .destructive) { [weak self] in
+            },
+            alternative: { [weak self] alternative in
                 guard let self else { return }
+                guard alternative.disposition == .force else {
+                    Self.reportUnhandledAlternative(alternative, on: "stop paused")
+                    return
+                }
                 Task { await self.viewModel.forceStop(vm) }
-            }
-        }
-        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel))
-        return AlertConfiguration(
-            title: prompt.title, message: prompt.message, buttons: buttons)
+            })
     }
 
     private func errorConfig(_ message: String, title: String) -> AlertConfiguration {
-        AlertConfiguration(
-            title: title, message: message, buttons: [AlertButton("OK", role: .cancel)])
+        .acknowledgement(title: title, message: message)
     }
 
     private func startFailedAttachmentConfig(
@@ -497,7 +498,7 @@ final class DetailAlertsPresenter: NSObject {
         message += isInternal ? "." : ", and you can re-attach it later in Settings."
         if vm.hasSaveFile {
             message +=
-                " Removing it also discards this virtual machine’s saved state, which can only be restored with the same devices attached."
+                " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
         }
         return AlertConfiguration(
             title: "Couldn't Start “\(vm.name)”",
@@ -536,11 +537,11 @@ final class DetailAlertsPresenter: NSObject {
             lead = "The Kernova guest agent disk stays attached to \(vmName) whenever it runs."
         }
 
-        return AlertConfiguration(
+        return .acknowledgement(
             title: title,
             message:
-                "\(lead) Inside the VM, open the “\(KernovaMacOSAgentInfo.diskLabel)” disk in Finder and \(nextStep)",
-            buttons: [AlertButton("OK", role: .cancel)])
+                "\(lead) Inside the VM, open the “\(KernovaMacOSAgentInfo.diskLabel)” disk in Finder and \(nextStep)"
+        )
     }
 }
 

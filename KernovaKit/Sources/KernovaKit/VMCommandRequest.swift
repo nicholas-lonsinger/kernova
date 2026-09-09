@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 1
+    public static let currentProtocolVersion = 2
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int

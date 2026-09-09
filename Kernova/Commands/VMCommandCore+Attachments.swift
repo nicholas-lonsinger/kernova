@@ -160,10 +160,9 @@ extension VMCommandCore {
         }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
-                Self.removalConsent(
-                    Self.attachmentDeletePrompt(
-                        label: disk.label, isInternal: disk.isInternal, isGuestAgent: false,
-                        sharedVMNames: shared)))
+                Self.attachmentDeletePrompt(
+                    label: disk.label, isInternal: disk.isInternal, isGuestAgent: false,
+                    sharedVMNames: shared))
         }
         try detachStorageDisk(id, from: instance)
 
@@ -355,10 +354,9 @@ extension VMCommandCore {
         }
         if trashFile, !confirmed {
             throw CommandError.confirmationRequired(
-                Self.removalConsent(
-                    Self.attachmentDeletePrompt(
-                        label: item.label, isInternal: false,
-                        isGuestAgent: isAgentInstaller, sharedVMNames: shared)))
+                Self.attachmentDeletePrompt(
+                    label: item.label, isInternal: false,
+                    isGuestAgent: isAgentInstaller, sharedVMNames: shared))
         }
         try detachRemovableMedia(id, from: instance)
 
@@ -627,60 +625,60 @@ extension VMCommandCore {
 
     // MARK: - Consent
 
-    /// Decides the per-row removal confirmation (title, message, offered
-    /// actions) purely from the attachment's nature.
+    /// The confirmation a removal raises, decided purely from the attachment's
+    /// nature — the settings pane draws it, and a wire client receives it.
     ///
     /// The Guest Agent installer and files shared with another VM can only be
-    /// detached, never trashed.
+    /// detached, never trashed, so their confirm keeps the file and destroys
+    /// nothing.
     static func attachmentDeletePrompt(
         label: String,
         isInternal: Bool,
         isGuestAgent: Bool,
         sharedVMNames: [String]
-    ) -> AttachmentDeletePrompt {
+    ) -> ConfirmationPrompt {
         let title = "Remove \u{201C}\(label)\u{201D}?"
 
         if isGuestAgent {
-            return AttachmentDeletePrompt(
+            return ConfirmationPrompt(
+                kind: .removeAttachment,
                 title: title,
                 message:
                     "Detaches the Guest Agent installer from this VM. It's part of Kernova, so the file isn't deleted.",
-                actions: [.removeFromVM])
+                confirmTitle: "Remove from VM",
+                confirmIsDestructive: false,
+                dismissTitle: "Cancel")
         }
 
         if !sharedVMNames.isEmpty {
-            return AttachmentDeletePrompt(
+            return ConfirmationPrompt(
+                kind: .removeAttachment,
                 title: title,
                 message:
                     "Detaches it from this VM. Its file is kept — still used by \(DataFormatters.quotedList(sharedVMNames)).",
-                actions: [.removeFromVM])
+                confirmTitle: "Remove from VM",
+                confirmIsDestructive: false,
+                dismissTitle: "Cancel")
         }
 
         if isInternal {
-            return AttachmentDeletePrompt(
+            return ConfirmationPrompt(
+                kind: .removeAttachment,
                 title: title,
                 message:
                     "Moves the disk image to the Trash and removes the disk from this VM.",
-                actions: [.moveToTrash])
+                confirmTitle: "Move to Trash",
+                dismissTitle: "Cancel")
         }
 
-        return AttachmentDeletePrompt(
+        return ConfirmationPrompt(
+            kind: .removeAttachment,
             title: title,
             message:
                 "Move to Trash sends the file to the Trash. Remove from VM detaches it but keeps the file.",
-            actions: [.moveToTrash, .removeFromVM])
-    }
-
-    /// The consent refusal a trashing removal raises, worded from the same
-    /// decision the settings pane renders its alert from.
-    static func removalConsent(_ prompt: AttachmentDeletePrompt) -> ConfirmationPrompt {
-        ConfirmationPrompt(
-            kind: .removeAttachment,
-            title: prompt.title,
-            message: prompt.message,
-            confirmTitle: prompt.actions.first == .moveToTrash
-                ? "Move to Trash" : "Remove from VM",
-            dismissTitle: "Cancel")
+            confirmTitle: "Move to Trash",
+            dismissTitle: "Cancel",
+            alternatives: [ConfirmationAlternative(title: "Remove from VM", keepsFile: true)])
     }
 
     // MARK: - Trashing

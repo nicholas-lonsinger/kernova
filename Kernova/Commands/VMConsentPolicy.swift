@@ -57,8 +57,9 @@ enum VMConsentPolicy {
         }
     }
 
-    /// The action that performs a revert with `takingCheckpoint`, `nil` when
-    /// the VM cannot take one and so cannot perform that revert at all.
+    /// The action that performs a revert with `takingCheckpoint` — its label and
+    /// whether it destroys anything — `nil` when the VM cannot take one and so
+    /// cannot perform that revert at all.
     ///
     /// The core names both routes — its own confirm action reverts, and a
     /// `takesCheckpoint` alternative captures first — and offers the
@@ -66,8 +67,11 @@ enum VMConsentPolicy {
     /// already chosen between them shows the chosen one's words rather than
     /// inventing copy, and learns from the missing alternative that the choice
     /// cannot be honoured.
-    static func revertAction(_ prompt: ConfirmationPrompt, takingCheckpoint: Bool) -> String? {
-        guard takingCheckpoint else { return prompt.confirmTitle }
-        return prompt.alternatives.first { $0.takesCheckpoint }?.title
+    static func revertAction(
+        _ prompt: ConfirmationPrompt, takingCheckpoint: Bool
+    ) -> (title: String, isDestructive: Bool)? {
+        guard takingCheckpoint else { return (prompt.confirmTitle, prompt.confirmIsDestructive) }
+        return prompt.alternatives.first { $0.takesCheckpoint }
+            .map { ($0.title, $0.isDestructive) }
     }
 }

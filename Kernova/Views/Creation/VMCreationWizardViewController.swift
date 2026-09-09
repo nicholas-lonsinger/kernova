@@ -350,11 +350,11 @@ final class VMCreationWizardViewController: NSViewController {
         didRequestCreate = false
         apply()
         guard let window = view.window else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Couldn’t Create Virtual Machine"
-        alert.informativeText = message ?? "An unknown error occurred while creating the virtual machine."
-        alert.addButton(withTitle: "OK")
-        alert.beginSheetModal(for: window, completionHandler: nil)
+        presentSheetAlert(
+            .acknowledgement(
+                title: "Couldn't Create Virtual Machine",
+                message: message
+                    ?? "An unknown error occurred while creating the virtual machine."),
+            in: window)
     }
 }
