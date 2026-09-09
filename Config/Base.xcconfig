@@ -44,8 +44,8 @@ STRING_CATALOG_GENERATE_SYMBOLS = YES
 // Xcode's content-addressed compilation cache, stored machine-wide under the
 // DerivedData root. Keys embed the checkout path, so it replays a rebuild of
 // the same checkout (an evicted arena, a branch switched back) and does not
-// carry between worktrees. Project targets only — the Makefile passes the same
-// setting on CI's command line so the package targets get it there too.
+// carry between worktrees. Project targets only: a package target never reads
+// a project xcconfig. CI turns it off (Makefile, CI_FLAGS).
 COMPILATION_CACHE_ENABLE_CACHING = YES
 
 GCC_OPTIMIZATION_LEVEL[config=Debug] = 0

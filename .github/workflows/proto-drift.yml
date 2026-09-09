@@ -77,22 +77,12 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
           swift --version
-          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
 
       - name: Install protoc
         if: steps.filter.outputs.changed == 'true'
         run: |
           Tools/brew-install.sh protoc:protobuf
           protoc --version
-
-      # Tools/regen-proto.sh builds protoc-gen-swift into KernovaKit/.build
-      # from the revision Package.resolved pins, so the key tracks that file.
-      - name: Cache SwiftPM build for protoc-gen-swift
-        if: steps.filter.outputs.changed == 'true'
-        uses: actions/cache@v5
-        with:
-          path: KernovaKit/.build
-          key: ${{ runner.os }}-proto-drift-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Regenerate Swift bindings
         if: steps.filter.outputs.changed == 'true'
