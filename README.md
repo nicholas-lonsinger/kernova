@@ -1,80 +1,144 @@
 # Kernova
 
-**Native virtual machines for Apple Silicon — macOS and Linux guests, built on Apple's [Virtualization.framework](https://developer.apple.com/documentation/virtualization).**
+**Native virtual machines for Apple Silicon — macOS and Linux guests on Apple's [Virtualization.framework](https://developer.apple.com/documentation/virtualization).**
 
-![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
-![Platform: macOS 26 · Apple Silicon](https://img.shields.io/badge/platform-macOS%2026%20%C2%B7%20Apple%20Silicon-lightgrey)
+![Platform](https://img.shields.io/badge/macOS%2026-Apple%20Silicon-000000?logo=apple&logoColor=white)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
+![AppKit](https://img.shields.io/badge/UI-pure%20AppKit-0A84FF)
+![App Sandbox](https://img.shields.io/badge/App%20Sandbox-on-34C759)
+[![License](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
 
-Kernova is a pure-AppKit Mac app for creating and running virtual machines directly on Apple Silicon — no third-party hypervisor, no kernel extensions, no licensing. It's for developers, QA engineers, and power users who want fast, disposable macOS and Linux VMs that feel like part of the Mac: a real source list of machines, one-click lifecycle, and deep host integration — shared clipboard, files, audio, and an in-guest agent — all inside the App Sandbox.
+[Highlights](#highlights) · [Features](#features) · [Automation](#automation) · [Requirements](#requirements) · [Building](#building-kernova) · [Docs](#documentation) · [License](#license)
 
-Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests are supported back to 12.0.1 (Monterey), including the in-guest agent.
+Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no third-party hypervisor, no kernel extensions, no licensing. A source list of machines, one-click lifecycle, and deep host integration: shared clipboard, drag-and-drop, shared folders, port forwarding, audio, and an in-guest agent.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
-    <img src="docs/images/hero-light.png" alt="Kernova main window: sidebar of VMs with a running guest in the detail pane" width="900">
+    <img src="docs/images/hero-light.png" alt="Kernova main window: sidebar of VMs with a running macOS guest in the detail pane" width="900">
   </picture>
 </p>
+
+## Highlights
+
+| | macOS guests | Linux guests |
+|---|:---:|:---:|
+| **Install** from IPSW, version catalog, URL, or local file · ISO catalog, URL, or local ISO | ✅ | ✅ |
+| **Lifecycle** — start, stop, pause, resume, **suspend/restore**, force stop | ✅ | ✅ |
+| **Snapshots** — live memory snapshots, instant copy-on-write, repeatable revert | ✅ | ✅ |
+| **Ephemeral mode** — auto-revert to a baseline at every shutdown | ✅ | ✅ |
+| **Clone** VMs and **import** `.kernova` bundles — instant APFS copies on the same volume | ✅ | ✅ |
+| **Headless** operation from the status bar, **auto-start** at login | ✅ | ✅ |
+| **Shared folders** over VirtioFS | ✅ | ✅ |
+| **NAT** with **port forwarding** (TCP/UDP), **bridged**, **host-only** networking | ✅ | ✅ |
+| **Hot-plug** removable media (ISOs, disk images) | ✅ | ✅ |
+| **Audio** out, opt-in **microphone** passthrough | ✅ | ✅ |
+| **Serial console** log and Unix-socket relay | ✅ | ✅ |
+| **Clipboard sharing** — text, rich text, images, files, folders | ✅ | text only |
+| **Drag-and-drop** files from Finder into the guest | ✅ | — |
+| **Guest agent** with log forwarding to Console.app | ✅ | — |
+| **HiDPI** display, **Recovery Mode** boot | ✅ | — |
+| **CLI**, **Shortcuts**, **AppleScript**, **`kernova:` links** | ✅ | ✅ |
 
 ## Features
 
 ### Virtual machines
 
-- **macOS and Linux guests** — a step-by-step creation wizard: macOS installs from the latest IPSW, a version catalog, a pasted URL, or a local file; Linux installs from a downloadable distribution catalog (checksum-verified against the distribution's own manifest), an image URL, or a local ISO, booting EFI/UEFI or a direct kernel
-- **Full lifecycle** — start, stop, pause, resume, suspend, and restore, plus Force Stop for a hung VM and a one-shot Start in Recovery Mode for macOS guests
-- **Snapshots** — named restore points, taken while a VM is running, suspended, or stopped: the first two keep the guest's memory alongside its disks and settings, the last keeps the disks and settings alone. Reverting is repeatable, where restoring a suspended VM consumes its saved state, and it leaves disks attached from outside the bundle as they are.
-  The copies share blocks with the VM's own disks, so taking one is near-instant and adds little to what's on disk
-- **Ephemeral mode** — a per-VM switch that returns the guest to a chosen baseline snapshot at every shutdown, discarding whatever the session changed inside it. Suspending keeps the session — including the save-suspend when Kernova quits — and it reverts at the next shutdown instead; a sidebar badge and a marker on the running VM keep a throwaway session visible as one
-- **Cloning and import** — clone a VM with a fresh machine identity, or keep it via a setting or the ⌥-alternate menu command; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
-- **Background operation** — a resident menu-bar app, on by default and toggleable in Settings, with opt-in Open at Login, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
-- **Automatic startup** — a per-VM opt-in that boots (or resumes from saved state) that guest whenever Kernova opens; paired with Open at Login, the machine comes up with those VMs already running
+| | |
+|---|---|
+| **Creation wizard** | macOS from the latest IPSW, a version catalog, a URL, or a local file. Linux from a checksum-verified distribution catalog, an image URL, or a local ISO — EFI/UEFI or direct kernel boot. |
+| **Lifecycle** | Start, stop, pause, resume, suspend, and restore. Force Stop for a hung VM; one-shot Start in Recovery Mode for macOS. |
+| **Snapshots** | Named restore points with notes, taken running, suspended, or stopped — the first two capture memory too. Copy-on-write with the VM's own disks, so a snapshot is near-instant and adds little on disk. Revert is repeatable. |
+| **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot. Suspend keeps the session; a sidebar badge marks the throwaway VM. |
+| **Clone & import** | Clone with a fresh machine identity, or keep it (setting or ⌥-menu). Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
+| **Headless** | A status-bar item keeps VMs running after the last window closes and lists each one with its status. Quit save-suspends; sleep pauses, wake resumes. |
+| **Auto-start** | Per-VM boot (or resume) whenever Kernova opens — with Open at Login, the Mac comes up with them running. |
+
+> [!TIP]
+> **Ephemeral mode** + a baseline snapshot gives you a clean test machine every boot — install once, break it freely, shut down, repeat.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/creation-wizard-dark.png">
-    <img src="docs/images/creation-wizard-light.png" alt="The VM creation wizard selecting a guest operating system" width="720">
+    <img src="docs/images/creation-wizard-light.png" alt="The VM creation wizard's Review Configuration step, summarizing the name, operating system, boot mode, and resources before creating the VM" width="720">
   </picture>
 </p>
 
 ### Virtual hardware
 
-- **Storage** — ASIF sparse disks for near-native SSD performance, with live on-disk-vs-allocated capacity, extra disks with per-disk read-only and drag-to-reorder boot order, and hot-plug removable media (ISOs, disk images) attachable and ejectable while the VM runs
-- **Shared directories** — host folders exposed over VirtioFS, read-only or read-write
-- **Display** — resolution presets or a custom size, HiDPI, and live auto-resize with the window; per-VM choice of inline, pop-out window, or fullscreen, and a toggle between the live display and a read-only settings form while the VM runs
-- **Input** — Mac or USB keyboard-and-pointer devices, chosen automatically by guest macOS version with a per-VM override
-- **Audio** — guest audio routed to the host, on by default; host microphone passthrough opt-in per VM, off by default for privacy
-- **Network** — per-VM modes: Shared Network (default; private outbound through the host, with port-forwarding rules), Bridged onto a chosen host interface or Automatic, Host Only (guests reach the host and each other, nothing wider), or None — plus a live IP address readout and a persistent, editable MAC address with one-click regeneration
-- **Serial** — output persisted to a size-capped `serial.log` in the bundle, plus an opt-in AF_UNIX socket relay for external tools (`socat`, `nc -U`), hot-toggleable while running
+| | |
+|---|---|
+| **Storage** | **ASIF** sparse disks at near-native SSD speed, live on-disk vs. allocated size, extra disks with per-disk read-only and drag-to-reorder boot order. |
+| **Removable media** | ISOs and disk images **hot-plugged** and ejected while the VM runs. |
+| **Shared folders** | Host folders over **VirtioFS**, read-only or read-write. |
+| **Display** | Resolution presets or custom size, **HiDPI**, size-to-fit at startup, live auto-resize. Inline, pop-out window, or **fullscreen** per VM; flip between the live display and a read-only settings form while running. |
+| **Input** | Mac or USB keyboard/pointer, auto-picked by guest version. Per-VM choice of when **system hot keys** reach the guest: never, in full screen, or always — live-switchable. |
+| **Audio** | Guest audio to the host, on by default. **Microphone** passthrough opt-in per VM, off by default. |
+| **Network** | **Shared (NAT)** with TCP/UDP **port forwarding** · **Bridged** to a chosen interface or Automatic · **Host Only** · None. Live **IP address** readout; persistent, editable **MAC address** with one-click regeneration and a duplicate warning. |
+| **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
+
+> [!NOTE]
+> **Bridged** and **Host Only** need Apple's restricted `com.apple.vm.networking` entitlement. A build without it hides those modes and everything else works unchanged.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/vm-settings-dark.png">
-    <img src="docs/images/vm-settings-light.png" alt="VM settings form showing the Storage Disks, Removable Media, and Audio sections" width="720">
+    <img src="docs/images/vm-settings-light.png" alt="VM settings form showing the General, Resources, Storage Disks, Removable Media, Shared Directories, Network, and Audio sections" width="720">
   </picture>
 </p>
 
 ### Guest integration
 
-- **Guest agent (macOS guests)** — a lightweight in-guest menu-bar helper, installed from an attachable installer disk, reporting status and version to the host over vsock
-- **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders. Copying is instant in either direction: only a paste moves bytes — up to an adjustable ceiling (2 GB by default) — with integrity verification and live transfer progress in a dedicated clipboard window.
-  Per-VM opt-in Automatic Clipboard Passthrough syncs continuously with no paste step. Concealed and password content shows a locked placeholder; transient pasteboard content isn't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
-- **Drag and drop (macOS guests)** — files dragged from the Finder onto a running guest's display land in its Downloads folder and are revealed there, keeping both copies rather than overwriting a name already taken, with live transfer progress on the way. On per VM by default; a display whose agent isn't connected refuses the drag rather than taking files it can't deliver
-- **Log forwarding (macOS guests)** — opt-in per VM and live-toggleable; the guest's `os.Logger` records surface on the host in Console.app under the `app.kernova.guest` subsystem
+| | |
+|---|---|
+| **Guest agent** (macOS) | A lightweight in-guest helper installed from an attachable disk. Talks to the host over **vsock**; its own status-bar menu shows the connection, what's shared, and when an update is available. |
+| **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress in a clipboard window. Opt-in **Automatic Passthrough** syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
+| **Drag-and-drop** (macOS) | Drop files from Finder onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. |
+| **Log forwarding** (macOS) | Opt-in, live-toggleable: the guest's `os.Logger` records appear in **Console.app** under `app.kernova.guest`. |
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png">
-    <img src="docs/images/clipboard-light.png" alt="The clipboard window showing a file transfer between host and guest" width="720">
+    <img src="docs/images/clipboard-light.png" alt="The clipboard window showing rich text with an embedded image shared between host and guest" width="720">
   </picture>
 </p>
 
-### The app itself
+### The app
 
-Pure AppKit in the Liquid Glass design language: a source-list sidebar with drag reordering and inline rename, a customizable toolbar, a Settings window (⌘,), and a deletion sheet that offers to trash a VM's external attachments alongside it.
+Pure AppKit in the **Liquid Glass** design language — a source-list sidebar with drag reordering and inline rename, a customizable toolbar, and a delete sheet that offers to trash a VM's external attachments with it.
 
-VMs are also drivable without the window: App Intents put start, stop, pause, resume, suspend, restart, open, and snapshot capture in the Shortcuts app and Spotlight, with each VM as a typed entity you pick or search by name, and an AppleScript dictionary puts the lifecycle verbs in Script Editor and Automator.
+| Settings pane (⌘,) | Holds |
+|---|---|
+| **General** | Open at Login · keep running in the status bar |
+| **Clipboard** | Maximum paste size |
+| **Reminders** | Status-bar quit reminder · guest-agent install nudge, app-wide and per VM |
+| **Advanced** | Always show ⌥-gated commands · block duplicate machine IDs from booting · new machine ID for clones · install the CLI and shell completions |
 
-Script Editor's **File → Open Dictionary…** shows everything the dictionary offers — every property a virtual machine answers, and every verb with its parameters. A few idioms the dictionary alone doesn't show:
+## Automation
+
+Four surfaces, one library, the same verbs.
+
+| Surface | What it offers |
+|---|---|
+| **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, reveal), the library (search, import, clone, rename, delete), snapshots (take, find, revert, rename, notes, delete), and reading state or IP — each VM a typed entity you pick by name. |
+| **AppleScript** | A scripting dictionary with the lifecycle verbs and every VM property, for Script Editor and Automator. |
+| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, settings read/write, snapshots, shared folders, port forwarding, `wait`, and `--format json` on every verb. Shell completions for zsh, bash, and fish. |
+| **URL scheme** | Clickable links from a browser, a note, or a script. `kernova://open/<name>` brings a running VM's display forward and refuses when it has none; `kernova://reveal/<name>` never refuses — the display when there is one, the VM's library row otherwise. |
+
+```bash
+kernova start Alpha
+kernova wait Alpha --until agent
+kernova ip Alpha --wait
+kernova snapshot take Alpha --name "before upgrade"
+kernova share add Alpha ~/Projects --read-only
+kernova forward add Alpha 2222:22
+kernova get Alpha memory --format json
+```
+
+A verb launches Kernova hidden when it isn't running; `--no-launch` refuses instead. `kernova --help` lists every verb, flag, and the exit codes a script branches on.
+
+<details>
+<summary><b>AppleScript idioms</b> the dictionary alone doesn't show</summary>
 
 ```applescript
 tell application "Kernova"
@@ -95,55 +159,64 @@ tell application "Kernova"
 end tell
 ```
 
-Kernova also ships a `kernova` command-line tool, bundled inside the app at `Contents/Helpers/kernova`. **Settings → Advanced → Install…** links it into a folder you choose, so a shell always reaches the copy the installed app ships:
+**File → Open Dictionary…** in Script Editor lists every verb, parameter, and property.
+
+</details>
+
+## Requirements
+
+| | |
+|---|---|
+| **Host** | macOS 26 (Tahoe) or later · Apple Silicon |
+| **macOS guests** | macOS 12.0.1 (Monterey) and later, including the guest agent |
+| **Linux guests** | ARM64 — Ubuntu, Debian, Fedora, and Kali from the catalog, or any image of your own |
+
+## Building Kernova
+
+Kernova builds from source with **Xcode 26** and **Swift 6**. After cloning:
 
 ```bash
-kernova list
-kernova start Alpha
-kernova snapshot take Alpha --name "before upgrade"
-kernova get Alpha memory
-kernova ip Alpha --wait
+make setup   # one-time per clone; idempotent, rerun any time
 ```
 
-A verb starts Kernova hidden when it isn't running; `--no-launch` refuses instead. The same Settings pane installs shell completions for zsh, bash, and fish, which offer your own virtual machines, their snapshots, and the setting keys as candidates. `kernova --help` is the reference — every verb and flag, and the exit codes a script branches on.
+| `make setup` step | What it does |
+|---|---|
+| **Git hooks** | Activates the checked-in `.githooks/` — a pre-push `make lint` matching the required check on `main` (`git push --no-verify` bypasses once) and a post-checkout hook that readies new worktrees ([docs/BUILD.md](docs/BUILD.md)). |
+| **Homebrew tools** | `shellcheck`, `gh`, `protoc`, `xcode-build-server` — skipped if present or if [Homebrew](https://brew.sh) is absent; none is needed to build or test. |
+| **`buildServer.json`** | Gives editors and language servers the project's real compiler flags; build once for them to resolve. |
+| **Periphery** | The pinned release `make dead-code` scans with. |
+| **`make doctor`** | Checks toolchain, signing, and hooks against what Kernova needs. |
 
-## Development setup
+Then open `Kernova.xcodeproj`, pick the `Kernova` scheme, and run (⌘R). `make` alone lists every build, test, format, and lint target.
 
-Everything below is for building and working on Kernova itself. You'll need Xcode 26 and Swift 6 on top of the requirements above.
+> [!IMPORTANT]
+> **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds ([docs/BUILD.md](docs/BUILD.md#signing-identity)). **Release** needs a paid membership and a distribution identity ([docs/RELEASING.md](docs/RELEASING.md)).
 
-After cloning:
+The `com.apple.security.virtualization` entitlement is already in the project configuration.
 
-```bash
-make setup   # one-time per clone; rerun any time
-```
-
-Every step is idempotent, so rerunning `setup` after the environment drifts is safe. What it does:
-
-- **Git hooks** — points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
-- **Homebrew tools** — `shellcheck`, `gh`, `protoc`, and `xcode-build-server`, skipping any already installed. Without [Homebrew](https://brew.sh) the run names what it skipped and carries on; none of them is needed to build or test.
-- **`buildServer.json`** — this checkout's copy, which gives editors and Claude Code's Swift language server the project's real compiler flags. Build the checkout once for the flags to resolve.
-- **Periphery** — the pinned release `make dead-code` scans with.
-
-It ends with `make doctor`, which checks that your toolchain, signing, and hooks match what Kernova needs.
-
-Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration. Bridged and Host Only networking additionally need the restricted `com.apple.vm.networking` entitlement; a build signed without a provisioning profile omits those modes from the network picker and everything else still works.
-
-`make` with no arguments lists every build, test, format, and lint target.
-
-**Debug needs no signing team or Apple account** — it signs ad-hoc ("Sign to Run Locally") by default, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it through a gitignored `Config/Local.xcconfig` off `Config/Local.xcconfig.example` so macOS privacy grants survive a rebuild ([docs/BUILD.md](docs/BUILD.md#signing-identity)). **Release** requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store); it matters only when cutting a distributable build ([docs/RELEASING.md](docs/RELEASING.md)).
-
-## Testing
+### Testing
 
 ```bash
 make test
 ```
 
-Runs every test target via the test plan. Tests use [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks; the conventions are in [docs/TESTING.md](docs/TESTING.md).
+Runs every test target via the test plan — [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks ([docs/TESTING.md](docs/TESTING.md)).
 
-## Architecture
+## Documentation
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component map, data flow, and design decisions; [docs/README.md](docs/README.md) indexes the rest, including [docs/DESIGN.md](docs/DESIGN.md) for design philosophy and UI guidelines, [docs/CLIPBOARD.md](docs/CLIPBOARD.md) for the clipboard subsystem, and [docs/NETWORKING.md](docs/NETWORKING.md) for networking principles.
+| Read | For |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component map, data flow, design decisions |
+| [DESIGN.md](docs/DESIGN.md) | Design philosophy and UI guidelines |
+| [CLIPBOARD.md](docs/CLIPBOARD.md) | The clipboard subsystem's principles |
+| [NETWORKING.md](docs/NETWORKING.md) | Networking principles |
+| [VERSION-FLOORS.md](docs/VERSION-FLOORS.md) | Which guest versions support what |
+| [docs/README.md](docs/README.md) | The full index |
+
+## Contributing and security
+
+Bug reports and feedback are welcome as [issues](https://github.com/nicholas-lonsinger/kernova/issues). Outside code contributions aren't being accepted yet — [CONTRIBUTING.md](CONTRIBUTING.md) explains why. Report vulnerabilities privately through [GitHub's advisory form](https://github.com/nicholas-lonsinger/kernova/security/advisories/new); [SECURITY.md](SECURITY.md) describes what's in scope.
 
 ## License
 
-Kernova is **source-available** under the [Functional Source License (FSL-1.1-ALv2)](LICENSE): you're free to use, modify, and redistribute it for any purpose **except** offering a competing commercial product or service. Internal use, non-commercial education, and non-commercial research are explicitly permitted. Each release converts to Apache 2.0 two years after its publication. See [LICENSE](LICENSE) for the full terms.
+Kernova is **source-available** under the [Functional Source License (FSL-1.1-ALv2)](LICENSE): use, modify, and redistribute it for any purpose **except** a competing commercial product or service. Internal use, non-commercial education, and non-commercial research are explicitly permitted. Each release converts to Apache 2.0 two years after publication.
