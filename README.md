@@ -2,8 +2,6 @@
 
 **Native virtual machines for Apple Silicon — macOS and Linux guests on Apple's [Virtualization.framework](https://developer.apple.com/documentation/virtualization).**
 
-[![Build & Test](https://github.com/nicholas-lonsinger/kernova/actions/workflows/xcodebuild-test.yml/badge.svg)](https://github.com/nicholas-lonsinger/kernova/actions/workflows/xcodebuild-test.yml)
-[![Lint](https://github.com/nicholas-lonsinger/kernova/actions/workflows/lint.yml/badge.svg)](https://github.com/nicholas-lonsinger/kernova/actions/workflows/lint.yml)
 ![Platform](https://img.shields.io/badge/macOS%2026-Apple%20Silicon-000000?logo=apple&logoColor=white)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 ![AppKit](https://img.shields.io/badge/UI-pure%20AppKit-0A84FF)
@@ -40,7 +38,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Drag-and-drop** files from Finder into the guest | ✅ | — |
 | **Guest agent** with log forwarding to Console.app | ✅ | — |
 | **HiDPI** display, **Recovery Mode** boot | ✅ | — |
-| **CLI**, **Shortcuts**, **AppleScript** | ✅ | ✅ |
+| **CLI**, **Shortcuts**, **AppleScript**, **`kernova:` links** | ✅ | ✅ |
 
 ## Features
 
@@ -118,13 +116,14 @@ Pure AppKit in the **Liquid Glass** design language — a source-list sidebar wi
 
 ## Automation
 
-Three surfaces, one library, the same verbs.
+Four surfaces, one library, the same verbs.
 
 | Surface | What it offers |
 |---|---|
 | **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, reveal), the library (search, import, clone, rename, delete), snapshots (take, find, revert, rename, notes, delete), and reading state or IP — each VM a typed entity you pick by name. |
 | **AppleScript** | A scripting dictionary with the lifecycle verbs and every VM property, for Script Editor and Automator. |
-| **`kernova` CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, settings read/write, snapshots, shared folders, port forwarding, `wait`, and `--format json` on every verb. Shell completions for zsh, bash, and fish. |
+| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, settings read/write, snapshots, shared folders, port forwarding, `wait`, and `--format json` on every verb. Shell completions for zsh, bash, and fish. |
+| **URL scheme** | `kernova://open/<name>` brings a VM's display forward and `kernova://reveal/<name>` puts the VM in front of you in any state — from a browser, a note, a script, or `open`. Names or identifiers, percent-encoded. |
 
 ```bash
 kernova start Alpha
