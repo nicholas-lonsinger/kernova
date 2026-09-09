@@ -30,10 +30,21 @@ struct VMScriptingGatewayTests {
         var isWaiting: Bool { lock.withLock { waiting } }
 
         /// Suspends until ``open()``, as the app's first library read does.
+        ///
+        /// A gate no test opens is a test defect, recorded as one — and then
+        /// parked for good rather than returned from: a readiness that "lands"
+        /// on the backstop resumes whatever the gateway deferred, and a
+        /// re-issued command reaches Cocoa on the main actor with no Apple
+        /// event behind it.
         func wait() async {
             lock.withLock { waiting = true }
             gate.notify()
-            try? await gate.wait { self.lock.withLock { self.isOpen } }
+            do {
+                try await gate.wait { self.lock.withLock { self.isOpen } }
+            } catch {
+                Issue.record("readiness gate was never opened: \(error)")
+                await VMScriptingGatewayTests.parkForever()
+            }
         }
 
         /// Lands the library read.
@@ -46,6 +57,12 @@ struct VMScriptingGatewayTests {
         func awaitWaiting() async throws {
             try await gate.wait { self.isWaiting }
         }
+    }
+
+    /// A readiness await that never lands and arms no clock, for a deferred
+    /// read that must stay parked for the rest of the process's life.
+    private static func parkForever() async {
+        await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
     }
 
     private func makeGateway(
@@ -318,10 +335,12 @@ struct VMScriptingGatewayTests {
     func aColdReadIsDeferredOnce() throws {
         let commands = MockVMCommanding()
         commands.library = [makeSummary(name: "Alpha")]
-        // Never landed, so the deferred read stays parked: resuming a command
-        // Cocoa never suspended is undefined, and only Cocoa's Apple event
-        // handling can suspend one.
-        let gateway = makeGateway(commands, awaitReady: { await ReadinessGate().wait() })
+        // Never lands, so the deferred read stays parked: only Cocoa's Apple
+        // event handling can answer a resumed command, and a readiness that
+        // landed on a backstop instead re-issued this one on the main actor —
+        // Cocoa threw, HIToolbox swallowed it, and every main-actor test after
+        // it froze (#1196).
+        let gateway = makeGateway(commands, awaitReady: { await Self.parkForever() })
         let command = try makeGetCommand()
         gateway.currentCommandForTesting = { command }
 
