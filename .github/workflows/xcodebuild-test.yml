@@ -83,10 +83,15 @@ jobs:
       # test runner with the prefix stripped and passes nothing else through,
       # so the plain name set here silently no-ops and the run measures
       # pass-through (observed 2026-08-20).
+      #
+      # The wall-clock bound sits well under the job cap so a stalled run ends
+      # with the test hosts sampled into artifacts/samples/ and the reporting
+      # steps still running, instead of a silent cancellation. A healthy step
+      # finishes in about two minutes (measured 2026-09-09).
       - name: Test without building
         env:
           TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
-        run: make test-without-building 2>&1
+        run: Tools/run-with-sample.sh 360 artifacts/samples make test-without-building 2>&1
 
       # xcodebuild's own stream interleaves parallel test hosts, so a failure's
       # message can land far from the test that raised it. This pairs each
