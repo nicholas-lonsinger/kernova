@@ -645,12 +645,12 @@ func makeGroupedFormSwitch(target: AnyObject, action: Selector) -> NSSwitch {
     return toggle
 }
 
-/// Builds a toggle row: title, info button, and a trailing control.
+/// Builds a row: title, info button, and a trailing control.
 ///
 /// `titleLabel` hands the freshly-built label back to the caller, for rows whose
 /// text has to be restyled later.
 @MainActor
-func makeGroupedFormToggleRowWithInfo(
+func makeGroupedFormRowWithInfo(
     _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph],
     titleLabel: ((NSTextField) -> Void)? = nil
 ) -> NSView {

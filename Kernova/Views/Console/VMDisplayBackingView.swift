@@ -2,18 +2,23 @@ import Cocoa
 import Virtualization
 import os
 
+/// The `VZVirtualMachineView` properties Kernova drives from a VM's settings,
+/// carried together so both display hosts write the same set.
+struct VMDisplayViewSettings: Equatable {
+    /// Whether the guest reconfigures its display to follow the view as it is
+    /// resized.
+    var automaticallyReconfiguresDisplay: Bool
+    /// Whether system hot keys reach the guest instead of the host.
+    var capturesSystemKeys: Bool
+}
+
 /// Pure AppKit view containing a `VZVirtualMachineView` with built-in pause and transition overlays.
 ///
 /// Used directly as `window.contentView` in the detached display window, and layered on top of
 /// the inline detail content by `DetailContainerViewController`.
 @MainActor
 final class VMDisplayBackingView: NSView {
-    private(set) var machineView: VZVirtualMachineView = {
-        let view = VZVirtualMachineView()
-        view.capturesSystemKeys = true
-        view.automaticallyReconfiguresDisplay = true
-        return view
-    }()
+    private(set) var machineView = VZVirtualMachineView()
 
     /// Called when the user taps the resume button on the pause overlay.
     var onResume: (() -> Void)?
@@ -82,9 +87,15 @@ final class VMDisplayBackingView: NSView {
     private static let promisedItemTypes: [NSPasteboard.PasteboardType] =
         NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) }
 
-    /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``apply(automaticallyReconfiguresDisplay:)``
-    /// writes the framework property only when it actually changes.
-    private var automaticallyReconfiguresDisplay = true
+    /// What was last written to `machineView`, so ``apply(_:)`` touches a
+    /// framework property only when its value actually changes — a distinction
+    /// `automaticallyReconfiguresDisplay` makes: `VZVirtualMachineView.h` says
+    /// setting it on a second view targeting the same display turns it off on
+    /// the first.
+    ///
+    /// `nil` until the first pass, which is what lets the view start from VZ's
+    /// own defaults instead of a copy of them kept here.
+    private var appliedSettings: VMDisplayViewSettings?
 
     private let pauseOverlay: NSVisualEffectView
     private let pauseButton: NSButton
@@ -133,21 +144,21 @@ final class VMDisplayBackingView: NSView {
     ///   - display: The session's display handle, or `nil` to clear.
     ///   - isPaused: Whether the pause overlay should be visible.
     ///   - transitionText: If non-nil, shows the transition overlay with this label (e.g. "Suspending…").
-    ///   - automaticallyReconfiguresDisplay: Whether the guest display follows the view as it resizes.
+    ///   - settings: The framework properties this VM's display should carry now.
     func update(
         display: VMDisplayHandle?, isPaused: Bool, transitionText: String?,
-        automaticallyReconfiguresDisplay: Bool
+        settings: VMDisplayViewSettings
     ) {
         // Before the attach: VZ reconfigures the guest display as the VM is
         // assigned, so a stale flag reconfigures a VM the user opted out of.
-        apply(automaticallyReconfiguresDisplay: automaticallyReconfiguresDisplay)
+        apply(settings)
         show(display: display, isPaused: isPaused, transitionText: transitionText)
     }
 
     /// Clears the displayed VM and its overlays on a view about to be discarded.
     ///
-    /// Leaves `automaticallyReconfiguresDisplay` where it is: with no VM
-    /// attached there is nothing left for it to reconfigure.
+    /// Leaves the applied settings where they are: with no VM attached there is
+    /// nothing left for them to act on.
     func detach() {
         show(display: nil, isPaused: false, transitionText: nil)
     }
@@ -167,14 +178,20 @@ final class VMDisplayBackingView: NSView {
         }
     }
 
-    /// Sets whether the guest display follows the view as it resizes, on a view
-    /// that may be hidden or showing no VM.
-    func apply(automaticallyReconfiguresDisplay: Bool) {
-        guard self.automaticallyReconfiguresDisplay != automaticallyReconfiguresDisplay else {
-            return
+    /// Writes `settings` to the machine view, on a view that may be hidden or
+    /// showing no VM.
+    func apply(_ settings: VMDisplayViewSettings) {
+        guard settings != appliedSettings else { return }
+        if settings.automaticallyReconfiguresDisplay
+            != appliedSettings?.automaticallyReconfiguresDisplay
+        {
+            machineView.automaticallyReconfiguresDisplay =
+                settings.automaticallyReconfiguresDisplay
         }
-        self.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
-        machineView.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
+        if settings.capturesSystemKeys != appliedSettings?.capturesSystemKeys {
+            machineView.capturesSystemKeys = settings.capturesSystemKeys
+        }
+        appliedSettings = settings
     }
 
     // MARK: - File Drop

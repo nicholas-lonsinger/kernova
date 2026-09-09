@@ -46,9 +46,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         displayResolutionIsCustom = false
 
         var sections = [buildResourcesSection(), buildDisplaySection(), buildAudioSection()]
-        if instance.configuration.guestOS == .macOS {
-            sections.append(buildInputDevicesSection())
-        }
+        sections.append(buildInputSection())
         sections.append(buildSerialRelaySection())
         for section in sections {
             panelStack.addArrangedSubview(section)
@@ -61,7 +59,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         refreshResources()
         refreshDisplay()
         refreshAudio()
-        refreshInputDevices()
+        refreshInput()
         refreshSerialRelay()
     }
 
@@ -100,8 +98,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private var audioOutputSwitch = NSSwitch()
     private var audioWarningContainer = NSStackView()
 
-    // Input devices (macOS guests only)
+    // Input
+    /// macOS guests only — Linux guests always take the USB pair.
     private var inputDevicesPopUp = NSPopUpButton()
+    private var systemKeysPopUp = NSPopUpButton()
 
     // Serial Console
     private var serialRelaySwitch = NSSwitch()
@@ -188,11 +188,11 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         var rows: [NSView] = [
             // Deliberately not `lockable`: the flag lives on the display view, so
             // it is legal to flip while the VM runs.
-            makeGroupedFormToggleRowWithInfo(
+            makeGroupedFormRowWithInfo(
                 "Automatically resize with window", control: displayAutoResizeSwitch,
                 paragraphs: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
             lockRegistry.lockable(
-                makeGroupedFormToggleRowWithInfo(
+                makeGroupedFormRowWithInfo(
                     "Size display to fit window at startup", control: displayMatchWindowSwitch,
                     paragraphs: [
                         .body(
@@ -211,7 +211,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         if supportsDensity {
             rows.append(
                 lockRegistry.lockable(
-                    makeGroupedFormToggleRowWithInfo(
+                    makeGroupedFormRowWithInfo(
                         "HiDPI (Retina)", control: displayHiDPISwitch,
                         paragraphs: [
                             .body(
@@ -310,7 +310,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         ])
     }
 
-    // MARK: Input Devices
+    // MARK: Input
 
     /// Titles and modes for the input devices popup, in menu order.
     private static let inputDeviceChoices: [(title: String, mode: VMInputDeviceMode)] = [
@@ -329,26 +329,72 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         ),
     ]
 
-    private func buildInputDevicesSection() -> NSView {
-        inputDevicesPopUp = makeInputDevicesPopUp()
-        return makeGroupedFormSection([
-            lockRegistry.makeHeader("Input", lockable: true, paragraphs: Self.inputDevicesInfoParagraphs),
-            makeGroupedFormCard(rows: [
+    /// Titles and modes for the system keys popup, in menu order.
+    ///
+    /// "Full Screen" is Apple's own name for the state the middle choice reads.
+    private static let systemKeyChoices: [(title: String, mode: VMSystemKeyForwarding)] = [
+        ("Never", .never),
+        ("In Full Screen", .fullscreenOnly),
+        ("Always", .always),
+    ]
+
+    /// Info copy for the system keys picker.
+    ///
+    /// Which keys Virtualization forwards is Apple's to decide and its
+    /// documentation names none, so neither does this.
+    private static let systemKeysInfoParagraphs: [InfoPopoverParagraph] = [
+        .body(
+            "Sends certain system hot keys to the guest instead of the host, while the VM display has keyboard focus. Virtualization chooses which keys those are."
+        ),
+        .body(
+            "In Full Screen narrows that to a display filling a screen of its own, so the same keys keep acting on this Mac while the VM is in a window."
+        ),
+        .body("Takes effect immediately, including while the VM is running."),
+    ]
+
+    private func buildInputSection() -> NSView {
+        let isMacOS = instance.configuration.guestOS == .macOS
+        systemKeysPopUp = makePopUp(
+            Self.systemKeyChoices, action: #selector(systemKeysChanged))
+
+        // Deliberately not `lockable`: the flag lives on the display view, so it
+        // is legal to flip while the VM runs.
+        var rows: [NSView] = [
+            makeGroupedFormRowWithInfo(
+                "Send system keys to guest", control: systemKeysPopUp,
+                paragraphs: Self.systemKeysInfoParagraphs)
+        ]
+        if isMacOS {
+            inputDevicesPopUp = makePopUp(
+                Self.inputDeviceChoices, action: #selector(inputDevicesChanged))
+            rows.append(
                 lockRegistry.lockable(
-                    makeGroupedFormCardRow("Devices", control: inputDevicesPopUp), inputDevicesPopUp)
-            ]),
+                    makeGroupedFormRowWithInfo(
+                        "Devices", control: inputDevicesPopUp,
+                        paragraphs: Self.inputDevicesInfoParagraphs), inputDevicesPopUp))
+        }
+
+        return makeGroupedFormSection([
+            // A Linux guest's section holds only the live row, so nothing in it
+            // waits on a stop and the hint would name a lock that isn't there.
+            lockRegistry.makeHeader("Input", lockable: isMacOS),
+            makeGroupedFormCard(rows: rows),
         ])
     }
 
-    private func makeInputDevicesPopUp() -> NSPopUpButton {
+    /// A settings popup whose items carry `choices`' modes as represented
+    /// objects, in menu order.
+    private func makePopUp<Mode>(
+        _ choices: [(title: String, mode: Mode)], action: Selector
+    ) -> NSPopUpButton {
         let popUp = NSPopUpButton()
         popUp.controlSize = .small
-        for choice in Self.inputDeviceChoices {
+        for choice in choices {
             popUp.addItem(withTitle: choice.title)
             popUp.lastItem?.representedObject = choice.mode
         }
         popUp.target = self
-        popUp.action = #selector(inputDevicesChanged)
+        popUp.action = action
         return popUp
     }
 
@@ -360,7 +406,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             "Reveal serial.log in Finder", target: self, action: #selector(revealSerialLog))
         let socketPath = VMInstance.serialSocketPath(for: instance.id)
         let card = makeGroupedFormCard(rows: [
-            makeGroupedFormToggleRowWithInfo(
+            makeGroupedFormRowWithInfo(
                 "Expose serial socket", control: serialRelaySwitch,
                 paragraphs: [
                     .body(
@@ -497,18 +543,25 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         }
     }
 
-    private func refreshInputDevices() {
+    private func refreshInput() {
+        select(instance.configuration.systemKeyForwarding, in: systemKeysPopUp, named: "system keys")
         guard instance.configuration.guestOS == .macOS else { return }
-        let mode = instance.configuration.inputDeviceMode
-        let index = inputDevicesPopUp.itemArray.firstIndex {
-            ($0.representedObject as? VMInputDeviceMode) == mode
-        }
-        guard let index else {
-            Self.logger.fault("No popup item for input device mode '\(mode.rawValue, privacy: .public)'")
-            assertionFailure("No popup item for input device mode: \(mode.rawValue)")
+        select(instance.configuration.inputDeviceMode, in: inputDevicesPopUp, named: "input device")
+    }
+
+    /// Selects the item carrying `mode`, reporting a popup that was built
+    /// without one rather than leaving a stale selection standing.
+    private func select<Mode: RawRepresentable & Equatable>(
+        _ mode: Mode, in popUp: NSPopUpButton, named what: String
+    ) where Mode.RawValue == String {
+        guard let index = popUp.itemArray.firstIndex(where: { ($0.representedObject as? Mode) == mode })
+        else {
+            Self.logger.fault(
+                "No popup item for \(what, privacy: .public) mode '\(mode.rawValue, privacy: .public)'")
+            assertionFailure("No popup item for \(what) mode: \(mode.rawValue)")
             return
         }
-        inputDevicesPopUp.selectItem(at: index)
+        popUp.selectItem(at: index)
     }
 
     private func refreshSerialRelay() {
@@ -651,6 +704,17 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             return
         }
         writeConfig { $0.inputDeviceMode = mode }
+    }
+
+    @objc private func systemKeysChanged() {
+        guard
+            let mode = systemKeysPopUp.selectedItem?.representedObject as? VMSystemKeyForwarding
+        else {
+            Self.logger.fault("System keys popup selection carries no mode")
+            assertionFailure("System keys popup selection carries no mode")
+            return
+        }
+        writeConfig { $0.systemKeyForwarding = mode }
     }
 
     @objc private func serialRelayToggled() {

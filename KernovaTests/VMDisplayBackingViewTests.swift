@@ -9,46 +9,71 @@ import Testing
 @Suite("VMDisplayBackingView Tests", .admissionGated)
 @MainActor
 struct VMDisplayBackingViewTests {
-    @Test("update carries automaticallyReconfiguresDisplay through to the machine view")
-    func updateAppliesAutoResizeFlag() {
+    private func settings(autoResize: Bool, capturesSystemKeys: Bool) -> VMDisplayViewSettings {
+        VMDisplayViewSettings(
+            automaticallyReconfiguresDisplay: autoResize, capturesSystemKeys: capturesSystemKeys)
+    }
+
+    @Test("update carries both settings through to the machine view")
+    func updateAppliesSettings() {
         let backing = VMDisplayBackingView(frame: .zero)
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
 
         backing.update(
             display: nil, isPaused: false, transitionText: nil,
-            automaticallyReconfiguresDisplay: false)
+            settings: settings(autoResize: true, capturesSystemKeys: true))
+        #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
+        #expect(backing.machineView.capturesSystemKeys == true)
+
+        backing.update(
+            display: nil, isPaused: false, transitionText: nil,
+            settings: settings(autoResize: false, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
+        #expect(backing.machineView.capturesSystemKeys == false)
+    }
 
-        backing.update(
-            display: nil, isPaused: false, transitionText: nil,
-            automaticallyReconfiguresDisplay: true)
+    @Test("each setting moves on its own")
+    func settingsMoveIndependently() {
+        let backing = VMDisplayBackingView(frame: .zero)
+
+        backing.apply(settings(autoResize: true, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
+        #expect(backing.machineView.capturesSystemKeys == false)
+
+        backing.apply(settings(autoResize: true, capturesSystemKeys: true))
+        #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
+        #expect(backing.machineView.capturesSystemKeys == true)
+
+        backing.apply(settings(autoResize: false, capturesSystemKeys: true))
+        #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
+        #expect(backing.machineView.capturesSystemKeys == true)
     }
 
     @Test("apply reaches the machine view without an update pass")
-    func applyAutoResizeFlagStandalone() {
+    func applySettingsStandalone() {
         let backing = VMDisplayBackingView(frame: .zero)
 
-        backing.apply(automaticallyReconfiguresDisplay: false)
+        backing.apply(settings(autoResize: false, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
 
-        // Re-applying the same value is a no-op, and the next change still lands.
-        backing.apply(automaticallyReconfiguresDisplay: false)
+        // Re-applying the same values is a no-op, and the next change still lands.
+        backing.apply(settings(autoResize: false, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
 
-        backing.apply(automaticallyReconfiguresDisplay: true)
+        backing.apply(settings(autoResize: true, capturesSystemKeys: true))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
+        #expect(backing.machineView.capturesSystemKeys == true)
     }
 
-    @Test("detach clears the machine view and leaves the auto-resize flag alone")
-    func detachClearsWithoutTouchingTheFlag() {
+    @Test("detach clears the machine view and leaves the applied settings alone")
+    func detachClearsWithoutTouchingTheSettings() {
         let backing = VMDisplayBackingView(frame: .zero)
-        backing.apply(automaticallyReconfiguresDisplay: false)
+        backing.apply(settings(autoResize: false, capturesSystemKeys: true))
 
         backing.detach()
 
         #expect(backing.machineView.virtualMachine == nil)
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
+        #expect(backing.machineView.capturesSystemKeys == true)
     }
 
     // MARK: - File drop

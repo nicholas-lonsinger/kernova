@@ -187,7 +187,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
         // Not lockable — every toggle here takes effect live.
         let card = makeGroupedFormCard(rows: [
-            makeGroupedFormToggleRowWithInfo(
+            makeGroupedFormRowWithInfo(
                 "Forward guest logs", control: logForwardingSwitch,
                 paragraphs: [
                     .body(
@@ -197,23 +197,23 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             // Passthrough rides on sharing — it goes inert when sharing is off —
             // so it nests as a sub-option rather than an equal sibling toggle.
             makeGroupedFormSubOptionGroup(
-                primary: makeGroupedFormToggleRowWithInfo(
+                primary: makeGroupedFormRowWithInfo(
                     "Clipboard sharing", control: clipboardSwitch,
                     paragraphs: [
                         .body("Exchanges clipboard text between host and guest.")
                     ]),
-                subOption: makeGroupedFormToggleRowWithInfo(
+                subOption: makeGroupedFormRowWithInfo(
                     "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                     paragraphs: Self.passthroughInfoParagraphs,
                     titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 })),
-            makeGroupedFormToggleRowWithInfo(
+            makeGroupedFormRowWithInfo(
                 "Drag and drop files", control: dropFilesSwitch,
                 paragraphs: [
                     .body(
                         "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
                     )
                 ]),
-            makeGroupedFormToggleRowWithInfo(
+            makeGroupedFormRowWithInfo(
                 "Show install reminder", control: installReminderSwitch,
                 paragraphs: [
                     .body(
@@ -254,7 +254,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
-                    subOption: makeGroupedFormToggleRowWithInfo(
+                    subOption: makeGroupedFormRowWithInfo(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                         paragraphs: Self.passthroughInfoParagraphs,
                         titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 }))

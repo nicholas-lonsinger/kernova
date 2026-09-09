@@ -221,11 +221,13 @@ struct VMCommandCoreConfigurationTests {
             assignments: [
                 ConfigurationEntry(key: "clipboard.sharing", value: "true"),
                 ConfigurationEntry(key: "display.autoResize", value: "false"),
+                ConfigurationEntry(key: "input.systemKeys", value: "fullscreenOnly"),
             ],
             confirmed: false)
 
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.displayAutoResizes)
+        #expect(instance.configuration.systemKeyForwarding == .fullscreenOnly)
     }
 
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")

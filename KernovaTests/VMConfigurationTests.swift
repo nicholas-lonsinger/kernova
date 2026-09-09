@@ -946,6 +946,39 @@ struct VMConfigurationTests {
         #expect(config.displayAutoResizes == true)
     }
 
+    // MARK: - systemKeyForwarding Tests
+
+    @Test("System key forwarding defaults to always, and round-trips")
+    func systemKeyForwardingRoundTrips() throws {
+        #expect(
+            VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+                .systemKeyForwarding == .always)
+
+        for mode in VMSystemKeyForwarding.allCases {
+            let config = VMConfiguration(
+                name: "Keys VM", guestOS: .macOS, bootMode: .macOS, systemKeyForwarding: mode)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+
+            let decoded = try decoder.decode(
+                VMConfiguration.self, from: try encoder.encode(config))
+
+            #expect(decoded.systemKeyForwarding == mode)
+        }
+    }
+
+    @Test("A missing system keys key decodes to always")
+    func missingSystemKeyForwardingUsesAlways() throws {
+        // `makeBaseJSON` carries no `systemKeyForwarding`.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.systemKeyForwarding == .always)
+    }
+
     @Test("displayResolution reads and writes the stored trio")
     func displayResolutionAccessesTheTrio() {
         var config = VMConfiguration(

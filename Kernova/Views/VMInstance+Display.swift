@@ -40,6 +40,24 @@ extension VMInstance {
         return .available
     }
 
+    /// The `VZVirtualMachineView` properties this VM's display should carry
+    /// right now.
+    ///
+    /// The one derivation of the set, so the inline display and the display
+    /// window cannot disagree — and reading it inside an observation `track`
+    /// closure registers exactly what it depends on, `displayMode` included.
+    var displayViewSettings: VMDisplayViewSettings {
+        let capturesSystemKeys =
+            switch configuration.systemKeyForwarding {
+            case .never: false
+            case .fullscreenOnly: isInFullscreen
+            case .always: true
+            }
+        return VMDisplayViewSettings(
+            automaticallyReconfiguresDisplay: configuration.displayAutoResizes,
+            capturesSystemKeys: capturesSystemKeys)
+    }
+
     /// Sends `urls` to the guest's Downloads folder, reporting whether the drop
     /// was taken up.
     ///

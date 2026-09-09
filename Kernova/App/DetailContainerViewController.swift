@@ -221,7 +221,10 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
-                _ = self.viewModel.selectedInstance?.configuration.displayAutoResizes
+                // Everything `displayViewSettings` reads, so a settings change —
+                // and a fullscreen transition, which moves what system-key
+                // forwarding resolves to — reaches the live view.
+                _ = self.viewModel.selectedInstance?.displayViewSettings
                 // Track instances with backing views so a stop or a move out of
                 // inline mode is detected, and the array itself for adds/removes.
                 _ = self.viewModel.instances.count
@@ -230,7 +233,7 @@ final class DetailContainerViewController: NSViewController {
                         _ = inst.status
                         _ = inst.hasLiveVirtualMachine
                         _ = inst.displayMode
-                        _ = inst.configuration.displayAutoResizes
+                        _ = inst.displayViewSettings
                         // Everything `displayDropAvailability` reads, so the
                         // display registers and unregisters as a drag
                         // destination when the guest agent comes and goes, the
@@ -259,11 +262,10 @@ final class DetailContainerViewController: NSViewController {
 
         // Ahead of the early return below: a hidden backing view stays attached and
         // constrained, so a VM whose Settings pane is up still reconfigures its
-        // guest on every window resize unless the toggle reaches it here.
+        // guest on every window resize unless the settings reach it here.
         for (id, backing) in backingViews {
             guard let instance = viewModel.instances.first(where: { $0.id == id }) else { continue }
-            backing.apply(
-                automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes)
+            backing.apply(instance.displayViewSettings)
             backing.applyDropRegistration()
         }
 
@@ -322,7 +324,7 @@ final class DetailContainerViewController: NSViewController {
             display: display,
             isPaused: instance.status == .paused,
             transitionText: instance.status.transitionLabel,
-            automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
+            settings: instance.displayViewSettings
         )
 
         if armedGuestFocusID == instance.id {

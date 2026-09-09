@@ -82,6 +82,7 @@ struct VMConfigurationKeyRegistryTests {
         original.displaySizesToWindow = true
         original.displayAutoResizes = false
         original.displayPreference = .fullscreen
+        original.systemKeyForwarding = .fullscreenOnly
         original.networkMode = .bridged
         original.bridgedInterfaceIdentifier = "en1"
 
@@ -157,6 +158,19 @@ struct VMConfigurationKeyRegistryTests {
         #expect(key.read(config) == "false")
     }
 
+    @Test("System keys takes and reads back every mode, live")
+    func systemKeysTakesEveryMode() throws {
+        let key = try #require(VMConfigurationKeyRegistry.key(named: "input.systemKeys"))
+        #expect(key.gate == .live)
+
+        for mode in VMSystemKeyForwarding.allCases {
+            var config = makeConfiguration()
+            try write(key, mode.rawValue, to: &config)
+            #expect(config.systemKeyForwarding == mode)
+            #expect(key.read(config) == mode.rawValue)
+        }
+    }
+
     @Test("A value outside a key's range is refused rather than clamped")
     func outOfRangeValuesAreRefused() throws {
         let original = makeConfiguration()
@@ -171,6 +185,7 @@ struct VMConfigurationKeyRegistryTests {
             ("display.height", String(DisplayBootSizing.minimumHeight - 1)),
             ("display.autoResize", "maybe"),
             ("display.preference", "windowed"),
+            ("input.systemKeys", "sometimes"),
             ("network.mode", "nat"),
             ("network.mac", "aa-bb-cc-dd-ee-ff"),
             ("network.mac", "00:00:00:00:00:00"),

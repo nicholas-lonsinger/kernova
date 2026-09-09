@@ -79,7 +79,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             display: instance.session?.displayHandle,
             isPaused: instance.status == .paused,
             transitionText: instance.status.transitionLabel,
-            automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
+            settings: instance.displayViewSettings
         )
         self.backingView = backing
 
@@ -121,6 +121,13 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Lifecycle
 
     override func showWindow(_ sender: Any?) {
+        // Re-derived here rather than trusted from `init`: the placement
+        // controller writes `displayMode` between constructing this controller
+        // and showing it, so a VM opening straight into fullscreen resolves
+        // `.fullscreenOnly` against the mode it is actually in — and it lands
+        // before the machine view takes focus below, which is when system-key
+        // capture starts to matter.
+        backingView.apply(instance.displayViewSettings)
         super.showWindow(sender)
         // Land keyboard focus in the guest, so typing works without a click.
         window?.makeFirstResponder(backingView.machineView)
@@ -191,7 +198,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 // `status` and `hasLiveVirtualMachine`, which the dismissal
                 // branch below also reads, are among them.
                 self.toolbarManager.trackItemState()
-                _ = self.instance.configuration.displayAutoResizes
+                // Everything `displayViewSettings` reads, so a settings change —
+                // and a fullscreen transition, which moves what system-key
+                // forwarding resolves to — reaches the live view.
+                _ = self.instance.displayViewSettings
                 // Everything `displayDropAvailability` reads, so the display
                 // registers and unregisters as a drag destination when the guest
                 // agent comes and goes, the VM pauses, or the toggle flips.
@@ -213,7 +223,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                         display: self.instance.session?.displayHandle,
                         isPaused: status == .paused,
                         transitionText: status.transitionLabel,
-                        automaticallyReconfiguresDisplay: self.instance.configuration.displayAutoResizes
+                        settings: self.instance.displayViewSettings
                     )
                     self.backingView.applyDropRegistration()
                     self.updateToolbarItems()

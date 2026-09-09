@@ -229,7 +229,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ephemeralBaselinePopUp = makeEphemeralBaselinePopUp()
         renderedEphemeralBaselines = nil
         let ephemeralGroup = makeGroupedFormSubOptionGroup(
-            primary: makeGroupedFormToggleRowWithInfo(
+            primary: makeGroupedFormRowWithInfo(
                 "Ephemeral Mode", control: ephemeralSwitch,
                 paragraphs: EphemeralModeCopy.popoverParagraphs,
                 titleLabel: { [weak self] in self?.ephemeralLabel = $0 }),
@@ -238,7 +238,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         self.ephemeralGroup = ephemeralGroup
 
         let card = makeGroupedFormCard(rows: [
-            makeGroupedFormToggleRowWithInfo(
+            makeGroupedFormRowWithInfo(
                 "Start when Kernova opens", control: autoStartSwitch,
                 paragraphs: [
                     .body(
