@@ -123,7 +123,7 @@ Four surfaces, one library, the same verbs.
 | **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, reveal), the library (search, import, clone, rename, delete), snapshots (take, find, revert, rename, notes, delete), and reading state or IP — each VM a typed entity you pick by name. |
 | **AppleScript** | A scripting dictionary with the lifecycle verbs and every VM property, for Script Editor and Automator. |
 | **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, settings read/write, snapshots, shared folders, port forwarding, `wait`, and `--format json` on every verb. Shell completions for zsh, bash, and fish. |
-| **URL scheme** | `kernova://open/<name>` brings a VM's display forward and `kernova://reveal/<name>` puts the VM in front of you in any state — from a browser, a note, a script, or `open`. Names or identifiers, percent-encoded. |
+| **URL scheme** | Clickable links from a browser, a note, or a script. `kernova://open/<name>` brings a running VM's display forward and refuses when it has none; `kernova://reveal/<name>` never refuses — the display when there is one, the VM's library row otherwise. |
 
 ```bash
 kernova start Alpha
