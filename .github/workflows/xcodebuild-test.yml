@@ -88,10 +88,11 @@ jobs:
       # the step and the reporting steps below still run — the job cap instead
       # cancels the run outright, leaving the result bundle half-written and
       # nothing to read. It backs up the test plan's per-test timeouts, which
-      # fail one stuck test and let the rest of the run finish. A healthy step
+      # fail one stuck test and let the rest of the run finish, so it is sized
+      # for a healthy run plus one test spending its whole allowance. A healthy step
       # takes about two minutes.
       - name: Test without building
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
         run: make test-without-building 2>&1
