@@ -121,19 +121,18 @@ expect_count '^KernovaTests/VMConfigurationTests\.swift:42: Expectation failed: 
 expect '^=== VMConfigurationTests/rejectsZeroMemory\(\)$'
 expect '^KernovaTests/VMConfigurationTests\.swift:58: Expectation failed: error is nil$'
 expect '^error → nil$'
-expect '^=== ClipboardTests/roundTrip\(\) \(passed on retry\)$'
 reject '^xcresult-report:'
 reject "$ROOT"
-expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 flaky=1 log=.*/test\.log xcresult=$tmp/bundles/failed\.xcresult$"
+expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 log=.*/test\.log xcresult=$tmp/bundles/failed\.xcresult$"
 
 run "test green" 0 with_log test-passed.log 0 test
 expect '^result=Passed total=3948 passed=3948 failed=0 skipped=0 xfail=0$'
-expect_last '^make-verdict: verdict=green target=test suite=- total=3948 failed=0 flaky=0 log=.* xcresult=.*/passed\.xcresult$'
+expect_last '^make-verdict: verdict=green target=test suite=- total=3948 failed=0 log=.* xcresult=.*/passed\.xcresult$'
 expect_lines 3
 
 run "suite matched nothing" 3 with_log test-none.log 0 test-suite KernovaTests/NoSuchSuite
 expect '^make-verdict: target=test-suite suite=KernovaTests/NoSuchSuite '
-expect_last '^make-verdict: verdict=no-tests-ran target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 flaky=0 '
+expect_last '^make-verdict: verdict=no-tests-ran target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 '
 
 run "test build failed" 2 with_log test-build-failed.log 65 test
 expect '^errors:$'
@@ -148,7 +147,7 @@ expect_last '^make-verdict: verdict=test-failed target=test suite=- reason=no-re
 
 run "tests passed but make failed" 1 with_log test-passed.log 1 test
 expect '^tail:$'
-expect_last '^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=0 flaky=0 reason=make-exit-1 '
+expect_last '^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=0 reason=make-exit-1 '
 
 run "test-without-building green" 0 with_log test-passed.log 0 test-without-building
 expect_last '^make-verdict: verdict=green target=test-without-building '
@@ -171,7 +170,7 @@ expect_last '^make-verdict: verdict=lint-failed target=lint '
 
 run "from-log reports without running" 1 verdict --from-log "$tmp/logs/test-failed.log" test
 expect '^make-verdict: target=test suite=- duration=- log='
-expect_last '^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 flaky=1 '
+expect_last '^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 '
 
 run "from-log build" 2 verdict --from-log "$tmp/logs/build-failed.log" build
 expect_last '^make-verdict: verdict=build-failed '
@@ -211,28 +210,21 @@ report() { "$SKILL/xcresult-report.sh" "$@"; }
 
 run "report failed bundle" 1 report --path "$tmp/bundles/failed.xcresult"
 expect '^result=Failed total=3948 passed=3945 failed=2 skipped=1 xfail=0$'
-expect_count '^=== ' 3
-expect_last "^xcresult-report: verdict=failed total=3948 failed=2 flaky=1 path=$tmp/bundles/failed\.xcresult$"
+expect_count '^=== ' 2
+expect_last "^xcresult-report: verdict=failed total=3948 failed=2 path=$tmp/bundles/failed\.xcresult$"
 
 run "report passed bundle" 0 report --path "$tmp/bundles/passed.xcresult"
-expect_last '^xcresult-report: verdict=passed total=3948 failed=0 flaky=0 '
+expect_last '^xcresult-report: verdict=passed total=3948 failed=0 '
 expect_lines 2
 
 run "report empty bundle" 3 report --path "$tmp/bundles/empty.xcresult"
-expect_last '^xcresult-report: verdict=no-tests total=0 failed=0 flaky=0 '
+expect_last '^xcresult-report: verdict=no-tests total=0 failed=0 '
 
 run "report from log" 1 report --from-log "$tmp/logs/test-failed.log"
 expect_last "path=$tmp/bundles/failed\.xcresult$"
 
-run "flaky ids only" 0 report --path "$tmp/bundles/failed.xcresult" --flaky
-expect_lines 1
-expect '^ClipboardTests/roundTrip\(\)$'
-
-run "flaky ids, none" 0 report --path "$tmp/bundles/passed.xcresult" --flaky
-expect_lines 0
-
 run "failure blocks only" 0 report --path "$tmp/bundles/failed.xcresult" --failures
-expect_count '^=== ' 3
+expect_count '^=== ' 2
 reject '^result='
 reject '^xcresult-report:'
 
@@ -242,7 +234,7 @@ expect_last '^xcresult-report: verdict=unreadable reason=no-bundle-in-log path=-
 run "bundle missing on disk" 2 report --path "$tmp/bundles/nope.xcresult"
 expect_last "^xcresult-report: verdict=unreadable reason=no-bundle path=$tmp/bundles/nope\.xcresult$"
 
-run "tooling mode on a missing bundle" 2 report --path "$tmp/bundles/nope.xcresult" --flaky
+run "tooling mode on a missing bundle" 2 report --path "$tmp/bundles/nope.xcresult" --failures
 expect_lines 0
 
 run "unknown flag" 2 report --bogus

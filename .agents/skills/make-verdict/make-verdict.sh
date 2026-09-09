@@ -25,7 +25,7 @@
 #   VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
 #   errors:                            (build-failed and lint-failed only)
 #     Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
-#   make-verdict: verdict=test-failed target=test suite=- total=3948 failed=3 flaky=0 log=… xcresult=…
+#   make-verdict: verdict=test-failed target=test suite=- total=3948 failed=3 log=… xcresult=…
 #
 # Verdict tokens and exit codes:
 #   0  green         the target succeeded; a test target ran at least one test
