@@ -718,10 +718,9 @@ extension SidebarViewController {
         }
         let canStop = capabilities.isApplicable(.stop, to: instance)
         let discardsSavedState = capabilities.isApplicable(.discardSavedState, to: instance)
+        let stopAction = capabilities.stopAction(for: instance)
         if canStop {
-            let stop = item(
-                VMInstance.stopActionMenuTitle(discardingSavedState: discardsSavedState),
-                #selector(menuStop(_:)), instance)
+            let stop = item(stopAction.menuTitle, #selector(menuStop(_:)), instance)
             menu.addItem(stop)
             // An Option-alternate of "Stop". No zero-height anchor is needed: when
             // a graceful stop is offered, a Pause or Resume item always precedes
@@ -736,10 +735,13 @@ extension SidebarViewController {
             menu.addItem(forceStop)
         }
         if discardsSavedState {
-            menu.addItem(
-                item(
-                    VMInstance.stopActionMenuTitle(discardingSavedState: discardsSavedState),
-                    #selector(menuForceStop(_:)), instance))
+            // Listed whatever its state, disabled when there is nothing behind
+            // it: an Ephemeral VM already resting on its baseline would revert
+            // to what it is already holding, and the greying is what tells the
+            // user so.
+            let discard = item(stopAction.menuTitle, #selector(menuForceStop(_:)), instance)
+            discard.isEnabled = capabilities.isStopActionAvailable(on: instance)
+            menu.addItem(discard)
         } else if capabilities.isApplicable(.forceStop, to: instance) && !canStop {
             // Transient states (starting/saving/restoring) where graceful stop isn't
             // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.

@@ -300,6 +300,28 @@ struct VMCapabilityCatalog {
         isAvailable(.deleteSnapshot, on: instance) && !instance.isEphemeralBaseline(snapshot)
     }
 
+    /// What this VM's stop slot performs — the derivation every surface sharing
+    /// that slot renders and dispatches from.
+    ///
+    /// An Ephemeral VM's discard is routed to a baseline revert, so the slot
+    /// names that outcome; the plain discard is what a VM without a baseline
+    /// gets.
+    func stopAction(for instance: VMInstance) -> VMInstance.StopAction {
+        guard isApplicable(.discardSavedState, to: instance) else { return .stop }
+        return instance.ephemeralBaselineSnapshot == nil ? .discardSavedState : .revertToBaseline
+    }
+
+    /// Whether the stop slot can be invoked now.
+    ///
+    /// The slot stands for two capabilities, and layers the baseline's own rule
+    /// over them: a VM already resting on its baseline's saved state has nothing
+    /// to revert, and a revert that would restore what is already there is an
+    /// action with no outcome to offer.
+    func isStopActionAvailable(on instance: VMInstance) -> Bool {
+        guard !instance.isRestingAtEphemeralBaseline else { return false }
+        return isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)
+    }
+
     /// Whether a commit of `capability` is taken now — what a verb's own guard
     /// asks, and what a refusal names as accepted.
     ///

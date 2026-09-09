@@ -1079,8 +1079,11 @@ struct VMCommandCoreTests {
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .forceStop)
-        #expect(prompt.title == "Discard Saved State")
+        // Named for the outcome it produces: this VM's discard is a revert, and
+        // the copy says so without claiming a discard of the VM's state.
+        #expect(prompt.title == "Revert to Baseline")
         #expect(prompt.confirmTitle == "Revert to Baseline")
+        #expect(prompt.message.contains("is ephemeral, so it returns to"))
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
         try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: true)

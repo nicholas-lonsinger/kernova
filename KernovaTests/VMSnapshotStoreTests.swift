@@ -249,6 +249,58 @@ struct VMSnapshotStoreTests {
                 atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
     }
 
+    @Test("A restored suspend slot is recognisable as the snapshot's own copy")
+    func restoredSuspendSlotIsRecognisableAsTheCapturedCopy() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
+        // Dated well back, so a match cannot come from the two files merely
+        // having been written in the same instant.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_577_836_800)],
+            ofItemAtPath: prepared.saveFileURL.path(percentEncoded: false))
+
+        // A session of its own: same length as the capture, written now.
+        try Data("own-suspend".utf8).write(to: fixture.layout.saveFileURL)
+        #expect(!fixture.layout.saveFileIsCopyOfSnapshot(id: snapshotID))
+
+        let plan = try store.planRestore(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
+        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+
+        // The clone lands carrying the captured file's modification date, which
+        // is what tells a restored slot apart from a guest's own suspend.
+        #expect(fixture.layout.saveFileIsCopyOfSnapshot(id: snapshotID))
+
+        // And a suspend after the revert reads as the VM's own again.
+        try Data("saved-state".utf8).write(to: fixture.layout.saveFileURL)
+        #expect(!fixture.layout.saveFileIsCopyOfSnapshot(id: snapshotID))
+    }
+
+    @Test("A bundle with no suspend slot is not holding the snapshot's copy")
+    func noSuspendSlotIsNotTheCapturedCopy() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
+
+        #expect(!fixture.layout.saveFileIsCopyOfSnapshot(id: snapshotID))
+    }
+
     @Test("A restore that fails partway leaves the bundle exactly as it was")
     func failedRestoreLeavesTheBundleUntouched() throws {
         let fixture = try makeFixture()

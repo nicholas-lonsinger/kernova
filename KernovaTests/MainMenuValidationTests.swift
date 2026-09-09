@@ -73,7 +73,7 @@ struct MainMenuValidationTests {
         #expect(!fixture.viewModel.capabilities.isAvailable(.stop, on: instance))
         #expect(fixture.viewModel.capabilities.isAvailable(.discardSavedState, on: instance))
         #expect(fixture.controller.validate(item))
-        #expect(item.title == VMInstance.stopActionMenuTitle(discardingSavedState: true))
+        #expect(item.title == VMInstance.StopAction.discardSavedState.menuTitle)
     }
 
     @Test("A build with no bundled guest-agent disk withholds the command")

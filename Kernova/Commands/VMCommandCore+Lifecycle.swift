@@ -561,9 +561,9 @@ extension VMCommandCore {
         let message: String
         if let ephemeralBaseline {
             message =
-                "\"\(instance.name)\" is ephemeral, so discarding its suspended session returns it to "
-                + "\u{201C}\(ephemeralBaseline.name)\u{201D}. Everything changed inside the guest "
-                + "during the session is discarded."
+                "\"\(instance.name)\" is ephemeral, so it returns to "
+                + "\u{201C}\(ephemeralBaseline.name)\u{201D}. The suspended session, and everything "
+                + "changed inside the guest during it, are discarded."
         } else if instance.isColdPaused {
             message =
                 "\"\(instance.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
@@ -583,9 +583,15 @@ extension VMCommandCore {
             instance.canStop && instance.status != .paused
             ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
             : []
+        let title: String
+        if instance.isColdPaused {
+            title = ephemeralBaseline == nil ? "Discard Saved State" : "Revert to Baseline"
+        } else {
+            title = "Force Stop Virtual Machine"
+        }
         return ConfirmationPrompt(
             kind: .forceStop,
-            title: instance.isColdPaused ? "Discard Saved State" : "Force Stop Virtual Machine",
+            title: title,
             message: message,
             confirmTitle: confirmTitle,
             dismissTitle: "Cancel",

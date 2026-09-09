@@ -1076,9 +1076,11 @@ enum VirtualizationError: LocalizedError {
         case .noSaveFile:
             "No saved state file found."
         case .restoreFailed(let underlying):
+            // Names no command: which of them this VM offers depends on its own
+            // state, and an Ephemeral VM resting on its baseline is offered
+            // neither the discard nor a force stop.
             "Could not restore the saved state: \(underlying.localizedDescription)\n\n"
-                + "The saved state was kept — choose Resume to try again, "
-                + "or Discard Saved State to remove it and start fresh."
+                + "The saved state was kept, so Resume can try again."
         case .revertResumeFailed(let underlying):
             "The virtual machine was reverted to the snapshot, but it could not be "
                 + "resumed: \(underlying.localizedDescription)\n\n"

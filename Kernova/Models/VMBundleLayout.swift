@@ -88,6 +88,29 @@ struct VMBundleLayout: Sendable {
         VMBundleLayout(bundleURL: snapshotDirectoryURL(id: id))
     }
 
+    /// Whether the bundle's suspend slot is the copy a revert to `id` installed,
+    /// rather than one the guest's own suspend wrote.
+    ///
+    /// A revert clones the snapshot's saved state through `copyItem`, which
+    /// carries the modification date across, and `replaceItemAt` lands the clone
+    /// with that date intact; a suspend writes a fresh file and stamps it with
+    /// the time it was written. Size and modification date together identify the
+    /// clone, at the cost of two `stat` calls and no reading of either file.
+    func saveFileIsCopyOfSnapshot(id: UUID) -> Bool {
+        let manager = FileManager.default
+        guard
+            let mine = try? manager.attributesOfItem(
+                atPath: saveFileURL.path(percentEncoded: false)),
+            let captured = try? manager.attributesOfItem(
+                atPath: snapshotLayout(id: id).saveFileURL.path(percentEncoded: false)),
+            let mySize = mine[.size] as? NSNumber,
+            let capturedSize = captured[.size] as? NSNumber,
+            let myDate = mine[.modificationDate] as? Date,
+            let capturedDate = captured[.modificationDate] as? Date
+        else { return false }
+        return mySize == capturedSize && myDate == capturedDate
+    }
+
     /// Absolute URL backing a disk: bundle-relative `path`s resolve against
     /// `bundleURL`, absolute paths are used as-is.
     func diskURL(forRelativePath path: String, isInternal: Bool) -> URL {

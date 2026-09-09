@@ -92,8 +92,6 @@ final class VMToolbarManager: NSObject {
     private static let downloadToolTip = "Download the installer image and start the virtual machine"
     private static let resumeDownloadToolTip = "Resume the interrupted installer image download"
     private static let pauseToolTip = "Pause the virtual machine"
-    private static let stopToolTip = "Stop the virtual machine"
-    private static let discardSavedStateToolTip = "Discard the virtual machine's saved state"
     private static let saveStateToolTip = "Suspend the virtual machine"
     private static let takeSnapshotToolTip = "Take a snapshot of the virtual machine"
     private static let clipboardToolTip = "Open the clipboard sharing window"
@@ -101,6 +99,20 @@ final class VMToolbarManager: NSObject {
     private static let popInToolTip = "Return display to the main window"
     private static let fullscreenToolTip = "Enter fullscreen display"
     private static let exitFullscreenToolTip = "Exit fullscreen display"
+
+    /// Why the stop segment is disabled, for the one state whose reason the user
+    /// cannot read off the label: an Ephemeral VM resting on its baseline keeps
+    /// the "Revert to Baseline" title and simply stops responding.
+    ///
+    /// Every other disabled state is one where a stop is plainly not on offer —
+    /// a stopped VM, a bundle still being written — so those keep the segment's
+    /// own description.
+    private static func disabledStopToolTip(for instance: VMInstance) -> String {
+        guard let baseline = instance.ephemeralBaselineSnapshot,
+            instance.isRestingAtEphemeralBaseline
+        else { return VMInstance.StopAction.stop.toolTip }
+        return "Already at \u{201C}\(baseline.name)\u{201D}"
+    }
     private static let showSettingsToolTip = "Show settings (read-only while the VM is running)"
     private static let showDisplayToolTip = "Return to the VM display"
 
@@ -147,7 +159,9 @@ final class VMToolbarManager: NSObject {
             group.label = "State Controls"
             group.subitems[LifecycleSegment.play.rawValue].toolTip = Self.startToolTip
             group.subitems[LifecycleSegment.pause.rawValue].toolTip = Self.pauseToolTip
-            group.subitems[LifecycleSegment.stop.rawValue].toolTip = Self.stopToolTip
+            // Replaced on the first update pass, which reads the VM's own slot.
+            group.subitems[LifecycleSegment.stop.rawValue].toolTip =
+                VMInstance.StopAction.stop.toolTip
             group.autovalidates = false
             return group
 
@@ -383,15 +397,20 @@ final class VMToolbarManager: NSObject {
         // The graceful stop excludes cold-paused, which the discard-saved-state
         // capability covers instead; the label names that consequence.
         let stop = group.subitems[LifecycleSegment.stop.rawValue]
-        let discardsSavedState = capabilities.isApplicable(.discardSavedState, to: instance)
-        let stopLabel = VMInstance.stopActionToolbarLabel(discardingSavedState: discardsSavedState)
+        let stopAction = capabilities.stopAction(for: instance)
+        let stopLabel = stopAction.toolbarLabel
         if stop.label != stopLabel {
             stop.label = stopLabel
             stop.image = .systemSymbol("stop.fill", accessibilityDescription: stopLabel)
-            stop.toolTip = discardsSavedState ? Self.discardSavedStateToolTip : Self.stopToolTip
         }
-        stop.isEnabled =
-            isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)
+        // Re-read every pass rather than only on a label change: a VM reaches
+        // its baseline without the label moving, and the disabled segment's
+        // tooltip is the only place that says why it went quiet. Read from the
+        // enablement rather than beside it, so the baseline comparison behind it
+        // runs once a pass and only in the state that can answer yes.
+        let isEnabled = capabilities.isStopActionAvailable(on: instance)
+        stop.toolTip = isEnabled ? stopAction.toolTip : Self.disabledStopToolTip(for: instance)
+        stop.isEnabled = isEnabled
     }
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {

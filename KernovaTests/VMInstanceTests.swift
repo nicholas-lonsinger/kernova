@@ -974,17 +974,85 @@ struct VMInstanceTests {
 
     @Test("The stop labels name the discard consequence when the stop discards")
     func stopActionTitlesNameTheDiscard() {
-        #expect(
-            VMInstance.stopActionMenuTitle(discardingSavedState: true) == "Discard Saved State…")
-        #expect(
-            VMInstance.stopActionToolbarLabel(discardingSavedState: true)
-                == "Discard Saved State")
+        #expect(VMInstance.StopAction.discardSavedState.menuTitle == "Discard Saved State…")
+        #expect(VMInstance.StopAction.discardSavedState.toolbarLabel == "Discard Saved State")
     }
 
     @Test("The stop labels are Stop for a stop that shuts the guest down")
     func stopActionTitlesDefault() {
-        #expect(VMInstance.stopActionMenuTitle(discardingSavedState: false) == "Stop")
-        #expect(VMInstance.stopActionToolbarLabel(discardingSavedState: false) == "Stop")
+        #expect(VMInstance.StopAction.stop.menuTitle == "Stop")
+        #expect(VMInstance.StopAction.stop.toolbarLabel == "Stop")
+    }
+
+    @Test("An Ephemeral VM's stop labels name the revert, not a discard")
+    func stopActionTitlesNameTheRevert() {
+        #expect(VMInstance.StopAction.revertToBaseline.menuTitle == "Revert to Baseline…")
+        #expect(VMInstance.StopAction.revertToBaseline.toolbarLabel == "Revert to Baseline")
+        #expect(
+            VMInstance.StopAction.revertToBaseline.toolTip
+                == "Return the virtual machine to its baseline snapshot")
+    }
+
+    /// A VM whose bundle exists on disk, holding a warm baseline snapshot whose
+    /// captured saved state the bundle's own suspend slot can be compared to.
+    private func makeEphemeralInstanceWithBundle() throws -> (
+        instance: VMInstance, baseline: VMSnapshot, temp: URL
+    ) {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        var config = VMConfiguration(name: "Ephemeral VM", guestOS: .linux, bootMode: .efi)
+        let baseline = VMSnapshot(name: "Ephemeral")
+        config.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let instance = VMInstance(configuration: config, bundleURL: temp, phase: .suspended)
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+
+        let snapshotLayout = instance.bundleLayout.snapshotLayout(id: baseline.id)
+        try FileManager.default.createDirectory(
+            at: snapshotLayout.bundleURL, withIntermediateDirectories: true)
+        try Data("captured".utf8).write(to: snapshotLayout.saveFileURL)
+        return (instance, baseline, temp)
+    }
+
+    @Test("A suspended Ephemeral VM holding the baseline's own saved state rests at it")
+    func restingAtEphemeralBaseline() throws {
+        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
+
+        try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
+        #expect(instance.isRestingAtEphemeralBaseline)
+    }
+
+    @Test("A suspend of its own leaves an Ephemeral VM away from its baseline")
+    func ownSuspendIsNotTheEphemeralBaseline() throws {
+        let (instance, _, temp) = try makeEphemeralInstanceWithBundle()
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        try Data("captured".utf8).write(to: instance.saveFileURL)
+        #expect(!instance.isRestingAtEphemeralBaseline)
+    }
+
+    @Test("A VM that is not suspended never reads as resting at its baseline")
+    func restingAtBaselineNeedsASuspendedVM() throws {
+        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
+        try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
+
+        instance.enter(.running(sessionID: UUID()))
+        #expect(!instance.isRestingAtEphemeralBaseline)
+    }
+
+    @Test("Ephemeral Mode off leaves the baseline comparison unasked")
+    func restingAtBaselineNeedsEphemeralMode() throws {
+        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
+        try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
+
+        instance.configuration.applyEphemeralMode(enabled: false, baseline: nil)
+        #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
     @Test("canRename refuses a bundle a clone or import is still writing into")

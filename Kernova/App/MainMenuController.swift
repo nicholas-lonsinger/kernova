@@ -336,12 +336,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         case #selector(AppDelegate.stopVM(_:)):
             // The title names what this VM's stop does, which is what its own
             // state admits; enablement is the availability read beside it.
-            let discardsSavedState = viewModel.capabilities.isApplicable(
-                .discardSavedState, to: instance)
-            menuItem.title = VMInstance.stopActionMenuTitle(
-                discardingSavedState: discardsSavedState)
-            return isAvailable
-                || viewModel.capabilities.isAvailable(.discardSavedState, on: instance)
+            menuItem.title = viewModel.capabilities.stopAction(for: instance).menuTitle
+            return viewModel.capabilities.isStopActionAvailable(on: instance)
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             // Layered over the capability: a bundled DMG for the VM to hold, and
             // the mount/eject model that decides both title and enablement. The
