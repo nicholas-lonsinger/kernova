@@ -59,8 +59,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: - Entry Point
 
+    /// Makes an ObjC exception raised on the main thread take the test host
+    /// down with a crash report, instead of AppKit reporting it and swallowing
+    /// it — which leaves the process alive with its main dispatch queue never
+    /// drained again, so every `@MainActor` test after it hangs silently.
+    private static func crashOnObjCExceptions() {
+        UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
+    }
+
     static func main() {
         let isTestHost = ProcessInfo.processInfo.isRunningXCTests
+        if isTestHost {
+            crashOnObjCExceptions()
+        }
         let app = NSApplication.shared
 
         // `NSApplication.delegate` is weak, so the local binding retains the

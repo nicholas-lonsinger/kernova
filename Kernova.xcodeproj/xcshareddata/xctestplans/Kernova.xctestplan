@@ -9,14 +9,15 @@
     }
   ],
   "defaultOptions" : {
-    "maximumTestRepetitions" : 2,
+    "defaultTestExecutionTimeAllowance" : 120,
+    "maximumTestExecutionTimeAllowance" : 120,
     "performanceAntipatternCheckerEnabled" : true,
     "targetForVariableExpansion" : {
       "containerPath" : "container:Kernova.xcodeproj",
       "identifier" : "A1000003",
       "name" : "Kernova"
     },
-    "testRepetitionMode" : "retryOnFailure"
+    "testTimeoutsEnabled" : true
   },
   "testTargets" : [
     {

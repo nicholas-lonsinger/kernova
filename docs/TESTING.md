@@ -8,6 +8,8 @@ macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil
 
 **Wait timeouts default to the shared `testWaitBackstop` — don't pass a smaller explicit value.** Runner stalls defeated 5 s *and* 10 s backstops (2026-07-19: two consecutive main-branch runs timed out 12 event-driven waits whose conditions were sound). A shorter timeout is reserved for the rare case where the deadline itself is the assertion; negative assertions ("prove nothing arrived") don't qualify — they use a fixed observation window (`expectNoNewFrames`-style), not a wait timeout.
 
+**`Kernova.xctestplan`'s per-test execution-time allowance stays clearly above `testWaitBackstop`.** The allowance bounds one test so a stuck case fails alone instead of stalling the whole bundle; set at or below the backstop it would instead kill tests whose own wait was about to fail them by name, trading a named stuck condition for a bare timeout. A case's wait for an admission permit runs inside its own execution scope, so a narrowed `TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH` spends that same allowance before the body starts.
+
 Pick the seam by what produces the state. `AsyncGate`/`waitUntil`/`TestFailure` are in the shared `KernovaTestSupport` product, imported by every test target; `waitForChange` is KernovaTests-only:
 
 | Seam | Use when | Notes |
