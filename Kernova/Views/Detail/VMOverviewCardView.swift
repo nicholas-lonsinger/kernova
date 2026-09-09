@@ -6,7 +6,7 @@ import os
 /// it carries, a closing full-width line, and the command it offers at its foot.
 ///
 /// The card holds no state of its own — every value comes from
-/// ``configure(rows:toggles:note:action:headerSummary:showsLockHint:warning:)``,
+/// ``configure(rows:toggles:note:action:headerSummary:warning:)``,
 /// and a flipped switch is reported to the owner rather than written here.
 @MainActor
 final class VMOverviewCardView: NSView {
@@ -25,9 +25,6 @@ final class VMOverviewCardView: NSView {
     /// The count and footprint beside the title, hidden while the category has
     /// none to state.
     private let headerSummaryLabel: NSTextField
-    /// The lock claim: a glyph beside the scoped text naming what actually
-    /// locks, so it stands beside live controls without contradicting them.
-    private let lockHint: NSView
     private let warningGlyph: NSImageView
     /// The switch rows this card can show, built once so a rebuild of the card's
     /// values never drops a control mid-interaction.
@@ -54,7 +51,6 @@ final class VMOverviewCardView: NSView {
 
     init(category: VMSettingsCategory, toggles: [VMOverviewToggle]) {
         self.category = category
-        lockHint = Self.makeLockHint(category.lockHint)
         warningGlyph = NSImageView(
             image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: ""))
         headerSummaryLabel = NSTextField(labelWithString: "")
@@ -70,7 +66,7 @@ final class VMOverviewCardView: NSView {
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         headerRow = NSStackView(views: [
-            icon, title, headerSummaryLabel, spacer, warningGlyph, lockHint,
+            icon, title, headerSummaryLabel, spacer, warningGlyph,
         ])
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
@@ -90,7 +86,6 @@ final class VMOverviewCardView: NSView {
         warningGlyph.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
         warningGlyph.setContentHuggingPriority(.required, for: .horizontal)
         warningGlyph.isHidden = true
-        lockHint.isHidden = true
 
         // The Edit button is the affordance; the whole header row takes the
         // click so the target is not a caption-sized label. It names the
@@ -129,12 +124,10 @@ final class VMOverviewCardView: NSView {
     /// of lines it shows changed.
     func configure(
         rows: [VMOverviewSummary.Row], toggles: [VMOverviewSummary.ToggleState], note: String?,
-        action: VMOverviewSummary.ActionState?, headerSummary: String?, showsLockHint: Bool,
-        warning: String?
+        action: VMOverviewSummary.ActionState?, headerSummary: String?, warning: String?
     ) {
         headerSummaryLabel.stringValue = headerSummary ?? ""
         headerSummaryLabel.isHidden = headerSummary == nil
-        lockHint.isHidden = !showsLockHint
         warningGlyph.isHidden = warning == nil
         warningGlyph.toolTip = warning
         warningGlyph.setAccessibilityLabel(warning)
@@ -221,29 +214,6 @@ final class VMOverviewCardView: NSView {
         row.alignment = .centerY
         row.spacing = Spacing.standard
         return row
-    }
-
-    /// The card's lock claim: a `lock.fill` beside the scoped text, or an empty
-    /// placeholder for a category nothing locks.
-    private static func makeLockHint(_ text: String?) -> NSView {
-        guard let text else { return NSView() }
-        let icon = NSImageView(image: .systemSymbol("lock.fill", accessibilityDescription: text))
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
-        icon.contentTintColor = .secondaryLabelColor
-        icon.setContentHuggingPriority(.required, for: .horizontal)
-
-        let label = NSTextField(labelWithString: text)
-        label.font = .preferredFont(forTextStyle: .caption1)
-        label.textColor = .secondaryLabelColor
-        label.isSelectable = false
-
-        let hint = NSStackView(views: [icon, label])
-        hint.orientation = .horizontal
-        hint.alignment = .centerY
-        hint.spacing = Spacing.tight
-        hint.toolTip = text
-        hint.setContentHuggingPriority(.required, for: .horizontal)
-        return hint
     }
 
     /// The card's closing line: one secondary sentence spanning the row, with no

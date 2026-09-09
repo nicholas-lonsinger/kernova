@@ -286,18 +286,6 @@ struct VMOverviewSummaryTests {
                 == VMOverviewSummary.ActionState(action: .takeSnapshot, isEnabled: true))
     }
 
-    // MARK: - Lock hints
-
-    @Test("A card's lock claim is scoped to the rows that actually lock")
-    func lockHintsAreScopedPerCategory() {
-        #expect(VMSettingsCategory.general.lockHint == nil)
-        #expect(VMSettingsCategory.snapshots.lockHint == nil)
-        #expect(VMSettingsCategory.system.lockHint == "Most editable when stopped")
-        #expect(VMSettingsCategory.network.lockHint == "Most editable when stopped")
-        #expect(VMSettingsCategory.storage.lockHint == "Disks editable when stopped")
-        #expect(VMSettingsCategory.sharing.lockHint == "Folders editable when stopped")
-    }
-
     // MARK: - Toggles
 
     @Test("Only General and Sharing carry live switches")

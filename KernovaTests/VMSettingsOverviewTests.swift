@@ -359,62 +359,7 @@ struct VMSettingsOverviewTests {
         #expect(summaryLine(in: sharing) == "Passthrough on \u{00B7} 1 shared folder")
     }
 
-    // MARK: - Lock hints and warnings
-
-    @Test("A card's lock hint shows only while read-only, and only where rows lock")
-    func cardLockHintsTrackReadOnly() throws {
-        let (readOnlyVC, _, _) = makeController(isReadOnly: true)
-        for category in VMSettingsCategory.allCases {
-            let card = try self.card(category, in: readOnlyVC)
-            guard let claim = category.lockHint else {
-                // Nothing in General or Snapshots is stopped-only, so neither
-                // card claims a lock at all.
-                #expect(findLabel(containing: "editable when stopped", in: card) == nil)
-                continue
-            }
-            let hint = try #require(cardLockHint(category, in: card))
-            #expect(!hint.isHidden)
-            #expect(hint.toolTip == claim)
-            // The scoped claim reads inline, not only in the tooltip.
-            #expect(findLabel(withText: claim, in: card) != nil)
-            // Never the panels' unscoped text, which a card's live controls
-            // would contradict.
-            #expect(findLabel(withText: groupedFormLockHintText, in: card) == nil)
-        }
-
-        let (editableVC, _, _) = makeController(isReadOnly: false)
-        for category in VMSettingsCategory.allCases {
-            let card = try self.card(category, in: editableVC)
-            #expect(cardLockHint(category, in: card)?.isHidden != false)
-        }
-    }
-
-    @Test("The scoped claim stands beside a card's live switches")
-    func scopedLockClaimStandsBesideLiveSwitches() throws {
-        // A running VM, not merely a read-only route: the panel's own hint
-        // follows the share verb's state gate, so the claim has to be one the
-        // VM's phase actually makes true.
-        let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .macOS)
-        instance.enter(.running(sessionID: UUID()))
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: true)
-        vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-        let sharing = try card(.sharing, in: vc)
-
-        // Every switch on the Sharing card edits live; the hint claims only
-        // that the folders lock, so it contradicts nothing beside it.
-        #expect(cardSwitch(.clipboardSharing, in: sharing) != nil)
-        let hint = try #require(cardLockHint(.sharing, in: sharing))
-        #expect(!hint.isHidden)
-        #expect(hint.toolTip == "Folders editable when stopped")
-        #expect(findLabel(withText: "Folders editable when stopped", in: sharing) != nil)
-        // The panel's own Shared Directories hint still states the full text.
-        vc.showCategory(.sharing)
-        let panel = try #require(vc.panelForTesting(.sharing))
-        #expect(settingsLockHints(in: panel).contains { !$0.isHidden })
-    }
+    // MARK: - Layout
 
     @Test("The pane grows past the column cap instead of pinning its host's width")
     func paneGrowsPastTheColumnCap() throws {
@@ -431,23 +376,6 @@ struct VMSettingsOverviewTests {
         let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
         let form = try #require(scrollView.documentView?.subviews.first)
         #expect(form.frame.width == GroupedFormStyle.columnWidth)
-    }
-
-    @Test("The Network card keeps its claim while the picker hot-swaps")
-    func networkCardClaimSurvivesLiveSwitching() throws {
-        let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        instance.enter(.running(sessionID: UUID()))
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: true)
-        vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-
-        // The mode picker live-switches on a running VM, but the MAC address and
-        // the forwarding rules still lock — which is all the claim says.
-        let hint = try #require(cardLockHint(.network, in: try card(.network, in: vc)))
-        #expect(!hint.isHidden)
-        #expect(hint.toolTip == "Most editable when stopped")
     }
 
     // MARK: - Card contents
@@ -533,8 +461,7 @@ struct VMSettingsOverviewTests {
                     copy: VMOverviewSummary.RowCopy(
                         value: "192.168.66.4", name: "Copy IP Address"))
             ],
-            toggles: [], note: nil, action: nil, headerSummary: nil, showsLockHint: false,
-            warning: nil)
+            toggles: [], note: nil, action: nil, headerSummary: nil, warning: nil)
 
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
         let window = makeTestWindow(styleMask: [.titled])
