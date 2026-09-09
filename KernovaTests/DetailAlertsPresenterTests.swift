@@ -378,6 +378,20 @@ struct DetailAlertsPresenterTests {
         #expect(alert.message.contains("suspended session"))
     }
 
+    @Test("A running VM's force-stop alert keeps the destructive button off Return")
+    func forceStopAlertOrdersItsButtons() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
+        vm.enter(.running(sessionID: UUID()))
+
+        let alert = presenter.forceStopAlertForTesting(vm)
+
+        // Added trailing-edge first, so this reads right-to-left on screen:
+        // Force Stop on the leading edge, Shut Down on Return.
+        #expect(alert.buttons.map(\.title) == ["Shut Down", "Cancel", "Force Stop"])
+        #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
+    }
+
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() {
         let (presenter, viewModel) = makePresenter()

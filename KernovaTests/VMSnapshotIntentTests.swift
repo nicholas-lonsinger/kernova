@@ -181,9 +181,15 @@ struct VMSnapshotIntentTests {
             ])
 
         #expect(
-            VMConsentPolicy.revertAction(offered, takingCheckpoint: true)
+            VMConsentPolicy.revertAction(offered, takingCheckpoint: true)?.title
                 == "Take Snapshot, Then Revert")
-        #expect(VMConsentPolicy.revertAction(offered, takingCheckpoint: false) == "Revert")
+        // Capturing first loses nothing, so Shortcuts is not asked to mark it
+        // destructive; the plain revert is.
+        #expect(
+            VMConsentPolicy.revertAction(offered, takingCheckpoint: true)?.isDestructive == false)
+        #expect(VMConsentPolicy.revertAction(offered, takingCheckpoint: false)?.title == "Revert")
+        #expect(
+            VMConsentPolicy.revertAction(offered, takingCheckpoint: false)?.isDestructive == true)
     }
 
     /// A VM that can be reverted but can no longer be captured — one that
@@ -197,7 +203,7 @@ struct VMSnapshotIntentTests {
             confirmTitle: "Revert", dismissTitle: "Cancel")
 
         #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: true) == nil)
-        #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: false) == "Revert")
+        #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: false)?.title == "Revert")
     }
 
     // MARK: - Consent

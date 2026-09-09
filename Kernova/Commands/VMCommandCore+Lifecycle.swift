@@ -418,6 +418,9 @@ extension VMCommandCore {
         let title: String
         let message: String
         let confirmTitle: String
+        // Only the install loses work: its progress restarts from the
+        // beginning. A kept image and a resumable download cost nothing.
+        let confirmIsDestructive: Bool
         let dismissTitle: String
         switch instance.setupState?.currentStep?.id {
         case .install:
@@ -425,23 +428,26 @@ extension VMCommandCore {
             message =
                 "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
             confirmTitle = "Cancel Installation"
+            confirmIsDestructive = true
             dismissTitle = "Keep Installing"
         case .verify:
             title = "Cancel Verification?"
             message =
                 "The downloaded image is kept, and it will be checked again the next time you start the virtual machine."
             confirmTitle = "Cancel Verification"
+            confirmIsDestructive = false
             dismissTitle = "Keep Verifying"
         case .download, nil:
             title = "Cancel Download?"
             message =
                 "The download progress will be saved and resumed the next time you start the virtual machine."
             confirmTitle = "Cancel Download"
+            confirmIsDestructive = false
             dismissTitle = "Keep Downloading"
         }
         return ConfirmationPrompt(
             kind: .cancelGuestSetup, title: title, message: message, confirmTitle: confirmTitle,
-            dismissTitle: dismissTitle)
+            confirmIsDestructive: confirmIsDestructive, dismissTitle: dismissTitle)
     }
 
     // MARK: - Stop
@@ -545,12 +551,16 @@ extension VMCommandCore {
     static func stopPausedPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .stopPaused,
-            title: "Stop Paused Virtual Machine",
+            title: "Stop \u{201C}\(instance.name)\u{201D}?",
             message:
-                "\"\(instance.name)\" is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).",
+                "\u{201C}\(instance.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).",
             confirmTitle: "Resume and Shut Down",
+            confirmIsDestructive: false,
             dismissTitle: "Cancel",
-            alternatives: [ConfirmationAlternative(title: "Force Stop", disposition: .force)])
+            alternatives: [
+                ConfirmationAlternative(
+                    title: "Force Stop", isDestructive: true, disposition: .force)
+            ])
     }
 
     /// The refusal a force stop raises, worded for what it actually discards.
@@ -561,15 +571,15 @@ extension VMCommandCore {
         let message: String
         if let ephemeralBaseline {
             message =
-                "\"\(instance.name)\" is ephemeral, so it returns to "
+                "\u{201C}\(instance.name)\u{201D} is ephemeral, so it returns to "
                 + "\u{201C}\(ephemeralBaseline.name)\u{201D}. The suspended session, and everything "
                 + "changed inside the guest during it, are discarded."
         } else if instance.isColdPaused {
             message =
-                "\"\(instance.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
+                "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
         } else {
             message =
-                "\"\(instance.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost."
+                "\u{201C}\(instance.name)\u{201D} will be immediately terminated. Any unsaved data inside the guest will be lost."
         }
         let confirmTitle: String
         if instance.isColdPaused {
@@ -584,10 +594,15 @@ extension VMCommandCore {
             ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
             : []
         let title: String
-        if instance.isColdPaused {
-            title = ephemeralBaseline == nil ? "Discard Saved State" : "Revert to Baseline"
+        if let ephemeralBaseline {
+            // The discard *is* a revert to that snapshot, so it asks in the
+            // words `revertPrompt` asks in.
+            title =
+                "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(ephemeralBaseline.name)\u{201D}?"
+        } else if instance.isColdPaused {
+            title = "Discard the Saved State of \u{201C}\(instance.name)\u{201D}?"
         } else {
-            title = "Force Stop Virtual Machine"
+            title = "Force Stop \u{201C}\(instance.name)\u{201D}?"
         }
         return ConfirmationPrompt(
             kind: .forceStop,

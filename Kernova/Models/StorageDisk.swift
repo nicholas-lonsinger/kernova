@@ -211,4 +211,9 @@ struct ExternalAttachment: Sendable, Equatable {
     var path: String { reference.path }
 
     var isShared: Bool { !sharedWithVMNames.isEmpty }
+
+    /// `true` when this external can be individually selected for trashing —
+    /// i.e. it is exclusively owned (not shared with another VM) and present on
+    /// disk.
+    var isSelectable: Bool { !isShared && !isMissing }
 }

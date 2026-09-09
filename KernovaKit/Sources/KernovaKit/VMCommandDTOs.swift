@@ -184,17 +184,31 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
 public struct ConfirmationAlternative: Codable, Sendable, Hashable {
     /// What the user sees on the button.
     public let title: String
+    /// Whether taking this route discards something, so a surface tints it and
+    /// keeps it off the Return key.
+    public let isDestructive: Bool
     /// The disposition re-issuing the verb with satisfies this alternative,
     /// `nil` when the alternative changes no disposition.
     public let disposition: StopDisposition?
     /// Whether re-issuing with a checkpoint capture satisfies this alternative.
     public let takesCheckpoint: Bool
+    /// Whether re-issuing without trashing the file behind the attachment
+    /// satisfies this alternative.
+    public let keepsFile: Bool
 
     /// Offers one alternative way to satisfy a confirmation.
-    public init(title: String, disposition: StopDisposition? = nil, takesCheckpoint: Bool = false) {
+    public init(
+        title: String,
+        isDestructive: Bool = false,
+        disposition: StopDisposition? = nil,
+        takesCheckpoint: Bool = false,
+        keepsFile: Bool = false
+    ) {
         self.title = title
+        self.isDestructive = isDestructive
         self.disposition = disposition
         self.takesCheckpoint = takesCheckpoint
+        self.keepsFile = keepsFile
     }
 }
 
@@ -212,6 +226,10 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     public let message: String
     /// The confirm action's title.
     public let confirmTitle: String
+    /// Whether confirming discards something, so a surface tints the action and
+    /// keeps it off the Return key. A confirmation is raised for a destructive
+    /// verb by definition; the gentle routes opt out.
+    public let confirmIsDestructive: Bool
     /// The title of the action that walks away, worded for what declining
     /// leaves running.
     public let dismissTitle: String
@@ -225,6 +243,7 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
         title: String,
         message: String,
         confirmTitle: String,
+        confirmIsDestructive: Bool = true,
         dismissTitle: String,
         alternatives: [ConfirmationAlternative] = []
     ) {
@@ -232,6 +251,7 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
         self.title = title
         self.message = message
         self.confirmTitle = confirmTitle
+        self.confirmIsDestructive = confirmIsDestructive
         self.dismissTitle = dismissTitle
         self.alternatives = alternatives
     }

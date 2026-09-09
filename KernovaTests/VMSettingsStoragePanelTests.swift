@@ -166,7 +166,10 @@ struct VMSettingsStoragePanelTests {
         let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Extra Disk", isInternal: true,
             isGuestAgent: false, sharedVMNames: [])
-        #expect(prompt.actions == [.moveToTrash])
+        #expect(prompt.kind == .removeAttachment)
+        #expect(prompt.confirmTitle == "Move to Trash")
+        #expect(prompt.confirmIsDestructive)
+        #expect(prompt.alternatives.isEmpty)
         #expect(prompt.title.contains("Extra Disk"))
     }
 
@@ -175,7 +178,13 @@ struct VMSettingsStoragePanelTests {
         let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Scratch", isInternal: false,
             isGuestAgent: false, sharedVMNames: [])
-        #expect(prompt.actions == [.moveToTrash, .removeFromVM])
+        #expect(prompt.confirmTitle == "Move to Trash")
+        #expect(prompt.confirmIsDestructive)
+        #expect(prompt.alternatives.map(\.title) == ["Remove from VM"])
+        // Keeping the file is the whole of what the alternative changes, and
+        // it destroys nothing.
+        #expect(prompt.alternatives.map(\.keepsFile) == [true])
+        #expect(prompt.alternatives.map(\.isDestructive) == [false])
     }
 
     @Test("Shared external delete hard-blocks trashing (Remove-from-VM only) and names the VMs")
@@ -183,7 +192,9 @@ struct VMSettingsStoragePanelTests {
         let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Installer", isInternal: false,
             isGuestAgent: false, sharedVMNames: ["macOS Copy", "Linux"])
-        #expect(prompt.actions == [.removeFromVM])
+        #expect(prompt.confirmTitle == "Remove from VM")
+        #expect(!prompt.confirmIsDestructive)
+        #expect(prompt.alternatives.isEmpty)
         #expect(prompt.message.contains("macOS Copy"))
         #expect(prompt.message.contains("Linux"))
     }
@@ -193,7 +204,9 @@ struct VMSettingsStoragePanelTests {
         let prompt = VMCommandCore.attachmentDeletePrompt(
             label: "Kernova Guest Agent", isInternal: false,
             isGuestAgent: true, sharedVMNames: [])
-        #expect(prompt.actions == [.removeFromVM])
+        #expect(prompt.confirmTitle == "Remove from VM")
+        #expect(!prompt.confirmIsDestructive)
+        #expect(prompt.alternatives.isEmpty)
         #expect(prompt.message.contains("isn't deleted"))
     }
 

@@ -65,7 +65,7 @@ struct RevertToSnapshotIntent: AppIntent {
         return .result()
     }
 
-    /// The confirmation's accept label, or the refusal for a VM that cannot
+    /// The confirmation's accept action, or the refusal for a VM that cannot
     /// take the checkpoint this action was configured to take.
     ///
     /// The refusal is raised here rather than left to the capture: the core
@@ -75,7 +75,9 @@ struct RevertToSnapshotIntent: AppIntent {
     /// state this covers is real — a VM that failed to start can be reverted
     /// but cannot be captured, and reverting is how a user gets out of it — so
     /// the refusal has to name the toggle that is in the way.
-    private func checkpointAwareConfirmation(_ prompt: ConfirmationPrompt) throws -> String {
+    private func checkpointAwareConfirmation(
+        _ prompt: ConfirmationPrompt
+    ) throws -> (title: String, isDestructive: Bool) {
         guard
             let action = VMConsentPolicy.revertAction(prompt, takingCheckpoint: takeCheckpoint)
         else {

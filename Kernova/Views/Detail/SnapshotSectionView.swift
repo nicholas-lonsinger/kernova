@@ -108,8 +108,8 @@ final class SnapshotSectionView: NSView {
         rows.append(
             makeGroupedFormCaption(
                 "Reverting returns the VM to the state and settings it had when the snapshot was "
-                    + "taken. Snapshots stay until you delete them. A snapshot\u{2019}s size counts "
-                    + "the blocks it shares with the VM\u{2019}s disks, so the listed sizes overlap "
+                    + "taken. Snapshots stay until you delete them. A snapshot's size counts "
+                    + "the blocks it shares with the VM's disks, so the listed sizes overlap "
                     + "rather than add up."))
 
         let section = NSStackView(views: rows)
@@ -160,8 +160,8 @@ final class SnapshotSectionView: NSView {
         readoutLabel.textColor = .secondaryLabelColor
         readoutLabel.isSelectable = false
         readoutLabel.toolTip =
-            "The space the snapshots\u{2019} files hold. Their copies share blocks with the "
-            + "VM\u{2019}s disks, so this overlaps with the VM rather than adding to it."
+            "The space the snapshots' files hold. Their copies share blocks with the "
+            + "VM's disks, so this overlaps with the VM rather than adding to it."
         readoutLabel.setContentHuggingPriority(.required, for: .horizontal)
     }
 

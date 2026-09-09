@@ -77,14 +77,10 @@ struct ClipboardPassthroughSetting {
     static func alert(
         vmName: String, onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void
     ) -> AlertConfiguration {
-        let prompt = ClipboardPassthroughConsent.prompt(vmName: vmName)
-        return AlertConfiguration(
-            title: prompt.title,
-            message: prompt.message,
-            buttons: [
-                AlertButton(prompt.confirmTitle, role: .default, action: onConfirm),
-                AlertButton(prompt.dismissTitle, role: .cancel, action: onCancel),
-            ])
+        AlertConfiguration(
+            confirming: ClipboardPassthroughConsent.prompt(vmName: vmName),
+            confirm: onConfirm,
+            dismiss: onCancel)
     }
 
     private func write(_ change: Change) {

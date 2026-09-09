@@ -222,7 +222,11 @@ struct VMSettingsSharingPanelTests {
         let prompt = ClipboardPassthroughConsent.prompt(vmName: "Alpha")
         #expect(alert.title == prompt.title)
         #expect(alert.message == prompt.message)
+        // Turning the setting on destroys nothing, so Turn On takes Return here
+        // and reaches Shortcuts as a non-destructive confirmation.
+        #expect(!prompt.confirmIsDestructive)
         #expect(alert.buttons.count == 2)
+        #expect(alert.buttons.first?.title == prompt.confirmTitle)
         #expect(alert.buttons.first?.role == .default)
         #expect(alert.buttons.last?.role == .cancel)
 

@@ -517,7 +517,9 @@ extension VMCommandCore {
         }
         guard confirmed else {
             throw CommandError.confirmationRequired(
-                Self.deletePrompt(instance, permanently: permanently))
+                Self.deletePrompt(
+                    instance, permanently: permanently,
+                    externals: await externalAttachments(for: instance)))
         }
 
         var toDelete: [ExternalAttachment] = []
@@ -577,17 +579,48 @@ extension VMCommandCore {
         }
     }
 
-    /// The refusal a VM delete raises.
-    static func deletePrompt(_ instance: VMInstance, permanently: Bool) -> ConfirmationPrompt {
-        ConfirmationPrompt(
+    /// The refusal a VM delete raises, and the copy the delete sheet renders.
+    ///
+    /// The message enumerates what goes with the bundle, so it names the saved
+    /// state and the snapshots when the bundle holds them. `externals` names
+    /// the files outside the bundle a caller may choose to take too — a list of
+    /// only shared or missing ones offers no choice, so the clause is left out
+    /// unless one of them is selectable.
+    static func deletePrompt(
+        _ instance: VMInstance, permanently: Bool, externals: [ExternalAttachment]
+    ) -> ConfirmationPrompt {
+        let name = "\u{201C}\(instance.name)\u{201D}"
+        var items = ["its disks"]
+        if instance.hasSaveFile { items.append("its saved state") }
+        if !instance.snapshotManifest.snapshots.isEmpty { items.append("its snapshots") }
+        let offersExternals = externals.contains(where: \.isSelectable)
+
+        if permanently {
+            // The VM heads the list rather than sitting in front of it, so a
+            // bundle holding nothing else reads "X and its disks" instead of
+            // splicing two clauses with a comma.
+            let deleted = ListFormatter.localizedString(byJoining: [name] + items)
+            let externalsClause = offersExternals ? ", plus any external files you choose," : ""
+            return ConfirmationPrompt(
+                kind: .deleteVM,
+                title: "Delete \(name) Immediately?",
+                message:
+                    "\(deleted)\(externalsClause) will be deleted immediately, bypassing the "
+                    + "Trash. You can't undo this action.",
+                confirmTitle: "Delete Immediately",
+                dismissTitle: "Cancel")
+        }
+        // Here the VM is the subject of its own sentence, so the list is what
+        // travels with it.
+        let taken = ListFormatter.localizedString(byJoining: items)
+        let externalsClause = offersExternals ? ", and any external files you choose" : ""
+        return ConfirmationPrompt(
             kind: .deleteVM,
-            title: permanently
-                ? "Delete \u{201C}\(instance.name)\u{201D} Immediately?"
-                : "Move \u{201C}\(instance.name)\u{201D} to the Trash?",
-            message: permanently
-                ? "The virtual machine bundle is deleted immediately, bypassing the Trash. External files are only removed when you name them."
-                : "The virtual machine bundle is moved to the Trash. External files are only moved when you name them.",
-            confirmTitle: permanently ? "Delete Immediately" : "Move to Trash",
+            title: "Move \(name) to the Trash?",
+            message:
+                "\(name) moves to the Trash with \(taken)\(externalsClause). Restore them with "
+                + "Finder's Put Back, or empty the Trash to delete them permanently.",
+            confirmTitle: "Move to Trash",
             dismissTitle: "Cancel")
     }
 
