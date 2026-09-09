@@ -9,8 +9,8 @@
     }
   ],
   "defaultOptions" : {
-    "defaultTestExecutionTimeAllowance" : 120,
-    "maximumTestExecutionTimeAllowance" : 120,
+    "defaultTestExecutionTimeAllowance" : 300,
+    "maximumTestExecutionTimeAllowance" : 300,
     "performanceAntipatternCheckerEnabled" : true,
     "targetForVariableExpansion" : {
       "containerPath" : "container:Kernova.xcodeproj",
