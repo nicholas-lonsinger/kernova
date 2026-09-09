@@ -30,14 +30,25 @@ Bash tool with `run_in_background`, which has no timeout — then act on the
 completion notification:
 
 ```bash
-.agents/skills/wait-github-ci/wait-github-ci.sh --timeout 540 $ARGUMENTS
+.agents/skills/wait-github-ci/wait-github-ci.sh $ARGUMENTS
+```
+
+The default deadline (55 minutes) sits inside the main conversation's
+1-hour prompt-cache TTL. A subagent's cache lives 5 minutes, and a wait
+longer than that returns to a cold cache, so from a subagent pass
+`--timeout 300`:
+
+```bash
+.agents/skills/wait-github-ci/wait-github-ci.sh --timeout 300 $ARGUMENTS
 ```
 
 Run the same command again on exit 3 (deadline expired, checks still
 pending), until it exits with any other code: one invocation is bounded by
-`--timeout`, and re-running against the same SHA is safe. Never substitute
-`gh pr checks --watch` or a sleep loop. `--verbose` adds progress lines for
-a person watching the script in a terminal; leave it off for an agent run.
+`--timeout`, and re-running against the same SHA is safe — a re-run costs
+two cache reads, far less than re-writing the context after a miss. Never
+substitute `gh pr checks --watch` or a sleep loop. `--verbose` adds progress
+lines for a person watching the script in a terminal; leave it off for an
+agent run.
 
 The PR number defaults to the current branch's PR, and the expected head SHA
 to `git rev-parse HEAD` — right only in the checkout the push came from. From

@@ -30,8 +30,11 @@
 #                 which is only right in the checkout the push came from; with
 #                 an explicit <pr-number>, a checkout whose upstream is not the
 #                 PR's head branch is refused rather than guessed at.
-#   --timeout     Overall deadline in seconds (default 3600). On expiry the
-#                 script exits 3; re-run it to keep waiting.
+#   --timeout     Overall deadline in seconds. The default, 3300, sits inside
+#                 the caller's 1-hour prompt-cache TTL with margin for the
+#                 exit-to-next-request gap, so one invocation never returns
+#                 to a cold cache; a caller on the 5-minute TTL passes 300.
+#                 On expiry the script exits 3; re-run it to keep waiting.
 #   --repo        owner/repo (default: inferred from the working directory).
 #   --remote      Git remote the PR's head branch lives on, used to verify the
 #                 push actually landed (default origin).
@@ -79,7 +82,7 @@ PR=""
 PR_GIVEN=0
 EXPECTED_SHA=""
 SHA_DEFAULTED=0
-TIMEOUT=3600
+TIMEOUT=3300
 REPO=""
 REMOTE="origin"
 VERBOSE=0
@@ -219,6 +222,16 @@ deadline_check() { # <what we're still waiting for>
   fi
 }
 
+# Sleep <seconds>, but never past the deadline, so the deadline check that
+# follows fires at the deadline rather than a full poll interval after it —
+# the caller's prompt-cache margin is measured from the deadline it asked for.
+nap() { # <seconds>
+  _n=$((DEADLINE - SECONDS))
+  [ "$_n" -gt "$1" ] && _n=$1
+  [ "$_n" -gt 0 ] && sleep "$_n"
+  return 0
+}
+
 # While checks are failing to register, a CONFLICTING PR is the likely cause:
 # pull_request-triggered workflows run against the merge commit, and a PR that
 # conflicts with its base has none, so those checks never start — the barrier
@@ -250,7 +263,7 @@ bounded_watch() {
       kill "$_wpid" 2>/dev/null
       break
     fi
-    sleep 10
+    nap 10
   done
   wait "$_wpid" 2>/dev/null
   return 0
@@ -382,19 +395,19 @@ while :; do
     MISSING=$(missing_required)
     if [ -n "$MISSING" ]; then
       conflict_check
-      deadline_check "required check(s) never registered: $(oneline "$MISSING")"
       progress "waiting for required check(s) to register: $(oneline "$MISSING")"
-      sleep 10
+      nap 10
+      deadline_check "required check(s) never registered: $(oneline "$MISSING")"
       continue
     fi
   else
     COUNT=$(printf '%s\n' "$SNAP_ROLLUP" | grep -c .)
     if [ "$COUNT" -eq 0 ] || [ "$COUNT" != "$PREV_COUNT" ]; then
       conflict_check
-      deadline_check "checks still registering ($COUNT reported)"
       progress "waiting for the reported check set to settle ($COUNT so far)…"
       PREV_COUNT=$COUNT
-      sleep 15
+      nap 15
+      deadline_check "checks still registering ($COUNT reported)"
       continue
     fi
   fi
@@ -411,7 +424,7 @@ while :; do
     progress "$(printf '%s\n' "$PENDING_LIST" | grep -c .) check(s) pending (elapsed ${SECONDS}s) — watching…"
     bounded_watch
     deadline_check "still pending: $(oneline "$PENDING_LIST")"
-    sleep 5
+    nap 5
     continue
   fi
 
