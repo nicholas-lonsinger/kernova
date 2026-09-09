@@ -66,38 +66,6 @@
               "duration": "0.001s"
             }
           ]
-        },
-        {
-          "name": "ClipboardTests",
-          "nodeType": "Test Suite",
-          "result": "Passed",
-          "children": [
-            {
-              "name": "roundTrip()",
-              "nodeIdentifier": "ClipboardTests/roundTrip()",
-              "nodeType": "Test Case",
-              "result": "Passed",
-              "duration": "1.204s",
-              "children": [
-                {
-                  "name": "Repetition 1",
-                  "nodeType": "Repetition",
-                  "result": "Failed",
-                  "children": [
-                    {
-                      "name": "@ROOT@/KernovaTests/ClipboardTests.swift:91: Expectation failed: received == sent",
-                      "nodeType": "Failure Message"
-                    }
-                  ]
-                },
-                {
-                  "name": "Repetition 2",
-                  "nodeType": "Repetition",
-                  "result": "Passed"
-                }
-              ]
-            }
-          ]
         }
       ]
     }

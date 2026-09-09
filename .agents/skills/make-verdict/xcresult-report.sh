@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Reads an .xcresult bundle and prints the test verdict: the counts from the
-# bundle's summary, each failing test with its failure messages — a case that
-# failed an attempt and passed on the retry included, marked as such — and one
+# bundle's summary, each failing test with its failure messages, and one
 # verdict line. The make-verdict skill's parser: make-verdict.sh calls it for
 # every test run, and it answers follow-up questions about a run on its own.
 #
 # Usage:
-#   .agents/skills/make-verdict/xcresult-report.sh [--path <bundle> | --from-log <log> | --latest] [--failures | --flaky]
+#   .agents/skills/make-verdict/xcresult-report.sh [--path <bundle> | --from-log <log> | --latest] [--failures]
 #
 #   --path <bundle>  an explicit bundle, e.g. a downloaded CI artifact
 #   --from-log <log> the bundle an xcodebuild log names (its last `.xcresult`
@@ -14,16 +13,13 @@
 #   --latest         the newest bundle in this checkout's build arena, via
 #                    Tools/derived-data-path.sh (the default)
 #   --failures       print only the `=== <test>` blocks, uncapped, for tooling
-#   --flaky          print only the identifiers of tests that failed an
-#                    attempt and passed on retry, one per line, for tooling
 #
 # Output (default mode, stdout):
 #   result=Failed total=3948 passed=3945 failed=3 skipped=0 xfail=0
 #   === VMConfigurationTests/defaultsMatchTemplate()
 #   KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
-#   === ClipboardTests/roundTrip() (passed on retry)
 #   ...
-#   xcresult-report: verdict=failed total=3948 failed=3 flaky=1 path=<bundle>
+#   xcresult-report: verdict=failed total=3948 failed=3 path=<bundle>
 #
 # Exit codes, default mode:
 #   0  passed, and at least one test ran
@@ -31,7 +27,7 @@
 #   2  no bundle resolved, or the bundle is unreadable
 #   3  zero tests ran — an `-only-testing:` filter that matches nothing still
 #      prints ** TEST SUCCEEDED **, so this is the failure xcodebuild omits
-# The two tooling modes exit 0 whenever the bundle was readable and 2 otherwise.
+# --failures exits 0 whenever the bundle was readable and 2 otherwise.
 
 set -uo pipefail
 
@@ -54,7 +50,6 @@ while [ $# -gt 0 ]; do
             ;;
         --latest) source=latest; shift ;;
         --failures) mode=failures; shift ;;
-        --flaky) mode=flaky; shift ;;
         -h | --help) usage; exit 0 ;;
         *) echo "xcresult-report.sh: unknown argument '$1'" >&2; usage; exit 2 ;;
     esac
@@ -104,18 +99,13 @@ fetch() {
     fi
 }
 
-# A retried case passes overall while one Repetition failed, so match on
-# either: the masked attempt's message is the one worth reading. Recursive
-# descent (`..`) keeps the parse independent of the tree's nesting.
+# Recursive descent (`..`) keeps the parse independent of the tree's nesting.
 failure_blocks() {
     jq -r '
         [ .. | objects
-          | select(.nodeType? == "Test Case")
-          | select(.result == "Failed"
-                   or any(.children[]?; .nodeType == "Repetition" and .result == "Failed")) ]
+          | select(.nodeType? == "Test Case" and .result == "Failed") ]
         | .[]
-        | "=== " + (.nodeIdentifier // .name)
-          + (if .result == "Passed" then " (passed on retry)" else "" end) + "\n"
+        | "=== " + (.nodeIdentifier // .name) + "\n"
           + ( [ .. | objects | select(.nodeType? == "Failure Message")
                 | ( .sourceLocation
                     | if . then .filePath + ":" + (.lineNumber | tostring) + ": " else "" end )
@@ -124,25 +114,8 @@ failure_blocks() {
     ' "$tmp/tests.json" | sed "s#$ROOT/##g"
 }
 
-# A genuine flake failed at least one Repetition but still passed overall — a
-# bundle-wide retry marks every passed test's repetitions "Passed", so this
-# does not false-positive on the tests dragged through the retry. A test that
-# failed every repetition is broken, not flaky, and `result == "Passed"`
-# excludes it. Dedup on `.nodeIdentifier` (suite-qualified), not `.name`: two
-# suites can share a test's display name.
-flaky_ids() {
-    jq -r '
-        [ .. | objects
-          | select(.nodeType? == "Test Case" and .result == "Passed")
-          | select(any(.children[]?; .nodeType == "Repetition" and .result == "Failed"))
-          | (.nodeIdentifier // .name) ]
-        | unique[]
-    ' "$tmp/tests.json"
-}
-
 case "$mode" in
     failures) fetch tests; failure_blocks; exit 0 ;;
-    flaky) fetch tests; flaky_ids; exit 0 ;;
 esac
 
 fetch summary
@@ -154,8 +127,6 @@ read -r result total passed failed skipped xfail <<<"$counts"
 case "$total" in
     '' | *[!0-9]*) unreadable "summary of '$bundle' carries no totalTestCount" no-counts ;;
 esac
-
-flaky="$(flaky_ids | grep -c .)"
 
 printf 'result=%s total=%s passed=%s failed=%s skipped=%s xfail=%s\n' \
     "$result" "$total" "$passed" "$failed" "$skipped" "$xfail"
@@ -181,6 +152,6 @@ elif [ "$failed" -gt 0 ] || [ "$result" = Failed ]; then
 else
     verdict=passed status=0
 fi
-printf 'xcresult-report: verdict=%s total=%s failed=%s flaky=%s path=%s\n' \
-    "$verdict" "$total" "$failed" "$flaky" "$bundle"
+printf 'xcresult-report: verdict=%s total=%s failed=%s path=%s\n' \
+    "$verdict" "$total" "$failed" "$bundle"
 exit "$status"
