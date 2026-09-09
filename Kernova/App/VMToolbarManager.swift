@@ -100,17 +100,17 @@ final class VMToolbarManager: NSObject {
     private static let fullscreenToolTip = "Enter fullscreen display"
     private static let exitFullscreenToolTip = "Exit fullscreen display"
 
-    /// The stop segment's tooltip: what the slot does, or — for an Ephemeral VM
-    /// already resting on its baseline — why it is disabled.
+    /// Why the stop segment is disabled, for the one state whose reason the user
+    /// cannot read off the label: an Ephemeral VM resting on its baseline keeps
+    /// the "Revert to Baseline" title and simply stops responding.
     ///
-    /// The one state whose reason the user cannot read off the label: the
-    /// segment keeps saying "Revert to Baseline" and simply stops responding.
-    private static func stopToolTip(
-        for instance: VMInstance, action: VMInstance.StopAction
-    ) -> String {
+    /// Every other disabled state is one where a stop is plainly not on offer —
+    /// a stopped VM, a bundle still being written — so those keep the segment's
+    /// own description.
+    private static func disabledStopToolTip(for instance: VMInstance) -> String {
         guard let baseline = instance.ephemeralBaselineSnapshot,
             instance.isRestingAtEphemeralBaseline
-        else { return action.toolTip }
+        else { return VMInstance.StopAction.stop.toolTip }
         return "Already at \u{201C}\(baseline.name)\u{201D}"
     }
     private static let showSettingsToolTip = "Show settings (read-only while the VM is running)"
@@ -405,9 +405,12 @@ final class VMToolbarManager: NSObject {
         }
         // Re-read every pass rather than only on a label change: a VM reaches
         // its baseline without the label moving, and the disabled segment's
-        // tooltip is the only place that says why it went quiet.
-        stop.toolTip = Self.stopToolTip(for: instance, action: stopAction)
-        stop.isEnabled = capabilities.isStopActionAvailable(on: instance)
+        // tooltip is the only place that says why it went quiet. Read from the
+        // enablement rather than beside it, so the baseline comparison behind it
+        // runs once a pass and only in the state that can answer yes.
+        let isEnabled = capabilities.isStopActionAvailable(on: instance)
+        stop.toolTip = isEnabled ? stopAction.toolTip : Self.disabledStopToolTip(for: instance)
+        stop.isEnabled = isEnabled
     }
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {

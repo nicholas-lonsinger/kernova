@@ -946,8 +946,9 @@ struct VirtualizationServiceTests {
         let description = VirtualizationError.restoreFailed(underlying: underlying)
             .localizedDescription
         #expect(description.contains("The save file is corrupted."))
+        // Resume is the one way forward every VM holding a saved state has; the
+        // rest depend on the VM's own state, so the copy names none of them.
         #expect(description.contains("Resume"))
-        #expect(description.contains("Discard Saved State"))
     }
 
     @Test("start sets error status for permanent config error")

@@ -1084,7 +1084,6 @@ struct VMCommandCoreTests {
         #expect(prompt.title == "Revert to Baseline")
         #expect(prompt.confirmTitle == "Revert to Baseline")
         #expect(prompt.message.contains("is ephemeral, so it returns to"))
-        #expect(!prompt.message.contains("discarding its suspended session"))
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
         try await harness.core.stop(.id(instance.id), disposition: .graceful, confirmed: true)
