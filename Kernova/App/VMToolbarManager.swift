@@ -194,17 +194,6 @@ final class VMToolbarManager: NSObject {
             item.label = "Clipboard"
             item.paletteLabel = "Clipboard"
             item.view = button
-            // AppKit builds an item's automatic menu form representation from the
-            // *item's* own action, which a view-backed item leaves nil, so the
-            // overflow menu ("»") entry would be inert without an explicit one.
-            let menuForm = NSMenuItem(
-                title: "Clipboard",
-                action: #selector(AppDelegate.showClipboard(_:)),
-                keyEquivalent: ""
-            )
-            menuForm.image = .systemSymbol(
-                ClipboardToolbarButton.symbolName, accessibilityDescription: "Clipboard")
-            item.menuFormRepresentation = menuForm
             item.autovalidates = false
             return item
 

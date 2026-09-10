@@ -162,10 +162,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// Hides New VM while the sidebar is collapsed and restores it on expand.
     ///
-    /// Implemented as remove/insert rather than `NSToolbarItem.isHidden`: on
-    /// the glass toolbar a hidden item's slot keeps its width (measured on
-    /// macOS 27 beta 4), leaving a dead gap between the window controls and
-    /// the sidebar toggle, while removal reclaims the space.
+    /// Implemented as remove/insert rather than `NSToolbarItem.isHidden`:
+    /// with the sidebar collapsed, hiding the item turns its slot into leading
+    /// flexible space instead of reclaiming it (measured on macOS 27.0
+    /// 26A428), leaving a dead gap between the window controls and the
+    /// sidebar toggle, while removal closes it — see docs/TOOLBAR.md.
     private func observeSidebarCollapse() {
         sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial]) {
             [weak self] _, _ in
@@ -184,9 +185,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     /// Unguarded so the palette-close path can drive it directly: AppKit
-    /// clears `customizationPaletteIsRunning` one runloop turn *after*
-    /// `windowDidEndSheet` runs (measured on macOS 27 beta 4), so a guarded
-    /// call from there would see the palette as still running and no-op.
+    /// clears `customizationPaletteIsRunning` only after `windowDidEndSheet`
+    /// returns (measured on macOS 27.0 26A428), so a guarded call from there
+    /// would see the palette as still running and no-op.
     private func applyNewVMVisibility(in toolbar: NSToolbar) {
         if sidebarItem.isCollapsed {
             guard newVMCollapseRemovalIndex == nil,

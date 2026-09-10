@@ -329,23 +329,6 @@ struct VMToolbarManagerTests {
         #expect(item?.autovalidates == false)
     }
 
-    @Test("Clipboard item carries a menu form representation for the overflow menu")
-    func clipboardItemMenuFormRepresentation() {
-        let manager = makeManager()
-        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testClipboard"))
-
-        // A view-backed item leaves `item.action` nil, so AppKit's automatic menu
-        // form representation would be inert — the overflow ("»") entry has to be
-        // supplied explicitly.
-        let menuForm = item?.menuFormRepresentation
-        #expect(menuForm != nil)
-        #expect(menuForm?.title == "Clipboard")
-        #expect(menuForm?.action == #selector(AppDelegate.showClipboard(_:)))
-        // Nil target: the action travels the responder chain to AppDelegate.
-        #expect(menuForm?.target == nil)
-        #expect(menuForm?.image != nil)
-    }
-
     @Test("Clipboard button hit-tests as one control over the transfer bar")
     func clipboardButtonHitTestOverTransferBar() {
         let button = ClipboardToolbarButton()

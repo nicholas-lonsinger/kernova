@@ -2,25 +2,27 @@
 
 Read this before adding or changing an `NSToolbar` item: the behaviors of the
 glass toolbar introduced in macOS 26 that toolbar code has to satisfy
-(measured on macOS 27 developer beta 4). Safari is the visual reference —
+(measured on macOS 27.0 26A428). Safari is the visual reference —
 independent adjacent buttons sharing glass capsules, per-item circular hover,
 a downloads-style progress bar inside a button.
 
 ## Glass-toolbar platter model (measured)
 
-The system renders toolbar items above a layer of glass "platter" capsules
-(`NSToolbarView → NSGlassContainerView → NSToolbarPlatterView`, all private —
-named here for debugging orientation only; Kernova references none of them):
+The system renders toolbar items inside glass "platter" capsules
+(`NSToolbarView → NSGlassContainerView → NSToolbarPlatterView →
+NSGlassEffectView → … → NSToolbarItemViewer`, all private — named here for
+debugging orientation only; Kernova references none of them):
 
-- A platter is a **background sibling** of the item viewers, not an ancestor —
-  items draw on top of it.
-- Platters are 36 pt tall at y = 8 in the 52 pt toolbar. A lone item's platter
-  is a **36×36 circle**.
+- A platter is an **ancestor** of the item viewers it holds; only `.space` and
+  `.flexibleSpace` viewers sit outside any platter.
+- Platters are 36 pt tall at y = 8 in the 52 pt toolbar, with fully rounded
+  ends. A lone item's platter is a **36-pt circle**; its width tracks the
+  item's content, so a wide symbol widens it by a fraction of a point.
 - **Adjacent bordered/view-backed items merge into one shared capsule
   platter.** A fixed space (`.space`) breaks the run into separate platters; an
   `NSToolbarItemGroup` always gets its own platter regardless of neighbors.
-- A multi-segment group's hover highlight is capsule-shaped (the segmented
-  control's treatment), not a per-segment circle.
+- A multi-segment group's hover highlight is **per segment**, each a capsule
+  (the segmented control's treatment) rather than a circle.
 
 ## View-backed items
 
@@ -37,10 +39,10 @@ stays a live view while the item keeps the platter treatment
 - **A decorative subview must return `nil` from `hitTest`.** Otherwise it
   swallows clicks over its own area — the 22×6 pt transfer bar takes the bottom
   of the circle — and the platter stops behaving as one button.
-- **The item needs an explicit `menuFormRepresentation`.** AppKit builds an
-  item's automatic overflow-menu ("»") entry from the *item's* own action, which
-  a view-backed item leaves `nil` — so the entry would be inert while every
-  bordered item's still worked.
+- **No `menuFormRepresentation` is needed.** The overflow-menu ("»") entry
+  AppKit synthesizes for a view-backed item takes the item's label and the
+  hosted button's image, and fires the button's action — a nil-target action
+  travels the responder chain from there like a bordered item's.
 - Bar metrics, taken from Safari's `ToolbarDownloadsButtonProgressBar`:
   **22×6 pt capsule, horizontally centered, bottom edge 3 pt above the
   circle's rim** — fully inside the circle.
@@ -49,16 +51,18 @@ stays a live view while the item keeps the platter treatment
 
 ## Sidebar section and collapse
 
-Items left of the `.sidebarTrackingSeparator` get the flat sidebar-section glass
-treatment, not capsule platters — the platform's sectioning (Mail and Notes
-behave the same).
+Items left of the `.sidebarTrackingSeparator` get the same circular platters
+as the content section; only the strip behind them takes the sidebar's tone.
 
 To take an item out of that section while the sidebar is collapsed
 (`MainWindowController.applyNewVMVisibility(in:)`), **remove and
-re-insert it — never `NSToolbarItem.isHidden`**: on the glass toolbar a hidden
-item's slot keeps its width (measured on macOS 27 beta 4), leaving a dead gap
-between the window controls and the toggle, while removal reclaims the space.
-Constraints follow:
+re-insert it — never `NSToolbarItem.isHidden`**: the hidden item's viewer does
+leave the hierarchy, but the section's leading `.flexibleSpace`, zero-width
+while the item is visible, materializes in the item's slot instead of
+collapsing (44 pt, measured on macOS 27.0 26A428), leaving a dead gap between
+the window controls and the toggle; removal reclaims the space. With the
+sidebar expanded the flexible space absorbs the item either way. Constraints
+follow:
 
 - **Remove with `autosavesConfiguration` suspended, restore with autosave live.**
   A collapsed toolbar is a transient presentation, not a customization, so it
@@ -85,8 +89,9 @@ Constraints follow:
   captures bypass the glass machinery and *do* show such content; verify
   toolbar rendering on screen, never from offscreen captures.)
 - Set `autovalidates = false` on any item whose enablement is driven by
-  observation — autovalidation forces `isEnabled = true` and flickers against
-  those writes.
+  observation — autovalidation, which runs off UI events, forces
+  `isEnabled = true` and flickers against those writes; an explicit
+  `validateVisibleItems()` forces it regardless of `autovalidates`.
 - Guard state-dependent relabeling (Pop Out ⇆ Pop In, Fullscreen ⇆ Exit
   Fullscreen) with a label-equality check so no-op updates don't trigger AppKit
   redraws. Palette labels keep the stable factory names.
