@@ -25,7 +25,9 @@ DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
 # reads back.
 CI_FLAGS           := -skipPackagePluginValidation \
                       COMPILER_INDEX_STORE_ENABLE=NO \
-                      COMPILATION_CACHE_ENABLE_CACHING=NO
+                      COMPILATION_CACHE_ENABLE_CACHING=NO \
+                      -showBuildTimingSummary \
+                      OTHER_SWIFT_FLAGS='-Xfrontend -warn-long-expression-type-checking=200 -Xfrontend -warn-long-function-bodies=300'                       SWIFT_TREAT_WARNINGS_AS_ERRORS=NO
 RESULT_BUNDLE_FLAG := -resultBundlePath $(RESULT_BUNDLE)
 endif
 

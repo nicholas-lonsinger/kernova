@@ -54,8 +54,30 @@ jobs:
       # fail one stuck test and let the rest of the run finish, so it is sized
       # for a healthy run plus one test spending its whole allowance. A healthy step
       # takes about two minutes.
-      - name: Test without building
+      - name: Test width 64 (a)
         timeout-minutes: 10
+        continue-on-error: true
+        env:
+          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "64"
+        run: make test-without-building 2>&1
+
+      - name: Test width 32 (b)
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
+        run: make test-without-building 2>&1
+
+      - name: Test width 64 (c)
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "64"
+        run: make test-without-building 2>&1
+
+      - name: Test width 32 (d)
+        timeout-minutes: 10
+        continue-on-error: true
         env:
           TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
         run: make test-without-building 2>&1
