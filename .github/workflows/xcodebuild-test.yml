@@ -25,6 +25,18 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
 
+      # Package.resolved pins each dependency to a commit, so the hash misses
+      # exactly when a dependency is bumped and hits otherwise. No
+      # restore-keys: a prefix fallback would restore an older checkout and
+      # then save the reconciled result under the new hash, so a saved entry
+      # would no longer match its key by construction. Checkouts are plain
+      # git clones, so the Xcode build is not part of the key.
+      - name: Cache SwiftPM checkouts
+        uses: actions/cache@v5
+        with:
+          path: DerivedData/Kernova/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
       # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
       # which needs no identity or team, so it embeds the app's sandbox
       # entitlements and the TEST_HOST-hosted unit tests run sandboxed here
