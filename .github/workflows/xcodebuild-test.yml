@@ -24,37 +24,18 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
-          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
 
+      # Package.resolved pins each dependency to a commit, so the hash misses
+      # exactly when a dependency is bumped and hits otherwise. No
+      # restore-keys: a prefix fallback would restore an older checkout and
+      # then save the reconciled result under the new hash, so a saved entry
+      # would no longer match its key by construction. Checkouts are plain
+      # git clones, so the Xcode build is not part of the key.
       - name: Cache SwiftPM checkouts
         uses: actions/cache@v5
         with:
-          # Nested under DerivedData/Kernova to match the Makefile's canonical
-          # layout (see below). The key's `spm2` segment marks that move: a
-          # same-key cache saved at the old flat path would restore uselessly
-          # and, existing, block a save at the new path.
           path: DerivedData/Kernova/SourcePackages
-          key: ${{ runner.os }}-spm2-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          # A Package.resolved or Xcode bump misses the exact key; a stale
-          # checkout is still a valid seed (SwiftPM reconciles against
-          # Package.resolved and fetches only the delta). Checkouts are plain
-          # git clones, so the Xcode-agnostic prefix is a valid last resort.
-          restore-keys: |
-            ${{ runner.os }}-spm2-${{ env.XCODE_BUILD }}-
-            ${{ runner.os }}-spm2-
-
-      - name: Cache compilation cache
-        uses: actions/cache@v5
-        with:
-          # Xcode 26's compilation cache (COMPILATION_CACHE_ENABLE_CACHING on
-          # the build step below) lives inside DerivedData; the glob tracks
-          # the store's folder whatever exact name Xcode gives it.
-          path: DerivedData/Kernova/CompilationCache*
-          # The store is content-addressed, so any prior snapshot is a valid
-          # seed. The per-commit key exists only so every run saves its
-          # updated store; the prefix restore pulls the most recent one.
-          key: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-
+          key: ${{ runner.os }}-spm-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
       # which needs no identity or team, so it embeds the app's sandbox
@@ -66,12 +47,6 @@ jobs:
       # source line that say what actually failed.
       - name: Build for testing
         run: make build-for-testing 2>&1
-
-      # The store's size after a build is the signal that caching engaged:
-      # empty or missing means COMPILATION_CACHE_ENABLE_CACHING no-opped, and
-      # the build step's wall clock across runs is then measuring nothing.
-      - name: Report compilation cache size
-        run: du -sh DerivedData/Kernova/CompilationCache* 2>/dev/null || echo "No compilation cache store found."
 
       # The admission width caps concurrent test cases per host process (three
       # hosts run at once, so the machine-wide bound is 3×). It is a herd cap
