@@ -351,10 +351,11 @@ func makeGroupedFormSubOptionGroup(
 /// the pane's read-only lock.
 ///
 /// `isEnabled` alone is not enough: AppKit draws a disabled `NSSwitch` that is
-/// **on** at its full accent fill (measured on macOS 27 developer beta 4), so
-/// the row reads as live while it is inert. Dimming the control is what makes
-/// it read as disabled, and graying the label keeps the pair consistent —
-/// AppKit never fades a plain `NSTextField` for a neighboring control.
+/// **on** at about 0.7 opacity of its accent fill (measured on macOS 27.0
+/// 26A428), fainter than the pane lock's `Alpha.disabled`, so the row dims the
+/// control to match the locked rows, and grays the label to keep the pair
+/// consistent — AppKit never fades a plain `NSTextField` for a neighboring
+/// control.
 @MainActor
 func applyGroupedFormRowEnabled(
     _ isEnabled: Bool, control: NSControl, label: NSTextField?
