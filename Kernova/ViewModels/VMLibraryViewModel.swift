@@ -129,6 +129,10 @@ final class VMLibraryViewModel {
     /// Every per-VM capability predicate the AppKit surfaces read.
     var capabilities: VMCapabilityCatalog { library.capabilities }
 
+    /// Whether this build can pass a host USB accessory through to a guest —
+    /// what decides whether the USB Device menu exists at all.
+    var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
+
     /// Every (transport, host port) pair any VM in the library claims — what a
     /// new rule may not name.
     var takenHostPortClaims: Set<PortForwardingHostClaim> {
@@ -465,6 +469,7 @@ final class VMLibraryViewModel {
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        usbAccessoryService: (any USBAccessoryProviding)? = USBAccessorySupport.makeService(),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -486,6 +491,7 @@ final class VMLibraryViewModel {
             installService: installService,
             ipswService: ipswService,
             removableMediaDeviceService: removableMediaDeviceService,
+            usbAccessoryService: usbAccessoryService,
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,

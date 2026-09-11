@@ -232,10 +232,11 @@ struct VMCapabilityCatalog {
             // only on a VM that can still be reconfigured.
             instance.canEditSettings
         case .editUSBAccessories:
-            // Stricter than removable media: a passthrough accessory has no
-            // persisted entry to pre-configure, so it exists only on a guest
-            // that is already running.
-            instance.hasLiveSession
+            // Stricter than removable media twice over: a passthrough accessory
+            // has no persisted entry to pre-configure, so it exists only on a
+            // guest already running — and a build that cannot claim an
+            // accessory at all must not name the verb among those a VM accepts.
+            library.supportsUSBAccessories && instance.hasLiveSession
         case .editPortForwarding, .editConfiguration:
             instance.canEditSettings
         case .editLiveConfiguration:

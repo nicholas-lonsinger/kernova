@@ -96,11 +96,11 @@ struct VirtualizationServiceTests {
     }
 
     @Test("Every passthrough accessory is detached, and its tracking entry cleared")
-    func detachesEveryAccessoryBeforeSaving() async {
+    func detachesEveryAccessoryBeforeSaving() async throws {
         let (instance, sessionID, deviceIDs) = instanceHoldingAccessories(2)
         let session = MockSnapshotSession(guestState: .running)
 
-        await VirtualizationService.detachUSBAccessories(
+        try await VirtualizationService.detachUSBAccessories(
             from: instance, session: session, for: sessionID)
 
         let detached = await session.detachedUSBDeviceIDs
@@ -108,24 +108,43 @@ struct VirtualizationServiceTests {
         #expect(instance.liveUSBAccessories.isEmpty)
     }
 
-    @Test("A detach that fails still clears the entry, so the save proceeds")
-    func aFailedDetachStillClearsTracking() async {
+    @Test("A device the controller already lost clears its entry and does not fail the save")
+    func anAlreadyDetachedDeviceIsNotAFailure() async throws {
         let (instance, sessionID, _) = instanceHoldingAccessories(1)
         let session = MockSnapshotSession(guestState: .running)
         await session.setDetachError(VMSessionError.usbDeviceNotFound)
 
-        await VirtualizationService.detachUSBAccessories(
+        try await VirtualizationService.detachUSBAccessories(
             from: instance, session: session, for: sessionID)
 
         #expect(instance.liveUSBAccessories.isEmpty)
     }
 
+    @Test("A detach that fails for any other reason stops the save rather than writing state")
+    func aFailedDetachStopsTheSave() async {
+        let (instance, sessionID, _) = instanceHoldingAccessories(1)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDetachError(VMSessionError.usbControllerUnavailable)
+
+        // Swallowing this would write a saved state still carrying a
+        // passthrough device — a file `VZErrorRestore` refuses and nothing can
+        // recover, produced by an operation that reported success.
+        await #expect(throws: VMSessionError.self) {
+            try await VirtualizationService.detachUSBAccessories(
+                from: instance, session: session, for: sessionID)
+        }
+
+        let calls = await session.calls
+        #expect(!calls.contains("saveMachineState"))
+        #expect(instance.liveUSBAccessories.count == 1)
+    }
+
     @Test("A session holding nothing asks VZ for no detach at all")
-    func noAccessoriesMeansNoDetachCalls() async {
+    func noAccessoriesMeansNoDetachCalls() async throws {
         let (instance, sessionID, _) = instanceHoldingAccessories(0)
         let session = MockSnapshotSession(guestState: .running)
 
-        await VirtualizationService.detachUSBAccessories(
+        try await VirtualizationService.detachUSBAccessories(
             from: instance, session: session, for: sessionID)
 
         let calls = await session.calls
@@ -133,11 +152,11 @@ struct VirtualizationServiceTests {
     }
 
     @Test("A detach for a session that is no longer live leaves the live one alone")
-    func detachForAStaleSessionDropsItsWrites() async {
+    func detachForAStaleSessionDropsItsWrites() async throws {
         let (instance, _, _) = instanceHoldingAccessories(1)
         let session = MockSnapshotSession(guestState: .running)
 
-        await VirtualizationService.detachUSBAccessories(
+        try await VirtualizationService.detachUSBAccessories(
             from: instance, session: session, for: UUID())
 
         // The device still left the controller — VZ was asked — but the record

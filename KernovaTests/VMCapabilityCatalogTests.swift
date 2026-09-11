@@ -86,16 +86,16 @@ struct VMCapabilityCatalogTests {
                 "running", .running(sessionID: id),
                 [
                     .stop, .restart, .forceStop, .pause, .suspend, .open, .takeSnapshot,
-                    .editRemovableMedia, .editUSBAccessories, .rename, .togglePopOut,
-                    .toggleFullscreen, .toggleSettingsPane,
+                    .editRemovableMedia, .rename, .togglePopOut, .toggleFullscreen,
+                    .toggleSettingsPane,
                 ]
             ),
             (
                 "live-paused", .livePaused(sessionID: id),
                 [
                     .stop, .restart, .forceStop, .resume, .suspend, .open, .takeSnapshot,
-                    .editRemovableMedia, .editUSBAccessories, .rename, .togglePopOut,
-                    .toggleFullscreen, .toggleSettingsPane,
+                    .editRemovableMedia, .rename, .togglePopOut, .toggleFullscreen,
+                    .toggleSettingsPane,
                 ]
             ),
             // No save file on disk, so a suspended VM has no suspend slot to

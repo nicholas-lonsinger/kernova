@@ -36,6 +36,15 @@ protocol USBAccessoryProviding: AnyObject {
     /// to a guest.
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)? { get set }
 
+    /// Called with the `registryID` of an accessory macOS took back, so a
+    /// caller can drop whatever it recorded against it.
+    ///
+    /// A guest's record of an attachment must not depend on
+    /// `VZUSBControllerDelegate` alone: an accessory can leave Kernova without
+    /// VZ reporting anything — a fast user switch withdraws every assignment —
+    /// and a record left behind names a device the guest no longer has.
+    var onAccessoryWithdrawn: (@MainActor (UInt64) -> Void)? { get set }
+
     /// Registers the listener that populates `accessories`. Idempotent; the
     /// registration lives for the process.
     func startObserving()

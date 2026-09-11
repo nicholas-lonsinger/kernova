@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaKit
 import os
 
 /// The application-level seam a ``MainMenuController`` needs but cannot own:
@@ -82,8 +83,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Value snapshot of the USB submenu's rendered contents.
     private struct USBAccessoryMenuModel: Equatable {
         let instanceID: UUID?
-        let attached: [AttachedUSBAccessory]
-        let available: [USBAccessoryInfo]
+        let attached: [USBAccessorySummary]
+        let available: [USBAccessorySummary]
         let isEnabled: Bool
     }
 
@@ -200,13 +201,15 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
         guard let host else { return }
         let instance = host.menuCommandTarget(of: nil)
-        let attachedIDs = Set(
-            viewModel.instances.flatMap { $0.liveUSBAccessories.map(\.accessory.registryID) })
-        let available = (viewModel.lifecycle.usbAccessoryService?.accessories ?? [])
-            .filter { !attachedIDs.contains($0.registryID) }
+        // Both listings come from the facade, so the menu offers exactly what
+        // an attach would accept — the held-accessory filter lives at the
+        // enforcement point, not here.
+        let available = (try? viewModel.commands.availableUSBAccessories()) ?? []
+        let attached =
+            instance.flatMap { try? viewModel.commands.usbAccessories(of: .id($0.id)) } ?? []
         let model = USBAccessoryMenuModel(
             instanceID: instance?.id,
-            attached: instance?.liveUSBAccessories ?? [],
+            attached: attached,
             available: available,
             isEnabled: instance.map {
                 viewModel.capabilities.isAvailable(.editUSBAccessories, on: $0)
@@ -214,7 +217,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         guard model != usbAccessoryMenuModel else { return }
         usbAccessoryMenuModel = model
         USBAccessoryMenu.rebuild(
-            menu, for: instance, available: available, isEnabled: model.isEnabled, target: nil,
+            menu, for: instance, attached: attached, available: available,
+            isEnabled: model.isEnabled, target: nil,
             attachAction: #selector(AppDelegate.attachUSBAccessory(_:)),
             detachAction: #selector(AppDelegate.detachUSBAccessory(_:)))
     }
@@ -559,7 +563,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // The capability is a property of this build's signature and OS, so a
         // build without it never grows the item — there is nothing here to
         // disable, and nothing to explain.
-        if viewModel.lifecycle.usbAccessoryService != nil {
+        if viewModel.supportsUSBAccessories {
             let usbItem = NSMenuItem(title: USBAccessoryMenu.title, action: nil, keyEquivalent: "")
             let usbMenu = NSMenu(title: USBAccessoryMenu.title)
             usbMenu.delegate = self

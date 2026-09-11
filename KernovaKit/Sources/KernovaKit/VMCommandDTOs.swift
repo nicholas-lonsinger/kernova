@@ -311,6 +311,10 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case invalidArgument(message: String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
+    /// This build cannot do what was asked, and no VM was named — a host-scoped
+    /// verb whose capability the build lacks, where naming a virtual machine
+    /// would describe something the caller never asked about.
+    case unsupportedByBuild(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The guest had not powered off `seconds` after the shutdown request, so
@@ -340,7 +344,8 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .ambiguous, .busy, .unsupported, .invalidState, .timedOut,
+        case .notFound, .ambiguous, .busy, .unsupported, .unsupportedByBuild, .invalidState,
+            .timedOut,
             .invalidArgument:
             "Error"
         case .confirmationRequired(let prompt):
@@ -386,6 +391,8 @@ extension CommandErrorDTO {
             message
         case .unsupported(let capability):
             "This virtual machine does not support \(capability)."
+        case .unsupportedByBuild(let capability):
+            "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
             switch reason {
             case .macAddressInUse(let address):

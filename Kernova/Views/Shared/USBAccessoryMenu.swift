@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Identifies which VM and accessory a USB Device item names, carried as the
 /// item's `representedObject`.
@@ -39,13 +40,13 @@ enum USBAccessoryMenu {
     /// VM that could not take one. A `nil` `target` leaves the items nil-target,
     /// dispatching the actions down the responder chain.
     static func rebuild(
-        _ menu: NSMenu, for instance: VMInstance?, available: [USBAccessoryInfo],
+        _ menu: NSMenu, for instance: VMInstance?, attached: [USBAccessorySummary],
+        available: [USBAccessorySummary],
         isEnabled: Bool, target: AnyObject?, attachAction: Selector, detachAction: Selector
     ) {
         menu.removeAllItems()
         menu.autoenablesItems = false
 
-        let attached = instance?.liveUSBAccessories ?? []
         guard let instance, !attached.isEmpty || !available.isEmpty else {
             let empty = NSMenuItem(title: emptyTitle, action: nil, keyEquivalent: "")
             empty.isEnabled = false
@@ -55,11 +56,10 @@ enum USBAccessoryMenu {
 
         for item in attached {
             let menuItem = NSMenuItem(
-                title: item.accessory.displayName, action: detachAction, keyEquivalent: "")
+                title: item.name, action: detachAction, keyEquivalent: "")
             menuItem.target = target
             menuItem.representedObject = USBAccessoryMenuRef(
-                instance: instance, registryID: item.accessory.registryID,
-                deviceID: item.deviceID)
+                instance: instance, registryID: item.registryID, deviceID: item.deviceID)
             // A checkmark is what says "in this guest" without a second column
             // of copy, and detaching is what clicking a checked row does.
             menuItem.state = .on
@@ -73,7 +73,7 @@ enum USBAccessoryMenu {
 
         for accessory in available {
             let menuItem = NSMenuItem(
-                title: accessory.displayName, action: attachAction, keyEquivalent: "")
+                title: accessory.name, action: attachAction, keyEquivalent: "")
             menuItem.target = target
             menuItem.representedObject = USBAccessoryMenuRef(
                 instance: instance, registryID: accessory.registryID, deviceID: nil)

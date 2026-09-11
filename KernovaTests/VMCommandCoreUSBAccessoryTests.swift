@@ -17,6 +17,10 @@ struct VMCommandCoreUSBAccessoryTests {
     /// through.
     private let unsupported = CommandError.unsupported(capability: "USB accessory passthrough")
 
+    /// The refusal the host-scoped listing owes, which names no virtual machine.
+    private let unsupportedByBuild = CommandError.unsupportedByBuild(
+        capability: "USB accessory passthrough")
+
     private struct Harness {
         let core: VMCommandCore
         let library: VMLibrary
@@ -117,8 +121,12 @@ struct VMCommandCoreUSBAccessoryTests {
         }
 
         #expect(listing == unsupported)
-        #expect(available == unsupported)
         #expect(edit == unsupported)
+        // The host-scoped read names no VM, so its refusal must not describe
+        // one: "This build of Kernova does not support …", not "This virtual
+        // machine does not support …".
+        #expect(available == unsupportedByBuild)
+        #expect(available?.message == "This build of Kernova does not support USB accessory passthrough.")
     }
 
     // MARK: - Reads
@@ -275,20 +283,60 @@ struct VMCommandCoreUSBAccessoryTests {
         }
     }
 
-    @Test("A detach the guest does not recognize reports what it was told")
+    @Test("A detach of a device the guest no longer holds succeeds and clears the entry")
+    func detachOfAnAlreadyGoneDeviceSucceeds() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        let deviceID = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 11), to: instance, in: harness)
+        service.detachError = USBAccessoryError.deviceNotFound
+
+        // A surprise unplug, or a save's own detach sweep, may have got there
+        // first — the outcome the caller asked for already holds, so this is
+        // not something to alert about.
+        try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
+
+        #expect(instance.liveUSBAccessories.isEmpty)
+    }
+
+    @Test("A detach that fails for any other reason reports what it was told")
     func detachFailureCarriesItsMessage() async throws {
         let harness = makeHarness()
         let service = try #require(harness.accessories)
         let instance = makeRunningInstance(in: harness)
-        service.detachError = USBAccessoryError.deviceNotFound
+        let deviceID = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 12), to: instance, in: harness)
+        service.detachError = USBAccessoryError.accessoryNotFound
 
         let thrownRefusal = await commandError {
-            try await harness.core.detachUSBAccessory(.id(instance.id), device: UUID())
+            try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
         }
         let refusal = try #require(thrownRefusal)
 
         #expect(refusal.isOperationFailure)
-        #expect(refusal.message == USBAccessoryError.deviceNotFound.errorDescription)
+        #expect(refusal.message == USBAccessoryError.accessoryNotFound.errorDescription)
+    }
+
+    // MARK: - One accessory, one guest
+
+    @Test("An accessory another guest is holding is refused rather than handed over twice")
+    func anAccessoryHeldElsewhereIsRefused() async throws {
+        let harness = makeHarness()
+        let holder = makeRunningInstance(in: harness, name: "Holder")
+        let other = makeRunningInstance(in: harness, name: "Other")
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 5), to: holder, in: harness)
+
+        let refusal = await commandError {
+            try await harness.core.attachUSBAccessory(.id(other.id), accessory: 5)
+        }
+
+        // A guest captures an accessory exclusively, so the second attach could
+        // otherwise only fail inside VZ.
+        #expect(refusal?.isOperationFailure == true)
+        #expect(other.liveUSBAccessories.isEmpty)
+        #expect(holder.liveUSBAccessories.count == 1)
     }
 }
 

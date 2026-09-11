@@ -21,9 +21,11 @@ extension VMCommandCore {
     }
 
     func availableUSBAccessories() throws -> [USBAccessorySummary] {
-        let service = try requireUSBAccessoryService()
-        let held = Set(
-            library.instances.flatMap { $0.liveUSBAccessories.map(\.accessory.registryID) })
+        // Host-scoped: this names no VM, so a refusal must not describe one.
+        guard let service = lifecycle.usbAccessoryService else {
+            throw CommandError.unsupportedByBuild(capability: Self.usbAccessoryCapability)
+        }
+        let held = heldAccessoryIDs()
         return service.accessories
             .filter { !held.contains($0.registryID) }
             .map { summary(of: $0) }
@@ -33,6 +35,15 @@ extension VMCommandCore {
 
     func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
         let (instance, sessionID) = try admitUSBAccessoryEdit(selector)
+        // A guest captures an accessory exclusively, so a second attach could
+        // only fail inside VZ. Refusing here is what makes the listings' filter
+        // a presentation detail rather than the only thing standing between two
+        // guests and the same device.
+        guard !heldAccessoryIDs().contains(registryID) else {
+            throw CommandError.operationFailed(
+                verb: .editUSBAccessory,
+                message: "That USB accessory is already attached to a virtual machine.")
+        }
         do {
             let attached = try await lifecycle.attachUSBAccessory(
                 registryID, to: instance, for: sessionID)
@@ -81,6 +92,15 @@ extension VMCommandCore {
             throw CommandError.unsupported(capability: Self.usbAccessoryCapability)
         }
         return service
+    }
+
+    /// Every accessory identifier some guest in the library is holding.
+    ///
+    /// The one derivation both listings and the attach gate read, so what
+    /// `availableUSBAccessories()` offers and what an attach accepts cannot
+    /// drift apart.
+    private func heldAccessoryIDs() -> Set<UInt64> {
+        Set(library.instances.flatMap { $0.liveUSBAccessories.map(\.accessory.registryID) })
     }
 
     /// One accessory as a caller names it, carrying the attachment identifier a

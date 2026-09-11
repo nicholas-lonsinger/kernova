@@ -396,7 +396,7 @@ final class VirtualizationService {
         instance.settle(.saving(sessionID: sessionID), for: sessionID)
 
         do {
-            await Self.detachUSBAccessories(from: instance, session: session, for: sessionID)
+            try await Self.detachUSBAccessories(from: instance, session: session, for: sessionID)
             try await session.pauseIfRunning()
             try await session.saveMachineState(to: instance.saveFileURL)
             // No sidecar metadata is needed beside the save file: removable media
@@ -504,7 +504,11 @@ final class VirtualizationService {
                     bundleURL: bundleURL, snapshotID: snapshotID, configuration: configuration)
             }.value
 
-            await detachUSBAccessories(from: instance, session: session, for: sessionID)
+            // The guest is still there afterwards, so these are put back once
+            // the capture is done — see
+            // ``VMLifecycleCoordinator/takeSnapshot(_:snapshot:store:)``.
+            try await detachUSBAccessories(
+                from: instance, session: session, for: sessionID)
             try await captureLiveState(
                 session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
             ) {
@@ -643,7 +647,7 @@ final class VirtualizationService {
     }
 
     /// Takes every passthrough USB accessory off `instance` before its state is
-    /// written.
+    /// written, and answers what it took off.
     ///
     /// A saved state is restored only into a configuration compatible with it,
     /// and a passthrough device names host hardware that may be in a drawer by
@@ -653,21 +657,27 @@ final class VirtualizationService {
     /// rather than merely unlikely. Both save paths call this, and a new one
     /// must too.
     ///
-    /// Failures are logged and swallowed: the save is what the user asked for,
-    /// and a device that will not detach is already beyond reach.
+    /// A device the controller no longer holds is a success — an unplug got
+    /// there first, and the post-condition already holds. Anything else throws:
+    /// writing a state that still carries a passthrough device produces a save
+    /// nothing can restore, so the save must fail where the user can see it
+    /// rather than succeed into an unusable file.
+    @discardableResult
     static func detachUSBAccessories(
         from instance: VMInstance, session: any VMSnapshotSessionOperating, for sessionID: UUID
-    ) async {
-        for attached in instance.liveUSBAccessories {
+    ) async throws -> [AttachedUSBAccessory] {
+        let attached = instance.liveUSBAccessories
+        for item in attached {
             do {
-                try await session.detachUSBDevice(uuid: attached.deviceID)
-            } catch {
-                logger.warning(
-                    "Could not detach USB accessory \(attached.accessory.displayName, privacy: .public) from '\(instance.name, privacy: .public)' before saving: \(error.localizedDescription, privacy: .public)"
+                try await session.detachUSBDevice(uuid: item.deviceID)
+            } catch VMSessionError.usbDeviceNotFound {
+                logger.notice(
+                    "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"
                 )
             }
-            instance.forgetAttachedAccessory(deviceID: attached.deviceID, for: sessionID)
+            instance.forgetAttachedAccessory(deviceID: item.deviceID, for: sessionID)
         }
+        return attached
     }
 
     /// Writes the guest's live state into `saveFileURL`, copies the disks

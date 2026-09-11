@@ -28,7 +28,28 @@ final class USBAccessoryRouter {
         service.onAccessoryAssigned = { [weak self] info in
             self?.route(info)
         }
+        service.onAccessoryWithdrawn = { [weak self] registryID in
+            self?.forget(registryID)
+        }
         service.startObserving()
+    }
+
+    /// Drops every guest's record of the accessory `registryID` names.
+    ///
+    /// macOS can take an assignment back without VZ reporting anything — a
+    /// fast user switch withdraws them all — so this is what keeps a VM's
+    /// attachment list from outliving the accessory behind it.
+    private func forget(_ registryID: UInt64) {
+        for instance in roster.instances {
+            guard let sessionID = instance.liveSessionID else { continue }
+            for attached in instance.liveUSBAccessories
+            where attached.accessory.registryID == registryID {
+                instance.forgetAttachedAccessory(deviceID: attached.deviceID, for: sessionID)
+                Self.logger.notice(
+                    "Dropped withdrawn USB accessory \(attached.accessory.displayName, privacy: .public) from '\(instance.name, privacy: .public)'"
+                )
+            }
+        }
     }
 
     /// The VMs an accessory could be attached to right now.

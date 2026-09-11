@@ -14,6 +14,7 @@ import os
 final class USBAccessoryService: USBAccessoryProviding {
     private(set) var accessories: [USBAccessoryInfo] = []
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
+    var onAccessoryWithdrawn: (@MainActor (UInt64) -> Void)?
 
     /// The live `AAUSBAccessory` behind each entry in `accessories`. VZ needs
     /// the object itself to capture the device; every other layer names it by
@@ -87,6 +88,7 @@ final class USBAccessoryService: USBAccessoryProviding {
         guard held.removeValue(forKey: registryID) != nil else { return }
         accessories.removeAll { $0.registryID == registryID }
         Self.logger.notice("USB accessory withdrawn from Kernova: \(registryID)")
+        onAccessoryWithdrawn?(registryID)
     }
 
     // MARK: - Attach and Detach
