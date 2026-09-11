@@ -2,9 +2,9 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("USBDeviceService Tests", .admissionGated)
+@Suite("RemovableMediaDeviceService Tests", .admissionGated)
 @MainActor
-struct USBDeviceServiceTests {
+struct RemovableMediaDeviceServiceTests {
     private func makeInstance(phase: VMLifecyclePhase = .running(sessionID: UUID()))
         -> VMInstance
     {
@@ -18,11 +18,11 @@ struct USBDeviceServiceTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
     }
 
-    // MARK: - USBDeviceInfo Model Tests
+    // MARK: - RemovableMediaDeviceInfo Model Tests
 
-    @Test("USBDeviceInfo displayName returns last path component")
-    func usbDeviceInfoDisplayName() {
-        let info = USBDeviceInfo(path: "/Users/test/disk.dmg", readOnly: true)
+    @Test("RemovableMediaDeviceInfo displayName returns last path component")
+    func removableMediaDeviceInfoDisplayName() {
+        let info = RemovableMediaDeviceInfo(path: "/Users/test/disk.dmg", readOnly: true)
         #expect(info.displayName == "disk.dmg")
     }
 
@@ -30,7 +30,7 @@ struct USBDeviceServiceTests {
 
     @Test("Mock service records attach call parameters")
     func mockServiceRecordsAttach() async throws {
-        let service = MockUSBDeviceService()
+        let service = MockRemovableMediaDeviceService()
         let instance = makeInstance()
 
         let info = try await service.attach(
@@ -46,7 +46,7 @@ struct USBDeviceServiceTests {
 
     @Test("Mock service honors desiredUUID and records it")
     func mockServiceHonorsDesiredUUID() async throws {
-        let service = MockUSBDeviceService()
+        let service = MockRemovableMediaDeviceService()
         let instance = makeInstance()
         let desired = UUID()
 
@@ -63,7 +63,7 @@ struct USBDeviceServiceTests {
 
     @Test("Mock service records detach call")
     func mockServiceRecordsDetach() async throws {
-        let service = MockUSBDeviceService()
+        let service = MockRemovableMediaDeviceService()
         let instance = makeInstance()
 
         let info = try await service.attach(
@@ -75,14 +75,14 @@ struct USBDeviceServiceTests {
 
     @Test("Attach propagates errors without modifying tracking")
     func attachPropagatesErrors() async {
-        let service = MockUSBDeviceService()
-        service.attachError = USBDeviceError.noVirtualMachine
+        let service = MockRemovableMediaDeviceService()
+        service.attachError = RemovableMediaDeviceError.noVirtualMachine
         let instance = makeInstance()
 
         await #expect {
             try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
         } throws: { error in
-            guard let e = error as? USBDeviceError,
+            guard let e = error as? RemovableMediaDeviceError,
                 case .noVirtualMachine = e
             else { return false }
             return true
@@ -93,16 +93,16 @@ struct USBDeviceServiceTests {
 
     @Test("Detach propagates errors")
     func detachPropagatesErrors() async throws {
-        let service = MockUSBDeviceService()
+        let service = MockRemovableMediaDeviceService()
         let instance = makeInstance()
 
-        let info = USBDeviceInfo(path: "/tmp/test.dmg", readOnly: false)
-        service.detachError = USBDeviceError.deviceNotFound
+        let info = RemovableMediaDeviceInfo(path: "/tmp/test.dmg", readOnly: false)
+        service.detachError = RemovableMediaDeviceError.deviceNotFound
 
         await #expect {
             try await service.detach(deviceInfo: info, from: instance)
         } throws: { error in
-            guard let e = error as? USBDeviceError,
+            guard let e = error as? RemovableMediaDeviceError,
                 case .deviceNotFound = e
             else { return false }
             return true
@@ -112,12 +112,12 @@ struct USBDeviceServiceTests {
     // MARK: - VMInstance State Tests
 
     @Test("tearDownSession clears liveRemovableMedia")
-    func tearDownClearsUSBDevices() {
+    func tearDownClearsRemovableMedia() {
         let instance = makeInstance()
         let context = instance.beginSessionContext()
 
-        context.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
-        context.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
+        context.liveRemovableMedia.append(RemovableMediaDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
+        context.liveRemovableMedia.append(RemovableMediaDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
         #expect(instance.liveRemovableMedia.count == 2)
 
         instance.tearDownSession(restingAt: .stopped)
@@ -126,7 +126,7 @@ struct USBDeviceServiceTests {
     }
 
     @Test(
-        "canAttachUSBDevices admits a live VM only at a settled phase",
+        "canAttachRemovableMedia admits a live VM only at a settled phase",
         arguments: zip(
             [
                 VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
@@ -135,6 +135,6 @@ struct USBDeviceServiceTests {
             [true, true, false, false, false]))
     func canAttachFollowsLiveSession(phase: VMLifecyclePhase, expected: Bool) {
         let instance = makeInstance(phase: phase)
-        #expect(instance.canAttachUSBDevices == expected)
+        #expect(instance.canAttachRemovableMedia == expected)
     }
 }

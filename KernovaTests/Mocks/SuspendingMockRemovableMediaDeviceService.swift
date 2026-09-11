@@ -3,7 +3,7 @@ import KernovaTestSupport
 
 @testable import Kernova
 
-/// A mock USB device service whose `attach` method suspends until explicitly resumed.
+/// A mock removable media device service whose `attach` method suspends until explicitly resumed.
 ///
 /// Used to test the rapid-double-click mount mutex in `VMLibraryViewModel`.
 ///
@@ -11,7 +11,7 @@ import KernovaTestSupport
 ///   single `suspendedContinuation` slot; calling `suspendIfNeeded()` while another
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
-final class SuspendingMockUSBDeviceService: USBDeviceProviding {
+final class SuspendingMockRemovableMediaDeviceService: RemovableMediaAttaching {
     var attachCallCount = 0
     var detachCallCount = 0
     var lastAttachedPath: String?
@@ -76,14 +76,14 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
         }
     }
 
-    // MARK: - USBDeviceProviding
+    // MARK: - RemovableMediaAttaching
 
     func attach(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID?,
         to instance: VMInstance
-    ) async throws -> USBDeviceInfo {
+    ) async throws -> RemovableMediaDeviceInfo {
         attachCallCount += 1
         lastAttachedPath = diskImagePath
         lastAttachedReadOnly = readOnly
@@ -94,11 +94,11 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
         }
         let id = desiredUUID ?? UUID()
         noteCompletion()
-        return USBDeviceInfo(id: id, path: diskImagePath, readOnly: readOnly)
+        return RemovableMediaDeviceInfo(id: id, path: diskImagePath, readOnly: readOnly)
     }
 
     func detach(
-        deviceInfo: USBDeviceInfo,
+        deviceInfo: RemovableMediaDeviceInfo,
         from instance: VMInstance
     ) async throws {
         detachCallCount += 1

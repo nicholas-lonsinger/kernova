@@ -81,7 +81,7 @@ struct VMLibraryViewModelEphemeralTests {
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider()

@@ -23,21 +23,21 @@ struct VMLifecycleCoordinatorTests {
         MockVirtualizationService,
         MockMacOSInstallService,
         MockIPSWService,
-        MockUSBDeviceService
+        MockRemovableMediaDeviceService
     ) {
         let virtService = MockVirtualizationService()
         let installService = MockMacOSInstallService()
         let ipswService = MockIPSWService()
-        let usbService = MockUSBDeviceService()
+        let removableMediaService = MockRemovableMediaDeviceService()
         let coordinator = VMLifecycleCoordinator(
             virtualizationService: virtService,
             installService: installService,
             ipswService: ipswService,
-            usbDeviceService: usbService,
+            removableMediaDeviceService: removableMediaService,
             downloadsDirectory: downloadsDirectory
                 ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         )
-        return (coordinator, virtService, installService, ipswService, usbService)
+        return (coordinator, virtService, installService, ipswService, removableMediaService)
     }
 
     private func makeSuspendingCoordinator() -> (
@@ -49,7 +49,7 @@ struct VMLifecycleCoordinatorTests {
             virtualizationService: suspendingService,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService()
+            removableMediaDeviceService: MockRemovableMediaDeviceService()
         )
         return (coordinator, suspendingService)
     }
@@ -1102,7 +1102,7 @@ struct VMLifecycleCoordinatorTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             linuxImageResolveService: resolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,
@@ -1302,7 +1302,7 @@ struct VMLifecycleCoordinatorTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             downloadsDirectory: nil
         )
         let persisted = URL(fileURLWithPath: "/Users/Shared/old.iso")
@@ -1780,63 +1780,63 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.configuration.linuxInstallContext == context)
     }
 
-    // MARK: - USB Device Pass-Through
+    // MARK: - Removable Media Attach/Detach
 
-    @Test("attachUSBDevice forwards to USB device service")
-    func attachUSBDeviceForwards() async throws {
-        let (coordinator, _, _, _, usbService) = makeCoordinator()
+    @Test("attachRemovableMedia forwards to removable media device service")
+    func attachRemovableMediaForwards() async throws {
+        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
         instance.enter(.running(sessionID: sessionID))
 
-        let info = try await coordinator.attachUSBDevice(
+        let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
             readOnly: true,
             to: instance,
             for: sessionID
         )
 
-        #expect(usbService.attachCallCount == 1)
-        #expect(usbService.lastAttachedPath == "/tmp/test.dmg")
-        #expect(usbService.lastAttachedReadOnly == true)
+        #expect(removableMediaService.attachCallCount == 1)
+        #expect(removableMediaService.lastAttachedPath == "/tmp/test.dmg")
+        #expect(removableMediaService.lastAttachedReadOnly == true)
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == true)
         #expect(instance.liveRemovableMedia.count == 1)
         #expect(instance.liveRemovableMedia[0].id == info.id)
     }
 
-    @Test("detachUSBDevice forwards to USB device service")
-    func detachUSBDeviceForwards() async throws {
-        let (coordinator, _, _, _, usbService) = makeCoordinator()
+    @Test("detachRemovableMedia forwards to removable media device service")
+    func detachRemovableMediaForwards() async throws {
+        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
         instance.enter(.running(sessionID: sessionID))
 
-        let info = try await coordinator.attachUSBDevice(
+        let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
             readOnly: false,
             to: instance,
             for: sessionID
         )
 
-        try await coordinator.detachUSBDevice(info, from: instance, for: sessionID)
+        try await coordinator.detachRemovableMedia(info, from: instance, for: sessionID)
 
-        #expect(usbService.detachCallCount == 1)
+        #expect(removableMediaService.detachCallCount == 1)
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("attachUSBDevice propagates error from USB device service")
-    func attachUSBDevicePropagatesError() async {
-        let (coordinator, _, _, _, usbService) = makeCoordinator()
-        usbService.attachError = USBDeviceError.noVirtualMachine
+    @Test("attachRemovableMedia propagates error from removable media device service")
+    func attachRemovableMediaPropagatesError() async {
+        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
+        removableMediaService.attachError = RemovableMediaDeviceError.noVirtualMachine
         let sessionID = UUID()
         let instance = makeInstance()
         instance.enter(.running(sessionID: sessionID))
 
-        await #expect(throws: USBDeviceError.self) {
-            try await coordinator.attachUSBDevice(
+        await #expect(throws: RemovableMediaDeviceError.self) {
+            try await coordinator.attachRemovableMedia(
                 diskImagePath: "/tmp/test.dmg",
                 readOnly: false,
                 to: instance,
@@ -1845,40 +1845,40 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
-    @Test("detachUSBDevice propagates error from USB device service")
-    func detachUSBDevicePropagatesError() async throws {
-        let (coordinator, _, _, _, usbService) = makeCoordinator()
+    @Test("detachRemovableMedia propagates error from removable media device service")
+    func detachRemovableMediaPropagatesError() async throws {
+        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
         instance.enter(.running(sessionID: sessionID))
 
-        let info = try await coordinator.attachUSBDevice(
+        let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
             readOnly: false,
             to: instance,
             for: sessionID
         )
 
-        usbService.detachError = USBDeviceError.deviceNotFound
+        removableMediaService.detachError = RemovableMediaDeviceError.deviceNotFound
 
-        await #expect(throws: USBDeviceError.self) {
-            try await coordinator.detachUSBDevice(info, from: instance, for: sessionID)
+        await #expect(throws: RemovableMediaDeviceError.self) {
+            try await coordinator.detachRemovableMedia(info, from: instance, for: sessionID)
         }
 
         // Device should still be tracked since detach failed
         #expect(instance.liveRemovableMedia.count == 1)
     }
 
-    @Test("attachUSBDevice and detachUSBDevice never reach the service for a superseded session")
-    func usbDevicePassThroughDropsASupersededSession() async throws {
-        let (coordinator, _, _, _, usbService) = makeCoordinator()
+    @Test("attachRemovableMedia and detachRemovableMedia never reach the service for a superseded session")
+    func removableMediaPassThroughDropsASupersededSession() async throws {
+        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
         instance.enter(.running(sessionID: sessionID))
 
-        let info = try await coordinator.attachUSBDevice(
+        let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
             readOnly: true,
             to: instance,
@@ -1888,39 +1888,39 @@ struct VMLifecycleCoordinatorTests {
         instance.tearDownSession(restingAt: .stopped)
         instance.beginSessionContext()
         instance.enter(.running(sessionID: UUID()))
-        let attachesBefore = usbService.attachCallCount
+        let attachesBefore = removableMediaService.attachCallCount
 
         // `noVirtualMachine` specifically: it is the case `VMLibrary`'s
-        // abandon-the-reconcile arms catch. `USBDeviceError` is not
+        // abandon-the-reconcile arms catch. `RemovableMediaDeviceError` is not
         // `Equatable`, so the arm is what states the expectation.
         var attachBailed = false
         do {
-            _ = try await coordinator.attachUSBDevice(
+            _ = try await coordinator.attachRemovableMedia(
                 diskImagePath: "/tmp/test.dmg",
                 readOnly: true,
                 to: instance,
                 for: sessionID
             )
-        } catch USBDeviceError.noVirtualMachine {
+        } catch RemovableMediaDeviceError.noVirtualMachine {
             attachBailed = true
         }
         var detachBailed = false
         do {
-            try await coordinator.detachUSBDevice(info, from: instance, for: sessionID)
-        } catch USBDeviceError.noVirtualMachine {
+            try await coordinator.detachRemovableMedia(info, from: instance, for: sessionID)
+        } catch RemovableMediaDeviceError.noVirtualMachine {
             detachBailed = true
         }
 
         #expect(attachBailed)
         #expect(detachBailed)
-        #expect(usbService.attachCallCount == attachesBefore)
-        #expect(usbService.detachCallCount == 0)
+        #expect(removableMediaService.attachCallCount == attachesBefore)
+        #expect(removableMediaService.detachCallCount == 0)
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("attachUSBDevice attaches the resolved URL but tracks the stored path")
-    func attachUSBDeviceTracksStoredPathWithResolvedURL() async throws {
-        let (coordinator, _, _, _, usbService) = makeCoordinator()
+    @Test("attachRemovableMedia attaches the resolved URL but tracks the stored path")
+    func attachRemovableMediaTracksStoredPathWithResolvedURL() async throws {
+        let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = makeInstance()
         instance.beginSessionContext()
@@ -1930,7 +1930,7 @@ struct VMLifecycleCoordinatorTests {
         // what must reach the service, while the tracked identity stays the
         // config's stored path so the live reconcile's path comparison
         // doesn't churn.
-        let info = try await coordinator.attachUSBDevice(
+        let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/old/location/media.iso",
             readOnly: true,
             resolvedURL: URL(fileURLWithPath: "/new/location/media.iso"),
@@ -1938,7 +1938,7 @@ struct VMLifecycleCoordinatorTests {
             for: sessionID
         )
 
-        #expect(usbService.lastAttachedPath == "/new/location/media.iso")
+        #expect(removableMediaService.lastAttachedPath == "/new/location/media.iso")
         #expect(info.path == "/old/location/media.iso")
         #expect(instance.liveRemovableMedia.first?.path == "/old/location/media.iso")
     }
@@ -2049,7 +2049,7 @@ struct VMLifecycleCoordinatorTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             downloadsDirectory: nil
         )
         let persisted = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")

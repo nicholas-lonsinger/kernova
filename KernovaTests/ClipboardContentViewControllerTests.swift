@@ -39,7 +39,7 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
-        usbDeviceService: MockUSBDeviceService(),
+        removableMediaDeviceService: MockRemovableMediaDeviceService(),
         preferences: preferences
     )
 }

@@ -126,8 +126,8 @@ stateless ones are `Sendable` structs.
   capture and revert against an injected `VMSnapshotStoring`.
 - `MacOSInstallService` — restore-image load, platform-file creation, and the `VZMacOSInstaller`
   run with KVO progress.
-- `USBDeviceService` — runtime USB mass-storage attach/detach against the live XHCI controller.
-  Owned by `VMLifecycleCoordinator`.
+- `RemovableMediaDeviceService` — runtime USB mass-storage attach/detach against the live XHCI
+  controller. Owned by `VMLifecycleCoordinator`.
 - `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMSleepWakeCoordinator`,
   which auto-pauses running VMs before sleep and resumes them on wake.
 
@@ -363,7 +363,7 @@ session down without that hook, so a suspended session survives to revert at its
   surface, and drives alerts, sheets and the wizard by calling its `VMLibraryPresenting` delegate
   imperatively rather than toggling observed flags.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
-  `IPSWService`, `USBDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
+  `IPSWService`, `RemovableMediaDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
   `Downloading`), and orchestrates the macOS install and Linux install pipelines, each driven by
   the install context persisted on `VMConfiguration` (`installContext` / `linuxInstallContext`)
   until it completes. It serializes lifecycle operations per VM, and a serialized operation first
@@ -452,7 +452,7 @@ AppDelegate
     │                 ├── VirtualizationService
     │                 ├── MacOSInstallService
     │                 ├── IPSWService
-    │                 └── USBDeviceService
+    │                 └── RemovableMediaDeviceService
     ├── creates → MainMenuController
     ├── creates → AppResidencyHosting: AppResidencyController (activation policy, status item,
     │                 summon, intent gateway) or TestHostResidencyController

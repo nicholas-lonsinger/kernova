@@ -20,19 +20,19 @@ struct VMCommandCoreAttachmentTests {
         let storage: MockVMStorageService
         let diskImages: MockDiskImageService
         let fileSystem: MockFileSystem
-        let usbDevices: MockUSBDeviceService
+        let removableMediaDevices: MockRemovableMediaDeviceService
     }
 
     private func makeHarness(diskImages: MockDiskImageService = MockDiskImageService()) -> Harness {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
-        let usbDevices = MockUSBDeviceService()
+        let removableMediaDevices = MockRemovableMediaDeviceService()
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: usbDevices,
+            removableMediaDeviceService: removableMediaDevices,
             linuxImageResolveService: MockLinuxImageResolveService(),
             downloadService: MockDownloadService(),
             fileSystem: fileSystem
@@ -57,7 +57,7 @@ struct VMCommandCoreAttachmentTests {
         )
         return Harness(
             core: core, library: library, storage: storage, diskImages: diskImages,
-            fileSystem: fileSystem, usbDevices: usbDevices)
+            fileSystem: fileSystem, removableMediaDevices: removableMediaDevices)
     }
 
     @discardableResult
@@ -627,14 +627,14 @@ struct VMCommandCoreAttachmentTests {
         let item = RemovableMediaItem(path: externalPath("media.iso"), readOnly: true)
         instance.configuration.removableMedia = [item]
         instance.recordAttachedMedia(
-            USBDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
+            RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
 
         try harness.core.ejectRemovableMedia(.id(instance.id), item: item.id)
         try await harness.core.suspend(.id(instance.id))
 
         // A save that ran first would have torn the session down under the
         // queued detach, which would then have been dropped as stale.
-        #expect(harness.usbDevices.detachCallCount == 1)
+        #expect(harness.removableMediaDevices.detachCallCount == 1)
         #expect(instance.configuration.removableMedia == nil)
         #expect(instance.phase == .suspended)
     }
@@ -1099,7 +1099,7 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
         #expect(instance.hasGuestAgentInstallerMounted)
-        #expect(harness.usbDevices.detachCallCount == 0)
+        #expect(harness.removableMediaDevices.detachCallCount == 0)
 
         instance.enter(.running(sessionID: sessionID))
         try harness.core.unmountGuestAgentDisk(.id(instance.id))

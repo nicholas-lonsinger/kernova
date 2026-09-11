@@ -24,7 +24,7 @@ func makeSettingsViewModel(
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
-        usbDeviceService: MockUSBDeviceService(),
+        removableMediaDeviceService: MockRemovableMediaDeviceService(),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         isVMNetworkingEntitled: entitled

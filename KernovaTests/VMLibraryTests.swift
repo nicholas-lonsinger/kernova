@@ -19,7 +19,7 @@ struct VMLibraryTests {
     private func makeLibrary(
         storageService: MockVMStorageService = MockVMStorageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService(),
-        usbDeviceService: any USBDeviceProviding = MockUSBDeviceService(),
+        removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
         downloadsDirectory: URL? = FileManager.default.urls(
@@ -27,7 +27,7 @@ struct VMLibraryTests {
         ).first,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         isVMNetworkingEntitled: Bool = true
-    ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any USBDeviceProviding) {
+    ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
         let library = VMLibrary(
             storageService: storageService,
             snapshotStore: VMSnapshotStore(),
@@ -35,7 +35,7 @@ struct VMLibraryTests {
                 virtualizationService: virtualizationService,
                 installService: MockMacOSInstallService(),
                 ipswService: MockIPSWService(),
-                usbDeviceService: usbDeviceService,
+                removableMediaDeviceService: removableMediaDeviceService,
                 linuxImageResolveService: linuxImageResolveService,
                 downloadService: downloadService,
                 fileSystem: fileSystem,
@@ -49,7 +49,7 @@ struct VMLibraryTests {
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
-        return (library, storageService, virtualizationService, usbDeviceService)
+        return (library, storageService, virtualizationService, removableMediaDeviceService)
     }
 
     /// Helper to mark an instance as preparing with a no-op task.

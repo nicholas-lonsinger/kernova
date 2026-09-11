@@ -50,7 +50,7 @@ struct DetailAlertsPresenterTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences
         )
         return (DetailAlertsPresenter(viewModel: viewModel), viewModel)

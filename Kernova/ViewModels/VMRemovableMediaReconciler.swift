@@ -186,7 +186,7 @@ final class VMRemovableMediaReconciler {
             rollbackLookup[item.id] = item
         }
 
-        var toDetach: [USBDeviceInfo] = []
+        var toDetach: [RemovableMediaDeviceInfo] = []
         var toAttach: [RemovableMediaItem] = []
         for trackedItem in tracked {
             guard let desired = targetByID[trackedItem.id] else {
@@ -208,13 +208,13 @@ final class VMRemovableMediaReconciler {
         // a swap reuses an id with a different attachment.
         for device in toDetach {
             do {
-                try await lifecycle.detachUSBDevice(device, from: instance, for: sessionID)
-            } catch USBDeviceError.noVirtualMachine {
+                try await lifecycle.detachRemovableMedia(device, from: instance, for: sessionID)
+            } catch RemovableMediaDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
                 )
                 return
-            } catch USBDeviceError.deviceNotFound {
+            } catch RemovableMediaDeviceError.deviceNotFound {
                 // The coordinator's `forgetAttachedMedia` is skipped when the
                 // framework call throws, so clear stale tracking explicitly here.
                 Self.logger.notice(
@@ -236,7 +236,7 @@ final class VMRemovableMediaReconciler {
                 // opens the attachment; on success it is registered with the instance
                 // (released at detach or teardown), and released by deinit if it throws.
                 let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
-                _ = try await lifecycle.attachUSBDevice(
+                _ = try await lifecycle.attachRemovableMedia(
                     diskImagePath: item.path,
                     readOnly: item.readOnly,
                     desiredUUID: item.id,
@@ -250,7 +250,7 @@ final class VMRemovableMediaReconciler {
                 Self.logger.notice(
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
                 )
-            } catch USBDeviceError.noVirtualMachine {
+            } catch RemovableMediaDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during media attach; abandoning reconcile"
                 )

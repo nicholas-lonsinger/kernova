@@ -71,7 +71,7 @@ struct VMSessionContextTests {
         let clipboard = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
         context.clipboardService = clipboard
         instance.clipboardDataSink.set(RetainingAcceptor())
-        context.liveRemovableMedia = [USBDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
+        context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.agentExpectedButMissing = true
         context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
@@ -151,7 +151,7 @@ struct VMSessionContextTests {
     func adoptBuildResultPopulatesTheContext() {
         let instance = makeInstance(guestOS: .linux)
         let context = instance.beginSessionContext()
-        let media = USBDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
+        let media = RemovableMediaDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
         let result = ConfigurationBuilder.BuildResult(
             configuration: VZVirtualMachineConfiguration(),
             serialInputPipe: Pipe(),
@@ -176,8 +176,8 @@ struct VMSessionContextTests {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
-        let first = USBDeviceInfo(path: "/tmp/a.iso", readOnly: true)
-        let second = USBDeviceInfo(path: "/tmp/b.iso", readOnly: false)
+        let first = RemovableMediaDeviceInfo(path: "/tmp/a.iso", readOnly: true)
+        let second = RemovableMediaDeviceInfo(path: "/tmp/b.iso", readOnly: false)
 
         instance.recordAttachedMedia(first, for: sessionID)
         instance.recordAttachedMedia(second, for: sessionID)
@@ -190,8 +190,8 @@ struct VMSessionContextTests {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
-        let kept = USBDeviceInfo(path: "/tmp/keep.iso", readOnly: true)
-        let removed = USBDeviceInfo(path: "/tmp/remove.iso", readOnly: false)
+        let kept = RemovableMediaDeviceInfo(path: "/tmp/keep.iso", readOnly: true)
+        let removed = RemovableMediaDeviceInfo(path: "/tmp/remove.iso", readOnly: false)
         instance.recordAttachedMedia(kept, for: sessionID)
         instance.recordAttachedMedia(removed, for: sessionID)
 
@@ -208,7 +208,7 @@ struct VMSessionContextTests {
         instance.tearDownSession(restingAt: .stopped)
         #expect(instance.sessionContext == nil)
 
-        instance.recordAttachedMedia(USBDeviceInfo(path: "/tmp/late.iso", readOnly: true), for: sessionID)
+        instance.recordAttachedMedia(RemovableMediaDeviceInfo(path: "/tmp/late.iso", readOnly: true), for: sessionID)
         instance.forgetAttachedMedia(deviceID: UUID(), for: sessionID)
 
         #expect(instance.liveRemovableMedia.isEmpty)
@@ -219,13 +219,13 @@ struct VMSessionContextTests {
         let sessionA = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionA))
         instance.beginSessionContext()
-        let carried = USBDeviceInfo(path: "/tmp/carried.iso", readOnly: true)
+        let carried = RemovableMediaDeviceInfo(path: "/tmp/carried.iso", readOnly: true)
         instance.recordAttachedMedia(carried, for: sessionA)
 
         // Force stop, then a restart whose cold boot re-registers the same item.
         instance.tearDownSession(restingAt: .stopped)
         instance.beginSessionContext()
-        let coldBooted = USBDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
+        let coldBooted = RemovableMediaDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
         instance.adoptBuildResult(
             ConfigurationBuilder.BuildResult(
                 configuration: VZVirtualMachineConfiguration(),
@@ -269,12 +269,12 @@ struct VMSessionContextTests {
             })
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {
-                context.liveRemovableMedia = [USBDeviceInfo(path: "/tmp/a.iso", readOnly: true)]
+                context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/a.iso", readOnly: true)]
             })
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {
                 instance.recordAttachedMedia(
-                    USBDeviceInfo(path: "/tmp/b.iso", readOnly: true), for: sessionID)
+                    RemovableMediaDeviceInfo(path: "/tmp/b.iso", readOnly: true), for: sessionID)
             })
     }
 

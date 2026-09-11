@@ -27,7 +27,7 @@ struct VMLibraryViewModelSnapshotTests {
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider()
@@ -57,7 +57,7 @@ struct VMLibraryViewModelSnapshotTests {
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider()

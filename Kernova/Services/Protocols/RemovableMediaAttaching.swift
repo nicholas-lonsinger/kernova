@@ -1,8 +1,8 @@
 import Foundation
 
-/// Abstraction for runtime USB device attach/detach operations.
+/// Abstraction for runtime removable-media attach/detach operations.
 @MainActor
-protocol USBDeviceProviding: Sendable {
+protocol RemovableMediaAttaching: Sendable {
     /// Attaches a disk image as a USB mass storage device.
     ///
     /// `desiredUUID` overrides the auto-generated device UUID so the runtime
@@ -13,6 +13,6 @@ protocol USBDeviceProviding: Sendable {
         readOnly: Bool,
         desiredUUID: UUID?,
         to instance: VMInstance
-    ) async throws -> USBDeviceInfo
-    func detach(deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws
+    ) async throws -> RemovableMediaDeviceInfo
+    func detach(deviceInfo: RemovableMediaDeviceInfo, from instance: VMInstance) async throws
 }
