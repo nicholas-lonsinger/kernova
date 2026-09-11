@@ -48,12 +48,9 @@ struct ClipboardPassthroughCoordinatorTests {
         /// resolve resolves on the event itself.
         @ObservationIgnored let grabRecorded = AsyncGate()
 
-        /// How many times `materializeForCopy` has run — the first step of a
-        /// publish, so a wait on it resolves once the publish is in flight.
+        /// How many times `materializeForCopy` has run — a publish's first step,
+        /// and so how far a publish a test is holding has got.
         var copiesMaterialized = 0
-
-        /// Fires on each `materializeForCopy`.
-        @ObservationIgnored let copyMaterialized = AsyncGate()
 
         func stop() {}
         func clearBuffer() { clipboardContent = .empty }
@@ -69,7 +66,6 @@ struct ClipboardPassthroughCoordinatorTests {
 
         func materializeForCopy() -> [CopyToMacItem] {
             copiesMaterialized += 1
-            copyMaterialized.notify()
             guard refusesOverCopyBudget else {
                 return clipboardContent.representations.map { .resolved($0) }
             }
@@ -877,24 +873,29 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.pasteboard.changeCount == baseline)
     }
 
-    /// Starts a session and lets one inbound publish get under way: past
-    /// `materializeForCopy`, so the coordinator's task is parked on the
-    /// publisher's off-actor stage and the next main-actor turn is the test's.
-    private func makeInFlightPublishHarness() async throws -> Harness {
+    /// Starts a session and parks its one inbound publish at the write: past
+    /// `materializeForCopy` *and* past the publisher's off-actor stage, the
+    /// window a cancellation has to land in for the write to be stopped.
+    private func makeHeldPublishHarness() async throws -> (Harness, PublishHold) {
         let h = makeHarness()
         writeText("previous host content", to: h.pasteboard)
+        let hold = PublishHold(h.publisher)
         h.coordinator.start()
         // Settle the outbound poll first, so the timer's first tick cannot land
         // mid-test and overwrite the service buffer with the host content.
         h.coordinator.pollHostClipboard()
         h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
-        try await h.service.copyMaterialized.wait { h.service.copiesMaterialized == 1 }
-        return h
+        try await hold.waitUntilAtWrite()
+        // Where the park sits: the publish has planned and staged its items, the
+        // state a gate on `materializeForCopy` — synchronous, before the first
+        // await — cannot hold a publish in.
+        #expect(h.service.copiesMaterialized == 1)
+        return (h, hold)
     }
 
     @Test("stop() cancels the inbound publish in flight, so nothing lands after it")
-    func stopCancelsInFlightInboundPublish() async throws {
-        let h = try await makeInFlightPublishHarness()
+    func stopCancelsTheInboundPublishInFlight() async throws {
+        let (h, hold) = try await makeHeldPublishHarness()
         defer { h.pasteboard.releaseGlobally() }
         let baseline = h.pasteboard.changeCount
 
@@ -904,15 +905,43 @@ struct ClipboardPassthroughCoordinatorTests {
         h.coordinator.stop()
         #expect(publish.isCancelled)
 
+        hold.release()
         await publish.value
+
         #expect(!publishedAfterStop)
         #expect(h.pasteboard.changeCount == baseline)
         #expect(h.pasteboard.string(forType: .string) == "previous host content")
+        // The write records this whether or not the pasteboard took the items,
+        // so `nil` means the write was never attempted.
+        #expect(h.publisher.lastWriteChangeCount == nil)
+    }
+
+    @Test("A publish held at its write still lands while the session is running")
+    func heldInboundPublishLandsWithoutAStop() async throws {
+        let (h, hold) = try await makeHeldPublishHarness()
+        defer {
+            h.coordinator.stop()
+            h.pasteboard.releaseGlobally()
+        }
+
+        let published = AsyncGate()
+        var publishCompleted = false
+        h.coordinator.onInboundPublishedForTesting = {
+            publishCompleted = true
+            published.notify()
+        }
+        hold.release()
+        try await published.wait { publishCompleted }
+
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        #expect(h.pasteboard.data(forType: textType) == Data("guest copied this".utf8))
+        // The coordinator absorbed its own write, so the next poll tick skips it.
+        #expect(h.publisher.lastWriteChangeCount == h.pasteboard.changeCount)
     }
 
     @Test("A newer inbound offer supersedes the publish in flight")
     func newerOfferSupersedesInFlightPublish() async throws {
-        let h = try await makeInFlightPublishHarness()
+        let (h, hold) = try await makeHeldPublishHarness()
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
@@ -922,37 +951,56 @@ struct ClipboardPassthroughCoordinatorTests {
         let published = AsyncGate()
         h.coordinator.onInboundPublishedForTesting = { published.notify() }
         h.service.simulateInboundOffer(ClipboardContent(text: "guest copied again"))
-        try await h.service.copyMaterialized.wait { h.service.copiesMaterialized == 2 }
+        // Both publishes park at the write, so the first is provably still in
+        // flight — not merely un-awaited — when the second supersedes it.
+        try await hold.waitUntilAtWrite(count: 2)
 
-        // The second publish is the live one, and it was armed by cancelling
-        // the first — whether or not the first had already returned.
         #expect(first.isCancelled)
         let second = try #require(h.coordinator.inboundPublishTaskForTesting)
         #expect(second != first)
         #expect(!second.isCancelled)
 
+        hold.release()
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         try await published.wait {
             h.pasteboard.data(forType: textType) == Data("guest copied again".utf8)
         }
     }
+}
 
-    @Test("A publish whose task is cancelled writes nothing")
-    func cancelledPublishWritesNothing() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-        writeText("previous host content", to: h.pasteboard)
-        let baseline = h.pasteboard.changeCount
-        h.service.clipboardContent = ClipboardContent(text: "from guest")
+/// Parks every publish one step short of its pasteboard write — past
+/// `materializeForCopy` and the staging hop — so a test can drive a `stop()`, or
+/// a superseding offer, into the window a gate before the publish's first await
+/// never reaches.
+///
+/// Install it on the publisher before the offer that triggers the publish:
+/// ``waitUntilAtWrite(count:)`` resolves once that many publishes are parked
+/// there, and ``release()`` lets them all go on.
+@MainActor
+private final class PublishHold {
+    private let reached = AsyncGate()
+    private let resumed = AsyncGate()
+    private var parkedCount = 0
+    private var isReleased = false
 
-        let publisher = h.publisher
-        let service = h.service
-        let publish = Task { @MainActor in try await publisher.publish(from: service) }
-        publish.cancel()
+    init(_ publisher: HostClipboardPublisher) {
+        publisher.beforePasteboardWriteForTesting = { [self] in
+            parkedCount += 1
+            reached.notify()
+            // A fired backstop only lets the publish reach its write, which the
+            // caller's assertions catch — this hides no stuck condition.
+            try? await resumed.wait { self.isReleased }
+        }
+    }
 
-        await #expect(throws: CancellationError.self) { try await publish.value }
-        #expect(h.service.copiesMaterialized == 0)
-        #expect(h.pasteboard.changeCount == baseline)
-        #expect(h.pasteboard.string(forType: .string) == "previous host content")
+    /// Suspends until `count` publishes are parked at the write.
+    func waitUntilAtWrite(count: Int = 1) async throws {
+        try await reached.wait { self.parkedCount >= count }
+    }
+
+    /// Lets every parked publish go on.
+    func release() {
+        isReleased = true
+        resumed.notify()
     }
 }

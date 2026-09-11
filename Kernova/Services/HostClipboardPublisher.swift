@@ -41,6 +41,15 @@ final class HostClipboardPublisher {
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "HostClipboardPublisher")
 
+    #if DEBUG
+    /// Awaited between the staging hop and the cancellation check that guards the
+    /// write, so a test can park a publish in that gap and land a cancellation
+    /// there deterministically — the window a caller's cancellation has to hit
+    /// for the write to be stopped, and the one no gate before the first await
+    /// can reach.
+    var beforePasteboardWriteForTesting: (@MainActor () async -> Void)?
+    #endif
+
     init(
         writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
         providerRegistry: LazyClipboardProviderRegistry = .shared
@@ -88,6 +97,9 @@ final class HostClipboardPublisher {
             specs = try await Self.hostPasteboardItems(
                 for: ClipboardContent(representations: resolvedReps), generation: generation,
                 staging: staging)
+            #if DEBUG
+            await beforePasteboardWriteForTesting?()
+            #endif
             // The stage is where the task was off the actor; a cancellation that
             // arrived meanwhile must stop the write, the one observable step.
             guard !Task.isCancelled else { throw CancellationError() }
