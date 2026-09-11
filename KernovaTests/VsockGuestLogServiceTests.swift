@@ -205,9 +205,11 @@ struct VsockGuestLogServiceTests {
 
         let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
         service.start()
-        // Queued on the socket before the teardown, and never picked up: the
-        // consume task is `@MainActor` like this body, so nothing between here
-        // and `stop()` can hand it a turn.
+        // In flight at the teardown, at whichever stage the channel's GCD reader
+        // reaches first: still on the socket, or already yielded into `incoming`
+        // and buffered there. The consume task is `@MainActor` like this body, so
+        // it cannot run before `stop()` either way — and `stop()` closes the
+        // channel, which is what refuses a buffered frame to every consumer.
         try sender.send(makeLogFrame(level: .notice, message: "in flight"))
         service.stop()
 

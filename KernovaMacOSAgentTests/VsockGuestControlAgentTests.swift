@@ -551,4 +551,52 @@ struct VsockGuestControlAgentTests {
         // Second stop is a no-op.
         agent.stop()
     }
+
+    @Test("A stop() taken inside onPolicy drops the policy buffered behind it")
+    func stopInsideOnPolicyDropsTheBufferedPolicy() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let policies = AtomicInt()
+        let states = StateBox()
+        let agentBox = AtomicBox<VsockGuestControlAgent>()
+        let agent = makeAgent(
+            agentFd: agentFd,
+            onPolicy: { _ in
+                // The stop is taken on the serve loop itself, so the loop's next
+                // `next()` runs strictly after it — the case the channel makes
+                // exact. A stop from another executor races this loop instead,
+                // and the agent's serve loop is detached, so the guarantee it
+                // gets in production is best-effort.
+                if policies.increment() == 1 { agentBox.value?.stop() }
+            },
+            onStateChange: { states.record($0) })
+        agentBox.set(agent)
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host)  // drain the agent's outbound Hello
+
+        // One write, so the agent's readability handler decodes and yields both
+        // policies in the same callback — the state the second one has to be in
+        // for this test to be about a buffered frame at all.
+        var framed = Data()
+        for logForwarding in [true, false] {
+            var frame = Frame()
+            frame.protocolVersion = 1
+            frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
+                $0.logForwardingEnabled = logForwarding
+                $0.clipboardSharingEnabled = false
+            }
+            framed.append(try VsockChannel.serializeFramed(frame))
+        }
+        try host.writeFramed(framed)
+
+        // The serve loop leaving `.connected` is the channel being done…
+        try await states.changed.wait { states.value == .connecting }
+        // …and only the policy that arrived before the stop was ever handled.
+        #expect(policies.value == 1)
+    }
 }

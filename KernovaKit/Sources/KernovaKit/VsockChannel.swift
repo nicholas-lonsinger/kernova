@@ -15,14 +15,31 @@ public typealias Frame = Kernova_V1_Frame
 /// hold off both the inbound reads that keep the peer draining and the close
 /// that would otherwise end the park.
 public final class VsockChannel: @unchecked Sendable {
-    /// Inbound frames.
+    /// Inbound frames, in arrival order.
     ///
-    /// The stream finishes on EOF and finishes-with-error on
-    /// any framing or decoding failure.
-    public let incoming: AsyncThrowingStream<Frame, Error>
+    /// ``close()`` bounds delivery: no frame is handed over by a `next()` that
+    /// observes the close, so a consumer sharing the closer's actor takes
+    /// nothing after it — the check and the loop body share one turn of that
+    /// actor. A consumer iterating on another executor runs concurrently with
+    /// the close and can still be handling a frame it took an instant before
+    /// it; bounding that one is the consumer's own job, as
+    /// `ClipboardEndpoint.handleControlFrame` does.
+    ///
+    /// A peer EOF is not a close — frames read before one are still owed and
+    /// still delivered. The sequence finishes on either, and
+    /// finishes-with-error on any framing or decoding failure.
+    public let incoming: InboundFrames
 
     private let fileHandle: FileHandle
     private let continuation: AsyncThrowingStream<Frame, Error>.Continuation
+
+    /// Set by ``close()`` alone, and read by ``incoming`` on the consumer's
+    /// executor before each frame is handed over.
+    ///
+    /// An object of its own rather than a field beside `closed`: `incoming`
+    /// holds it, and a sequence holding the *channel* would retain it past the
+    /// `deinit` that closes it.
+    private let ownerClosed: Latch
 
     /// Serializes the blocking `fileHandle.write` call inside `writeFramed`.
     ///
@@ -76,7 +93,9 @@ public final class VsockChannel: @unchecked Sendable {
 
         self.fileHandle = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
         let (stream, continuation) = AsyncThrowingStream<Frame, Error>.makeStream()
-        self.incoming = stream
+        let ownerClosed = Latch()
+        self.ownerClosed = ownerClosed
+        self.incoming = InboundFrames(base: stream, ownerClosed: ownerClosed)
         self.continuation = continuation
     }
 
@@ -156,11 +175,19 @@ public final class VsockChannel: @unchecked Sendable {
         }
     }
 
-    /// Tears down the channel.
+    /// Tears down the channel at its owner's request (idempotent).
     ///
-    /// Subsequent `send` calls throw `.closed` and
-    /// the `incoming` stream finishes (without error).
+    /// Bounds ``incoming`` at the point of delivery: a frame already read off
+    /// the socket is dropped rather than handed over by any `next()` that
+    /// observes this call. That is exact for a consumer on the closer's own
+    /// actor and best-effort for one on another executor, which may be
+    /// mid-handling a frame it took just before — see ``incoming``.
+    /// Subsequent `send` calls throw `.closed`, and `incoming` finishes
+    /// without error.
     public func close() {
+        // Before the teardown, so no frame can be handed over between the
+        // stream's `finish()` and the flag that says why it finished.
+        ownerClosed.set()
         teardown(finishWith: nil)
     }
 
@@ -229,6 +256,84 @@ public final class VsockChannel: @unchecked Sendable {
             continuation.finish(throwing: error)
         } else {
             continuation.finish()
+        }
+    }
+}
+
+// MARK: - Inbound frames
+
+extension VsockChannel {
+    /// What ``VsockChannel/incoming`` delivers: the reader's frames, minus any
+    /// the owner's ``VsockChannel/close()`` reached first.
+    ///
+    /// The filter lives here rather than at the yield, because a frame the
+    /// reader has already yielded survives both the stream's `finish()` and a
+    /// consuming task's cancellation — an `AsyncThrowingStream` drains its
+    /// buffer before it reports either.
+    public struct InboundFrames: AsyncSequence, Sendable {
+        /// One decoded Kernova-protocol frame.
+        public typealias Element = Frame
+
+        private let base: AsyncThrowingStream<Frame, Error>
+        private let ownerClosed: Latch
+
+        fileprivate init(base: AsyncThrowingStream<Frame, Error>, ownerClosed: Latch) {
+            self.base = base
+            self.ownerClosed = ownerClosed
+        }
+
+        /// Single-consumer, sequential iteration only: iterators share the one
+        /// underlying buffer, and a second `next()` outstanding against it traps.
+        public func makeAsyncIterator() -> AsyncIterator {
+            AsyncIterator(base: base, ownerClosed: ownerClosed)
+        }
+
+        /// Hands over frames until the channel is done.
+        ///
+        /// Carries no position of its own — the stream's shared storage has it —
+        /// so ``next()`` is non-mutating and a `let` binding iterates.
+        public struct AsyncIterator: AsyncIteratorProtocol {
+            private let base: AsyncThrowingStream<Frame, Error>
+            private let ownerClosed: Latch
+
+            fileprivate init(
+                base: AsyncThrowingStream<Frame, Error>, ownerClosed: Latch
+            ) {
+                self.base = base
+                self.ownerClosed = ownerClosed
+            }
+
+            /// - Returns: the next frame, or `nil` once the channel is done.
+            /// - Throws: the framing or decoding failure that ended the channel.
+            ///
+            /// `nonisolated(nonsending)` is what makes the drop terminal for a
+            /// consumer that shares an actor with the closer: the check runs on
+            /// that actor, so no turn of it — no `close()` — comes between the
+            /// check and the loop body the frame is handed to.
+            public nonisolated(nonsending) func next() async throws -> Frame? {
+                while let frame = try await Self.pull(from: base) {
+                    // Dropped and drained rather than returning `nil` here, so a
+                    // stream finished with an error still surfaces it.
+                    guard !ownerClosed.isSet else { continue }
+                    return frame
+                }
+                return nil
+            }
+
+            /// One pull from the underlying stream.
+            ///
+            /// A fresh stream iterator per pull: they share the one storage, so
+            /// this continues the sequence rather than replaying it.
+            ///
+            /// `nonisolated(nonsending)` like ``next()``, so a frame's whole
+            /// trip stays on the consumer's executor and the non-`Sendable`
+            /// iterator never crosses out of it.
+            private nonisolated(nonsending) static func pull(
+                from stream: AsyncThrowingStream<Frame, Error>
+            ) async throws -> Frame? {
+                var iterator = stream.makeAsyncIterator()
+                return try await iterator.next()
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Darwin
+import SwiftProtobuf
 import KernovaTestSupport
 @testable import KernovaKit
 
@@ -59,7 +60,7 @@ struct VsockChannelTests {
         timeout: Duration = .seconds(2)
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Error> {
-            var iterator = channel.incoming.makeAsyncIterator()
+            let iterator = channel.incoming.makeAsyncIterator()
             return try await iterator.next()
         }
         let timeoutTask = Task<Void, Error> {
@@ -152,7 +153,7 @@ struct VsockChannelTests {
         }
 
         var received: [UInt32] = []
-        var iterator = b.incoming.makeAsyncIterator()
+        let iterator = b.incoming.makeAsyncIterator()
         let collector = Task<[UInt32], Error> {
             var collected: [UInt32] = []
             while collected.count < 5, let frame = try await iterator.next() {
@@ -185,7 +186,7 @@ struct VsockChannelTests {
 
         // Spawn the consumer first so it's blocked in next().
         let consumer = Task<Frame?, Error> {
-            var iterator = a.incoming.makeAsyncIterator()
+            let iterator = a.incoming.makeAsyncIterator()
             return try await iterator.next()
         }
         // Tiny yield to let the consumer enter next().
@@ -205,7 +206,7 @@ struct VsockChannelTests {
         defer { a.close() }
 
         let consumer = Task<Frame?, Error> {
-            var iterator = a.incoming.makeAsyncIterator()
+            let iterator = a.incoming.makeAsyncIterator()
             return try await iterator.next()
         }
         try await Task.sleep(for: .milliseconds(10))
@@ -214,6 +215,102 @@ struct VsockChannelTests {
 
         let value = try await consumer.value
         #expect(value == nil)
+    }
+
+    /// Writes two frames as one `write(2)`, so the receiver's readability
+    /// handler decodes and yields both in the same callback.
+    ///
+    /// Once the first frame has been delivered, the second is therefore
+    /// provably sitting in `incoming`'s buffer — the state a test about what
+    /// happens to a buffered frame has to be in, and one no channel API
+    /// otherwise reports.
+    private func sendAsOneChunk(_ frames: [Frame], on channel: VsockChannel) throws {
+        var bytes = Data()
+        for frame in frames {
+            bytes.append(try VsockChannel.serializeFramed(frame))
+        }
+        try channel.writeFramed(bytes)
+    }
+
+    /// Whether any byte is still sitting unread in `fd`'s receive buffer.
+    ///
+    /// `MSG_PEEK` leaves whatever it finds in place, so the channel's own reader
+    /// still gets it.
+    private func hasUnreadBytes(on fd: Int32) -> Bool {
+        var byte: UInt8 = 0
+        return recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT) > 0
+    }
+
+    @Test("A frame buffered when the owner closes is never delivered")
+    func ownerCloseDropsABufferedFrame() async throws {
+        let (fdA, fdB) = try rawSocketPair()
+        let a = VsockChannel(fileDescriptor: fdA)
+        let b = VsockChannel(fileDescriptor: fdB)
+        a.start()
+        b.start()
+        defer { a.close(); b.close() }
+
+        try sendAsOneChunk([makeHello(serviceVersion: 1), makeHello(serviceVersion: 2)], on: a)
+
+        let first = try await waitForNextFrame(on: b)
+        guard case .hello(let hello) = first?.payload, hello.serviceVersion == 1 else {
+            Issue.record("Expected the first hello, got \(String(describing: first?.payload))")
+            return
+        }
+        // The test's premise, and not otherwise observable: the first frame's
+        // delivery means the readability handler decoded the whole chunk, so
+        // the second is in `incoming`'s buffer. Left on the socket instead, the
+        // close would drop it by nilling the handler and prove nothing.
+        #expect(!hasUnreadBytes(on: fdB))
+
+        b.close()
+
+        let afterClose = try await waitForNextFrame(on: b)
+        #expect(afterClose == nil)
+    }
+
+    @Test("A frame buffered when the peer hangs up is still delivered")
+    func peerEOFStillDeliversABufferedFrame() async throws {
+        let (a, b) = try makePair()
+        a.start()
+        b.start()
+        defer { a.close(); b.close() }
+
+        try sendAsOneChunk([makeHello(serviceVersion: 1), makeHello(serviceVersion: 2)], on: a)
+
+        _ = try await waitForNextFrame(on: b)
+
+        // The peer's own close is not this channel's: what it had already sent
+        // is still owed to the consumer.
+        a.close()
+
+        let second = try await waitForNextFrame(on: b)
+        guard case .hello(let hello) = second?.payload else {
+            Issue.record("Expected the second hello, got \(String(describing: second?.payload))")
+            return
+        }
+        #expect(hello.serviceVersion == 2)
+        let afterSecond = try await waitForNextFrame(on: b)
+        #expect(afterSecond == nil)
+    }
+
+    @Test("A decode failure surfaces to the consumer as a thrown error")
+    func decodeFailureThrowsToTheConsumer() async throws {
+        let (a, b) = try makePair()
+        a.start()
+        b.start()
+        defer { a.close(); b.close() }
+
+        // A well-framed payload that is not a `Frame`: the length prefix is
+        // honoured, so the failure is the protobuf decode, which finishes the
+        // stream with its error rather than with EOF.
+        try a.writeFramed(try StreamFrame.encode(Data([0xFF, 0xFF, 0xFF, 0xFF])))
+
+        // The specific decode error, not `any Error`: `waitForNextFrame`'s own
+        // `TestTimeout` would satisfy that and pass this test on a stall.
+        await #expect(throws: BinaryDecodingError.self) {
+            _ = try await waitForNextFrame(on: b)
+        }
     }
 
     @Test("send after close throws .closed")

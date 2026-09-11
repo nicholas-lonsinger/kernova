@@ -34,14 +34,14 @@ public func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel
 ///   producing a frame (EOF), so the two failure shapes are identifiable.
 ///   Conflating them once masked a CI flake as a peer-disconnect bug.
 ///
-/// Single-consumer: `AsyncThrowingStream` allows one iteration, so a test that
-/// also needs "prove nothing arrived" against the same channel uses
+/// Single-consumer: `VsockChannel.incoming` allows one iteration at a time, so a
+/// test that also needs "prove nothing arrived" against the same channel uses
 /// ``FrameRecorder`` instead of mixing the two.
 public func nextFrame(from channel: VsockChannel) async throws -> Frame {
     let timeout = testWaitBackstop
     let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {
-        var iterator = channel.incoming.makeAsyncIterator()
+        let iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
     }
     let timeoutTask = Task<Void, Never> {
@@ -74,10 +74,10 @@ public func nextFrame(from channel: VsockChannel) async throws -> Frame {
 
 /// Buffers everything one channel delivers, from a single consumer.
 ///
-/// `AsyncThrowingStream` is single-consumer and cancelling one iterator ends the
-/// shared iteration, so a test needing both "expect this frame" and "expect no
-/// frame" against the same channel records once here rather than hand-rolling an
-/// iterator per assertion.
+/// `VsockChannel.incoming` is single-consumer and cancelling one iterator ends
+/// the shared iteration, so a test needing both "expect this frame" and "expect
+/// no frame" against the same channel records once here rather than hand-rolling
+/// an iterator per assertion.
 public final class FrameRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storedFrames: [Frame] = []
