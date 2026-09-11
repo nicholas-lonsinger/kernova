@@ -71,6 +71,82 @@ struct VirtualizationServiceTests {
         #expect(!captured)
     }
 
+    // MARK: - Detaching passthrough accessories before a save
+
+    /// A live session holding `count` passthrough accessories.
+    private func instanceHoldingAccessories(_ count: Int) -> (VMInstance, UUID, [UUID]) {
+        let sessionID = UUID()
+        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        let context = instance.beginSessionContext()
+        var deviceIDs: [UUID] = []
+        for index in 0..<count {
+            let deviceID = UUID()
+            deviceIDs.append(deviceID)
+            context.liveUSBAccessories.append(
+                AttachedUSBAccessory(
+                    deviceID: deviceID,
+                    accessory: USBAccessoryInfo(
+                        registryID: UInt64(index + 1),
+                        descriptor: USBDeviceDescriptor(
+                            usbVersion: 0x0200, deviceClass: 0xFF, deviceSubClass: 0,
+                            deviceProtocol: 0, vendorID: 0x0403, productID: 0x6001,
+                            deviceVersion: 0x0600))))
+        }
+        return (instance, sessionID, deviceIDs)
+    }
+
+    @Test("Every passthrough accessory is detached, and its tracking entry cleared")
+    func detachesEveryAccessoryBeforeSaving() async {
+        let (instance, sessionID, deviceIDs) = instanceHoldingAccessories(2)
+        let session = MockSnapshotSession(guestState: .running)
+
+        await VirtualizationService.detachUSBAccessories(
+            from: instance, session: session, for: sessionID)
+
+        let detached = await session.detachedUSBDeviceIDs
+        #expect(detached == deviceIDs)
+        #expect(instance.liveUSBAccessories.isEmpty)
+    }
+
+    @Test("A detach that fails still clears the entry, so the save proceeds")
+    func aFailedDetachStillClearsTracking() async {
+        let (instance, sessionID, _) = instanceHoldingAccessories(1)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDetachError(VMSessionError.usbDeviceNotFound)
+
+        await VirtualizationService.detachUSBAccessories(
+            from: instance, session: session, for: sessionID)
+
+        #expect(instance.liveUSBAccessories.isEmpty)
+    }
+
+    @Test("A session holding nothing asks VZ for no detach at all")
+    func noAccessoriesMeansNoDetachCalls() async {
+        let (instance, sessionID, _) = instanceHoldingAccessories(0)
+        let session = MockSnapshotSession(guestState: .running)
+
+        await VirtualizationService.detachUSBAccessories(
+            from: instance, session: session, for: sessionID)
+
+        let calls = await session.calls
+        #expect(calls.isEmpty)
+    }
+
+    @Test("A detach for a session that is no longer live leaves the live one alone")
+    func detachForAStaleSessionDropsItsWrites() async {
+        let (instance, _, _) = instanceHoldingAccessories(1)
+        let session = MockSnapshotSession(guestState: .running)
+
+        await VirtualizationService.detachUSBAccessories(
+            from: instance, session: session, for: UUID())
+
+        // The device still left the controller — VZ was asked — but the record
+        // belongs to whichever session is live now, so it is untouched.
+        let detached = await session.detachedUSBDeviceIDs
+        #expect(detached.count == 1)
+        #expect(instance.liveUSBAccessories.count == 1)
+    }
+
     // MARK: - An attempt overtaken by an interrupt
 
     @Test("An attempt that still holds the session it acted for keeps the phase")

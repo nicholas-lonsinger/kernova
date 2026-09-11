@@ -25,6 +25,10 @@ final class VMLifecycleCoordinator {
     let linuxImageResolveService: any LinuxImageResolving
     let downloadService: any Downloading
 
+    /// Passes host USB accessories through to a guest, or `nil` when this build
+    /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
+    let usbAccessoryService: (any USBAccessoryProviding)?
+
     /// Trashes an image that failed verification.
     private let fileSystem: any FileSystemOperating
 
@@ -60,6 +64,7 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        usbAccessoryService: (any USBAccessoryProviding)? = USBAccessorySupport.makeService(),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -71,6 +76,7 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
+        self.usbAccessoryService = usbAccessoryService
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
         self.fileSystem = fileSystem
@@ -881,5 +887,40 @@ final class VMLifecycleCoordinator {
         guard instance.liveSessionID == sessionID else { throw RemovableMediaDeviceError.noVirtualMachine }
         try await removableMediaDeviceService.detach(deviceInfo: deviceInfo, from: instance)
         instance.forgetAttachedMedia(deviceID: deviceInfo.id, for: sessionID)
+    }
+
+    // MARK: - USB Accessories
+
+    /// Passes the accessory `registryID` names through to the guest of the
+    /// session `sessionID` names, and records the attachment.
+    ///
+    /// Session-scoped for the reason
+    /// ``attachRemovableMedia(diskImagePath:readOnly:desiredUUID:resolvedURL:to:for:)``
+    /// is: a pass overtaken by a stop or a restart must not drive a successor's
+    /// controller.
+    @discardableResult
+    func attachUSBAccessory(
+        _ registryID: UInt64,
+        to instance: VMInstance,
+        for sessionID: UUID
+    ) async throws -> AttachedUSBAccessory {
+        guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
+        guard instance.liveSessionID == sessionID else { throw USBAccessoryError.noVirtualMachine }
+        let attached = try await usbAccessoryService.attach(registryID, to: instance)
+        instance.recordAttachedAccessory(attached, for: sessionID)
+        return attached
+    }
+
+    /// Detaches the passthrough device `deviceID` names and clears its tracking
+    /// entry.
+    func detachUSBAccessory(
+        deviceID: UUID,
+        from instance: VMInstance,
+        for sessionID: UUID
+    ) async throws {
+        guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
+        guard instance.liveSessionID == sessionID else { throw USBAccessoryError.noVirtualMachine }
+        try await usbAccessoryService.detach(deviceID: deviceID, from: instance)
+        instance.forgetAttachedAccessory(deviceID: deviceID, for: sessionID)
     }
 }

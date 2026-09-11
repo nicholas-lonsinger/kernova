@@ -128,6 +128,14 @@ final class VMSessionContext {
     /// configuration describes.
     var removableMediaReconcileOwed = false
 
+    // MARK: - Runtime USB Accessories
+
+    /// Host USB accessories passed through to this guest.
+    ///
+    /// Nothing in `VMConfiguration` corresponds to these: an attachment is
+    /// made against the live controller and lives no longer than the session.
+    var liveUSBAccessories: [AttachedUSBAccessory] = []
+
     // MARK: - Initializer
 
     init(
@@ -167,6 +175,7 @@ final class VMSessionContext {
         serialOutputPipe = nil
         liveRemovableMedia = []
         removableMediaReconcileOwed = false
+        liveUSBAccessories = []
         // Releasing the session releases the actor, its delegate adapter, and
         // the `VZVirtualMachine`; the boot paths' file-lock retry covers the
         // lagging deallocation of the VM's advisory locks.

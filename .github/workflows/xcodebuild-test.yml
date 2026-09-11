@@ -62,6 +62,11 @@ jobs:
       - name: Build for testing
         run: make build-for-testing 2>&1
 
+      # Reads load commands off the built binary, so it cannot run in `make
+      # lint` — that job never builds. The script's header says what it guards.
+      - name: Check weak framework links
+        run: Tools/check-weak-links.sh
+
       # llvm-cas keeps the two newest generations (the fresh primary and its
       # read-through fallback) and deletes the rest. The listing shows which
       # generations survive and the size that will be saved.

@@ -35,9 +35,13 @@ Set `CODE_SIGN_IDENTITY = Apple Development` there whenever you have a certifica
 The guest agent and `KernovaRelaunchHelper` pin their Release identities in their own `Config/Targets/` files, which outrank a project xcconfig; the app and both test bundles leave Release unpinned, so the override reaches them too — an entitled archive needs the real identity, and a team-signed, hardened test host rejects an ad-hoc test bundle under library validation, so host and bundle must sign together.
 The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
 
-The app's entitlements resolve through the same override point. `com.apple.vm.networking` is restricted — automatic signing refuses to sign it without an authorizing profile, and amfid kills an ad-hoc-signed binary that claims it at exec ("adhoc signed but contains restricted entitlements") — so the app's `CODE_SIGN_ENTITLEMENTS` resolves through `KERNOVA_APP_ENTITLEMENTS` in both configurations, defaulting in `Base.xcconfig` to `Kernova/Resources/Kernova.Development.entitlements`: the shipping set minus that key, keeping a profile-less checkout building and launchable.
+The app's entitlements resolve through the same override point. `com.apple.vm.networking` and `com.apple.developer.accessory-access.usb` are both restricted — automatic signing refuses to sign either without an authorizing profile, and amfid kills an ad-hoc-signed binary that claims one at exec ("adhoc signed but contains restricted entitlements") — so the app's `CODE_SIGN_ENTITLEMENTS` resolves through `KERNOVA_APP_ENTITLEMENTS` in both configurations, defaulting in `Base.xcconfig` to `Kernova/Resources/Kernova.Development.entitlements`: the shipping set minus both keys, keeping a profile-less checkout building and launchable. [SANDBOX.md](SANDBOX.md) lists what each one buys.
 
-With the capability enabled on the team's App ID, setting `KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements` in `Local.xcconfig` opts the app into the full set — automatic signing then embeds the authorizing Xcode-managed profile, and an archive cut this way carries the key ([RELEASING.md](RELEASING.md) owns the per-lane choice). Code asks which set it was signed with through `EntitlementService`, never `#if DEBUG`.
+With both capabilities enabled on the team's App ID, setting `KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements` in `Local.xcconfig` opts the app into the full set — automatic signing then embeds the authorizing Xcode-managed profile, and an archive cut this way carries the keys ([RELEASING.md](RELEASING.md) owns the per-lane choice).
+
+A capability the App ID lacks fails the build naming itself ("Provisioning profile … doesn't include the Claim USB Accessory capability"). Add it in Xcode's Signing & Capabilities editor, which registers it on the App ID and regenerates the profile.
+
+Code asks which set it was signed with through `EntitlementService`, never `#if DEBUG`.
 
 ## The bundled `kernova` tool
 
@@ -64,6 +68,8 @@ That works because `KernovaKit` is referenced as a top-level peer — a `PBXFile
 Three of the workflows in `.github/workflows/` are required status checks: `lint`, `build-and-test`, and `proto-drift`. The "Required actions" ruleset matches them **by job name**, and that ruleset lives in GitHub's settings rather than in this repo — so renaming a job means editing the ruleset in the same change, or every PR waits on a check that never reports.
 
 The `lint` job runs `make lint`, which is therefore what gates a merge; the Makefile's `lint` target is the list of what it covers, and shellcheck goes from optional to required once `$CI` is set. Each workflow's own header explains its trigger design; read it there before changing one.
+
+A check that reads a *built* product cannot live in `make lint`, which never builds. `Tools/check-weak-links.sh` is the one of those, run as its own step in `build-and-test`; run it by hand after a build, passing a binary path to point it elsewhere.
 
 The dead-code scan runs weekly in CI, on demand with `gh workflow run dead-code.yml`, and locally with `make dead-code`. Every route installs the pinned Periphery release through `Tools/install-periphery.sh` and reads `.periphery.yml`, so a local scan and the job's scan are one scan.
 

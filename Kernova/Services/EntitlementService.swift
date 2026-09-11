@@ -50,7 +50,23 @@ struct EntitlementService: Sendable {
     /// signature, which cannot change under it.
     let hasVMNetworking: Bool
 
+    /// Whether claiming a USB accessory for passthrough to a guest is
+    /// authorized (`com.apple.developer.accessory-access.usb`).
+    ///
+    /// Resolved once, for the same reason as `hasVMNetworking`.
+    let hasAccessoryAccess: Bool
+
+    /// Whether USB accessory passthrough can work at all in this process —
+    /// both the entitlement and the OS that carries the API.
+    ///
+    /// The single value every accessory surface reads, so the capability
+    /// appears and disappears in one place rather than per surface.
+    var supportsUSBAccessories: Bool {
+        if #available(macOS 27.0, *) { hasAccessoryAccess } else { false }
+    }
+
     init(reader: any EntitlementReading = ProcessEntitlementReader()) {
         hasVMNetworking = reader.hasEntitlement("com.apple.vm.networking")
+        hasAccessoryAccess = reader.hasEntitlement("com.apple.developer.accessory-access.usb")
     }
 }

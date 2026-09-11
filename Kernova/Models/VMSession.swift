@@ -9,6 +9,9 @@ enum VMSessionEvent: Sendable {
     case guestDidStop
     case didStopWithError(any Error)
     case networkAttachmentDisconnected(any Error)
+    /// A passthrough accessory's host device went away. VZ has already detached
+    /// it, so the receiver only drops its own record of the attachment.
+    case usbPassthroughDeviceDidDisconnect(UUID)
 }
 
 /// The sink a session delivers its events into.
@@ -95,13 +98,22 @@ actor VMSession {
     /// VZ holds its delegate weakly; the session retains it.
     private let delegateAdapter: VMDelegateAdapter
 
+    /// VZ holds a USB controller's delegate weakly too, so the session retains
+    /// this one as well. Typed `AnyObject` because `VZUSBControllerDelegate` is
+    /// macOS 27.0 and this type is not; nothing ever reads it back.
+    private let usbDelegateAdapter: AnyObject?
+
     private static let logger = Logger(subsystem: "app.kernova", category: "VMSession")
 
-    private init(id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine, delegateAdapter: VMDelegateAdapter) {
+    private init(
+        id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine,
+        delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?
+    ) {
         self.id = id
         self.queue = queue
         self.vm = vm
         self.delegateAdapter = delegateAdapter
+        self.usbDelegateAdapter = usbDelegateAdapter
         self.displayHandle = VMDisplayHandle(vm: vm)
         self.hasVirtioSocketDevice = vm.socketDevices.contains { $0 is VZVirtioSocketDevice }
         self.hasNetworkDevice = !vm.networkDevices.isEmpty
@@ -123,8 +135,20 @@ actor VMSession {
                 assert(vm.queue === queue)
                 nonisolated(unsafe) let adapter = VMDelegateAdapter(sessionID: id, events: events)
                 vm.delegate = adapter
+                // A controller's delegate must be set on the VM's queue, which
+                // is this one, and its callback arrives here too.
+                nonisolated(unsafe) var usbAdapter: AnyObject?
+                if #available(macOS 27.0, *) {
+                    let usb = VMUSBControllerDelegateAdapter(sessionID: id, events: events)
+                    for controller in vm.usbControllers {
+                        controller.delegate = usb
+                    }
+                    usbAdapter = usb
+                }
                 continuation.resume(
-                    returning: VMSession(id: id, queue: queue, vm: vm, delegateAdapter: adapter))
+                    returning: VMSession(
+                        id: id, queue: queue, vm: vm, delegateAdapter: adapter,
+                        usbDelegateAdapter: usbAdapter))
             }
         }
     }
@@ -374,11 +398,15 @@ actor VMSession {
 
     // MARK: - USB Devices
 
-    /// Builds a USB mass storage device on the queue via `make` and attaches
-    /// it on the XHCI controller.
+    /// Builds a USB device on the queue via `make` and attaches it on the XHCI
+    /// controller.
+    ///
+    /// `make` runs on the VM's queue because VZ device objects must be built
+    /// and attached there. Both hot-pluggable device kinds — a mass storage
+    /// image and a passthrough accessory — differ only in its body.
     ///
     /// - Returns: The attached device's UUID.
-    func attachUSBDevice(_ make: @Sendable () throws -> VZUSBMassStorageDevice) async throws -> UUID {
+    func attachUSBDevice(_ make: @Sendable () throws -> any VZUSBDevice) async throws -> UUID {
         let controller = try usbController()
         let device = try make()
         let uuid = device.uuid
@@ -503,5 +531,27 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
         attachmentWasDisconnectedWithError error: any Error
     ) {
         events.handle(sessionID, .networkAttachmentDisconnected(error))
+    }
+}
+
+/// Receives `VZUSBControllerDelegate` callbacks on the session's queue and
+/// forwards them as events.
+///
+/// By the time this fires, VZ has already detached the device and dropped it
+/// from `VZUSBController.usbDevices`, so the handler must not detach it again.
+@available(macOS 27.0, *)
+private final class VMUSBControllerDelegateAdapter: NSObject, VZUSBController.Delegate {
+    private let sessionID: UUID
+    private let events: VMSessionEvents
+
+    init(sessionID: UUID, events: VMSessionEvents) {
+        self.sessionID = sessionID
+        self.events = events
+    }
+
+    func usbController(
+        _ usbController: VZUSBController, usbPassthroughDeviceDidDisconnect device: VZUSBPassthroughDevice
+    ) {
+        events.handle(sessionID, .usbPassthroughDeviceDidDisconnect(device.uuid))
     }
 }

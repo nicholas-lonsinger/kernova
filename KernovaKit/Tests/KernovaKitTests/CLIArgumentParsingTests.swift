@@ -263,6 +263,54 @@ struct CLIArgumentParsingTests {
         #expect(throws: (any Error).self) { try parse(["forward", "list"]) }
     }
 
+    // MARK: - USB accessories
+
+    @Test("Each USB verb parses to its own subcommand")
+    func usbVerbsResolve() throws {
+        #expect(try parse(["usb", "list"]) is KernovaCommand.USB.List)
+        #expect(try parse(["usb", "attach", "Alpha", "12"]) is KernovaCommand.USB.Attach)
+        #expect(
+            try parse(["usb", "detach", "Alpha", UUID().uuidString]) is KernovaCommand.USB.Detach)
+    }
+
+    @Test("A USB listing asks a guest's own accessories only when a guest is named")
+    func usbListNamesItsSubject() throws {
+        let free = try #require(try parse(["usb", "list"]) as? KernovaCommand.USB.List)
+        #expect(free.vm == nil)
+        #expect(try free.verb() == .availableUSBAccessories)
+
+        let held = try #require(try parse(["usb", "list", "Alpha"]) as? KernovaCommand.USB.List)
+        #expect(held.vm == "Alpha")
+        #expect(try held.verb() == .usbAccessories(.idOrName("Alpha")))
+    }
+
+    @Test("An accessory is attached by its own identifier and detached by the attachment's")
+    func usbEditsNameTheirHandles() throws {
+        // An IORegistry ID runs past what 32 bits can name.
+        let attach = try #require(
+            try parse(["usb", "attach", "Alpha", "4294967296"]) as? KernovaCommand.USB.Attach)
+        #expect(
+            try attach.verb()
+                == .editUSBAccessory(.idOrName("Alpha"), .attach(accessory: 4_294_967_296)))
+
+        let device = UUID()
+        let detach = try #require(
+            try parse(["usb", "detach", "Alpha", device.uuidString]) as? KernovaCommand.USB.Detach)
+        #expect(
+            try detach.verb() == .editUSBAccessory(.idOrName("Alpha"), .detach(device: device)))
+    }
+
+    @Test("Neither USB handle is a display name, so text that is not one never crosses the wire")
+    func usbHandlesRefuseAnythingButAnIdentifier() throws {
+        let attach = try #require(
+            try parse(["usb", "attach", "Alpha", "hub"]) as? KernovaCommand.USB.Attach)
+        #expect(throws: CLIFailure.self) { try attach.verb() }
+
+        let detach = try #require(
+            try parse(["usb", "detach", "Alpha", "hub"]) as? KernovaCommand.USB.Detach)
+        #expect(throws: CLIFailure.self) { try detach.verb() }
+    }
+
     @Test("get takes any number of keys, and all of them when given none")
     func getParsesItsKeys() throws {
         let everything = try #require(try parse(["get", "Alpha"]) as? KernovaCommand.Get)

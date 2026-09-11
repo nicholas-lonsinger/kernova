@@ -396,6 +396,7 @@ final class VirtualizationService {
         instance.settle(.saving(sessionID: sessionID), for: sessionID)
 
         do {
+            await Self.detachUSBAccessories(from: instance, session: session, for: sessionID)
             try await session.pauseIfRunning()
             try await session.saveMachineState(to: instance.saveFileURL)
             // No sidecar metadata is needed beside the save file: removable media
@@ -503,6 +504,7 @@ final class VirtualizationService {
                     bundleURL: bundleURL, snapshotID: snapshotID, configuration: configuration)
             }.value
 
+            await detachUSBAccessories(from: instance, session: session, for: sessionID)
             try await captureLiveState(
                 session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
             ) {
@@ -637,6 +639,34 @@ final class VirtualizationService {
             )
             instance.enter(.suspended)
             throw error
+        }
+    }
+
+    /// Takes every passthrough USB accessory off `instance` before its state is
+    /// written.
+    ///
+    /// A saved state is restored only into a configuration compatible with it,
+    /// and a passthrough device names host hardware that may be in a drawer by
+    /// then — a mismatch VZ reports as `VZErrorRestore`, failing the whole
+    /// restore with nothing the user can remove to recover. Nothing persists an
+    /// attachment, so dropping them before the write makes that unreachable
+    /// rather than merely unlikely. Both save paths call this, and a new one
+    /// must too.
+    ///
+    /// Failures are logged and swallowed: the save is what the user asked for,
+    /// and a device that will not detach is already beyond reach.
+    static func detachUSBAccessories(
+        from instance: VMInstance, session: any VMSnapshotSessionOperating, for sessionID: UUID
+    ) async {
+        for attached in instance.liveUSBAccessories {
+            do {
+                try await session.detachUSBDevice(uuid: attached.deviceID)
+            } catch {
+                logger.warning(
+                    "Could not detach USB accessory \(attached.accessory.displayName, privacy: .public) from '\(instance.name, privacy: .public)' before saving: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+            instance.forgetAttachedAccessory(deviceID: attached.deviceID, for: sessionID)
         }
     }
 

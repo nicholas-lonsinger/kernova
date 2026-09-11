@@ -35,6 +35,7 @@ enum VMCapability: CaseIterable, Hashable {
     case editStorageDisks
     case editRemovableMedia
     case editSharedDirectories
+    case editUSBAccessories
     case editPortForwarding
     case editConfiguration
     case editLiveConfiguration
@@ -78,6 +79,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .editStorageDisks: .editStorageDisk
         case .editRemovableMedia: .editRemovableMedia
         case .editSharedDirectories: .editSharedDirectory
+        case .editUSBAccessories: .editUSBAccessory
         case .editPortForwarding: .editPortForwarding
         case .editConfiguration, .editLiveConfiguration, .switchNetworkMode: .setConfiguration
         case .clone: .clone
@@ -108,7 +110,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
             .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .editStorageDisks,
-            .editRemovableMedia, .editSharedDirectories, .editPortForwarding, .editConfiguration,
+            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories,
+            .editPortForwarding, .editConfiguration,
             .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .showInFinder,
             .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
@@ -133,7 +136,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia,
-            .editSharedDirectories, .editPortForwarding, .editConfiguration,
+            .editSharedDirectories, .editUSBAccessories, .editPortForwarding, .editConfiguration,
             .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .cancelPreparing,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
@@ -159,7 +162,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editRemovableMedia, .editSharedDirectories, .editPortForwarding, .editConfiguration,
+            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .editPortForwarding,
+            .editConfiguration,
             .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .cancelPreparing,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
@@ -227,6 +231,11 @@ struct VMCapabilityCatalog {
             // A VM's virtiofs device set is fixed at boot, so a share edit lands
             // only on a VM that can still be reconfigured.
             instance.canEditSettings
+        case .editUSBAccessories:
+            // Stricter than removable media: a passthrough accessory has no
+            // persisted entry to pre-configure, so it exists only on a guest
+            // that is already running.
+            instance.hasLiveSession
         case .editPortForwarding, .editConfiguration:
             instance.canEditSettings
         case .editLiveConfiguration:
@@ -370,7 +379,8 @@ struct VMCapabilityCatalog {
         case .info, .ipAddress, .snapshots, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editPortForwarding,
+            .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editUSBAccessories,
+            .editPortForwarding,
             .editConfiguration, .editLiveConfiguration, .switchNetworkMode, .clone, .delete,
             .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleGuestAgentDisk, .toggleSettingsPane:

@@ -155,6 +155,38 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     }
 }
 
+/// One USB accessory macOS has assigned to Kernova, and where it currently is.
+///
+/// `name` is `VID:PID · class` read from the device descriptor. A product or
+/// vendor string would take opening the device for exclusive access, which
+/// Kernova does not do, so the identifiers that are readable are what it shows.
+public struct USBAccessorySummary: Codable, Sendable, Hashable {
+    /// The accessory's IORegistry ID, and what an attach names it by. Valid
+    /// only while this Kernova process keeps holding the accessory.
+    public let registryID: UInt64
+    /// What a surface calls this accessory.
+    public let name: String
+    /// `idVendor` from the device descriptor.
+    public let vendorID: UInt16
+    /// `idProduct` from the device descriptor.
+    public let productID: UInt16
+    /// The attachment's device UUID while a guest holds this accessory, and
+    /// what a detach names it by; `nil` when it is available to attach.
+    public let deviceID: UUID?
+
+    /// Describes one accessory.
+    public init(
+        registryID: UInt64, name: String, vendorID: UInt16, productID: UInt16,
+        deviceID: UUID? = nil
+    ) {
+        self.registryID = registryID
+        self.name = name
+        self.vendorID = vendorID
+        self.productID = productID
+        self.deviceID = deviceID
+    }
+}
+
 /// What kind of consent a refusal is asking for, so a surface can pick its
 /// native affordance without parsing the copy.
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {

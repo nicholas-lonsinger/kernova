@@ -42,6 +42,10 @@ final class VMLibraryViewModel {
     /// and this is the composition root that owns its lifetime.
     private let sleepWake: VMSleepWakeCoordinator
 
+    /// Routes newly assigned USB accessories to a running guest; `nil` when
+    /// this build cannot pass accessories through at all.
+    private let usbAccessoryRouter: USBAccessoryRouter?
+
     private let preferences: AppPreferences
 
     // MARK: - Library Forwarding
@@ -500,6 +504,7 @@ final class VMLibraryViewModel {
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         self.sleepWake = sleepWake
+        self.usbAccessoryRouter = USBAccessoryRouter(lifecycle: lifecycle, roster: library)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -699,6 +704,31 @@ final class VMLibraryViewModel {
     func requestRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
         guard capabilities.isAvailable(.revertToSnapshot, on: instance) else { return }
         presenter?.presentRevertSnapshot(snapshot, for: instance)
+    }
+
+    /// Passes a host USB accessory through to `instance`'s guest.
+    ///
+    /// No confirmation: the user already consented to Kernova holding this
+    /// accessory in Apple's *Virtual Machine Accessories* menu, and a detach is
+    /// one action away.
+    func attachUSBAccessory(_ registryID: UInt64, to instance: VMInstance) {
+        guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
+        Task {
+            await run(on: instance) {
+                try await self.commands.attachUSBAccessory(
+                    .id(instance.id), accessory: registryID)
+            }
+        }
+    }
+
+    /// Takes a passed-through accessory back off `instance`'s guest.
+    func detachUSBAccessory(deviceID: UUID, from instance: VMInstance) {
+        guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
+        Task {
+            await run(on: instance) {
+                try await self.commands.detachUSBAccessory(.id(instance.id), device: deviceID)
+            }
+        }
     }
 
     /// Reverts to `snapshot`, optionally check-pointing the current state
