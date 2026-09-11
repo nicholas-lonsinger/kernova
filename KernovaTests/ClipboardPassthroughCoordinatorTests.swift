@@ -884,6 +884,9 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         writeText("previous host content", to: h.pasteboard)
         h.coordinator.start()
+        // Settle the outbound poll first, so the timer's first tick cannot land
+        // mid-test and overwrite the service buffer with the host content.
+        h.coordinator.pollHostClipboard()
         h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
         try await h.service.copyMaterialized.wait { h.service.copiesMaterialized == 1 }
         return h
