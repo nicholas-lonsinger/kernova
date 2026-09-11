@@ -107,7 +107,7 @@ jobs:
       # message can land far from the test that raised it. This pairs each
       # failed case with every message it recorded, in one block.
       - name: Report failure messages
-        if: always()
+        if: failure()
         run: |
           bundle="artifacts/TestResults.xcresult"
           if [ ! -d "$bundle" ]; then
@@ -148,7 +148,7 @@ jobs:
             --last 30m --style compact || echo "log show unavailable"
 
       - name: Upload test results
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v6
         with:
           name: test-results
