@@ -2829,7 +2829,7 @@ struct VsockGuestClipboardAgentTests {
         from channel: VsockChannel, window: TimeInterval = 0.2
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
-            var iterator = channel.incoming.makeAsyncIterator()
+            let iterator = channel.incoming.makeAsyncIterator()
             return try? await iterator.next()
         }
         try await MonotonicEngineClock().sleep(for: window)

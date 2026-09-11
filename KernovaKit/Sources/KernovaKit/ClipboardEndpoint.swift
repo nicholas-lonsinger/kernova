@@ -541,9 +541,11 @@ public final class ClipboardEndpoint {
     /// No payload byte arrives here — each transfer carries its own on a data
     /// connection of its own.
     ///
-    /// A frame the peer sent and then closed on is still delivered; one queued
-    /// behind a local ``stop()`` is not, because that is this side deciding it
-    /// is done listening.
+    /// A frame the peer sent and then closed on is still delivered; one the
+    /// consume loop queued to main before a local ``stop()`` is not, because
+    /// that is this side deciding it is done listening. The channel's own
+    /// owner-close drop cannot answer this one: the frame left ``VsockChannel``
+    /// before the close and is waiting on the main queue.
     private func handleControlFrame(_ frame: Frame) {
         guard !session.hasStopped else { return }
         switch frame.payload {

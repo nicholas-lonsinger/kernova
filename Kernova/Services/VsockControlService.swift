@@ -438,10 +438,6 @@ final class VsockControlService: VsockFeatureService {
     }
 
     private func handle(frame: Frame) {
-        // A frame still buffered in `incoming` when the teardown ran would
-        // otherwise flip `isConnected` back on for a channel whose tasks are
-        // already cancelled.
-        guard !hasStopped else { return }
         let inbound = ControlChannelInbound.classify(frame)
         // Any inbound traffic counts as liveness. Refresh before dispatch, so a
         // channel that resumed talking is out of `.unresponsive` by the time
