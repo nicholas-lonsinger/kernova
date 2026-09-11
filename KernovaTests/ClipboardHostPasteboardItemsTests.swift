@@ -30,12 +30,12 @@ struct ClipboardHostPasteboardItemsTests {
     }
 
     @Test("a plain-text inline copy promises its text UTI and serves bytes lazily")
-    func inlineTextServedLazily() async {
+    func inlineTextServedLazily() async throws {
         let staging = makeStaging()
         defer { staging.sweep() }
 
         let content = ClipboardContent(text: "hello world")
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 1)
@@ -57,7 +57,7 @@ struct ClipboardHostPasteboardItemsTests {
             .init(uti: UTType.plainText.identifier, data: Data("alpha".utf8), filename: "a.txt"),
             .init(uti: UTType.plainText.identifier, data: Data("beta".utf8), filename: "b.txt"),
         ])
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 2)
@@ -88,7 +88,7 @@ struct ClipboardHostPasteboardItemsTests {
         let content = ClipboardContent(representations: [
             .init(uti: UTType.png.identifier, data: png, filename: "photo.png")
         ])
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 1)
@@ -111,7 +111,7 @@ struct ClipboardHostPasteboardItemsTests {
             .init(uti: ClipboardContent.utf8TextUTI, data: Data("inline text".utf8)),
             .init(uti: UTType.plainText.identifier, data: Data("file body".utf8), filename: "f.txt"),
         ])
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 2)
@@ -134,7 +134,7 @@ struct ClipboardHostPasteboardItemsTests {
             .init(uti: UTType.plainText.identifier, data: Data("one".utf8), filename: "dup.txt"),
             .init(uti: UTType.plainText.identifier, data: Data("two".utf8), filename: "dup.txt"),
         ])
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 2)
@@ -170,7 +170,7 @@ struct ClipboardHostPasteboardItemsTests {
                 uti: UTType.folder.identifier, fileURL: tree, byteCount: 1024,
                 filename: "Project", isDirectory: true)
         ])
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 1)

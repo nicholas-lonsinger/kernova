@@ -80,6 +80,12 @@ final class ClipboardPassthroughCoordinator {
 
     private var inboundObservation: ObservationLoop?
 
+    /// The inbound publish in flight, held so `stop()` can cancel it and a newer
+    /// offer can supersede it. The pasteboard write happens inside the
+    /// publisher's await, so a session check after the await runs too late to
+    /// stop it; only cancellation reaches the write.
+    private var inboundPublishTask: Task<Void, Never>?
+
     /// The inbound-offer sequence already published to the host pasteboard, so a
     /// re-observation (or per-rep materialization) doesn't re-publish.
     private var lastInboundOfferSeq: UInt64 = 0
@@ -108,6 +114,9 @@ final class ClipboardPassthroughCoordinator {
     #if DEBUG
     /// Fires after each inbound auto-publish completes.
     var onInboundPublishedForTesting: (@MainActor () -> Void)?
+
+    /// The inbound publish in flight, for a test to await its unwinding.
+    var inboundPublishTaskForTesting: Task<Void, Never>? { inboundPublishTask }
 
     /// Fires once the poll's off-actor file resolve has been handled, on every
     /// outcome, with the `runGeneration` the resolve was launched in — the seam
@@ -160,6 +169,8 @@ final class ClipboardPassthroughCoordinator {
         pollTimer = nil
         inboundObservation?.cancel()
         inboundObservation = nil
+        inboundPublishTask?.cancel()
+        inboundPublishTask = nil
         Self.logger.notice(
             "Clipboard passthrough stopped for '\(self.instance?.name ?? "?", privacy: .public)'")
     }
@@ -346,9 +357,16 @@ final class ClipboardPassthroughCoordinator {
     /// paste ceiling caused so a later raise can deliver what it withheld.
     private func publishInbound(from service: any ClipboardServicing, seq: UInt64) {
         let ceiling = instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-        Task { @MainActor [weak self] in
+        inboundPublishTask?.cancel()
+        inboundPublishTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let outcome = await self.publisher.publish(from: service)
+            let outcome: HostPublishOutcome
+            do {
+                outcome = try await self.publisher.publish(from: service)
+            } catch {
+                // Stopped, or superseded by a newer offer: nothing landed.
+                return
+            }
             // Record our own write so the next poll tick skips it.
             if let changeCount = outcome.postWriteChangeCount {
                 self.lastPasteboardChangeCount = changeCount

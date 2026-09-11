@@ -1763,7 +1763,7 @@ struct VsockClipboardServiceTests {
                 generation: 1,
                 reps: [RepInfo(uti: "public.data", byteCount: 128, filename: "a.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
-        let outcome = await publisher.publish(from: service)
+        let outcome = try await publisher.publish(from: service)
         guard case .written = outcome else {
             Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
             return
@@ -1782,7 +1782,7 @@ struct VsockClipboardServiceTests {
         // Publish gen=2, then the user copies their own content over it — a
         // write of their own is a change count this publisher's write no longer
         // matches, which is the whole of what makes the pasteboard theirs.
-        _ = await publisher.publish(from: service)
+        _ = try await publisher.publish(from: service)
         pasteboard.clearContents()
         let countBefore = pasteboard.changeCount
         try guest.send(
@@ -1830,7 +1830,7 @@ struct VsockClipboardServiceTests {
                 ClipboardContent.Representation(
                     uti: ClipboardContent.utf8TextUTI, data: Data("local".utf8))
             ])
-        let outcome = await publisher.publish(from: service)
+        let outcome = try await publisher.publish(from: service)
         guard case .written = outcome else {
             Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
             return
