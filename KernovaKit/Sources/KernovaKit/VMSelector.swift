@@ -35,6 +35,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case snapshotOnDiskBytes
     case sharedDirectories
     case portForwardingRules
+    case usbAccessories
+    case availableUSBAccessories
     case events
     case start
     case cancelGuestSetup
@@ -62,6 +64,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case editRemovableMedia
     case editSharedDirectory
     case editPortForwarding
+    case editUSBAccessory
     case configurationKeys
     case configuration
     case setConfiguration
@@ -81,6 +84,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .snapshotOnDiskBytes: "Get Snapshot Sizes"
         case .sharedDirectories: "List Shared Directories"
         case .portForwardingRules: "List Forwarded Ports"
+        case .usbAccessories: "List USB Accessories"
+        case .availableUSBAccessories: "List Available USB Accessories"
         case .events: "Watch Events"
         case .start: "Start"
         case .cancelGuestSetup: "Cancel Setup"
@@ -108,6 +113,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .editRemovableMedia: "Edit Removable Media"
         case .editSharedDirectory: "Edit Shared Directories"
         case .editPortForwarding: "Edit Port Forwarding"
+        case .editUSBAccessory: "Edit USB Accessories"
         case .configurationKeys: "List Settings Keys"
         case .configuration: "Get Settings"
         case .setConfiguration: "Change Settings"
@@ -132,14 +138,15 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     public var isAdmittedInEveryState: Bool {
         switch self {
         case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
-            .portForwardingRules, .events, .reveal,
+            .portForwardingRules, .usbAccessories, .availableUSBAccessories, .events, .reveal,
             .showInFinder, .awaitPreparing, .configurationKeys, .configuration, .setConfiguration,
             .quit:
             true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .create, .clone, .rename, .delete, .importVM, .cancelPreparing, .editStorageDisk,
-            .editRemovableMedia, .editSharedDirectory, .editPortForwarding, .guestAgentDisk:
+            .editRemovableMedia, .editSharedDirectory, .editPortForwarding, .editUSBAccessory,
+            .guestAgentDisk:
             false
         }
     }

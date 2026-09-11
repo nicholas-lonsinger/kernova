@@ -432,6 +432,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.requestRevert(ref.instance, to: ref.snapshot)
     }
 
+    @objc func attachUSBAccessory(_ sender: Any?) {
+        guard let ref = (sender as? NSMenuItem)?.representedObject as? USBAccessoryMenuRef else {
+            return
+        }
+        viewModel.attachUSBAccessory(ref.registryID, to: ref.instance)
+    }
+
+    @objc func detachUSBAccessory(_ sender: Any?) {
+        guard let ref = (sender as? NSMenuItem)?.representedObject as? USBAccessoryMenuRef,
+            let deviceID = ref.deviceID
+        else { return }
+        viewModel.detachUSBAccessory(deviceID: deviceID, from: ref.instance)
+    }
+
     @objc func toggleSettingsPane(_ sender: Any?) {
         guard let instance = activeInstance,
             instance.hasActiveDisplay

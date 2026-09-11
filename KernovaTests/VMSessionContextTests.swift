@@ -57,6 +57,19 @@ struct VMSessionContextTests {
         return flag.fired
     }
 
+    /// One attached passthrough accessory, for the live-state assertions.
+    static func attachedAccessory(
+        deviceID: UUID = UUID(), registryID: UInt64 = 0x1_0000
+    ) -> AttachedUSBAccessory {
+        AttachedUSBAccessory(
+            deviceID: deviceID,
+            accessory: USBAccessoryInfo(
+                registryID: registryID,
+                descriptor: USBDeviceDescriptor(
+                    usbVersion: 0x0200, deviceClass: 0xFF, deviceSubClass: 0, deviceProtocol: 0,
+                    vendorID: 0x0403, productID: 0x6001, deviceVersion: 0x0600)))
+    }
+
     // MARK: - Teardown
 
     @Test("tearDown releases every service, pipe and hand-off the session held")
@@ -72,6 +85,7 @@ struct VMSessionContextTests {
         context.clipboardService = clipboard
         instance.clipboardDataSink.set(RetainingAcceptor())
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
+        context.liveUSBAccessories = [Self.attachedAccessory()]
         context.agentExpectedButMissing = true
         context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
@@ -90,6 +104,7 @@ struct VMSessionContextTests {
         #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
+        #expect(context.liveUSBAccessories.isEmpty)
         #expect(context.agentExpectedButMissing == false)
         #expect(context.hasSeenAgentThisSession == false)
         #expect(context.networkAttachmentPending == false)
@@ -124,6 +139,7 @@ struct VMSessionContextTests {
         #expect(instance.networkAttachmentCoordinator == nil)
         #expect(instance.networkAttachmentPending == false)
         #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
         #expect(instance.bootedIntoRecovery == false)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.hasSeenAgentThisSession == false)

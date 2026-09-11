@@ -25,6 +25,10 @@ final class VMLifecycleCoordinator {
     let linuxImageResolveService: any LinuxImageResolving
     let downloadService: any Downloading
 
+    /// Passes host USB accessories through to a guest, or `nil` when this build
+    /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
+    let usbAccessoryService: (any USBAccessoryProviding)?
+
     /// Trashes an image that failed verification.
     private let fileSystem: any FileSystemOperating
 
@@ -60,6 +64,7 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        usbAccessoryService: (any USBAccessoryProviding)? = USBAccessorySupport.makeService(),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -71,6 +76,7 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
+        self.usbAccessoryService = usbAccessoryService
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
         self.fileSystem = fileSystem
@@ -252,7 +258,48 @@ final class VMLifecycleCoordinator {
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
         try await serialized(instance, action: "takeSnapshot") {
+            // A warm capture takes every passthrough accessory off before it
+            // writes the guest's state, because a saved state carrying one
+            // cannot be restored. Unlike a suspend the guest is still running
+            // afterwards, so they go back on: a snapshot is not a reason to
+            // unplug the user's hardware. Read before the capture, since the
+            // capture is what clears them.
+            let held = instance.liveUSBAccessories
+            let sessionID = instance.attachableSessionID
             try await virtualizationService.takeSnapshot(instance, snapshot: snapshot, store: store)
+            if let sessionID {
+                await reattachUSBAccessories(held, to: instance, for: sessionID)
+            }
+        }
+    }
+
+    /// Puts back the accessories a warm capture took off.
+    ///
+    /// Guarded on the session at every step: a guest that went away under the
+    /// capture has no controller to attach to. Failures are logged and
+    /// swallowed — the snapshot the user asked for is already written, and an
+    /// accessory that will not go back on leaves the guest exactly where a
+    /// surprise unplug would.
+    private func reattachUSBAccessories(
+        _ accessories: [AttachedUSBAccessory], to instance: VMInstance, for sessionID: UUID
+    ) async {
+        guard let usbAccessoryService, !accessories.isEmpty else { return }
+        for item in accessories {
+            guard instance.attachableSessionID == sessionID else { return }
+            do {
+                let reattached = try await usbAccessoryService.attach(
+                    item.accessory.registryID, to: instance)
+                guard instance.attachableSessionID == sessionID else {
+                    try? await usbAccessoryService.detach(
+                        deviceID: reattached.deviceID, from: instance)
+                    return
+                }
+                instance.recordAttachedAccessory(reattached, for: sessionID)
+            } catch {
+                Self.logger.warning(
+                    "Could not put USB accessory \(item.accessory.displayName, privacy: .public) back on '\(instance.name, privacy: .public)' after the snapshot: \(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 
@@ -881,5 +928,71 @@ final class VMLifecycleCoordinator {
         guard instance.liveSessionID == sessionID else { throw RemovableMediaDeviceError.noVirtualMachine }
         try await removableMediaDeviceService.detach(deviceInfo: deviceInfo, from: instance)
         instance.forgetAttachedMedia(deviceID: deviceInfo.id, for: sessionID)
+    }
+
+    // MARK: - USB Accessories
+
+    /// Passes the accessory `registryID` names through to the guest of the
+    /// session `sessionID` names, and records the attachment.
+    ///
+    /// Serialized like every other operation, which is what makes the save
+    /// paths' "no passthrough device on the controller when `saveMachineState`
+    /// runs" post-condition hold by construction rather than by timing: a save
+    /// or a snapshot cannot start while this is in flight, and this cannot
+    /// start while one of those is.
+    @discardableResult
+    func attachUSBAccessory(
+        _ registryID: UInt64,
+        to instance: VMInstance,
+        for sessionID: UUID
+    ) async throws -> AttachedUSBAccessory {
+        try await serialized(instance, action: "attachUSBAccessory") {
+            guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
+            guard instance.attachableSessionID == sessionID else {
+                throw USBAccessoryError.noVirtualMachine
+            }
+            let attached = try await usbAccessoryService.attach(registryID, to: instance)
+            // VZ captured the device while this was suspended, so a session that
+            // went away under the call would leave it captured by a VM nothing
+            // holds. Hand it back rather than record an attachment against a
+            // session that is gone.
+            guard instance.attachableSessionID == sessionID else {
+                try? await usbAccessoryService.detach(deviceID: attached.deviceID, from: instance)
+                Self.logger.notice(
+                    "Released USB accessory \(attached.accessory.displayName, privacy: .public): '\(instance.name, privacy: .public)' lost its session under the attach"
+                )
+                throw USBAccessoryError.noVirtualMachine
+            }
+            instance.recordAttachedAccessory(attached, for: sessionID)
+            return attached
+        }
+    }
+
+    /// Detaches the passthrough device `deviceID` names and clears its tracking
+    /// entry.
+    ///
+    /// A device VZ no longer holds is a success, not a failure: a surprise
+    /// unplug or a save's own detach sweep may have got there first, and the
+    /// outcome the caller asked for already holds. The tracking entry goes
+    /// either way.
+    func detachUSBAccessory(
+        deviceID: UUID,
+        from instance: VMInstance,
+        for sessionID: UUID
+    ) async throws {
+        try await serialized(instance, action: "detachUSBAccessory") {
+            guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
+            guard instance.attachableSessionID == sessionID else {
+                throw USBAccessoryError.noVirtualMachine
+            }
+            do {
+                try await usbAccessoryService.detach(deviceID: deviceID, from: instance)
+            } catch USBAccessoryError.deviceNotFound {
+                Self.logger.notice(
+                    "USB accessory \(deviceID.uuidString, privacy: .public) was already off '\(instance.name, privacy: .public)'"
+                )
+            }
+            instance.forgetAttachedAccessory(deviceID: deviceID, for: sessionID)
+        }
     }
 }

@@ -50,6 +50,20 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         guestState = .running
     }
 
+    /// Device UUIDs `detachUSBDevice(uuid:)` was asked for, in order.
+    private(set) var detachedUSBDeviceIDs: [UUID] = []
+    var detachError: (any Error)?
+
+    func setDetachError(_ error: any Error) {
+        detachError = error
+    }
+
+    func detachUSBDevice(uuid: UUID) async throws {
+        calls.append("detachUSBDevice")
+        if let detachError { throw detachError }
+        detachedUSBDeviceIDs.append(uuid)
+    }
+
     func saveMachineState(to url: URL) async throws {
         calls.append("saveMachineState")
         savedStateURLs.append(url)

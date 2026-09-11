@@ -112,10 +112,19 @@ enum VMOverviewSummary {
             // the status — or one of the card's own two switches.
             return []
         case .system:
-            return [
+            var rows = [
                 Row(label: "Display", value: displayValue(config)),
                 Row(label: "Audio", value: audioValue(config)),
             ]
+            // Runtime-only, and so shown only while a guest holds something. A
+            // standing "None" would read as a setting that is off, and a
+            // passthrough accessory is not a setting — nothing about it is
+            // configured or persisted.
+            let accessories = instance.liveUSBAccessories
+            if !accessories.isEmpty {
+                rows.append(Row(label: "USB devices", value: usbAccessoriesValue(accessories)))
+            }
+            return rows
         case .storage:
             let disks = instance.effectiveStorageDisks
             guard let boot = disks.first else { return [Row(label: "Disks", value: "None")] }
@@ -252,6 +261,15 @@ enum VMOverviewSummary {
         case 1: "1 more disk"
         default: "\(count) more disks"
         }
+    }
+
+    /// One accessory names itself; several are counted, because the USB Device
+    /// menu is where they are listed and acted on.
+    private static func usbAccessoriesValue(_ accessories: [AttachedUSBAccessory]) -> String {
+        if accessories.count == 1, let only = accessories.first {
+            return only.accessory.displayName
+        }
+        return "\(accessories.count) devices"
     }
 
     private static func mediaValue(_ count: Int) -> String {

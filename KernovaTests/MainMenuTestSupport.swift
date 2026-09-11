@@ -26,7 +26,10 @@ final class StubMenuHost: MainMenuHosting {
 }
 
 @MainActor
-func makeLibraryViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
+func makeLibraryViewModel(
+    preferences: AppPreferences,
+    usbAccessoryService: (any USBAccessoryProviding)? = nil
+) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: MockVMStorageService(),
         diskImageService: MockDiskImageService(),
@@ -34,6 +37,10 @@ func makeLibraryViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
+        // Never the real one: constructing it registers a process-wide
+        // AccessoryAccess listener, which every test host would then hold on a
+        // machine whose signature carries the entitlement.
+        usbAccessoryService: usbAccessoryService,
         preferences: preferences
     )
 }

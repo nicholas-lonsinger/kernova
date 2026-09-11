@@ -41,6 +41,8 @@ enum CommandError: Error, Sendable, Equatable {
     case invalidArgument(String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
+    /// This build cannot do what was asked, and no VM was named.
+    case unsupportedByBuild(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The guest had not powered off `seconds` after the shutdown request, so
@@ -99,6 +101,8 @@ extension CommandError {
             .invalidArgument(message: message)
         case .unsupported(let capability):
             .unsupported(capability: capability)
+        case .unsupportedByBuild(let capability):
+            .unsupportedByBuild(capability: capability)
         case .conflict(let vm, let other, let reason):
             .conflict(vm: vm, with: other, reason: reason)
         case .timedOut(let vm, let verb, let seconds):

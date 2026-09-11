@@ -174,6 +174,51 @@ struct VMCommandEnvelopeRouterTests {
         #expect(double.portForwardingRulesSelectors == [selector])
     }
 
+    @Test("Both USB listings and the edit cross the wire as their own requests")
+    func theUSBVerbsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable)
+        double.library = [summary]
+        let held = [
+            USBAccessorySummary(
+                registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
+                vendorID: 0x0403, productID: 0x6001, deviceID: UUID())
+        ]
+        let free = [
+            USBAccessorySummary(
+                registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
+                productID: 0x12A8)
+        ]
+        double.usbAccessoriesByVM = [summary.id: held]
+        double.availableUSBAccessoriesToReturn = free
+        let transport = makeTransport(over: double)
+        let selector = VMSelector.id(summary.id)
+        let edit = USBAccessoryEdit.attach(accessory: 4_294_967_296)
+
+        let listedHeld = try await transport.send(.usbAccessories(selector)).result
+        #expect(listedHeld == .usbAccessories(held))
+        // Both listings answer in one payload shape, so a client reads what a
+        // guest holds and what nothing holds the same way.
+        let listedFree = try await transport.send(.availableUSBAccessories).result
+        #expect(listedFree == .usbAccessories(free))
+        let attached = try await transport.send(.editUSBAccessory(selector, edit)).result
+        #expect(attached == .ok)
+        let deviceID = UUID()
+        let detached = try await transport.send(
+            .editUSBAccessory(selector, .detach(device: deviceID))
+        ).result
+        #expect(detached == .ok)
+
+        #expect(double.usbAccessoriesSelectors == [selector])
+        #expect(double.availableUSBAccessoriesCallCount == 1)
+        // The router unpacks the edit onto the facade's two verbs, the way it
+        // does for every other attachment family.
+        #expect(double.attachUSBAccessoryCalls.map(\.selector) == [selector])
+        #expect(double.attachUSBAccessoryCalls.map(\.accessory) == [4_294_967_296])
+        #expect(double.detachUSBAccessoryCalls.map(\.selector) == [selector])
+        #expect(double.detachUSBAccessoryCalls.map(\.device) == [deviceID])
+    }
+
     @Test("A listing the facade refuses crosses the wire as that refusal, not as an empty list")
     func aRefusedListingCrossesTheWire() async throws {
         let double = MockVMCommanding()

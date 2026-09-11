@@ -375,6 +375,52 @@ struct CLIRenderingTests {
         }
     }
 
+    // MARK: - USB accessories
+
+    private let accessories = [
+        USBAccessorySummary(
+            registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
+            vendorID: 0x0403, productID: 0x6001,
+            deviceID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")),
+        USBAccessorySummary(
+            registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
+            productID: 0x12A8),
+    ]
+
+    @Test("A USB listing carries both handles, and quiet prints the one each row is acted on by")
+    func usbListingNamesBothHandles() throws {
+        let lines = TableRenderer.render(accessories, quiet: false)
+            .components(separatedBy: "\n")
+
+        #expect(lines[0].hasPrefix("NAME"))
+        #expect(lines[0].contains("ACCESSORY"))
+        #expect(lines[0].contains("DEVICE"))
+        #expect(lines[1].contains("4294967296"))
+        #expect(lines[1].contains("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"))
+
+        // An accessory a guest holds is detached by its attachment, and one no
+        // guest holds is attached by its own identifier, so `quiet` prints
+        // whichever of them the row's verb takes back.
+        #expect(
+            TableRenderer.render(accessories, quiet: true)
+                == "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\n12")
+    }
+
+    @Test("A guest holding nothing prints nothing at all")
+    func emptyUSBListingIsEmpty() {
+        #expect(TableRenderer.render([USBAccessorySummary](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([USBAccessorySummary](), quiet: true).isEmpty)
+    }
+
+    @Test("USB JSON is the wire DTO itself, decodable back")
+    func usbJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(accessories)
+
+        #expect(
+            try JSONDecoder().decode([USBAccessorySummary].self, from: Data(rendered.utf8))
+                == accessories)
+    }
+
     // MARK: - Forwarded ports
 
     private let rules = [

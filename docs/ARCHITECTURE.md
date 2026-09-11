@@ -89,9 +89,10 @@ Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvancedOptio
 - `VMSession` — one running VM's isolation domain: an actor whose executor is the private serial
   queue its `VZVirtualMachine` was created with, and the only type that calls into that VM or any
   of its device objects. It retains the VM's `VsockListenerHost`s, each for as long as its port is
-  bound. VZ's delegate callbacks arrive on that queue and leave as `VMSessionEvent`s
-  stamped with the session's id, which `VMInstance` hops to main and drops once the id no longer
-  names the live session.
+  bound. It owns both VZ delegates — the VM's own and, on macOS 27, each USB controller's, which
+  reports a passthrough accessory whose host device went away. Their callbacks arrive on that queue
+  and leave as `VMSessionEvent`s stamped with the session's id, which `VMInstance` hops to main and
+  drops once the id no longer names the live session.
 - `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path from the bundle root; the one
   place path logic lives.
 - `VMSnapshot` / `VMSnapshotManifest` — a named restore point and the `Snapshots/manifest.json`
@@ -128,6 +129,12 @@ stateless ones are `Sendable` structs.
   run with KVO progress.
 - `RemovableMediaDeviceService` — runtime USB mass-storage attach/detach against the live XHCI
   controller. Owned by `VMLifecycleCoordinator`.
+- `USBAccessoryService` — the only type that touches AccessoryAccess, and the only one that builds
+  a `VZUSBPassthroughDevice`. Registers one unfiltered `AAUSBAccessoryListener` for the process and
+  publishes the accessories macOS assigns to Kernova; it never enumerates the host's USB devices.
+  macOS 27.0-only, so `VMLifecycleCoordinator` holds it as an optional whose `nil` is the
+  capability's absence — both causes of it, the OS and the entitlement, collapsed by
+  `EntitlementService.supportsUSBAccessories`.
 - `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMSleepWakeCoordinator`,
   which auto-pauses running VMs before sleep and resumes them on wake.
 
@@ -445,6 +452,8 @@ AppDelegate
     │                 │      └── VMNetworkSlotRegistry, VMRemovableMediaReconciler
     │                 ├── VMSleepWakeCoordinator
     │                 │      └── SystemSleepWatcher
+    │                 ├── USBAccessoryRouter?  (routes a newly assigned accessory to the one
+    │                 │      running VM that could take it; nil with the capability absent)
     │                 ├── VMStorageService, VMSnapshotStore (one each, held by all three)
     │                 ├── DiskImageService
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)
@@ -452,7 +461,8 @@ AppDelegate
     │                 ├── VirtualizationService
     │                 ├── MacOSInstallService
     │                 ├── IPSWService
-    │                 └── RemovableMediaDeviceService
+    │                 ├── RemovableMediaDeviceService
+    │                 └── USBAccessoryService?  (nil without macOS 27 + the entitlement)
     ├── creates → MainMenuController
     ├── creates → AppResidencyHosting: AppResidencyController (activation policy, status item,
     │                 summon, intent gateway) or TestHostResidencyController

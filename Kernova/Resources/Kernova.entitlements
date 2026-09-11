@@ -43,6 +43,18 @@
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+	<!-- Passing a host USB accessory through to a guest. The App Sandbox
+	     profile keys on this entitlement directly: frameworks.sb grants the
+	     AppleUSBHostDeviceUserClient/AppleUSBHostFrameworkDeviceClient IOKit
+	     user clients to a process holding it. Xcode's capability catalog lists
+	     it as "Claim USB Accessory", public and App Store-eligible, so enabling
+	     it on the App ID takes no request to Apple — but it is restricted, like
+	     com.apple.vm.networking above: amfid kills an ad-hoc-signed binary
+	     claiming it ("adhoc signed but contains restricted entitlements"), so
+	     the default build signs with Kernova.Development.entitlements, this
+	     file minus both restricted keys. -->
+	<key>com.apple.developer.accessory-access.usb</key>
+	<true/>
 	<!-- The container the app and its `kernova` command-line tool meet in,
 	     holding the command socket. `$(TeamIdentifierPrefix)` is load-bearing —
 	     docs/research/2026-09-05-cli-transport-launchd-domains-and-sandboxed-sockets.md
