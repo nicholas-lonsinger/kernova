@@ -45,8 +45,12 @@ STRING_CATALOG_GENERATE_SYMBOLS = YES
 // DerivedData root. Keys embed the checkout path, so it replays a rebuild of
 // the same checkout (an evicted arena, a branch switched back) and does not
 // carry between worktrees. Project targets only: a package target never reads
-// a project xcconfig. CI turns it off (Makefile, CI_FLAGS).
+// a project xcconfig; the Makefile repeats both settings on CI's command line.
+// Past the limit the store rolls over into a new generation and keeps the
+// previous one as a read-through fallback, so on disk it holds up to two
+// generations. Unset, the limit is half the volume's free space.
 COMPILATION_CACHE_ENABLE_CACHING = YES
+COMPILATION_CACHE_LIMIT_SIZE = 4G
 
 GCC_OPTIMIZATION_LEVEL[config=Debug] = 0
 SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone

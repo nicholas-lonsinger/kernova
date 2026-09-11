@@ -19,13 +19,16 @@ ifneq ($(strip $(CI)),)
 # flag is load-bearing — docs/BUILD.md "Derived data and build arenas".
 DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
 # Plugin validation is an interactive trust prompt no runner can answer; the
-# index store serves an editor CI does not have; the compilation cache
-# (Config/Base.xcconfig) replays a rebuild of a checkout, and a runner builds
-# each checkout exactly once, so it would only pay to fill a store nothing
-# reads back.
+# index store serves an editor CI does not have. The compilation cache is on
+# project-wide in Config/Base.xcconfig and repeated here because a package
+# target never reads a project xcconfig. The limit is below any build's
+# output, so every build rolls the store over into a fresh generation that
+# holds exactly what that build produced or looked up — the workflow prunes
+# the generation left behind and saves the rest.
 CI_FLAGS           := -skipPackagePluginValidation \
                       COMPILER_INDEX_STORE_ENABLE=NO \
-                      COMPILATION_CACHE_ENABLE_CACHING=NO
+                      COMPILATION_CACHE_ENABLE_CACHING=YES \
+                      COMPILATION_CACHE_LIMIT_SIZE=1M
 RESULT_BUNDLE_FLAG := -resultBundlePath $(RESULT_BUNDLE)
 endif
 
