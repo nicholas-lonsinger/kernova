@@ -21,7 +21,7 @@ final class VMLifecycleCoordinator {
     let virtualizationService: any VirtualizationProviding
     let installService: any MacOSInstallProviding
     let ipswService: any IPSWProviding
-    let usbDeviceService: any USBDeviceProviding
+    let removableMediaDeviceService: any RemovableMediaAttaching
     let linuxImageResolveService: any LinuxImageResolving
     let downloadService: any Downloading
 
@@ -59,7 +59,7 @@ final class VMLifecycleCoordinator {
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
-        usbDeviceService: any USBDeviceProviding = USBDeviceService(),
+        removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -70,7 +70,7 @@ final class VMLifecycleCoordinator {
         self.virtualizationService = virtualizationService
         self.installService = installService
         self.ipswService = ipswService
-        self.usbDeviceService = usbDeviceService
+        self.removableMediaDeviceService = removableMediaDeviceService
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
         self.fileSystem = fileSystem
@@ -831,7 +831,7 @@ final class VMLifecycleCoordinator {
         )
     }
 
-    // MARK: - USB Device Management
+    // MARK: - Removable Media Management
 
     /// Attaches a USB mass storage device to a running VM and records it on
     /// `instance`, making it visible through `instance.liveRemovableMedia`.
@@ -843,25 +843,25 @@ final class VMLifecycleCoordinator {
     /// stays `diskImagePath`.
     ///
     /// `sessionID` is the session the caller's pass is acting for; a pass that
-    /// has been overtaken throws `USBDeviceError.noVirtualMachine` without
+    /// has been overtaken throws `RemovableMediaDeviceError.noVirtualMachine` without
     /// reaching the framework, so its remaining attaches cannot drive a
     /// successor's controller from the predecessor's diff.
-    func attachUSBDevice(
+    func attachRemovableMedia(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID? = nil,
         resolvedURL: URL? = nil,
         to instance: VMInstance,
         for sessionID: UUID
-    ) async throws -> USBDeviceInfo {
-        guard instance.liveSessionID == sessionID else { throw USBDeviceError.noVirtualMachine }
-        let info = try await usbDeviceService.attach(
+    ) async throws -> RemovableMediaDeviceInfo {
+        guard instance.liveSessionID == sessionID else { throw RemovableMediaDeviceError.noVirtualMachine }
+        let info = try await removableMediaDeviceService.attach(
             diskImagePath: resolvedURL?.path(percentEncoded: false) ?? diskImagePath,
             readOnly: readOnly,
             desiredUUID: desiredUUID,
             to: instance
         )
-        let tracked = USBDeviceInfo(
+        let tracked = RemovableMediaDeviceInfo(
             id: info.id, path: diskImagePath, readOnly: info.readOnly,
             attachedAt: info.attachedAt)
         instance.recordAttachedMedia(tracked, for: sessionID)
@@ -869,17 +869,17 @@ final class VMLifecycleCoordinator {
     }
 
     /// Detaches a device the session `sessionID` names is holding, and clears
-    /// its tracking entry — dropping to `USBDeviceError.noVirtualMachine`
+    /// its tracking entry — dropping to `RemovableMediaDeviceError.noVirtualMachine`
     /// before the framework call for the reason
-    /// ``attachUSBDevice(diskImagePath:readOnly:desiredUUID:resolvedURL:to:for:)``
+    /// ``attachRemovableMedia(diskImagePath:readOnly:desiredUUID:resolvedURL:to:for:)``
     /// does.
-    func detachUSBDevice(
-        _ deviceInfo: USBDeviceInfo,
+    func detachRemovableMedia(
+        _ deviceInfo: RemovableMediaDeviceInfo,
         from instance: VMInstance,
         for sessionID: UUID
     ) async throws {
-        guard instance.liveSessionID == sessionID else { throw USBDeviceError.noVirtualMachine }
-        try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
+        guard instance.liveSessionID == sessionID else { throw RemovableMediaDeviceError.noVirtualMachine }
+        try await removableMediaDeviceService.detach(deviceInfo: deviceInfo, from: instance)
         instance.forgetAttachedMedia(deviceID: deviceInfo.id, for: sessionID)
     }
 }

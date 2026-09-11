@@ -26,7 +26,7 @@ struct VMCapabilityCatalogTests {
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             linuxImageResolveService: MockLinuxImageResolveService(),
             downloadService: MockDownloadService(),
             fileSystem: MockFileSystem()

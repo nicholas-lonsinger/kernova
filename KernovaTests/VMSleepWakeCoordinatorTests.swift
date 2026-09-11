@@ -19,7 +19,7 @@ struct VMSleepWakeCoordinatorTests {
                 virtualizationService: virtualizationService,
                 installService: MockMacOSInstallService(),
                 ipswService: MockIPSWService(),
-                usbDeviceService: MockUSBDeviceService(),
+                removableMediaDeviceService: MockRemovableMediaDeviceService(),
                 linuxImageResolveService: MockLinuxImageResolveService(),
                 downloadService: MockDownloadService(),
                 fileSystem: fileSystem,

@@ -27,7 +27,7 @@ struct VMLibraryViewModelTests {
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService(),
-        usbDeviceService: any USBDeviceProviding = MockUSBDeviceService(),
+        removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
         downloadsDirectory: URL? = FileManager.default.urls(
@@ -37,7 +37,7 @@ struct VMLibraryViewModelTests {
         isVMNetworkingEntitled: Bool = true
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
-        any USBDeviceProviding
+        any RemovableMediaAttaching
     ) {
         let vm = VMLibraryViewModel(
             storageService: storageService,
@@ -45,7 +45,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: virtualizationService,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: usbDeviceService,
+            removableMediaDeviceService: removableMediaDeviceService,
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,
@@ -55,7 +55,7 @@ struct VMLibraryViewModelTests {
             isVMNetworkingEntitled: isVMNetworkingEntitled
         )
         vm.presenter = presenter
-        return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
+        return (vm, storageService, diskImageService, virtualizationService, removableMediaDeviceService)
     }
 
     /// A view model whose virtualization service holds one lifecycle call
@@ -70,7 +70,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: suspending,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -683,7 +683,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: ipswService,
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -2301,7 +2301,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: installService,
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences
         )
@@ -3541,7 +3541,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: raceInstaller,
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences
         )
         viewModel.presenter = presenter
@@ -5505,8 +5505,8 @@ struct VMLibraryViewModelTests {
     @Test("mountGuestAgentInstaller appends DMG to removableMedia and shows alert")
     func mountGuestAgentInstallerAppendsAndShowsAlert() async throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let mock = MockRemovableMediaDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
@@ -5530,8 +5530,8 @@ struct VMLibraryViewModelTests {
     @Test("mountGuestAgentInstaller is a no-op when DMG already in removableMedia, but still surfaces alert")
     func mountGuestAgentInstallerAlreadyMountedSurfacesAlert() throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let mock = MockRemovableMediaDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         instance.configuration.removableMedia = [
@@ -5565,8 +5565,8 @@ struct VMLibraryViewModelTests {
     @Test("mountGuestAgentInstaller attaches nothing for a guest that takes the disk on virtio")
     func mountGuestAgentInstallerVirtioAttachesNothing() async throws {
         _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let mock = MockRemovableMediaDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance(guestOS: .macOS)
         instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         instance.enter(.running(sessionID: UUID()))
@@ -5713,16 +5713,18 @@ struct VMLibraryViewModelTests {
 
     @Test("Reorder-only removableMedia change triggers no detach/attach")
     func liveRemovableReorderIsNoOp() async throws {
-        let mock = MockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let mock = MockRemovableMediaDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let idA = UUID()
         let idB = UUID()
-        instance.recordAttachedMedia(USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true), for: sessionID)
-        instance.recordAttachedMedia(USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true), for: sessionID)
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true), for: sessionID)
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: idA, path: "/tmp/a.iso", readOnly: true),
@@ -5751,16 +5753,16 @@ struct VMLibraryViewModelTests {
     @Test("Failed detach rolls config back to live state (item stays attached)")
     func liveRemovableRollbackOnDetachFailure() async throws {
         struct TransientError: Error {}
-        let mock = MockUSBDeviceService()
+        let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
         instance.recordAttachedMedia(
-            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
+            RemovableMediaDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)
@@ -5789,9 +5791,9 @@ struct VMLibraryViewModelTests {
     @Test("Failed attach rolls config back to live state (entry strips from config)")
     func liveRemovableRollbackOnAttachFailure() async throws {
         struct TransientError: Error {}
-        let mock = MockUSBDeviceService()
+        let mock = MockRemovableMediaDeviceService()
         mock.attachError = TransientError()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
@@ -5820,16 +5822,16 @@ struct VMLibraryViewModelTests {
     @Test("Failed swap rollback preserves the entry's label and note")
     func liveRemovableRollbackOnSwapFailurePreservesLabelAndNotes() async throws {
         struct TransientError: Error {}
-        let mock = MockUSBDeviceService()
+        let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
         instance.recordAttachedMedia(
-            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
+            RemovableMediaDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var oldItem = RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true, label: "Installer")
         oldItem.notes = "from the Ubuntu mirror"
         var old = instance.configuration
@@ -5860,16 +5862,16 @@ struct VMLibraryViewModelTests {
     @Test("Failed swap rollback restores the original entry, not the target")
     func liveRemovableRollbackOnSwapFailureRestoresOriginal() async throws {
         struct TransientError: Error {}
-        let mock = MockUSBDeviceService()
+        let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = makeInstance()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
         let id = UUID()
         instance.recordAttachedMedia(
-            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
+            RemovableMediaDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         var old = instance.configuration
         old.removableMedia = [
             RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)

@@ -120,7 +120,7 @@ final class VMSessionContext {
     ///
     /// One entry per item in `configuration.removableMedia` while the VM is
     /// running.
-    var liveRemovableMedia: [USBDeviceInfo] = []
+    var liveRemovableMedia: [RemovableMediaDeviceInfo] = []
 
     /// `true` from the moment a removable-media edit is queued for this
     /// session until the reconcile pass has drained it — the window a

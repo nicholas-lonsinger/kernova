@@ -13,12 +13,12 @@ struct ConfigurationBuilder: Sendable {
         let serialOutputPipe: Pipe
         let clipboardInputPipe: Pipe?
         let clipboardOutputPipe: Pipe?
-        /// `USBDeviceInfo` for each item in `config.removableMedia`, attached on
+        /// `RemovableMediaDeviceInfo` for each item in `config.removableMedia`, attached on
         /// the XHCI controller at config-build time.
         ///
         /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so
         /// `instance.liveRemovableMedia` can locate the devices for hot-detach.
-        let coldRemovableMedia: [USBDeviceInfo]
+        let coldRemovableMedia: [RemovableMediaDeviceInfo]
     }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "ConfigurationBuilder")
@@ -448,19 +448,19 @@ struct ConfigurationBuilder: Sendable {
     }
 
     /// Attaches every `removableMedia` item to the XHCI controller's
-    /// `usbDevices` list and returns the matching `USBDeviceInfo`s for
+    /// `usbDevices` list and returns the matching `RemovableMediaDeviceInfo`s for
     /// runtime tracking in `instance.liveRemovableMedia`.
     private func configureRemovableMedia(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration
-    ) throws -> [USBDeviceInfo] {
+    ) throws -> [RemovableMediaDeviceInfo] {
         guard let items = config.removableMedia, !items.isEmpty else { return [] }
         guard let xhci = vzConfig.usbControllers.first else {
             Self.logger.fault("USB controller missing when attaching removable media")
             preconditionFailure("USB controller must be configured before removable media")
         }
 
-        var infos: [USBDeviceInfo] = []
+        var infos: [RemovableMediaDeviceInfo] = []
         var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
         for item in items {
             let resolved = try Self.resolveFile(
@@ -488,7 +488,7 @@ struct ConfigurationBuilder: Sendable {
             let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
             usbConfig.uuid = item.id
             attached.append(usbConfig)
-            infos.append(USBDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
+            infos.append(RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
 
             Self.logger.debug(
                 "Attached removable media '\(item.label, privacy: .public)' on XHCI (readOnly: \(item.readOnly, privacy: .public))"
@@ -669,7 +669,7 @@ struct ConfigurationBuilder: Sendable {
     }
 
     /// Configures an XHCI USB controller unconditionally so that runtime USB device hot-plug
-    /// is always available via `USBDeviceService`.
+    /// is always available via `RemovableMediaDeviceService`.
     private func configureUSBControllers(_ vzConfig: VZVirtualMachineConfiguration) {
         vzConfig.usbControllers = [VZXHCIControllerConfiguration()]
     }

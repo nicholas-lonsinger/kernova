@@ -413,7 +413,7 @@ final class VMInstance {
     ///
     /// One entry per item in `configuration.removableMedia` while the VM is
     /// running; cleared on stop/teardown.
-    var liveRemovableMedia: [USBDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
+    var liveRemovableMedia: [RemovableMediaDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
 
     /// Whether the live session has a removable-media edit queued that the
     /// reconciler has not yet driven onto the XHCI controller.
@@ -454,9 +454,9 @@ final class VMInstance {
     /// attach call, and a power-off (or a power-off and restart) landing on
     /// main during that suspension resolves the continuation against a VM this
     /// record no longer describes — the same race its own
-    /// `USBDeviceError.noVirtualMachine` handling already treats as a normal
+    /// `RemovableMediaDeviceError.noVirtualMachine` handling already treats as a normal
     /// bail, not a programming error.
-    func recordAttachedMedia(_ info: USBDeviceInfo, for sessionID: UUID) {
+    func recordAttachedMedia(_ info: RemovableMediaDeviceInfo, for sessionID: UUID) {
         guard let context = mediaWriteTarget(for: sessionID, deviceID: info.id, "attached-media record")
         else { return }
         context.liveRemovableMedia.append(info)
@@ -540,7 +540,7 @@ final class VMInstance {
     /// capability it was admitted by cannot answer for different sessions.
     var attachableSessionID: UUID? { hasLiveSession ? liveSessionID : nil }
 
-    var canAttachUSBDevices: Bool { attachableSessionID != nil }
+    var canAttachRemovableMedia: Bool { attachableSessionID != nil }
 
     /// `true` when the bundled guest-agent installer disk can be attached to or
     /// ejected from this VM.
@@ -548,7 +548,7 @@ final class VMInstance {
     /// macOS guests only: the disk carries a `.app` and an `install.command`
     /// that stages a user LaunchAgent, neither of which a Linux guest can run.
     var canManageGuestAgentDisk: Bool {
-        canAttachUSBDevices && configuration.guestOS == .macOS
+        canAttachRemovableMedia && configuration.guestOS == .macOS
     }
 
     /// Whether this VM may be holding — or be about to take — an attachment on

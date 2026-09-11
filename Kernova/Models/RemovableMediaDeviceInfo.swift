@@ -3,7 +3,7 @@ import Foundation
 /// Metadata for a USB mass storage device attached at runtime via XHCI.
 ///
 /// Runtime-only — not persisted; devices detach when the VM stops.
-struct USBDeviceInfo: Sendable, Equatable {
+struct RemovableMediaDeviceInfo: Sendable, Equatable {
     let id: UUID
     let path: String
     let readOnly: Bool
