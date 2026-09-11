@@ -705,7 +705,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 self.isCopyingToMac = false
                 self.refreshCommandButtons()
             }
-            let outcome = await self.publisher.publish(from: service)
+            // A cancelled publish has no outcome to show.
+            guard let outcome = try? await self.publisher.publish(from: service) else { return }
             self.showCopyOutcome(outcome)
         }
     }

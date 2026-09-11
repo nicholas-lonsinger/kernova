@@ -48,6 +48,13 @@ struct ClipboardPassthroughCoordinatorTests {
         /// resolve resolves on the event itself.
         @ObservationIgnored let grabRecorded = AsyncGate()
 
+        /// How many times `materializeForCopy` has run — the first step of a
+        /// publish, so a wait on it resolves once the publish is in flight.
+        var copiesMaterialized = 0
+
+        /// Fires on each `materializeForCopy`.
+        @ObservationIgnored let copyMaterialized = AsyncGate()
+
         func stop() {}
         func clearBuffer() { clipboardContent = .empty }
 
@@ -61,6 +68,8 @@ struct ClipboardPassthroughCoordinatorTests {
         }
 
         func materializeForCopy() -> [CopyToMacItem] {
+            copiesMaterialized += 1
+            copyMaterialized.notify()
             guard refusesOverCopyBudget else {
                 return clipboardContent.representations.map { .resolved($0) }
             }
@@ -254,7 +263,7 @@ struct ClipboardPassthroughCoordinatorTests {
     }
 
     @Test("Our own inbound publish is absorbed, not re-forwarded (echo suppression)")
-    func echoSuppressed() async {
+    func echoSuppressed() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
@@ -262,7 +271,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // exactly what the inbound path (or a manual "Copy to Mac") does through
         // the shared publisher.
         h.service.clipboardContent = ClipboardContent(text: "from guest")
-        let outcome = await h.publisher.publish(from: h.service)
+        let outcome = try await h.publisher.publish(from: h.service)
         guard case .written = outcome else {
             Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
             return
@@ -866,5 +875,81 @@ struct ClipboardPassthroughCoordinatorTests {
         try await Task.sleep(for: .milliseconds(300))
         #expect(!publishedAfterStop)
         #expect(h.pasteboard.changeCount == baseline)
+    }
+
+    /// Starts a session and lets one inbound publish get under way: past
+    /// `materializeForCopy`, so the coordinator's task is parked on the
+    /// publisher's off-actor stage and the next main-actor turn is the test's.
+    private func makeInFlightPublishHarness() async throws -> Harness {
+        let h = makeHarness()
+        writeText("previous host content", to: h.pasteboard)
+        h.coordinator.start()
+        h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
+        try await h.service.copyMaterialized.wait { h.service.copiesMaterialized == 1 }
+        return h
+    }
+
+    @Test("stop() cancels the inbound publish in flight, so nothing lands after it")
+    func stopCancelsInFlightInboundPublish() async throws {
+        let h = try await makeInFlightPublishHarness()
+        defer { h.pasteboard.releaseGlobally() }
+        let baseline = h.pasteboard.changeCount
+
+        let publish = try #require(h.coordinator.inboundPublishTaskForTesting)
+        var publishedAfterStop = false
+        h.coordinator.onInboundPublishedForTesting = { publishedAfterStop = true }
+        h.coordinator.stop()
+        #expect(publish.isCancelled)
+
+        await publish.value
+        #expect(!publishedAfterStop)
+        #expect(h.pasteboard.changeCount == baseline)
+        #expect(h.pasteboard.string(forType: .string) == "previous host content")
+    }
+
+    @Test("A newer inbound offer supersedes the publish in flight")
+    func newerOfferSupersedesInFlightPublish() async throws {
+        let h = try await makeInFlightPublishHarness()
+        defer {
+            h.coordinator.stop()
+            h.pasteboard.releaseGlobally()
+        }
+        let first = try #require(h.coordinator.inboundPublishTaskForTesting)
+
+        let published = AsyncGate()
+        h.coordinator.onInboundPublishedForTesting = { published.notify() }
+        h.service.simulateInboundOffer(ClipboardContent(text: "guest copied again"))
+        try await h.service.copyMaterialized.wait { h.service.copiesMaterialized == 2 }
+
+        // The second publish is the live one, and it was armed by cancelling
+        // the first — whether or not the first had already returned.
+        #expect(first.isCancelled)
+        let second = try #require(h.coordinator.inboundPublishTaskForTesting)
+        #expect(second != first)
+        #expect(!second.isCancelled)
+
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        try await published.wait {
+            h.pasteboard.data(forType: textType) == Data("guest copied again".utf8)
+        }
+    }
+
+    @Test("A publish whose task is cancelled writes nothing")
+    func cancelledPublishWritesNothing() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+        writeText("previous host content", to: h.pasteboard)
+        let baseline = h.pasteboard.changeCount
+        h.service.clipboardContent = ClipboardContent(text: "from guest")
+
+        let publisher = h.publisher
+        let service = h.service
+        let publish = Task { @MainActor in try await publisher.publish(from: service) }
+        publish.cancel()
+
+        await #expect(throws: CancellationError.self) { try await publish.value }
+        #expect(h.service.copiesMaterialized == 0)
+        #expect(h.pasteboard.changeCount == baseline)
+        #expect(h.pasteboard.string(forType: .string) == "previous host content")
     }
 }

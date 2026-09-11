@@ -55,7 +55,14 @@ final class HostClipboardPublisher {
     /// A live guest offer publishes from metadata alone — every promised rep's
     /// bytes are pulled at paste time through its provide closure — so nothing
     /// crosses the wire here; resolved (local) reps stage their bytes as before.
-    func publish(from service: any ClipboardServicing) async -> HostPublishOutcome {
+    ///
+    /// Cooperatively cancellable: a task cancelled before the write throws
+    /// `CancellationError` with the pasteboard untouched and its staging
+    /// discarded, so a publish the caller no longer wants never lands.
+    func publish(from service: any ClipboardServicing) async throws(CancellationError)
+        -> HostPublishOutcome
+    {
+        guard !Task.isCancelled else { throw CancellationError() }
         let staging = self.staging
         let generation = stagingGeneration
         stagingGeneration += 1
@@ -76,9 +83,19 @@ final class HostClipboardPublisher {
         }
 
         // Only `VsockClipboardService` produces `.promised`.
-        var specs = await Self.hostPasteboardItems(
-            for: ClipboardContent(representations: resolvedReps), generation: generation,
-            staging: staging)
+        var specs: [ClipboardPasteboardPublisher.ItemSpec]
+        do throws(CancellationError) {
+            specs = try await Self.hostPasteboardItems(
+                for: ClipboardContent(representations: resolvedReps), generation: generation,
+                staging: staging)
+            // The stage is where the task was off the actor; a cancellation that
+            // arrived meanwhile must stop the write, the one observable step.
+            guard !Task.isCancelled else { throw CancellationError() }
+        } catch {
+            // Nothing was written, so nothing can be serving from this generation.
+            staging.discardGeneration(generation)
+            throw error
+        }
         if let serving = service as? any ClipboardPromiseServing {
             specs += Self.promisedItemSpecs(for: promises, serve: serving)
         }
@@ -156,9 +173,12 @@ final class HostClipboardPublisher {
     /// (and, for an image file, its inline image bytes too). One `.fileURL` per
     /// item is what a Finder paste needs to create N files — an item holds only
     /// one value per type, so several file URLs in one item would collide.
+    ///
+    /// Checks for cancellation before each item's stage, so a cancelled publish
+    /// of many files unwinds at the next file rather than staging them all.
     nonisolated static func hostPasteboardItems(
         for content: ClipboardContent, generation: UInt64, staging: ClipboardFileStaging
-    ) async -> [ClipboardPasteboardPublisher.ItemSpec] {
+    ) async throws(CancellationError) -> [ClipboardPasteboardPublisher.ItemSpec] {
         let descriptors = content.representations.map {
             ClipboardRepresentationDescriptor(
                 uti: $0.uti, filename: $0.filename,
@@ -168,6 +188,7 @@ final class HostClipboardPublisher {
 
         var specs: [ClipboardPasteboardPublisher.ItemSpec] = []
         for item in plan.items {
+            guard !Task.isCancelled else { throw CancellationError() }
             if item.types.contains(where: \.isFileURL) {
                 // All of an item's types share one backing rep.
                 let representation = content.representations[item.types[0].representationIndex]
