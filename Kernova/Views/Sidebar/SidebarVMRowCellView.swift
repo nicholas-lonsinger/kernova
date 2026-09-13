@@ -325,7 +325,8 @@ final class SidebarVMRowCellView: NSTableCellView {
     // MARK: - Intrinsic width
 
     /// The cell content width — excluding the outline view's per-row indentation,
-    /// which the caller adds — at which `name` stops truncating.
+    /// which the caller adds — at which `name` stops truncating while its row is
+    /// selected, which is the widest the name is ever drawn.
     static func contentWidth(
         forName name: String, showsAgentAccessory: Bool, showsEphemeralAccessory: Bool
     ) -> CGFloat {
@@ -357,17 +358,40 @@ final class SidebarVMRowCellView: NSTableCellView {
         return field
     }()
 
+    /// The font a *selected* row's name is drawn in — the emphasized variant of
+    /// ``Typography/body``.
+    ///
+    /// A source-list `NSOutlineView` draws the selected row's name by rewriting
+    /// the attributed string it renders, leaving the text field's own `font`, and
+    /// its cell's, reporting the regular weight — so the drawn font has to be
+    /// derived rather than read off the cell (observed macOS 27.0, 2026-09-13).
+    static var emphasizedNameFont: NSFont {
+        let body = Typography.body
+        if let memo = emphasizedNameFontMemo, memo.body == body { return memo.emphasized }
+        let emphasized = NSFontManager.shared.convert(body, toHaveTrait: .boldFontMask)
+        emphasizedNameFontMemo = (body, emphasized)
+        return emphasized
+    }
+
+    /// The last ``Typography/body`` seen and what it converted to.
+    ///
+    /// The conversion costs orders of magnitude more than the width-cache hit it
+    /// guards, and the snap runs both over every VM on every
+    /// `constrainSplitPosition` call, so it is re-derived only when the body font
+    /// itself changes.
+    private static var emphasizedNameFontMemo: (body: NSFont, emphasized: NSFont)?
+
     /// Memoized name-to-width measurements for the sidebar snap-to-fit.
     ///
     /// The snap recomputes the fit width on every `constrainSplitPosition` call
     /// (many per second during a drag) over every VM, so caching the text-layout
     /// pass keeps that hot path off the layout engine. Cleared when the font
-    /// changes, so it keeps tracking `Typography.body`.
+    /// changes, so it keeps tracking ``emphasizedNameFont``.
     private static var nameWidthCache: [String: CGFloat] = [:]
     private static var nameWidthCacheFont: NSFont?
 
     private static func measuredNameWidth(for name: String) -> CGFloat {
-        let font = Typography.body
+        let font = emphasizedNameFont
         if font != nameWidthCacheFont {
             nameWidthCache.removeAll()
             nameWidthCacheFont = font
