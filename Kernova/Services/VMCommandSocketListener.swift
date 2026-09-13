@@ -171,15 +171,11 @@ final class VMCommandSocketListener {
             return
         }
         guard let token = peerAuditToken(of: fd) else {
-            refuse(
-                fd, router: router,
-                reason: "The connecting process could not be identified.")
+            refuse(fd, router: router, refusal: .unidentified)
             return
         }
-        guard authorizer.isAuthorized(peer: token) else {
-            refuse(
-                fd, router: router,
-                reason: "Only Kernova components signed by the same team may drive this app.")
+        if case .refused(let refusal) = authorizer.authorization(ofPeer: token) {
+            refuse(fd, router: router, refusal: refusal)
             return
         }
         adopt(
@@ -190,8 +186,9 @@ final class VMCommandSocketListener {
 
     /// Writes one refusal frame, best-effort, and closes the descriptor.
     nonisolated private static func refuse(
-        _ fd: Int32, router: VMCommandEnvelopeRouter, reason: String
+        _ fd: Int32, router: VMCommandEnvelopeRouter, refusal: PeerRefusal
     ) {
+        let reason = refusal.reason
         Self.logger.notice(
             "Refused a connection on the command socket: \(reason, privacy: .public)")
         let payload = router.encode(

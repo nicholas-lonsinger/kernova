@@ -2,10 +2,44 @@ import Foundation
 import Security
 import os
 
+/// Why a connecting peer was turned away.
+///
+/// The states a ``PeerAuthorizing`` tells apart with certainty, kept apart so a
+/// refused client is told what the check found rather than whichever refusal is
+/// the most common.
+enum PeerRefusal: Equatable, Sendable {
+    /// The peer was not resolved to a code identity.
+    case unidentified
+    /// The peer's signature does not validate against Apple's roots.
+    case notValidlySigned
+    /// The peer is validly signed, by a team this build does not answer.
+    case differentTeam
+
+    /// What the refused peer is told: only what the check established, naming
+    /// neither a cause it cannot know nor a step it cannot be sure would help.
+    var reason: String {
+        switch self {
+        case .unidentified:
+            "The connecting process could not be identified."
+        case .notValidlySigned:
+            "The connecting process is not validly signed."
+        case .differentTeam:
+            "Only Kernova components signed by the same team may drive this app."
+        }
+    }
+}
+
+/// What a ``PeerAuthorizing`` made of a connecting peer.
+enum PeerAuthorization: Equatable, Sendable {
+    case authorized
+    case refused(PeerRefusal)
+}
+
 /// Whether the process on the other end of a connection may drive this app.
 protocol PeerAuthorizing: Sendable {
-    /// Whether the peer behind `token` is one this build answers.
-    func isAuthorized(peer token: audit_token_t) -> Bool
+    /// Whether the peer behind `token` is one this build answers, and when it
+    /// is not, which refusal that is.
+    func authorization(ofPeer token: audit_token_t) -> PeerAuthorization
 }
 
 /// Admits peers code-signed by this build's own team, and nothing else.
@@ -52,7 +86,7 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         ownTeam = team
     }
 
-    func isAuthorized(peer token: audit_token_t) -> Bool {
+    func authorization(ofPeer token: audit_token_t) -> PeerAuthorization {
         let attributes =
             [kSecGuestAttributeAudit: Data(Self.bytes(of: token))] as CFDictionary
         var peer: SecCode?
@@ -61,30 +95,33 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
             Self.logger.warning(
                 "A connecting peer could not be resolved to a code identity: OSStatus \(lookup, privacy: .public)"
             )
-            return false
+            return .refused(.unidentified)
         }
 
         var requirement: SecRequirement?
         let built = SecRequirementCreateWithString(
             Self.anchorRequirement as CFString, [], &requirement)
         guard built == errSecSuccess, let requirement else {
-            Self.logger.error(
+            Self.logger.fault(
                 "Could not build the anchor requirement: OSStatus \(built, privacy: .public)")
-            return false
+            assertionFailure("Could not build the anchor requirement: OSStatus \(built)")
+            // No check ran, so the signature and the team are both unread: the
+            // refusal claiming the least is the one this peer gets.
+            return .refused(.unidentified)
         }
         let validity = SecCodeCheckValidity(peer, [], requirement)
         guard validity == errSecSuccess else {
             Self.logger.notice(
                 "Refused a connecting peer that does not chain to an Apple root: OSStatus \(validity, privacy: .public)"
             )
-            return false
+            return .refused(.notValidlySigned)
         }
 
         guard Self.isSameTeam(peer: Self.teamIdentifier(of: peer), own: ownTeam) else {
             Self.logger.notice("Refused a connecting peer signed by a different team")
-            return false
+            return .refused(.differentTeam)
         }
-        return true
+        return .authorized
     }
 
     /// Whether `peer` is the team this build answers.

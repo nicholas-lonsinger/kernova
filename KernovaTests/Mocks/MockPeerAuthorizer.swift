@@ -10,20 +10,20 @@ import Foundation
 /// unanswerable exactly when the subject asks.
 final class MockPeerAuthorizer: PeerAuthorizing, @unchecked Sendable {
     private let lock = NSLock()
-    private let authorized: Bool
+    private let verdict: PeerAuthorization
     private var asked = 0
 
     /// How many peers have been checked.
     var checkCount: Int { lock.withLock { asked } }
 
-    init(isAuthorizedResult: Bool = true) {
-        self.authorized = isAuthorizedResult
+    init(_ verdict: PeerAuthorization = .authorized) {
+        self.verdict = verdict
     }
 
-    func isAuthorized(peer token: audit_token_t) -> Bool {
+    func authorization(ofPeer token: audit_token_t) -> PeerAuthorization {
         lock.withLock {
             asked += 1
-            return authorized
+            return verdict
         }
     }
 }
