@@ -72,13 +72,13 @@ struct VMCommandSocketListenerTests {
     }
 
     private func makeHarness(
-        authorized: Bool = true,
+        authorization: PeerAuthorization = .authorized,
         library: [VMSummary] = [],
         libraryHasLanded: Bool = true
     ) -> Harness {
         let commands = MockVMCommanding()
         commands.library = library
-        let authorizer = MockPeerAuthorizer(isAuthorizedResult: authorized)
+        let authorizer = MockPeerAuthorizer(authorization)
         let connectionsChanged = AsyncGate()
         let surfaced = AsyncGate()
         let surfaceCount = Counter()
@@ -230,9 +230,25 @@ struct VMCommandSocketListenerTests {
 
     // MARK: - Envelope refusals
 
-    @Test("An unauthorized peer is told so, then disconnected")
-    func unauthorizedPeerIsRefusedAndClosed() async throws {
-        let harness = makeHarness(authorized: false)
+    @Test(
+        "A refused peer is told which refusal it is, then disconnected",
+        arguments: [
+            (
+                refusal: PeerRefusal.unidentified,
+                sentence: "The connecting process could not be identified."
+            ),
+            (
+                refusal: PeerRefusal.notValidlySigned,
+                sentence: "The connecting process is not validly signed."
+            ),
+            (
+                refusal: PeerRefusal.differentTeam,
+                sentence: "Only Kernova components signed by the same team may drive this app."
+            ),
+        ]
+    )
+    func refusedPeerIsToldWhichRefusal(_ c: (refusal: PeerRefusal, sentence: String)) async throws {
+        let harness = makeHarness(authorization: .refused(c.refusal))
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -240,10 +256,9 @@ struct VMCommandSocketListenerTests {
         defer { client.close() }
 
         let response = try await client.nextResponse()
-        guard case .refused(.authorizationRefused) = response?.result else {
-            Issue.record("expected an authorization refusal, got \(String(describing: response))")
-            return
-        }
+        // A team mismatch is one of three refusals, and the other two are not
+        // worded as one: the sentence says what the check established.
+        #expect(response?.result == .refused(.authorizationRefused(reason: c.sentence)))
         // The refusal ends the connection, so the next read is end-of-stream.
         #expect(try await client.nextResponse() == nil)
         // Nothing reached the verbs, and no connection was ever adopted.
