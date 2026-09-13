@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # package-guest-agent-dmg.sh — stage Kernova Guest Agent.app with its
-# install/uninstall commands into a guest-mountable .cdr disk image inside
+# install/uninstall commands into a guest-mountable raw disk image inside
 # Kernova.app, and write the version sidecar the host reads at runtime.
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR,
@@ -10,10 +10,8 @@
 set -euo pipefail
 
 STAGING_DIR=$(mktemp -d "${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX")
-TEMP_DMG="$(mktemp -u "${DERIVED_FILE_DIR}/guest-agent-temp.XXXXXX").dmg"
-trap 'rm -rf "${STAGING_DIR}" "${TEMP_DMG}"' EXIT
+trap 'rm -rf "${STAGING_DIR}"' EXIT
 
-RAW_PREFIX="${DERIVED_FILE_DIR}/guest-agent-raw"
 DMG_OUTPUT="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaMacOSAgent.dmg"
 VERSION_OUTPUT="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaMacOSAgentVersion.txt"
 
@@ -25,16 +23,12 @@ cp "${SRCROOT}/KernovaMacOSAgent/app.kernova.macosagent.plist" "${STAGING_DIR}/a
 
 mkdir -p "$(dirname "${DMG_OUTPUT}")"
 
-# Create a UDRW DMG then convert to DVD/CD-R master (UDTO/.cdr).
-# VZDiskImageStorageDeviceAttachment needs a format it can present as a
-# USB block device — the .cdr export works reliably for guest-mountable volumes.
-hdiutil create \
-    -volname "Kernova Guest Agent" \
-    -srcfolder "${STAGING_DIR}" \
-    -ov -format UDRW \
-    "${TEMP_DMG}"
-hdiutil convert "${TEMP_DMG}" -format UDTO -ov -o "${RAW_PREFIX}"
-mv "${RAW_PREFIX}.cdr" "${DMG_OUTPUT}"
+# A raw image (GPT + APFS, no UDIF wrapper) is what
+# VZDiskImageStorageDeviceAttachment presents to the guest as a USB block device.
+diskutil image create from \
+    --format RAW \
+    --volumeName "Kernova Guest Agent" \
+    "${STAGING_DIR}" "${DMG_OUTPUT}"
 
 # Strip extended attributes that break code signing
 xattr -cr "${DMG_OUTPUT}"

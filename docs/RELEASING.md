@@ -158,13 +158,13 @@ Then inspect the agent **inside the DMG** (the one bundle export re-signing
 can't touch):
 
 ```bash
-hdiutil attach Kernova.app/Contents/Resources/KernovaMacOSAgent.dmg
+diskutil image attach Kernova.app/Contents/Resources/KernovaMacOSAgent.dmg
 codesign -dvvv "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app"
 # → Developer ID Application authority
 # → flags=0x10000(runtime)          (hardened runtime present)
 # → "Timestamp=" line present       (secure timestamp present)
 # → an embedded.provisionprofile with ProvisionsAllDevices
-hdiutil detach "/Volumes/Kernova Guest Agent"
+diskutil eject "/Volumes/Kernova Guest Agent"
 ```
 
 Finally, a **functional pass** on the disposable **"macOS TEST"** VM (never the
