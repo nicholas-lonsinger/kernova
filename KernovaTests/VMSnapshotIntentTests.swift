@@ -219,6 +219,47 @@ struct VMSnapshotIntentTests {
         #expect(commands.renameSnapshotCalls.isEmpty)
     }
 
+    /// The core trims a snapshot name and writes nothing when none is left —
+    /// the inline field commits on end-editing whether or not the text
+    /// changed — so a Shortcut whose Name resolves to nothing would report
+    /// success having renamed nothing.
+    @Test(
+        "A rename carrying nothing but whitespace for a name is refused",
+        arguments: ["", "   ", "\n\t "])
+    func aRenameWithoutANameIsRefused(name: String) async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        let listed = VMIntentFixtures.snapshot()
+        seed(commands, vm: vm, snapshots: [listed])
+        let gateway = makeGateway(commands)
+
+        await #expect(
+            throws: CommandError.invalidArgument(
+                "A name is at least one character that is not a space.")
+        ) {
+            try await gateway.renameSnapshot(
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), to: name)
+        }
+
+        #expect(commands.renameSnapshotCalls.isEmpty)
+    }
+
+    /// An empty note is a legitimate value — it clears the note — so the note
+    /// edit takes what the rename refuses.
+    @Test("An empty note clears the note rather than being refused")
+    func anEmptyNoteIsWritten() async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        let listed = VMIntentFixtures.snapshot()
+        seed(commands, vm: vm, snapshots: [listed])
+        let gateway = makeGateway(commands)
+
+        try await gateway.setSnapshotNotes(
+            vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), notes: "")
+
+        #expect(commands.setSnapshotNotesCalls.map(\.notes) == [""])
+    }
+
     // MARK: - Checkpoint
 
     /// The confirmation is labelled with the route the action chose, so a user

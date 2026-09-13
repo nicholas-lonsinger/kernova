@@ -64,6 +64,29 @@ struct VMLibraryIntentTests {
         #expect(commands.cancelGuestSetupCalls.map(\.selector) == [.id(vm)])
     }
 
+    /// The core trims the name and writes nothing when none is left — the
+    /// inline field commits on end-editing whether or not the text changed —
+    /// so a Shortcut whose Name resolves to nothing would report success
+    /// having renamed nothing.
+    @Test(
+        "A rename carrying nothing but whitespace for a name is refused",
+        arguments: ["", "   ", "\n\t "])
+    func aRenameWithoutANameIsRefused(name: String) async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        seed(commands, vm: vm)
+        let gateway = makeGateway(commands)
+
+        await #expect(
+            throws: CommandError.invalidArgument(
+                "A name is at least one character that is not a space.")
+        ) {
+            try await gateway.rename(vm, to: name)
+        }
+
+        #expect(commands.renameCalls.isEmpty)
+    }
+
     @Test("A clone answers the row the copy fills, read in full")
     func cloneAnswersTheNewRow() async throws {
         let commands = MockVMCommanding()

@@ -240,8 +240,9 @@ final class VMIntentGateway {
 
     func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
         try await perform(.renameSnapshot, on: id) {
+            let named = try Self.requireName(newName)
             let listed = try self.listedSnapshot(snapshot, on: id)
-            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: newName)
+            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: named)
         }
     }
 
@@ -268,15 +269,15 @@ final class VMIntentGateway {
     /// source's snapshot identifiers: one the named VM lists can still be a
     /// pick made in the VM it was copied from.
     private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
-        let listed = try commands.snapshots(of: .id(vm))
-        if picked.vm == vm, listed.contains(where: { $0.id == picked.snapshot }) {
-            return picked.snapshot
-        }
         guard let summary = commands.list().first(where: { $0.id == vm }) else {
             throw CommandError.notFound(.id(vm))
         }
-        throw CommandError.itemNotFound(
-            vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
+        let listed = try commands.snapshots(of: .id(vm))
+        guard picked.vm == vm, listed.contains(where: { $0.id == picked.snapshot }) else {
+            throw CommandError.itemNotFound(
+                vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
+        }
+        return picked.snapshot
     }
 
     // MARK: - Library
@@ -311,7 +312,9 @@ final class VMIntentGateway {
     }
 
     func rename(_ id: UUID, to newName: String) async throws {
-        try await perform(.rename, on: id) { try self.commands.rename(.id(id), to: newName) }
+        try await perform(.rename, on: id) {
+            try self.commands.rename(.id(id), to: Self.requireName(newName))
+        }
     }
 
     /// Moves the VM's bundle to the Trash.
@@ -331,6 +334,26 @@ final class VMIntentGateway {
         try await perform(.cancelPreparing, on: id) {
             try self.commands.cancelPreparing(.id(id), confirmed: confirmed)
         }
+    }
+
+    // MARK: - Arguments
+
+    /// `name` with its surrounding whitespace gone, refusing one that carries
+    /// nothing else.
+    ///
+    /// Both rename verbs in the core trim and return without writing when
+    /// nothing is left, because an inline field commits on end-editing whether
+    /// or not the text changed and must not raise an alert about a rename
+    /// nobody made. A Shortcut supplies the name deliberately — often from a
+    /// variable that resolves to nothing — so the same input is a refusal
+    /// here, rather than a success that renamed nothing.
+    private static func requireName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CommandError.invalidArgument(
+                "A name is at least one character that is not a space.")
+        }
+        return trimmed
     }
 
     // MARK: - Dispatch
