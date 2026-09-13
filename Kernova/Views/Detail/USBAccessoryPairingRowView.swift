@@ -15,18 +15,32 @@ final class USBAccessoryPairingRowView: NSView {
         title.font = Typography.body
         title.isSelectable = false
         title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
+        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        // The same secondary line the shared-directory rows in this card use.
         let detail = makeGroupedFormSecondaryLabel(Self.detailText(for: pairing))
         detail.font = .preferredFont(forTextStyle: .caption1)
         detail.lineBreakMode = .byTruncatingTail
+        detail.maximumNumberOfLines = 1
+        detail.setContentHuggingPriority(.defaultLow, for: .horizontal)
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let text = NSStackView(views: [title, detail])
         text.orientation = .vertical
         text.alignment = .leading
-        text.spacing = Spacing.tight
+        text.spacing = Spacing.hairline
         text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Both lines fill the text column rather than sizing to their own
+        // string, so the column is what the row's spare width lands in.
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: text.leadingAnchor),
+            title.trailingAnchor.constraint(equalTo: text.trailingAnchor),
+            detail.leadingAnchor.constraint(equalTo: text.leadingAnchor),
+            detail.trailingAnchor.constraint(equalTo: text.trailingAnchor),
+        ])
 
         let remove = NSButton()
         remove.image = .systemSymbol("minus.circle", accessibilityDescription: "Forget")
@@ -39,11 +53,16 @@ final class USBAccessoryPairingRowView: NSView {
         remove.target = target
         remove.action = action
         remove.toolTip = "Stop passing this accessory through automatically"
+        // Rigid, so the text column is the only view that stretches and the
+        // button lands on the row's trailing edge rather than against the
+        // title — the arrangement the attachment rows in this card use.
         remove.setContentHuggingPriority(.required, for: .horizontal)
+        remove.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let row = NSStackView(views: [text, remove])
         row.orientation = .horizontal
         row.alignment = .centerY
+        row.distribution = .fill
         row.spacing = Spacing.standard
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
