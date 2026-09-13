@@ -10,7 +10,7 @@
 
 [Highlights](#highlights) · [Features](#features) · [Automation](#automation) · [Requirements](#requirements) · [Building](#building-kernova) · [Docs](#documentation) · [License](#license)
 
-Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no third-party hypervisor, no kernel extensions, no licensing. A source list of machines, one-click lifecycle, and deep host integration: shared clipboard, drag-and-drop, shared folders, port forwarding, audio, and an in-guest agent.
+Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no third-party hypervisor, no kernel extensions, no licensing. A source list of machines, one-click lifecycle, and deep host integration: shared clipboard, drag-and-drop, shared folders, port forwarding, USB passthrough, audio, and an in-guest agent.
 
 <p align="center">
   <picture>
@@ -32,6 +32,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Shared folders** over VirtioFS | ✅ | ✅ |
 | **NAT** with **port forwarding** (TCP/UDP), **bridged**, **host-only** networking | ✅ | ✅ |
 | **Hot-plug** removable media (ISOs, disk images) | ✅ | ✅ |
+| **USB passthrough** of host accessories | ✅ | ✅ |
 | **Audio** out, opt-in **microphone** passthrough | ✅ | ✅ |
 | **Serial console** log and Unix-socket relay | ✅ | ✅ |
 | **Clipboard sharing** — text, rich text, images, files, folders | ✅ | text only |
@@ -70,6 +71,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 |---|---|
 | **Storage** | **ASIF** sparse disks at near-native SSD speed, live on-disk vs. allocated size, extra disks with per-disk read-only and drag-to-reorder boot order. |
 | **Removable media** | ISOs and disk images **hot-plugged** and ejected while the VM runs. |
+| **USB accessories** | On a macOS 27 host, a USB device you assign to Kernova in the **Virtual Machine Accessories** menu extra **passes through** to a running guest — from **Virtual Machine → USB Device** or `kernova usb attach`. Kernova **remembers** the pairing and passes the device through again when you plug it in and when the VM starts. Forget one in the Sharing settings or with `kernova usb forget`. |
 | **Shared folders** | Host folders over **VirtioFS**, read-only or read-write. |
 | **Display** | Resolution presets or custom size, **HiDPI**, size-to-fit at startup, live auto-resize. Inline, pop-out window, or **fullscreen** per VM; flip between the live display and a read-only settings form while running. |
 | **Input** | Mac or USB keyboard/pointer, auto-picked by guest version. Per-VM choice of when **system hot keys** reach the guest: never, in full screen, or always — live-switchable. |
@@ -78,7 +80,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
 
 > [!NOTE]
-> **Bridged** and **Host Only** need Apple's restricted `com.apple.vm.networking` entitlement. A build without it hides those modes and everything else works unchanged.
+> **Bridged** and **Host Only** need `com.apple.vm.networking`, a capability Apple grants; **USB accessories** need `com.apple.developer.accessory-access.usb`, which any App ID can enable in Xcode as *Claim USB Accessory*. Both must be authorized by a provisioning profile, so an ad-hoc-signed build carries neither — it hides those features, and everything else works unchanged.
 
 <p align="center">
   <picture>
