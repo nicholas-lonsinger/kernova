@@ -114,7 +114,7 @@ extension VMCommandCore {
         _ selector: VMSelector, snapshot id: UUID, takingCheckpoint: Bool, confirmed: Bool
     ) async throws {
         let instance = try resolve(selector)
-        let snapshot = try requireSnapshot(id, on: instance, verb: .revertToSnapshot)
+        let snapshot = try requireSnapshot(id, on: instance)
         try require(.revertToSnapshot, on: instance)
         guard confirmed else {
             throw CommandError.confirmationRequired(
@@ -327,7 +327,7 @@ extension VMCommandCore {
 
     func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, confirmed: Bool) async throws {
         let instance = try resolve(selector)
-        let snapshot = try requireSnapshot(id, on: instance, verb: .deleteSnapshot)
+        let snapshot = try requireSnapshot(id, on: instance)
         // Re-checked at the write as well as at the confirmation: the baseline
         // is what every power-off of this VM needs back, and the mode can be
         // switched on while a confirmation is up.
@@ -411,15 +411,9 @@ extension VMCommandCore {
 
     /// The snapshot `id` names on `instance`, or the refusal for one the
     /// manifest no longer lists.
-    private func requireSnapshot(
-        _ id: UUID, on instance: VMInstance, verb: VMVerb
-    ) throws -> VMSnapshot {
+    private func requireSnapshot(_ id: UUID, on instance: VMInstance) throws -> VMSnapshot {
         guard let snapshot = instance.snapshotManifest.snapshot(id: id) else {
-            throw CommandError.operationFailed(
-                verb: verb,
-                message:
-                    "\u{201C}\(instance.name)\u{201D} has no snapshot with the identifier \(id.uuidString)."
-            )
+            throw itemNotFound(instance, item: "snapshot with the identifier \(id.uuidString)")
         }
         return snapshot
     }

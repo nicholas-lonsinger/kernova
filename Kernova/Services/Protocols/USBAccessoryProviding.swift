@@ -32,22 +32,24 @@ protocol USBAccessoryProviding: AnyObject {
     /// The accessories macOS has assigned to Kernova, in arrival order.
     var accessories: [USBAccessoryInfo] { get }
 
-    /// Called when a newly assigned accessory arrives, so a caller can route it
-    /// to a guest.
+    /// Called when a newly assigned accessory arrives.
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)? { get set }
-
-    /// Called with the `registryID` of an accessory macOS took back, so a
-    /// caller can drop whatever it recorded against it.
-    ///
-    /// A guest's record of an attachment must not depend on
-    /// `VZUSBControllerDelegate` alone: an accessory can leave Kernova without
-    /// VZ reporting anything — a fast user switch withdraws every assignment —
-    /// and a record left behind names a device the guest no longer has.
-    var onAccessoryWithdrawn: (@MainActor (UInt64) -> Void)? { get set }
 
     /// Registers the listener that populates `accessories`. Idempotent; the
     /// registration lives for the process.
     func startObserving()
+
+    /// The accessory now carrying `identity`, waiting up to `timeout` for
+    /// macOS to assign one that does.
+    ///
+    /// Detaching a passthrough device destroys the capture behind it, which
+    /// resets the device and re-registers drivers for it, so the same stick
+    /// comes back as a different IORegistry node after a delay nothing bounds
+    /// — under a second with the host idle, and far longer when it has a
+    /// volume to unmount first. Event-driven for that reason: the wait ends on
+    /// the assignment, and `timeout` is only the backstop.
+    func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
+        async -> USBAccessoryInfo?
 
     /// Attaches the accessory `registryID` names to `instance`'s live USB
     /// controller.

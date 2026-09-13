@@ -670,6 +670,12 @@ final class VirtualizationService {
         for item in attached {
             do {
                 try await session.detachUSBDevice(uuid: item.deviceID)
+                // A .notice because it is an irreversible action on the user's
+                // own hardware: the device resets and the host takes it back,
+                // and nothing else in the log says a save did that.
+                logger.notice(
+                    "Took USB accessory \(item.accessory.displayName, privacy: .public) off '\(instance.name, privacy: .public)' before writing its state"
+                )
             } catch VMSessionError.usbDeviceNotFound {
                 logger.notice(
                     "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"

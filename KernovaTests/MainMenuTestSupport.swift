@@ -37,9 +37,6 @@ func makeLibraryViewModel(
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
-        // Never the real one: constructing it registers a process-wide
-        // AccessoryAccess listener, which every test host would then hold on a
-        // machine whose signature carries the entitlement.
         usbAccessoryService: usbAccessoryService,
         preferences: preferences
     )

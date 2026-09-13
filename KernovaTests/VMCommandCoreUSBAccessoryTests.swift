@@ -300,6 +300,85 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(instance.liveUSBAccessories.isEmpty)
     }
 
+    @Test("A detach naming a device the guest does not hold is refused, not quietly accepted")
+    func detachOfAnUnknownDeviceIsRefused() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 11), to: instance, in: harness)
+        let stranger = UUID()
+
+        let refusal = try #require(
+            await commandError {
+                try await harness.core.detachUSBAccessory(.id(instance.id), device: stranger)
+            })
+
+        // "Already gone" is a success only for a device the guest was recorded
+        // as holding; an identifier nothing answers to is a mistake, and
+        // succeeding at it would tell a script the detach happened.
+        #expect(refusal.isItemNotFound)
+        #expect(
+            refusal.message
+                == "\u{201C}Core VM\u{201D} has no USB accessory with the device identifier \(stranger.uuidString)."
+        )
+        #expect(service.detachedDeviceIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.count == 1)
+    }
+
+    // MARK: - Names
+
+    @Test("Two accessories that would read alike are told apart by their ports")
+    func duplicateNamesAreQualifiedAcrossBothListings() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        let held = MockUSBAccessoryService.accessory(
+            registryID: 1, serial: "AAA", receptacle: "hub/Port-USB-C@2", vendorName: "Samsung",
+            productName: "Type-C")
+        _ = try await attach(held, to: instance, in: harness)
+        service.accessories.append(
+            MockUSBAccessoryService.accessory(
+                registryID: 2, serial: "BBB", receptacle: "hub/Port-USB-C@3", vendorName: "Samsung",
+                productName: "Type-C"))
+
+        let attached = try harness.core.usbAccessories(of: .id(instance.id))
+        let available = try harness.core.availableUSBAccessories()
+
+        // One menu shows both lists, so the qualifier has to be decided across
+        // the pair rather than within either one.
+        #expect(attached.map(\.name) == ["Samsung Type-C (Port-USB-C@2)"])
+        #expect(available.map(\.name) == ["Samsung Type-C (Port-USB-C@3)"])
+    }
+
+    @Test("A lone accessory keeps its plain name")
+    func aLoneAccessoryIsNotQualified() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        service.accessories.append(
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "AAA", receptacle: "hub/Port-USB-C@2", vendorName: "Samsung",
+                productName: "Type-C"))
+
+        #expect(try harness.core.availableUSBAccessories().map(\.name) == ["Samsung Type-C"])
+    }
+
+    @Test("An accessory a guest holds is not qualified against itself")
+    func theOnlyAccessoryKeepsItsPlainNameWhileAttached() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        // macOS withdraws an accessory a guest captured, but not always before
+        // the guest's listing is read — so the same one can be in both sets,
+        // and counting it twice would make it qualify itself.
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "AAA", receptacle: "hub/Port-USB-C@2", vendorName: "Samsung",
+                productName: "Type-C"), to: instance, in: harness)
+
+        #expect(try harness.core.usbAccessories(of: .id(instance.id)).map(\.name) == ["Samsung Type-C"])
+        #expect(try harness.core.availableUSBAccessories().isEmpty)
+    }
+
     @Test("A detach that fails for any other reason reports what it was told")
     func detachFailureCarriesItsMessage() async throws {
         let harness = makeHarness()
@@ -343,6 +422,11 @@ struct VMCommandCoreUSBAccessoryTests {
 extension CommandError {
     fileprivate var isNotFound: Bool {
         if case .notFound = self { return true }
+        return false
+    }
+
+    fileprivate var isItemNotFound: Bool {
+        if case .itemNotFound = self { return true }
         return false
     }
 

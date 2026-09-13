@@ -412,6 +412,18 @@ struct CLIRenderingTests {
         #expect(TableRenderer.render([USBAccessorySummary](), quiet: true).isEmpty)
     }
 
+    @Test("A listing where no guest holds anything leaves the attachment column out")
+    func usbListingWithoutAttachmentsOmitsTheDeviceColumn() throws {
+        let free = accessories.filter { $0.deviceID == nil }
+        let lines = TableRenderer.render(free, quiet: false).components(separatedBy: "\n")
+
+        // Every row's attachment identifier would be blank, and a column of
+        // nothing is not a column.
+        #expect(lines[0].hasPrefix("NAME"))
+        #expect(lines[0].contains("ACCESSORY"))
+        #expect(!lines[0].contains("DEVICE"))
+    }
+
     @Test("USB JSON is the wire DTO itself, decodable back")
     func usbJSONIsTheWireDTO() throws {
         let rendered = try JSONRenderer.render(accessories)

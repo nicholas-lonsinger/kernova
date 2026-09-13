@@ -14,7 +14,6 @@ import os
 final class USBAccessoryService: USBAccessoryProviding {
     private(set) var accessories: [USBAccessoryInfo] = []
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
-    var onAccessoryWithdrawn: (@MainActor (UInt64) -> Void)?
 
     /// The live `AAUSBAccessory` behind each entry in `accessories`. VZ needs
     /// the object itself to capture the device; every other layer names it by
@@ -24,7 +23,23 @@ final class USBAccessoryService: USBAccessoryProviding {
     /// AccessoryAccess holds its listener weakly; the service retains it.
     private var listener: AccessoryListener?
 
+    /// Where the durable half of an accessory's description comes from.
+    private let registry: any USBAccessoryRegistryReading
+
+    /// Callers waiting for a particular unit to be assigned again, keyed by a
+    /// token so a backstop and an arrival cannot both answer one of them.
+    private var pendingMatches: [UUID: PendingMatch] = [:]
+
+    private struct PendingMatch {
+        let identity: USBAccessoryIdentity
+        let continuation: CheckedContinuation<USBAccessoryInfo?, Never>
+    }
+
     private static let logger = Logger(subsystem: "app.kernova", category: "USBAccessoryService")
+
+    init(registry: any USBAccessoryRegistryReading = USBAccessoryRegistry()) {
+        self.registry = registry
+    }
 
     func startObserving() {
         guard listener == nil else { return }
@@ -70,25 +85,83 @@ final class USBAccessoryService: USBAccessoryProviding {
             return
         }
 
-        let info = USBAccessoryInfo(registryID: registryID, descriptor: descriptor)
+        let node = registry.properties(ofAccessory: registryID)
+        if node == nil {
+            Self.logger.warning(
+                "No IORegistry node answered for USB accessory \(registryID): it can be attached, but not recognised if it is detached and comes back"
+            )
+        } else if node?.declaresSerialNumber == true, node?.serialNumber == nil {
+            Self.logger.warning(
+                "USB accessory \(registryID) declares a serial number its IORegistry node does not carry: identifying it by its port instead"
+            )
+        }
+
+        let info = USBAccessoryInfo.make(
+            registryID: registryID,
+            descriptor: descriptor,
+            configurationDescriptor: accessory.configurationDescriptorData,
+            node: node,
+            claimedBy: Set(accessories.compactMap { $0.identity?.key }))
         held[registryID] = accessory
         accessories.append(info)
         Self.logger.notice(
-            "USB accessory assigned to Kernova: \(info.displayName, privacy: .public) (\(registryID))"
+            "USB accessory assigned to Kernova: \(info.displayName, privacy: .public) (\(registryID), \(Self.identityText(info), privacy: .public))"
         )
+        resolvePendingMatches(with: info)
         onAccessoryAssigned?(info)
     }
 
     /// Drops an accessory macOS took back.
     ///
-    /// Routine rather than exceptional: a fast user switch or a console logout
-    /// disconnects every assigned accessory, and returning to the session
-    /// reconnects them.
+    /// Routine rather than exceptional: a guest capturing an accessory is
+    /// itself a reason for macOS to withdraw it, and a fast user switch or a
+    /// console logout withdraws every one of them.
     private func withdraw(_ registryID: UInt64) {
         guard held.removeValue(forKey: registryID) != nil else { return }
         accessories.removeAll { $0.registryID == registryID }
         Self.logger.notice("USB accessory withdrawn from Kernova: \(registryID)")
-        onAccessoryWithdrawn?(registryID)
+    }
+
+    /// How the log names an accessory's durable key.
+    private static func identityText(_ info: USBAccessoryInfo) -> String {
+        guard let identity = info.identity else { return "no durable identity" }
+        return switch identity.form {
+        case .serialNumber: "identity \(identity.key)"
+        case .receptacle: "identity \(identity.key), by port"
+        }
+    }
+
+    // MARK: - Waiting for a Re-Assignment
+
+    func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
+        async -> USBAccessoryInfo?
+    {
+        if let already = accessories.first(where: { $0.identity == identity }) { return already }
+
+        let token = UUID()
+        let backstop = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            self?.resolvePendingMatch(token, with: nil)
+        }
+        defer { backstop.cancel() }
+
+        return await withCheckedContinuation { continuation in
+            pendingMatches[token] = PendingMatch(identity: identity, continuation: continuation)
+        }
+    }
+
+    /// Answers every caller waiting for the unit `info` is.
+    private func resolvePendingMatches(with info: USBAccessoryInfo) {
+        guard let identity = info.identity else { return }
+        for token in pendingMatches.filter({ $0.value.identity == identity }).keys {
+            resolvePendingMatch(token, with: info)
+        }
+    }
+
+    private func resolvePendingMatch(_ token: UUID, with info: USBAccessoryInfo?) {
+        guard let pending = pendingMatches.removeValue(forKey: token) else { return }
+        pending.continuation.resume(returning: info)
     }
 
     // MARK: - Attach and Detach

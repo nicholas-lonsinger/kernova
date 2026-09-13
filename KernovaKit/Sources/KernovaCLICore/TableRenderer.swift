@@ -106,12 +106,19 @@ enum TableRenderer {
 
     /// USB accessories, in the order Kernova was handed them.
     ///
-    /// Two identifier columns, because the two verbs name a row differently: an
-    /// accessory is attached by its own identifier and detached by the
-    /// attachment's. `quiet` prints whichever of them acts on that row.
+    /// The two verbs name a row differently — an accessory is attached by its
+    /// own identifier and detached by the attachment's — so the attachment
+    /// column appears exactly when some row has one. On the accessories no
+    /// guest holds it would be a column of nothing. `quiet` prints whichever
+    /// identifier acts on that row.
     static func render(_ rows: [USBAccessorySummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(handle).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
+        guard rows.contains(where: { $0.deviceID != nil }) else {
+            return columns(
+                headings: ["NAME", "ACCESSORY"],
+                rows: rows.map { [$0.name, String($0.registryID)] })
+        }
         return columns(
             headings: ["NAME", "ACCESSORY", "DEVICE"],
             rows: rows.map { [$0.name, String($0.registryID), $0.deviceID?.uuidString ?? ""] })

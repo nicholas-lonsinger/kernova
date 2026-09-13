@@ -1,115 +1,94 @@
 import Foundation
 
-/// The fields Kernova reads out of a USB device descriptor.
-///
-/// The wire layout is USB 2.0 §9.6.1 — 18 packed little-endian bytes, which
-/// `IOUSBDeviceDescriptor` mirrors. `iManufacturer`/`iProduct`/`iSerialNumber`
-/// are deliberately absent: they are string *indices*, and resolving them takes
-/// control transfers on a device opened for exclusive access.
-struct USBDeviceDescriptor: Sendable, Equatable {
-    /// The USB revision the device reports, BCD-encoded (`0x0200` is USB 2.0).
-    let usbVersion: UInt16
-    let deviceClass: UInt8
-    let deviceSubClass: UInt8
-    let deviceProtocol: UInt8
-    let vendorID: UInt16
-    let productID: UInt16
-    /// The device's own revision, BCD-encoded.
-    let deviceVersion: UInt16
-
-    /// The descriptor's fixed size, and the only `bLength` a device descriptor
-    /// carries.
-    static let encodedLength = 18
-
-    /// `bDescriptorType` for a device descriptor.
-    private static let deviceDescriptorType: UInt8 = 1
-
-    /// Reads a device descriptor from `data`, or returns `nil` when the bytes
-    /// are not one.
-    ///
-    /// Rejects anything whose length or `bDescriptorType` disagrees with the
-    /// spec rather than reading past it, so a truncated or mistyped buffer
-    /// cannot surface as a plausible-looking VID:PID.
-    static func parse(_ data: Data) -> USBDeviceDescriptor? {
-        guard data.count >= encodedLength else { return nil }
-        let bytes = [UInt8](data)
-        guard bytes[0] == UInt8(encodedLength), bytes[1] == deviceDescriptorType else { return nil }
-
-        func word(at offset: Int) -> UInt16 {
-            UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8
-        }
-
-        return USBDeviceDescriptor(
-            usbVersion: word(at: 2),
-            deviceClass: bytes[4],
-            deviceSubClass: bytes[5],
-            deviceProtocol: bytes[6],
-            vendorID: word(at: 8),
-            productID: word(at: 10),
-            deviceVersion: word(at: 12))
-    }
-
-    /// The USB-IF name for `deviceClass`, or `nil` for a code the spec does not
-    /// assign.
-    ///
-    /// `0x00` means the device declares no class of its own and each interface
-    /// carries one instead, which is what "Composite" names.
-    var className: String? {
-        switch deviceClass {
-        case 0x00: "Composite"
-        case 0x01: "Audio"
-        case 0x02: "Communications"
-        case 0x03: "Human interface"
-        case 0x05: "Physical"
-        case 0x06: "Imaging"
-        case 0x07: "Printer"
-        case 0x08: "Mass storage"
-        case 0x09: "Hub"
-        case 0x0A: "Communications data"
-        case 0x0B: "Smart card"
-        case 0x0D: "Content security"
-        case 0x0E: "Video"
-        case 0x0F: "Personal healthcare"
-        case 0x10: "Audio/video"
-        case 0x11: "Billboard"
-        case 0x12: "USB-C bridge"
-        case 0xDC: "Diagnostic"
-        case 0xE0: "Wireless controller"
-        case 0xEF: "Miscellaneous"
-        case 0xFE: "Application-specific"
-        case 0xFF: "Vendor-specific"
-        default: nil
-        }
-    }
-
-    /// `idVendor:idProduct`, the way every USB tool spells it.
-    var vendorProductID: String {
-        String(format: "%04x:%04x", vendorID, productID)
-    }
-}
-
 /// A host USB accessory macOS has assigned to Kernova.
 ///
-/// Runtime-only, never persisted. `registryID` is an IORegistry ID, which a
-/// replug or a reboot reassigns, so it names an accessory only for as long as
-/// this process keeps holding it.
+/// Runtime-only, never persisted. ``registryID`` is the in-session handle —
+/// what VZ is given and what every verb names this accessory by — and
+/// ``identity`` is what survives the re-enumeration a detach causes.
 struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
-    /// `AAUSBAccessory.registryID` — the handle every Kernova surface names
-    /// this accessory by.
+    /// `AAUSBAccessory.registryID`.
     let registryID: UInt64
     let descriptor: USBDeviceDescriptor
+    /// What names this unit across a re-enumeration, or `nil` when the
+    /// IORegistry node answered nothing durable — in which case an accessory
+    /// that goes away cannot be recognised when it comes back.
+    let identity: USBAccessoryIdentity?
+    /// What the menu, the overview and `kernova usb list` call this accessory.
+    let displayName: String
+    /// The receptacle in the words the hardware uses for it, for the one job
+    /// the name cannot do alone: telling two identical devices apart.
+    let receptacleLabel: String?
 
     var id: UInt64 { registryID }
 
-    /// What the menu, the overview and `kernova usb list` call this accessory.
+    /// Describes the accessory `registryID` names.
     ///
-    /// A device's product and vendor strings are not readable without opening
-    /// it for exclusive access, so this states the identifiers that are:
-    /// `0403:6001 · Vendor-specific`, or the bare pair for an unassigned class
-    /// code.
-    var displayName: String {
-        guard let className = descriptor.className else { return descriptor.vendorProductID }
+    /// `node` is what the IORegistry reports about it, `nil` when no node
+    /// answered. `claimed` is the identity key of every accessory Kernova
+    /// already holds — see ``USBAccessoryIdentity/make(descriptor:node:claimedBy:)``.
+    static func make(
+        registryID: UInt64,
+        descriptor: USBDeviceDescriptor,
+        configurationDescriptor: Data?,
+        node: USBAccessoryNodeProperties?,
+        claimedBy claimed: Set<String> = []
+    ) -> USBAccessoryInfo {
+        USBAccessoryInfo(
+            registryID: registryID,
+            descriptor: descriptor,
+            identity: node.flatMap {
+                USBAccessoryIdentity.make(descriptor: descriptor, node: $0, claimedBy: claimed)
+            },
+            displayName: name(
+                descriptor: descriptor, configurationDescriptor: configurationDescriptor,
+                node: node),
+            receptacleLabel: node?.receptacleLabel)
+    }
+
+    /// What to call this accessory.
+    ///
+    /// The device's own vendor and product strings first — "Samsung Type-C" is
+    /// what is in the user's hand. Only a device that reports neither falls
+    /// back to the identifiers, named by the class that means something: its
+    /// own when it declares one, and otherwise its first interface's, because
+    /// a flash drive reporting `bDeviceClass` 0 is mass storage and not
+    /// "Composite".
+    private static func name(
+        descriptor: USBDeviceDescriptor, configurationDescriptor: Data?,
+        node: USBAccessoryNodeProperties?
+    ) -> String {
+        let reported = [node?.vendorName, node?.productName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if !reported.isEmpty { return reported.joined(separator: " ") }
+
+        let className =
+            descriptor.className
+            ?? configurationDescriptor
+            .flatMap(USBConfigurationDescriptor.firstInterfaceClass(in:))
+            .flatMap(USBClassCode.name)
+        guard let className else { return descriptor.vendorProductID }
         return "\(descriptor.vendorProductID) · \(className)"
+    }
+
+    /// The name each of `accessories` is listed under, qualified by its
+    /// receptacle where two of them would otherwise read identically.
+    ///
+    /// Two units of one model are an ordinary thing to own, and a menu
+    /// offering the same words twice says nothing about which is which. The
+    /// qualifier is deliberately not part of ``displayName``: it is a fact
+    /// about the list, not about the device.
+    static func listingNames(for accessories: [USBAccessoryInfo]) -> [UInt64: String] {
+        let counts = accessories.reduce(into: [String: Int]()) { $0[$1.displayName, default: 0] += 1 }
+        return accessories.reduce(into: [UInt64: String]()) { names, accessory in
+            guard counts[accessory.displayName, default: 0] > 1,
+                let label = accessory.receptacleLabel
+            else {
+                names[accessory.registryID] = accessory.displayName
+                return
+            }
+            names[accessory.registryID] = "\(accessory.displayName) (\(label))"
+        }
     }
 }
 

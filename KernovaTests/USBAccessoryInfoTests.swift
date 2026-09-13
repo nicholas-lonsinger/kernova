@@ -35,7 +35,30 @@ struct USBAccessoryInfoTests {
         return Data(bytes)
     }
 
-    // MARK: - Parsing
+    /// A configuration descriptor followed by one interface descriptor, USB 2.0
+    /// §9.6.3 — the shape `AAUSBAccessory.configurationDescriptorData` carries.
+    private func configurationBytes(
+        interfaceClass: UInt8 = 0x08, interfaceLength: UInt8 = 9, leadingFiller: [UInt8] = []
+    ) -> Data {
+        var bytes: [UInt8] = [9, 2, 32, 0, 1, 1, 0, 0xA0, 50]
+        bytes.append(contentsOf: leadingFiller)
+        bytes.append(contentsOf: [
+            interfaceLength, 4, 0, 0, 2, interfaceClass, 0x06, 0x50, 0,
+        ])
+        return Data(bytes)
+    }
+
+    private func info(
+        descriptor: Data, configuration: Data? = nil, node: USBAccessoryNodeProperties? = nil,
+        registryID: UInt64 = 1
+    ) throws -> USBAccessoryInfo {
+        let parsed = try #require(USBDeviceDescriptor.parse(descriptor))
+        return USBAccessoryInfo.make(
+            registryID: registryID, descriptor: parsed, configurationDescriptor: configuration,
+            node: node)
+    }
+
+    // MARK: - Device Descriptor Parsing
 
     @Test("Parses every field little-endian")
     func parsesFieldsLittleEndian() throws {
@@ -94,7 +117,6 @@ struct USBAccessoryInfoTests {
     @Test(
         "Names each assigned base class",
         arguments: [
-            (UInt8(0x00), "Composite"),
             (UInt8(0x03), "Human interface"),
             (UInt8(0x08), "Mass storage"),
             (UInt8(0x09), "Hub"),
@@ -112,7 +134,44 @@ struct USBAccessoryInfoTests {
         #expect(descriptor.className == nil)
     }
 
-    // MARK: - Display
+    @Test("A zero class code is a statement that the interfaces carry the class")
+    func zeroClassDefersToInterfaces() throws {
+        let descriptor = try #require(USBDeviceDescriptor.parse(descriptorBytes(deviceClass: 0)))
+        #expect(descriptor.declaresClassPerInterface)
+        #expect(descriptor.className == nil)
+    }
+
+    // MARK: - Configuration Descriptor Parsing
+
+    @Test("Reads the first interface's class out of a configuration descriptor")
+    func readsFirstInterfaceClass() {
+        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: configurationBytes()) == 0x08)
+    }
+
+    @Test("Walks past descriptors that are not interface descriptors")
+    func skipsNonInterfaceDescriptors() {
+        // An interface association descriptor (type 11) ahead of the interface.
+        let filler: [UInt8] = [8, 11, 0, 2, 0x02, 0x02, 0x01, 0]
+        let data = configurationBytes(interfaceClass: 0x02, leadingFiller: filler)
+        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: data) == 0x02)
+    }
+
+    @Test("Finds no interface class in bytes that carry none")
+    func noInterfaceDescriptor() {
+        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: Data([9, 2, 9, 0, 0, 1, 0, 0xA0, 50])) == nil)
+    }
+
+    @Test("Refuses a descriptor chain with a zero length rather than looping")
+    func zeroLengthDescriptorStops() {
+        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: Data([9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 4])) == nil)
+    }
+
+    @Test("Refuses an interface descriptor that runs past the buffer")
+    func truncatedInterfaceDescriptor() {
+        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: Data([9, 4, 0, 0])) == nil)
+    }
+
+    // MARK: - Display Names
 
     @Test("Formats the identifier pair zero-padded and lowercase")
     func formatsVendorProductID() throws {
@@ -121,35 +180,98 @@ struct USBAccessoryInfoTests {
         #expect(descriptor.vendorProductID == "005e:0b00")
     }
 
-    @Test("Names an accessory by identifiers and class")
-    func displayNameCarriesClass() throws {
-        let descriptor = try #require(USBDeviceDescriptor.parse(descriptorBytes()))
-        let info = USBAccessoryInfo(registryID: 4_294_968_000, descriptor: descriptor)
-        #expect(info.displayName == "0403:6001 · Vendor-specific")
+    @Test("Names an accessory by what the device calls itself")
+    func namesByReportedStrings() throws {
+        let node = USBAccessoryNodeProperties(vendorName: "Samsung", productName: "Type-C")
+        let accessory = try info(descriptor: descriptorBytes(deviceClass: 0), node: node)
+        #expect(accessory.displayName == "Samsung Type-C")
     }
 
-    @Test("Names an accessory by identifiers alone when the class is unassigned")
+    @Test("Names an accessory by whichever of the two strings it reports")
+    func namesByOneReportedString() throws {
+        let node = USBAccessoryNodeProperties(productName: "Ultra Fit")
+        let accessory = try info(descriptor: descriptorBytes(), node: node)
+        #expect(accessory.displayName == "Ultra Fit")
+    }
+
+    @Test("Falls back to identifiers and class for a device that reports neither string")
+    func fallsBackToIdentifiers() throws {
+        let accessory = try info(descriptor: descriptorBytes())
+        #expect(accessory.displayName == "0403:6001 · Vendor-specific")
+    }
+
+    @Test("Names the first interface's class when the device declares none of its own")
+    func fallsBackToInterfaceClass() throws {
+        let accessory = try info(
+            descriptor: descriptorBytes(deviceClass: 0, vendorID: 0x04E8, productID: 0x6300),
+            configuration: configurationBytes())
+        #expect(accessory.displayName == "04e8:6300 · Mass storage")
+    }
+
+    @Test("Names an accessory by identifiers alone when nothing supplies a class")
     func displayNameOmitsUnknownClass() throws {
-        let descriptor = try #require(USBDeviceDescriptor.parse(descriptorBytes(deviceClass: 0x42)))
-        let info = USBAccessoryInfo(registryID: 7, descriptor: descriptor)
-        #expect(info.displayName == "0403:6001")
+        let accessory = try info(descriptor: descriptorBytes(deviceClass: 0x42))
+        #expect(accessory.displayName == "0403:6001")
+    }
+
+    @Test("A device declaring no class and offering no configuration is named by identifiers")
+    func noClassAndNoConfiguration() throws {
+        let accessory = try info(descriptor: descriptorBytes(deviceClass: 0))
+        #expect(accessory.displayName == "0403:6001")
     }
 
     @Test("Identifies an accessory by its registry ID")
     func identityIsRegistryID() throws {
-        let descriptor = try #require(USBDeviceDescriptor.parse(descriptorBytes()))
-        #expect(USBAccessoryInfo(registryID: 99, descriptor: descriptor).id == 99)
+        #expect(try info(descriptor: descriptorBytes(), registryID: 99).id == 99)
+    }
+
+    // MARK: - Listing Names
+
+    @Test("Leaves names alone when no two accessories read alike")
+    func distinctNamesAreNotQualified() throws {
+        let first = try info(
+            descriptor: descriptorBytes(),
+            node: USBAccessoryNodeProperties(productName: "Type-C", ioPortPath: "hub/Port-USB-C@2"),
+            registryID: 1)
+        let second = try info(
+            descriptor: descriptorBytes(),
+            node: USBAccessoryNodeProperties(productName: "Ultra Fit", ioPortPath: "hub/Port-A@1"),
+            registryID: 2)
+        let names = USBAccessoryInfo.listingNames(for: [first, second])
+        #expect(names[1] == "Type-C")
+        #expect(names[2] == "Ultra Fit")
+    }
+
+    @Test("Qualifies two accessories that would otherwise read identically")
+    func duplicateNamesAreQualifiedByPort() throws {
+        let node = USBAccessoryNodeProperties(
+            vendorName: "Samsung", productName: "Type-C", ioPortPath: "hub/Port-USB-C@2")
+        var other = node
+        other.ioPortPath = "hub/Port-USB-C@3"
+        let first = try info(descriptor: descriptorBytes(), node: node, registryID: 1)
+        let second = try info(descriptor: descriptorBytes(), node: other, registryID: 2)
+        let names = USBAccessoryInfo.listingNames(for: [first, second])
+        #expect(names[1] == "Samsung Type-C (Port-USB-C@2)")
+        #expect(names[2] == "Samsung Type-C (Port-USB-C@3)")
+    }
+
+    @Test("Leaves a duplicate unqualified when nothing names its port")
+    func duplicateWithoutAPortKeepsItsName() throws {
+        let node = USBAccessoryNodeProperties(vendorName: "Samsung", productName: "Type-C")
+        let first = try info(descriptor: descriptorBytes(), node: node, registryID: 1)
+        let second = try info(descriptor: descriptorBytes(), node: node, registryID: 2)
+        let names = USBAccessoryInfo.listingNames(for: [first, second])
+        #expect(names[1] == "Samsung Type-C")
+        #expect(names[2] == "Samsung Type-C")
     }
 
     // MARK: - Attachment
 
     @Test("Identifies an attachment by its device UUID")
     func attachmentIdentityIsDeviceID() throws {
-        let descriptor = try #require(USBDeviceDescriptor.parse(descriptorBytes()))
         let deviceID = UUID()
         let attached = AttachedUSBAccessory(
-            deviceID: deviceID,
-            accessory: USBAccessoryInfo(registryID: 1, descriptor: descriptor))
+            deviceID: deviceID, accessory: try info(descriptor: descriptorBytes()))
         #expect(attached.id == deviceID)
         #expect(attached.accessory.registryID == 1)
     }

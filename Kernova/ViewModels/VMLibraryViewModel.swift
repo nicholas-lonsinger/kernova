@@ -42,9 +42,11 @@ final class VMLibraryViewModel {
     /// and this is the composition root that owns its lifetime.
     private let sleepWake: VMSleepWakeCoordinator
 
-    /// Routes newly assigned USB accessories to a running guest; `nil` when
-    /// this build cannot pass accessories through at all.
-    private let usbAccessoryRouter: USBAccessoryRouter?
+    /// Watches the USB accessories macOS assigns to Kernova; `nil` when this
+    /// build cannot pass accessories through at all.
+    ///
+    /// Held rather than read, for the reason ``sleepWake`` is.
+    private let usbAccessories: USBAccessoryCoordinator?
 
     private let preferences: AppPreferences
 
@@ -469,7 +471,11 @@ final class VMLibraryViewModel {
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
-        usbAccessoryService: (any USBAccessoryProviding)? = USBAccessorySupport.makeService(),
+        // Supplied by ``AppDelegate``, the one caller that should claim the
+        // user's accessories — registering the listener is a side effect on
+        // the whole process, and a default would hand it to every test that
+        // builds a view model for something else entirely.
+        usbAccessoryService: (any USBAccessoryProviding)? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -510,7 +516,7 @@ final class VMLibraryViewModel {
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         self.sleepWake = sleepWake
-        self.usbAccessoryRouter = USBAccessoryRouter(lifecycle: lifecycle, roster: library)
+        self.usbAccessories = USBAccessoryCoordinator(lifecycle: lifecycle, roster: library)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,

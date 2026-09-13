@@ -29,6 +29,14 @@ final class VMLifecycleCoordinator {
     /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
     let usbAccessoryService: (any USBAccessoryProviding)?
 
+    /// How long a warm capture waits for an accessory it ejected to be assigned
+    /// again before giving up on putting it back.
+    ///
+    /// Generous because the happy path never reaches it: the assignment arrives
+    /// well under a second with the host idle, and the long case is the host
+    /// unmounting a volume it briefly owned again.
+    private let usbAccessoryReturnTimeout: Duration
+
     /// Trashes an image that failed verification.
     private let fileSystem: any FileSystemOperating
 
@@ -64,7 +72,13 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
-        usbAccessoryService: (any USBAccessoryProviding)? = USBAccessorySupport.makeService(),
+        // No default that builds one: ``USBAccessorySupport/makeService(entitlements:)``
+        // is called in exactly one place, the composition root, and a
+        // collaborator that mints its own would register a second
+        // process-wide AccessoryAccess listener. Absent is the capability
+        // being absent, which every surface already reads as such.
+        usbAccessoryService: (any USBAccessoryProviding)? = nil,
+        usbAccessoryReturnTimeout: Duration = .seconds(30),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -77,6 +91,7 @@ final class VMLifecycleCoordinator {
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
         self.usbAccessoryService = usbAccessoryService
+        self.usbAccessoryReturnTimeout = usbAccessoryReturnTimeout
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
         self.fileSystem = fileSystem
@@ -275,6 +290,12 @@ final class VMLifecycleCoordinator {
 
     /// Puts back the accessories a warm capture took off.
     ///
+    /// Each one has to be found again before it can be attached: the capture's
+    /// detach reset the device, so the `registryID` it went off under names
+    /// nothing, and macOS assigns the same stick back under a new one. Matching
+    /// is on the durable identity and the wait is event-driven — see
+    /// ``USBAccessoryProviding/accessory(matching:appearingWithin:)``.
+    ///
     /// Guarded on the session at every step: a guest that went away under the
     /// capture has no controller to attach to. Failures are logged and
     /// swallowed — the snapshot the user asked for is already written, and an
@@ -286,9 +307,13 @@ final class VMLifecycleCoordinator {
         guard let usbAccessoryService, !accessories.isEmpty else { return }
         for item in accessories {
             guard instance.attachableSessionID == sessionID else { return }
+            guard let returned = await returningAccessory(item, service: usbAccessoryService) else {
+                continue
+            }
+            guard instance.attachableSessionID == sessionID else { return }
             do {
                 let reattached = try await usbAccessoryService.attach(
-                    item.accessory.registryID, to: instance)
+                    returned.registryID, to: instance)
                 guard instance.attachableSessionID == sessionID else {
                     try? await usbAccessoryService.detach(
                         deviceID: reattached.deviceID, from: instance)
@@ -301,6 +326,27 @@ final class VMLifecycleCoordinator {
                 )
             }
         }
+    }
+
+    /// The accessory `item` describes, as macOS has assigned it back to
+    /// Kernova, or `nil` — logged — when it cannot be matched or never returns.
+    private func returningAccessory(
+        _ item: AttachedUSBAccessory, service: any USBAccessoryProviding
+    ) async -> USBAccessoryInfo? {
+        guard let identity = item.accessory.identity else {
+            Self.logger.warning(
+                "Cannot put USB accessory \(item.accessory.displayName, privacy: .public) back after the snapshot: nothing durable identifies it"
+            )
+            return nil
+        }
+        let returned = await service.accessory(
+            matching: identity, appearingWithin: usbAccessoryReturnTimeout)
+        if returned == nil {
+            Self.logger.warning(
+                "USB accessory \(item.accessory.displayName, privacy: .public) was not assigned back to Kernova after the snapshot, so it stayed off the guest"
+            )
+        }
+        return returned
     }
 
     func revertToSnapshot(

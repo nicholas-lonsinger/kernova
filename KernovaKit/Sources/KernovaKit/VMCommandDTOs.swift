@@ -157,9 +157,9 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
 
 /// One USB accessory macOS has assigned to Kernova, and where it currently is.
 ///
-/// `name` is `VID:PID · class` read from the device descriptor. A product or
-/// vendor string would take opening the device for exclusive access, which
-/// Kernova does not do, so the identifiers that are readable are what it shows.
+/// `name` is what the device calls itself — its vendor and product strings —
+/// falling back to `VID:PID · class` for one that reports neither, and
+/// qualified by the port where two accessories would otherwise read alike.
 public struct USBAccessorySummary: Codable, Sendable, Hashable {
     /// The accessory's IORegistry ID, and what an attach names it by. Valid
     /// only while this Kernova process keeps holding the accessory.
@@ -315,6 +315,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// verb whose capability the build lacks, where naming a virtual machine
     /// would describe something the caller never asked about.
     case unsupportedByBuild(capability: String)
+    /// The VM answered; something the verb named *on* it did not. `item` is
+    /// what was looked for, in the words the user reads.
+    case itemNotFound(vm: VMSummary, item: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The guest had not powered off `seconds` after the shutdown request, so
@@ -344,9 +347,8 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .ambiguous, .busy, .unsupported, .unsupportedByBuild, .invalidState,
-            .timedOut,
-            .invalidArgument:
+        case .notFound, .itemNotFound, .ambiguous, .busy, .unsupported, .unsupportedByBuild,
+            .invalidState, .timedOut, .invalidArgument:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -366,6 +368,8 @@ extension CommandErrorDTO {
         switch self {
         case .notFound(let selector):
             "No virtual machine named \u{201C}\(selector.displayText)\u{201D}."
+        case .itemNotFound(let vm, let item):
+            "\u{201C}\(vm.name)\u{201D} has no \(item)."
         case .ambiguous(let selector, let candidates):
             "\u{201C}\(selector.displayText)\u{201D} names \(candidates.count) virtual machines. "
                 + "Use one of their identifiers instead: "

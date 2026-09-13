@@ -15,8 +15,9 @@ extension VMCommandCore {
 
     func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
         try requireUSBAccessoryService()
+        let names = listingNames()
         return try resolve(selector).liveUSBAccessories.map {
-            summary(of: $0.accessory, deviceID: $0.deviceID)
+            summary(of: $0.accessory, named: names, deviceID: $0.deviceID)
         }
     }
 
@@ -26,9 +27,10 @@ extension VMCommandCore {
             throw CommandError.unsupportedByBuild(capability: Self.usbAccessoryCapability)
         }
         let held = heldAccessoryIDs()
+        let names = listingNames()
         return service.accessories
             .filter { !held.contains($0.registryID) }
-            .map { summary(of: $0) }
+            .map { summary(of: $0, named: names) }
     }
 
     // MARK: - Edits
@@ -57,6 +59,14 @@ extension VMCommandCore {
 
     func detachUSBAccessory(_ selector: VMSelector, device deviceID: UUID) async throws {
         let (instance, sessionID) = try admitUSBAccessoryEdit(selector)
+        // An identifier no attachment answers to is a refusal, not a quiet
+        // success: the lifecycle treats a device VZ has already let go as done,
+        // which is right for an unplug that got there first and wrong for a
+        // caller who named the wrong device.
+        guard instance.liveUSBAccessories.contains(where: { $0.deviceID == deviceID }) else {
+            throw itemNotFound(
+                instance, item: "USB accessory with the device identifier \(deviceID.uuidString)")
+        }
         do {
             try await lifecycle.detachUSBAccessory(
                 deviceID: deviceID, from: instance, for: sessionID)
@@ -103,14 +113,33 @@ extension VMCommandCore {
         Set(library.instances.flatMap { $0.liveUSBAccessories.map(\.accessory.registryID) })
     }
 
+    /// What to call each accessory Kernova knows about, over every one of them
+    /// at once.
+    ///
+    /// Computed across the whole set rather than per listing, because the two
+    /// listings are read side by side — a guest's accessories above the free
+    /// ones in one menu — and two identical devices have to be told apart
+    /// across that boundary as readily as within it.
+    ///
+    /// Each accessory appears once. macOS withdraws an accessory a guest has
+    /// captured, but not always before the guest's own listing is read, and one
+    /// counted twice would look like two of a kind and qualify itself.
+    private func listingNames() -> [UInt64: String] {
+        let attached = library.instances.flatMap { $0.liveUSBAccessories.map(\.accessory) }
+        let held = heldAccessoryIDs()
+        let free = (lifecycle.usbAccessoryService?.accessories ?? [])
+            .filter { !held.contains($0.registryID) }
+        return USBAccessoryInfo.listingNames(for: attached + free)
+    }
+
     /// One accessory as a caller names it, carrying the attachment identifier a
     /// detach takes back when a guest is holding it.
-    private func summary(of accessory: USBAccessoryInfo, deviceID: UUID? = nil)
-        -> USBAccessorySummary
-    {
+    private func summary(
+        of accessory: USBAccessoryInfo, named names: [UInt64: String], deviceID: UUID? = nil
+    ) -> USBAccessorySummary {
         USBAccessorySummary(
             registryID: accessory.registryID,
-            name: accessory.displayName,
+            name: names[accessory.registryID] ?? accessory.displayName,
             vendorID: accessory.descriptor.vendorID,
             productID: accessory.descriptor.productID,
             deviceID: deviceID)

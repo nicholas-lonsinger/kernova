@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTestSupport
 
 @testable import Kernova
 
@@ -8,7 +9,6 @@ import Foundation
 final class MockUSBAccessoryService: USBAccessoryProviding {
     var accessories: [USBAccessoryInfo] = []
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
-    var onAccessoryWithdrawn: (@MainActor (UInt64) -> Void)?
 
     var startObservingCallCount = 0
     var attachedRegistryIDs: [UInt64] = []
@@ -22,6 +22,58 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
 
     func startObserving() {
         startObservingCallCount += 1
+    }
+
+    /// Plays macOS assigning `info` to Kernova, listing it and telling whoever
+    /// is watching — the callback the coordinator installs, and any wait.
+    func assign(_ info: USBAccessoryInfo) {
+        accessories.append(info)
+        resolveWaits(with: info)
+        onAccessoryAssigned?(info)
+    }
+
+    // MARK: - Waiting for a Re-Assignment
+
+    /// Identities `accessory(matching:appearingWithin:)` was asked for, in
+    /// order.
+    private(set) var awaitedIdentities: [USBAccessoryIdentity] = []
+    /// How many of those calls are parked right now, and the gate that fires
+    /// when one parks — so a test can drive the arrival from the other side
+    /// rather than racing it.
+    private(set) var parkedWaitCount = 0
+    let waitStarted = AsyncGate()
+
+    /// Whether a wait for an identity nothing answers to returns `nil` at once
+    /// instead of parking, for the tests where the backstop is not the subject.
+    var answersMissingAccessoryImmediately = false
+
+    private struct Wait {
+        let identity: USBAccessoryIdentity
+        let continuation: CheckedContinuation<USBAccessoryInfo?, Never>
+    }
+
+    private var waits: [UUID: Wait] = [:]
+
+    func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
+        async -> USBAccessoryInfo?
+    {
+        awaitedIdentities.append(identity)
+        if let already = accessories.first(where: { $0.identity == identity }) { return already }
+        if answersMissingAccessoryImmediately { return nil }
+        let token = UUID()
+        return await withCheckedContinuation { continuation in
+            waits[token] = Wait(identity: identity, continuation: continuation)
+            parkedWaitCount += 1
+            waitStarted.notify()
+        }
+    }
+
+    private func resolveWaits(with info: USBAccessoryInfo) {
+        for (token, wait) in waits where wait.identity == info.identity {
+            waits.removeValue(forKey: token)
+            parkedWaitCount -= 1
+            wait.continuation.resume(returning: info)
+        }
     }
 
     // MARK: - Suspension
@@ -75,15 +127,28 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
     }
 
     /// One accessory, built from the identifiers every surface names it by.
+    ///
+    /// `serial` present gives it the strong identity form; `nil` leaves it
+    /// identified by `receptacle`, and both `nil` leaves it with no durable
+    /// identity at all.
     static func accessory(
         registryID: UInt64, vendorID: UInt16 = 0x0403, productID: UInt16 = 0x6001,
-        deviceClass: UInt8 = 0xFF
+        deviceClass: UInt8 = 0xFF, deviceVersion: UInt16 = 0x0100,
+        serial: String? = nil, receptacle: String? = nil, vendorName: String? = nil,
+        productName: String? = nil
     ) -> USBAccessoryInfo {
-        USBAccessoryInfo(
-            registryID: registryID,
-            descriptor: USBDeviceDescriptor(
-                usbVersion: 0x0200, deviceClass: deviceClass, deviceSubClass: 0,
-                deviceProtocol: 0, vendorID: vendorID, productID: productID,
-                deviceVersion: 0x0100))
+        let descriptor = USBDeviceDescriptor(
+            usbVersion: 0x0200, deviceClass: deviceClass, deviceSubClass: 0,
+            deviceProtocol: 0, vendorID: vendorID, productID: productID,
+            deviceVersion: deviceVersion)
+        let node =
+            (serial == nil && receptacle == nil && vendorName == nil && productName == nil)
+            ? nil
+            : USBAccessoryNodeProperties(
+                vendorName: vendorName, productName: productName, serialNumber: serial,
+                serialNumberIndex: serial == nil ? 0 : 3, ioPortPath: receptacle)
+        return USBAccessoryInfo.make(
+            registryID: registryID, descriptor: descriptor, configurationDescriptor: nil,
+            node: node)
     }
 }

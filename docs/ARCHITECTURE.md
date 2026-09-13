@@ -134,7 +134,13 @@ stateless ones are `Sendable` structs.
   publishes the accessories macOS assigns to Kernova; it never enumerates the host's USB devices.
   macOS 27.0-only, so `VMLifecycleCoordinator` holds it as an optional whose `nil` is the
   capability's absence — both causes of it, the OS and the entitlement, collapsed by
-  `EntitlementService.supportsUSBAccessories`.
+  `EntitlementService.supportsUSBAccessories`. It also answers waits for a named unit to be
+  assigned again, which is how a warm capture puts back what it ejected.
+- `USBAccessoryRegistryReading` / `USBAccessoryRegistry` — the IOKit read behind each assignment,
+  answering what AccessoryAccess does not carry: the device's vendor, product and serial strings
+  and the receptacle it sits in. A pure composition over that turns into `USBAccessoryIdentity`,
+  the key that outlives the `registryID` a detach invalidates
+  ([research note](research/2026-09-12-usb-accessory-identity.md)).
 - `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMSleepWakeCoordinator`,
   which auto-pauses running VMs before sleep and resumes them on wake.
 
@@ -452,8 +458,9 @@ AppDelegate
     │                 │      └── VMNetworkSlotRegistry, VMRemovableMediaReconciler
     │                 ├── VMSleepWakeCoordinator
     │                 │      └── SystemSleepWatcher
-    │                 ├── USBAccessoryRouter?  (routes a newly assigned accessory to the one
-    │                 │      running VM that could take it; nil with the capability absent)
+    │                 ├── USBAccessoryCoordinator?  (starts the accessory listener and drops a
+    │                 │      guest's record of one the host has taken back; nil without the
+    │                 │      capability. Attaching is always the user's instruction)
     │                 ├── VMStorageService, VMSnapshotStore (one each, held by all three)
     │                 ├── DiskImageService
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)

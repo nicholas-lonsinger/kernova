@@ -63,11 +63,7 @@ struct VMSessionContextTests {
     ) -> AttachedUSBAccessory {
         AttachedUSBAccessory(
             deviceID: deviceID,
-            accessory: USBAccessoryInfo(
-                registryID: registryID,
-                descriptor: USBDeviceDescriptor(
-                    usbVersion: 0x0200, deviceClass: 0xFF, deviceSubClass: 0, deviceProtocol: 0,
-                    vendorID: 0x0403, productID: 0x6001, deviceVersion: 0x0600)))
+            accessory: MockUSBAccessoryService.accessory(registryID: registryID))
     }
 
     // MARK: - Teardown

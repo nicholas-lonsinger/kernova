@@ -26,6 +26,10 @@ enum CommandRecovery: Sendable, Equatable {
 enum CommandError: Error, Sendable, Equatable {
     /// No VM answers to the selector.
     case notFound(VMSelector)
+    /// The VM answered; something the verb named on it did not — a snapshot,
+    /// an attachment. The string names what was looked for, in the words the
+    /// user reads.
+    case itemNotFound(vm: VMSummary, item: String)
     /// More than one VM answers to the selector; the candidates say which.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
@@ -89,6 +93,8 @@ extension CommandError {
         switch self {
         case .notFound(let selector):
             .notFound(selector: selector)
+        case .itemNotFound(let vm, let item):
+            .itemNotFound(vm: vm, item: item)
         case .ambiguous(let selector, let candidates):
             .ambiguous(selector: selector, candidates: candidates)
         case .invalidState(let vm, let current, let allowed):
