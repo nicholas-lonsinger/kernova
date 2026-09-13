@@ -93,6 +93,10 @@ final class MockVMCommanding: VMCommanding {
     var sharedDirectoriesByVM: [UUID: [SharedDirectorySummary]] = [:]
     /// What `portForwardingRules(of:)` answers per VM.
     var portForwardingRulesByVM: [UUID: [PortForwardingRule]] = [:]
+    /// What `usbAccessories(of:)` answers per VM.
+    var usbAccessoriesByVM: [UUID: [USBAccessorySummary]] = [:]
+    /// What `availableUSBAccessories()` answers with.
+    var availableUSBAccessoriesToReturn: [USBAccessorySummary] = []
     /// What `externalAttachments(of:)` answers with.
     var externalAttachmentsToReturn: [ExternalAttachment] = []
     /// What `sharingVMNames(_:path:bookmark:)` answers with.
@@ -107,6 +111,8 @@ final class MockVMCommanding: VMCommanding {
     private(set) var snapshotOnDiskBytesSelectors: [VMSelector] = []
     private(set) var sharedDirectoriesSelectors: [VMSelector] = []
     private(set) var portForwardingRulesSelectors: [VMSelector] = []
+    private(set) var usbAccessoriesSelectors: [VMSelector] = []
+    private(set) var availableUSBAccessoriesCallCount = 0
     private(set) var externalAttachmentsSelectors: [VMSelector] = []
     private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
         []
@@ -165,6 +171,8 @@ final class MockVMCommanding: VMCommanding {
     private(set) var removeSharedDirectoryPathCalls: [(selector: VMSelector, path: String)] = []
     private(set) var addPortForwardingRuleCalls: [(selector: VMSelector, rule: PortForwardingRule)] = []
     private(set) var removePortForwardingRuleCalls: [(selector: VMSelector, claim: PortForwardingHostClaim)] = []
+    private(set) var attachUSBAccessoryCalls: [(selector: VMSelector, accessory: UInt64)] = []
+    private(set) var detachUSBAccessoryCalls: [(selector: VMSelector, device: UUID)] = []
     private(set) var configurationCalls: [(selector: VMSelector, keys: [String]?)] = []
     private(set) var setConfigurationCalls:
         [(selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool)] = []
@@ -184,6 +192,9 @@ final class MockVMCommanding: VMCommanding {
     var snapshotOnDiskBytesError: (any Error)?
     var sharedDirectoriesError: (any Error)?
     var portForwardingRulesError: (any Error)?
+    var usbAccessoriesError: (any Error)?
+    var availableUSBAccessoriesError: (any Error)?
+    var usbAccessoryEditError: (any Error)?
     var externalAttachmentsError: (any Error)?
     var sharingVMNamesError: (any Error)?
     var startError: (any Error)?
@@ -306,6 +317,18 @@ final class MockVMCommanding: VMCommanding {
         portForwardingRulesSelectors.append(selector)
         if let portForwardingRulesError { throw portForwardingRulesError }
         return portForwardingRulesByVM[try resolve(selector).id] ?? []
+    }
+
+    func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
+        usbAccessoriesSelectors.append(selector)
+        if let usbAccessoriesError { throw usbAccessoriesError }
+        return usbAccessoriesByVM[try resolve(selector).id] ?? []
+    }
+
+    func availableUSBAccessories() throws -> [USBAccessorySummary] {
+        availableUSBAccessoriesCallCount += 1
+        if let availableUSBAccessoriesError { throw availableUSBAccessoriesError }
+        return availableUSBAccessoriesToReturn
     }
 
     func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment] {
@@ -635,6 +658,18 @@ final class MockVMCommanding: VMCommanding {
     func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws {
         removePortForwardingRuleCalls.append((selector, claim))
         if let portForwardingEditError { throw portForwardingEditError }
+    }
+
+    // MARK: - USB Accessories
+
+    func attachUSBAccessory(_ selector: VMSelector, accessory: UInt64) async throws {
+        attachUSBAccessoryCalls.append((selector, accessory))
+        if let usbAccessoryEditError { throw usbAccessoryEditError }
+    }
+
+    func detachUSBAccessory(_ selector: VMSelector, device: UUID) async throws {
+        detachUSBAccessoryCalls.append((selector, device))
+        if let usbAccessoryEditError { throw usbAccessoryEditError }
     }
 
     // MARK: - Configuration

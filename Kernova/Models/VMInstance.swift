@@ -431,7 +431,7 @@ final class VMInstance {
     /// Dropped and logged when that session is no longer the live one — see
     /// ``recordAttachedMedia(_:for:)``.
     func markRemovableMediaReconcileOwed(for sessionID: UUID) {
-        guard let context = mediaWriteTarget(for: sessionID, "reconcile-owed mark") else { return }
+        guard let context = sessionWriteTarget(for: sessionID, "reconcile-owed mark") else { return }
         context.removableMediaReconcileOwed = true
     }
 
@@ -441,7 +441,7 @@ final class VMInstance {
     /// Dropped and logged when that session is no longer the live one — see
     /// ``recordAttachedMedia(_:for:)``.
     func clearRemovableMediaReconcileOwed(for sessionID: UUID) {
-        guard let context = mediaWriteTarget(for: sessionID, "reconcile-owed clear") else { return }
+        guard let context = sessionWriteTarget(for: sessionID, "reconcile-owed clear") else { return }
         context.removableMediaReconcileOwed = false
     }
 
@@ -457,7 +457,7 @@ final class VMInstance {
     /// `RemovableMediaDeviceError.noVirtualMachine` handling already treats as a normal
     /// bail, not a programming error.
     func recordAttachedMedia(_ info: RemovableMediaDeviceInfo, for sessionID: UUID) {
-        guard let context = mediaWriteTarget(for: sessionID, deviceID: info.id, "attached-media record")
+        guard let context = sessionWriteTarget(for: sessionID, deviceID: info.id, "attached-media record")
         else { return }
         context.liveRemovableMedia.append(info)
     }
@@ -469,7 +469,7 @@ final class VMInstance {
     /// ``recordAttachedMedia(_:for:)``. Nothing is released in that case: the
     /// grant this would have dropped belongs to whichever session is live now.
     func forgetAttachedMedia(deviceID: UUID, for sessionID: UUID) {
-        guard let context = mediaWriteTarget(for: sessionID, deviceID: deviceID, "detached-media record")
+        guard let context = sessionWriteTarget(for: sessionID, deviceID: deviceID, "detached-media record")
         else { return }
         context.liveRemovableMedia.removeAll { $0.id == deviceID }
         context.fileAccess.releaseHotAttach(id: deviceID)
@@ -484,19 +484,52 @@ final class VMInstance {
     /// the caller's local `deinit`, since `ScopedAccess.release()` is
     /// idempotent.
     func retainMediaScope(_ scope: ScopedAccess, deviceID: UUID, for sessionID: UUID) {
-        guard let context = mediaWriteTarget(for: sessionID, deviceID: deviceID, "media scope") else {
+        guard let context = sessionWriteTarget(for: sessionID, deviceID: deviceID, "media scope") else {
             scope.release()
             return
         }
         context.fileAccess.addHotAttach(id: deviceID, scope)
     }
 
-    /// The context a removable-media write issued against `sessionID` belongs
-    /// to, or `nil` — logged — when that session has been released.
+    // MARK: - Runtime USB Accessories
+
+    /// Host USB accessories passed through to this VM's guest; cleared on
+    /// stop/teardown.
+    var liveUSBAccessories: [AttachedUSBAccessory] { sessionContext?.liveUSBAccessories ?? [] }
+
+    /// Records an accessory that was just attached, live, on the session
+    /// `sessionID` names.
+    ///
+    /// Dropped and logged once that session is no longer the live one — see
+    /// ``recordAttachedMedia(_:for:)`` for why that is a normal bail.
+    func recordAttachedAccessory(_ attached: AttachedUSBAccessory, for sessionID: UUID) {
+        guard
+            let context = sessionWriteTarget(
+                for: sessionID, deviceID: attached.deviceID, "attached-accessory record")
+        else { return }
+        context.liveUSBAccessories.append(attached)
+    }
+
+    /// Drops an accessory's tracking entry — on detach, on a surprise unplug,
+    /// or before a save.
+    ///
+    /// A no-op, logged, when `sessionID` no longer names the live session.
+    /// Unlike removable media there is no security-scoped grant to release:
+    /// the user's assignment is macOS's to hold, not Kernova's.
+    func forgetAttachedAccessory(deviceID: UUID, for sessionID: UUID) {
+        guard
+            let context = sessionWriteTarget(
+                for: sessionID, deviceID: deviceID, "detached-accessory record")
+        else { return }
+        context.liveUSBAccessories.removeAll { $0.deviceID == deviceID }
+    }
+
+    /// The context a live-session write issued against `sessionID` belongs to,
+    /// or `nil` — logged — when that session has been released.
     ///
     /// `deviceID` names the device the write concerns, when it concerns one;
     /// it only shapes the log line.
-    private func mediaWriteTarget(
+    private func sessionWriteTarget(
         for sessionID: UUID,
         deviceID: UUID? = nil,
         _ what: StaticString
@@ -802,6 +835,17 @@ final class VMInstance {
             )
         case .networkAttachmentDisconnected(let error):
             networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
+        case .usbPassthroughDeviceDidDisconnect(let deviceID):
+            // VZ has already detached the device; only Kernova's record of it
+            // is left to drop. An unplug is routine — a fast user switch
+            // disconnects every assigned accessory too — so it never alerts.
+            guard let context = sessionContext,
+                let gone = context.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
+            else { break }
+            context.liveUSBAccessories.removeAll { $0.deviceID == deviceID }
+            Self.logger.notice(
+                "USB accessory \(gone.accessory.displayName, privacy: .public) disconnected from VM '\(self.name, privacy: .public)'"
+            )
         }
     }
 

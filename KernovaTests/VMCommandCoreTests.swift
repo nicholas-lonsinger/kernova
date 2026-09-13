@@ -1491,12 +1491,14 @@ struct VMCommandCoreTests {
                 try await harness.core.deleteSnapshot(
                     .id(instance.id), snapshot: UUID(), confirmed: true)
             })
-        guard case .operationFailed(let verb, _, let message, _) = error else {
-            Issue.record("expected an operation failure, got \(error)")
+        // A refusal, not a failure: the verb never ran, so it answers the way
+        // an unknown VM name does.
+        guard case .itemNotFound(let vm, let item) = error else {
+            Issue.record("expected a not-found refusal, got \(error)")
             return
         }
-        #expect(verb == .deleteSnapshot)
-        #expect(message.contains("no snapshot"))
+        #expect(vm.id == instance.id)
+        #expect(item.hasPrefix("snapshot with the identifier"))
     }
 
     @Test("The Ephemeral baseline is refused a delete even with consent")

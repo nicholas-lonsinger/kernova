@@ -30,6 +30,15 @@ struct CLICompletionTests {
         PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
         PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
     ]
+    private let accessories = [
+        USBAccessorySummary(
+            registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
+            vendorID: 0x0403, productID: 0x6001,
+            deviceID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")),
+        USBAccessorySummary(
+            registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
+            productID: 0x12A8),
+    ]
 
     private var checkpoint: SnapshotSummary {
         SnapshotSummary(
@@ -195,6 +204,11 @@ struct CLICompletionTests {
             CompletionSource.portMappings(
                 ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: unreachable
             ).isEmpty)
+        #expect(
+            CompletionSource.usbAccessoryDevices(
+                ofVM: "Alpha", byIdentifier: false, in: unreachable
+            ).isEmpty)
+        #expect(CompletionSource.availableUSBAccessories(in: unreachable).isEmpty)
         #expect(CompletionSource.configurationKeys(in: unreachable).isEmpty)
     }
 
@@ -295,6 +309,36 @@ struct CLICompletionTests {
             in: context(to: listener, asking: .zsh))
 
         #expect(mappings == ["5353\\:53:UDP"])
+    }
+
+    @Test("A USB detachment offers only what the named machine is actually holding")
+    func usbDevicesComeFromTheMachine() throws {
+        let listener = try TestCommandSocket(tag: "cmp-usb-held")
+        defer { listener.close() }
+        listener.serve([VMCommandResponse(result: .usbAccessories(accessories))])
+
+        let devices = CompletionSource.usbAccessoryDevices(
+            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
+
+        // A row carrying no attachment is one no guest holds, so there is
+        // nothing there to detach and nothing to offer.
+        #expect(devices == ["AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"])
+        #expect(listener.requests().map(\.verb) == [.usbAccessories(.idOrName("Alpha"))])
+    }
+
+    @Test("A USB attachment offers the free accessories, described by what they are")
+    func availableUSBAccessoriesComeFromTheHost() throws {
+        let listener = try TestCommandSocket(tag: "cmp-usb-free")
+        defer { listener.close() }
+        listener.serve([VMCommandResponse(result: .usbAccessories([accessories[1]]))])
+
+        let offered = CompletionSource.availableUSBAccessories(
+            in: context(to: listener, asking: .zsh))
+
+        // Nothing tells two accessories apart by identifier, so the description
+        // is what a person completes against.
+        #expect(offered == ["12:05ac:12a8 \u{00B7} Composite"])
+        #expect(listener.requests().map(\.verb) == [.availableUSBAccessories])
     }
 
     @Test("Under --id a virtual machine argument that is not one asks nothing")

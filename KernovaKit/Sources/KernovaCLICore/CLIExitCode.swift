@@ -28,7 +28,7 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .success: "The verb ran and did what was asked."
         case .operationFailed: "The verb ran and did not complete."
         case .usage: "The command line could not be parsed, or an argument was not valid."
-        case .notFound: "No VM answers to the selector."
+        case .notFound: "Nothing answers to what was named: a VM, or an item on one or the host."
         case .ambiguous: "More than one VM answers to the selector."
         case .refusedByState: "The VM's state, this build, or a missing consent refused the verb."
         case .busy: "The VM has work in flight the verb would race."
@@ -47,9 +47,10 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
     /// The code a verb's own refusal exits with.
     public init(_ failure: CommandErrorDTO) {
         switch failure {
-        case .notFound: self = .notFound
+        case .notFound, .itemNotFound, .itemNotFoundOnHost: self = .notFound
         case .ambiguous: self = .ambiguous
-        case .invalidState, .unsupported, .conflict, .confirmationRequired: self = .refusedByState
+        case .invalidState, .unsupported, .unsupportedByBuild, .conflict, .confirmationRequired:
+            self = .refusedByState
         case .invalidArgument: self = .usage
         case .busy: self = .busy
         case .timedOut: self = .timedOut

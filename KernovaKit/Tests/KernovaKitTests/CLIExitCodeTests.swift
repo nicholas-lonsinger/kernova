@@ -17,9 +17,15 @@ struct CLIExitCodeTests {
     func everyCommandErrorMaps() {
         let expected: [(CommandErrorDTO, CLIExitCode)] = [
             (.notFound(selector: .idOrName("Alpha")), .notFound),
+            // A VM that answered, naming something on it that did not, reads to
+            // a script as the same kind of miss as a VM name nothing answers to.
+            (.itemNotFound(vm: vm, item: "snapshot with the identifier 7"), .notFound),
+            // And one the host answered for, naming nothing on a VM at all.
+            (.itemNotFoundOnHost(item: "USB accessory with the identifier 7"), .notFound),
             (.ambiguous(selector: .idOrName("Alpha"), candidates: [vm]), .ambiguous),
             (.invalidState(vm: vm, current: "running", allowed: [.stop]), .refusedByState),
             (.unsupported(capability: "snapshots"), .refusedByState),
+            (.unsupportedByBuild(capability: "USB accessory passthrough"), .refusedByState),
             (.conflict(vm: vm, with: vm, reason: .macAddress), .refusedByState),
             (
                 .confirmationRequired(

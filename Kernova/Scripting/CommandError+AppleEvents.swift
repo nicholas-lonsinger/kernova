@@ -11,14 +11,14 @@ extension CommandError {
     /// refusals the tool tells apart by exit code fold into them.
     var appleEventErrorNumber: Int {
         switch self {
-        case .notFound, .ambiguous:
+        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous:
             Int(errAENoSuchObject)
         case .invalidArgument:
             Int(errAETypeError)
         case .timedOut:
             Int(errAETimeout)
-        case .invalidState, .unsupported, .conflict, .confirmationRequired, .busy,
-            .operationFailed:
+        case .invalidState, .unsupported, .unsupportedByBuild, .conflict, .confirmationRequired,
+            .busy, .operationFailed:
             Int(errAEEventFailed)
         }
     }

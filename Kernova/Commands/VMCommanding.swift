@@ -319,6 +319,26 @@ protocol VMCommanding: AnyObject {
     /// Drops the rule claiming `claim`.
     func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws
 
+    // MARK: - USB Accessories
+
+    /// The accessories the VM's guest is holding right now, each named by the
+    /// attachment a detach takes back.
+    func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary]
+
+    /// The accessories macOS has assigned to Kernova that no guest is holding.
+    ///
+    /// Addresses no VM: the user assigns an accessory to the app rather than to
+    /// a guest, so which VM could take it is the caller's question, not the
+    /// list's.
+    func availableUSBAccessories() throws -> [USBAccessorySummary]
+
+    /// Passes the accessory `accessory` names through to the VM's running
+    /// guest.
+    func attachUSBAccessory(_ selector: VMSelector, accessory: UInt64) async throws
+
+    /// Takes the passthrough device `device` names back off the guest.
+    func detachUSBAccessory(_ selector: VMSelector, device: UUID) async throws
+
     // MARK: - Configuration
 
     /// Every configuration key `configuration` and `setConfiguration` address,

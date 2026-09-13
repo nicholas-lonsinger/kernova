@@ -19,7 +19,8 @@ struct VMCapabilityCatalogTests {
     }
 
     private func makeHarness(
-        virtualization: any VirtualizationProviding = MockVirtualizationService()
+        virtualization: any VirtualizationProviding = MockVirtualizationService(),
+        usbAccessories: (any USBAccessoryProviding)? = nil
     ) -> Harness {
         let storage = MockVMStorageService()
         let lifecycle = VMLifecycleCoordinator(
@@ -27,6 +28,7 @@ struct VMCapabilityCatalogTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            usbAccessoryService: usbAccessories,
             linuxImageResolveService: MockLinuxImageResolveService(),
             downloadService: MockDownloadService(),
             fileSystem: MockFileSystem()
@@ -508,6 +510,25 @@ struct VMCapabilityCatalogTests {
 
         #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
         #expect(!harness.catalog.canDeleteSnapshot(snapshot, on: instance))
+    }
+
+    @Test("A USB accessory edit exists only in a build that can pass one through")
+    func usbAccessoryEditFollowsTheCapability() {
+        let without = makeHarness()
+        let notOffered = makeInstance(in: without, phase: .running(sessionID: UUID()))
+        // A build that cannot claim an accessory must not name the verb among
+        // those a VM accepts, however the VM is running.
+        #expect(!without.catalog.isApplicable(.editUSBAccessories, to: notOffered))
+
+        let with = makeHarness(usbAccessories: MockUSBAccessoryService())
+        #expect(
+            with.catalog.isApplicable(
+                .editUSBAccessories, to: makeInstance(in: with, phase: .running(sessionID: UUID()))))
+        // Stricter than removable media: there is no persisted entry to
+        // pre-configure, so a guest that is not running takes no edit.
+        #expect(
+            !with.catalog.isApplicable(
+                .editUSBAccessories, to: makeInstance(in: with, name: "Resting", phase: .stopped)))
     }
 
     @Test("The clipboard window follows the VM's own sharing toggle")

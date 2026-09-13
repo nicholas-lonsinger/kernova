@@ -130,6 +130,11 @@ final class VMLibrary: VMInstanceRoster {
             || lifecycle.hasUnsettledOperation(for: instance.id)
     }
 
+    /// Whether this build can pass a host USB accessory through to a guest at
+    /// all — the OS and the signature together, answered once by
+    /// ``USBAccessorySupport/makeService(entitlements:)``.
+    var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
+
     /// `true` from the moment a clone of `instance` has its phantom row
     /// registered until the copy publishes or fails — a cancelled row keeps
     /// its `preparingState` until the uninterruptible copy settles, so the

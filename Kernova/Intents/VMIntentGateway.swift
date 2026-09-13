@@ -223,7 +223,7 @@ final class VMIntentGateway {
         _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, confirmed: Bool
     ) async throws {
         try await perform(.revertToSnapshot, on: id) {
-            let listed = try self.listedSnapshot(snapshot, on: id, verb: .revertToSnapshot)
+            let listed = try self.listedSnapshot(snapshot, on: id)
             try await self.commands.revertToSnapshot(
                 .id(id), snapshot: listed, takingCheckpoint: takingCheckpoint,
                 confirmed: confirmed)
@@ -232,7 +232,7 @@ final class VMIntentGateway {
 
     func deleteSnapshot(_ id: UUID, snapshot: SnapshotEntityID, confirmed: Bool) async throws {
         try await perform(.deleteSnapshot, on: id) {
-            let listed = try self.listedSnapshot(snapshot, on: id, verb: .deleteSnapshot)
+            let listed = try self.listedSnapshot(snapshot, on: id)
             try await self.commands.deleteSnapshot(
                 .id(id), snapshot: listed, confirmed: confirmed)
         }
@@ -240,14 +240,14 @@ final class VMIntentGateway {
 
     func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
         try await perform(.renameSnapshot, on: id) {
-            let listed = try self.listedSnapshot(snapshot, on: id, verb: .renameSnapshot)
+            let listed = try self.listedSnapshot(snapshot, on: id)
             try self.commands.renameSnapshot(.id(id), snapshot: listed, to: newName)
         }
     }
 
     func setSnapshotNotes(_ id: UUID, snapshot: SnapshotEntityID, notes: String) async throws {
         try await perform(.setSnapshotNotes, on: id) {
-            let listed = try self.listedSnapshot(snapshot, on: id, verb: .setSnapshotNotes)
+            let listed = try self.listedSnapshot(snapshot, on: id)
             try self.commands.setSnapshotNotes(.id(id), snapshot: listed, notes: notes)
         }
     }
@@ -261,16 +261,13 @@ final class VMIntentGateway {
     /// there anyway; a rename or a note edit would not, because both are
     /// documented no-ops for an identifier the manifest does not list, so the
     /// mismatch would report success having changed nothing.
-    private func listedSnapshot(
-        _ picked: SnapshotEntityID, on vm: UUID, verb: VMVerb
-    ) throws -> UUID {
+    private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
         guard picked.vm != vm else { return picked.snapshot }
-        let name = (try? commands.info(.id(vm)).name) ?? vm.uuidString
-        throw CommandError.operationFailed(
-            verb: verb,
-            message:
-                "\u{201C}\(name)\u{201D} has no snapshot with the identifier \(picked.snapshot.uuidString)."
-        )
+        guard let summary = commands.list().first(where: { $0.id == vm }) else {
+            throw CommandError.notFound(.id(vm))
+        }
+        throw CommandError.itemNotFound(
+            vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
     }
 
     // MARK: - Library

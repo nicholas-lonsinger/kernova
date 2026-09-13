@@ -11,8 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # AccessoryAccess and VZUSBPassthroughDeviceConfiguration are macOS 27 SDK
+  # APIs, which an Xcode 26 toolchain cannot resolve at all — so this job runs
+  # on `xcode-27`, the only image carrying one. That image is a preview, so a
+  # run can sit queued for a while before a runner picks it up.
   build-and-test:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -20,10 +24,18 @@ jobs:
         with:
           fetch-depth: 1
 
+      # The image carries one Xcode and an Xcode.app symlink to it, so taking
+      # the newest resolves to that toolchain either way — and stays right on an
+      # image that gains a second. The inventory and SDK version are printed
+      # because a toolchain too old to carry the SDK otherwise surfaces as a
+      # bare "unable to resolve module dependency" naming no Xcode at all.
       - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          ls -d /Applications/Xcode*.app
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$newest/Contents/Developer"
           xcodebuild -version
+          xcrun --show-sdk-version
           echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
 
       # Package.resolved pins each dependency to a commit, so the hash misses
@@ -61,6 +73,11 @@ jobs:
       # source line that say what actually failed.
       - name: Build for testing
         run: make build-for-testing 2>&1
+
+      # Reads load commands off the built binary, so it cannot run in `make
+      # lint` — that job never builds. The script's header says what it guards.
+      - name: Check weak framework links
+        run: Tools/check-weak-links.sh
 
       # llvm-cas keeps the two newest generations (the fresh primary and its
       # read-through fallback) and deletes the rest. The listing shows which

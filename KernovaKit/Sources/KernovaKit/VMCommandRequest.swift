@@ -34,6 +34,11 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case sharedDirectories(VMSelector)
         /// The VM's host→guest port mappings.
         case portForwardingRules(VMSelector)
+        /// The USB accessories this VM's guest currently holds.
+        case usbAccessories(VMSelector)
+        /// The USB accessories macOS has assigned to Kernova and no guest holds.
+        /// Host-scoped: accessories arrive before any VM claims one.
+        case availableUSBAccessories
         /// Subscribe: a snapshot frame, then one frame per library event.
         case events
 
@@ -77,6 +82,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
         case editSharedDirectory(VMSelector, SharedDirectoryEdit)
         case editPortForwarding(VMSelector, PortForwardingEdit)
+        case editUSBAccessory(VMSelector, USBAccessoryEdit)
         case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
 
         /// Every configuration key `configuration` and `setConfiguration`
@@ -109,7 +115,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
                 .restart(_, let presentation, _):
                 presentation == .surface
             case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
-                .portForwardingRules, .events,
+                .portForwardingRules, .usbAccessories, .availableUSBAccessories, .editUSBAccessory,
+                .events,
                 .cancelGuestSetup, .stop, .pause, .suspend, .showInFinder, .takeSnapshot,
                 .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
                 .rename, .delete, .importVM, .cancelPreparing, .awaitPreparing, .editStorageDisk,
@@ -129,6 +136,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .snapshotOnDiskBytes: .snapshotOnDiskBytes
             case .sharedDirectories: .sharedDirectories
             case .portForwardingRules: .portForwardingRules
+            case .usbAccessories: .usbAccessories
+            case .availableUSBAccessories: .availableUSBAccessories
             case .events: .events
             case .start: .start
             case .cancelGuestSetup: .cancelGuestSetup
@@ -155,6 +164,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .editRemovableMedia: .editRemovableMedia
             case .editSharedDirectory: .editSharedDirectory
             case .editPortForwarding: .editPortForwarding
+            case .editUSBAccessory: .editUSBAccessory
             case .guestAgentDisk: .guestAgentDisk
             case .configurationKeys: .configurationKeys
             case .configuration: .configuration

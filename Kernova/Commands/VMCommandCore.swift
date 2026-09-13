@@ -274,6 +274,16 @@ final class VMCommandCore: VMCommanding {
             allowed: allowedVerbs(for: instance))
     }
 
+    /// The refusal for something the verb named on a VM that has no such thing
+    /// — a snapshot identifier, an attachment identifier.
+    ///
+    /// A refusal, not a failure: the verb never ran, so it answers the way an
+    /// unknown VM name does rather than the way a verb that ran and did not
+    /// finish does.
+    func itemNotFound(_ instance: VMInstance, item: String) -> CommandError {
+        .itemNotFound(vm: summary(instance), item: item)
+    }
+
     /// Refuses while a create, clone or import is still writing the VM's bundle.
     ///
     /// For the verbs that take no capability gate of their own; everything gated

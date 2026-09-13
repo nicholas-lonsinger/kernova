@@ -104,6 +104,32 @@ enum TableRenderer {
         return columns(headings: ["MAPPING"], rows: rules.map { [PortMapping.text(for: $0)] })
     }
 
+    /// USB accessories, in the order Kernova was handed them.
+    ///
+    /// The two verbs name a row differently — an accessory is attached by its
+    /// own identifier and detached by the attachment's — so the attachment
+    /// column appears exactly when some row has one. On the accessories no
+    /// guest holds it would be a column of nothing. `quiet` prints whichever
+    /// identifier acts on that row.
+    static func render(_ rows: [USBAccessorySummary], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(handle).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        guard rows.contains(where: { $0.deviceID != nil }) else {
+            return columns(
+                headings: ["NAME", "ACCESSORY"],
+                rows: rows.map { [$0.name, String($0.registryID)] })
+        }
+        return columns(
+            headings: ["NAME", "ACCESSORY", "DEVICE"],
+            rows: rows.map { [$0.name, String($0.registryID), $0.deviceID?.uuidString ?? ""] })
+    }
+
+    /// What `usb attach` or `usb detach` takes back for one accessory: the
+    /// attachment while a guest holds it, the accessory itself while none does.
+    private static func handle(_ accessory: USBAccessorySummary) -> String {
+        accessory.deviceID?.uuidString ?? String(accessory.registryID)
+    }
+
     /// A virtual machine's settings, one per line, in the order they were
     /// asked for.
     ///

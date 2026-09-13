@@ -82,7 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     init(isTestHost: Bool, preferences: AppPreferences = .shared) {
-        let viewModel = VMLibraryViewModel()
+        // The one place the USB accessory service is built. The test host is
+        // still this app, and an `AAUSBAccessoryListener` it registered would
+        // take the accessories the user assigned to the copy they are actually
+        // running — so it claims none.
+        let viewModel = VMLibraryViewModel(
+            usbAccessoryService: isTestHost ? nil : USBAccessorySupport.makeService())
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
@@ -430,6 +435,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return
         }
         viewModel.requestRevert(ref.instance, to: ref.snapshot)
+    }
+
+    @objc func attachUSBAccessory(_ sender: Any?) {
+        guard let ref = (sender as? NSMenuItem)?.representedObject as? USBAccessoryMenuRef else {
+            return
+        }
+        viewModel.attachUSBAccessory(ref.registryID, to: ref.instance)
+    }
+
+    @objc func detachUSBAccessory(_ sender: Any?) {
+        guard let ref = (sender as? NSMenuItem)?.representedObject as? USBAccessoryMenuRef,
+            let deviceID = ref.deviceID
+        else { return }
+        viewModel.detachUSBAccessory(deviceID: deviceID, from: ref.instance)
     }
 
     @objc func toggleSettingsPane(_ sender: Any?) {

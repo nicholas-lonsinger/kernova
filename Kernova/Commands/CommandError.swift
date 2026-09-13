@@ -26,6 +26,16 @@ enum CommandRecovery: Sendable, Equatable {
 enum CommandError: Error, Sendable, Equatable {
     /// No VM answers to the selector.
     case notFound(VMSelector)
+    /// The VM answered; something the verb named on it did not — a snapshot,
+    /// an attachment. The string names what was looked for, in the words the
+    /// user reads.
+    case itemNotFound(vm: VMSummary, item: String)
+    /// Something the verb named on the host did not answer — a USB accessory
+    /// macOS has not assigned to Kernova. The host-scoped sibling of
+    /// ``itemNotFound(vm:item:)``, for the same reason
+    /// ``unsupportedByBuild(capability:)`` is one: naming a VM would describe
+    /// something the caller never asked about.
+    case itemNotFoundOnHost(item: String)
     /// More than one VM answers to the selector; the candidates say which.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
@@ -41,6 +51,8 @@ enum CommandError: Error, Sendable, Equatable {
     case invalidArgument(String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
+    /// This build cannot do what was asked, and no VM was named.
+    case unsupportedByBuild(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The guest had not powered off `seconds` after the shutdown request, so
@@ -87,6 +99,10 @@ extension CommandError {
         switch self {
         case .notFound(let selector):
             .notFound(selector: selector)
+        case .itemNotFound(let vm, let item):
+            .itemNotFound(vm: vm, item: item)
+        case .itemNotFoundOnHost(let item):
+            .itemNotFoundOnHost(item: item)
         case .ambiguous(let selector, let candidates):
             .ambiguous(selector: selector, candidates: candidates)
         case .invalidState(let vm, let current, let allowed):
@@ -99,6 +115,8 @@ extension CommandError {
             .invalidArgument(message: message)
         case .unsupported(let capability):
             .unsupported(capability: capability)
+        case .unsupportedByBuild(let capability):
+            .unsupportedByBuild(capability: capability)
         case .conflict(let vm, let other, let reason):
             .conflict(vm: vm, with: other, reason: reason)
         case .timedOut(let vm, let verb, let seconds):

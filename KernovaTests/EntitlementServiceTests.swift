@@ -16,6 +16,21 @@ struct EntitlementServiceTests {
             ).hasVMNetworking)
     }
 
+    @Test("hasAccessoryAccess is true exactly when the signature claims the accessory entitlement")
+    func accessoryAccessReflectsReader() {
+        #expect(
+            EntitlementService(
+                reader: MockEntitlementReader(
+                    granted: ["com.apple.developer.accessory-access.usb"])
+            ).hasAccessoryAccess)
+        #expect(!EntitlementService(reader: MockEntitlementReader()).hasAccessoryAccess)
+        // The two entitlements are read independently, so neither answers for
+        // the other.
+        #expect(
+            !EntitlementService(reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+                .hasAccessoryAccess)
+    }
+
     @Test("The process reader reports an unclaimed key as absent")
     func processReaderUnclaimedKeyIsAbsent() {
         #expect(!ProcessEntitlementReader().hasEntitlement("app.kernova.test.never-claimed"))

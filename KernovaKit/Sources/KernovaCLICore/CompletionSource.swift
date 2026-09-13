@@ -76,6 +76,19 @@ enum CompletionSource {
             ofVM: subject.vm, byIdentifier: subject.byIdentifier, transport: udp ? .udp : .tcp)
     }
 
+    /// The accessories a `usb attach` argument offers: the ones no guest is
+    /// holding, which is the same set whichever machine the line named.
+    static let availableUSBAccessory = CompletionKind.custom { _, _, _ in availableUSBAccessories() }
+
+    /// The attachments a `usb detach` argument offers, of whichever virtual
+    /// machine the line already named.
+    static let usbAccessory = CompletionKind.custom { words, index, _ in
+        guard let subject = CompletionLine.vmSubject(in: words, completingAt: index) else {
+            return []
+        }
+        return usbAccessoryDevices(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
+    }
+
     /// The settings a `get` key argument offers.
     static let configurationKey = CompletionKind.custom { _, _, _ in configurationKeys() }
 
@@ -152,6 +165,34 @@ enum CompletionSource {
             candidate(
                 PortMapping.text(for: $0), describedBy: $0.transport.displayName,
                 for: context.shell)
+        }
+    }
+
+    /// Every accessory no guest is holding, by the identifier `usb attach`
+    /// takes back.
+    static func availableUSBAccessories(in context: CompletionContext = .live) -> [String] {
+        guard
+            case .usbAccessories(let accessories)? = answer(
+                to: .availableUSBAccessories, in: context)
+        else { return [] }
+        return accessories.map {
+            candidate(String($0.registryID), describedBy: $0.name, for: context.shell)
+        }
+    }
+
+    /// Every accessory the virtual machine `vm` names is holding, by the device
+    /// identifier `usb detach` takes back.
+    static func usbAccessoryDevices(
+        ofVM vm: String, byIdentifier: Bool, in context: CompletionContext = .live
+    ) -> [String] {
+        guard let selector = try? SelectorParsing.selector(from: vm, forcingID: byIdentifier),
+            case .usbAccessories(let accessories)? = answer(
+                to: .usbAccessories(selector), in: context)
+        else { return [] }
+        return accessories.compactMap { accessory in
+            accessory.deviceID.map {
+                candidate($0.uuidString, describedBy: accessory.name, for: context.shell)
+            }
         }
     }
 

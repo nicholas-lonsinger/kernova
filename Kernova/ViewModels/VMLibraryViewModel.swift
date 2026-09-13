@@ -42,6 +42,12 @@ final class VMLibraryViewModel {
     /// and this is the composition root that owns its lifetime.
     private let sleepWake: VMSleepWakeCoordinator
 
+    /// Watches the USB accessories macOS assigns to Kernova; `nil` when this
+    /// build cannot pass accessories through at all.
+    ///
+    /// Held rather than read, for the reason ``sleepWake`` is.
+    private let usbAccessories: USBAccessoryCoordinator?
+
     private let preferences: AppPreferences
 
     // MARK: - Library Forwarding
@@ -124,6 +130,10 @@ final class VMLibraryViewModel {
 
     /// Every per-VM capability predicate the AppKit surfaces read.
     var capabilities: VMCapabilityCatalog { library.capabilities }
+
+    /// Whether this build can pass a host USB accessory through to a guest —
+    /// what decides whether the USB Device menu exists at all.
+    var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
 
     /// Every (transport, host port) pair any VM in the library claims — what a
     /// new rule may not name.
@@ -461,6 +471,11 @@ final class VMLibraryViewModel {
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        // Supplied by ``AppDelegate``, the one caller that should claim the
+        // user's accessories — registering the listener is a side effect on
+        // the whole process, and a default would hand it to every test that
+        // builds a view model for something else entirely.
+        usbAccessoryService: (any USBAccessoryProviding)? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -482,6 +497,7 @@ final class VMLibraryViewModel {
             installService: installService,
             ipswService: ipswService,
             removableMediaDeviceService: removableMediaDeviceService,
+            usbAccessoryService: usbAccessoryService,
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,
@@ -500,6 +516,7 @@ final class VMLibraryViewModel {
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         self.sleepWake = sleepWake
+        self.usbAccessories = USBAccessoryCoordinator(lifecycle: lifecycle, roster: library)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -699,6 +716,31 @@ final class VMLibraryViewModel {
     func requestRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
         guard capabilities.isAvailable(.revertToSnapshot, on: instance) else { return }
         presenter?.presentRevertSnapshot(snapshot, for: instance)
+    }
+
+    /// Passes a host USB accessory through to `instance`'s guest.
+    ///
+    /// No confirmation: the user already consented to Kernova holding this
+    /// accessory in Apple's *Virtual Machine Accessories* menu, and a detach is
+    /// one action away.
+    func attachUSBAccessory(_ registryID: UInt64, to instance: VMInstance) {
+        guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
+        Task {
+            await run(on: instance) {
+                try await self.commands.attachUSBAccessory(
+                    .id(instance.id), accessory: registryID)
+            }
+        }
+    }
+
+    /// Takes a passed-through accessory back off `instance`'s guest.
+    func detachUSBAccessory(deviceID: UUID, from instance: VMInstance) {
+        guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
+        Task {
+            await run(on: instance) {
+                try await self.commands.detachUSBAccessory(.id(instance.id), device: deviceID)
+            }
+        }
     }
 
     /// Reverts to `snapshot`, optionally check-pointing the current state

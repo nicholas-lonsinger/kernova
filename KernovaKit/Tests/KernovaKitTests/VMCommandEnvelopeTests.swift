@@ -68,6 +68,8 @@ struct VMCommandEnvelopeTests {
             .snapshotOnDiskBytes(selector),
             .sharedDirectories(selector),
             .portForwardingRules(selector),
+            .usbAccessories(selector),
+            .availableUSBAccessories,
             .events,
             .start(selector, recovery: true, presentation: .surface),
             .start(selector, recovery: false, presentation: .headless),
@@ -120,6 +122,10 @@ struct VMCommandEnvelopeTests {
             .editPortForwarding(
                 selector,
                 .remove(claim: PortForwardingHostClaim(transport: .udp, hostPort: 5353))),
+            // An IORegistry ID runs past what 32 bits can name, so the width is
+            // part of what has to survive the trip.
+            .editUSBAccessory(selector, .attach(accessory: 4_294_967_296)),
+            .editUSBAccessory(selector, .detach(device: diskID)),
             .configurationKeys,
             .configuration(selector, keys: nil),
             .configuration(selector, keys: ["cpus", "memory"]),
@@ -261,6 +267,15 @@ struct VMCommandEnvelopeTests {
                 PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
             ]),
             .portForwardingRules([]),
+            .usbAccessories([
+                USBAccessorySummary(
+                    registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
+                    vendorID: 0x0403, productID: 0x6001, deviceID: diskID),
+                USBAccessorySummary(
+                    registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
+                    productID: 0x12A8),
+            ]),
+            .usbAccessories([]),
             .event(.added(summary)),
             .event(.removed(id: vmID, name: "Alpha")),
             .event(.statusChanged(id: vmID, name: "Alpha", from: "stopped", to: "running")),

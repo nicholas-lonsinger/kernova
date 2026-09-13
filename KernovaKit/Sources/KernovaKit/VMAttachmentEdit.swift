@@ -63,6 +63,19 @@ public enum SharedDirectoryEdit: Codable, Sendable, Hashable {
     case setReadOnly(directory: UUID, readOnly: Bool)
 }
 
+/// One change to the USB accessories a VM's guest holds.
+///
+/// Both sides name a device the caller got from a list: `accessory` is an
+/// `AAUSBAccessory.registryID` from the available list, and `device` the
+/// attachment UUID from the attached one. Neither survives a replug or a
+/// restart, which is why nothing persists either.
+public enum USBAccessoryEdit: Codable, Sendable, Hashable {
+    /// Passes the accessory through to the guest.
+    case attach(accessory: UInt64)
+    /// Takes the accessory back off the guest.
+    case detach(device: UUID)
+}
+
 /// What to do with the bundled guest-agent installer disk.
 public enum GuestAgentDiskEdit: String, Codable, Sendable, Hashable, CaseIterable {
     /// Put the installer image in front of the guest.

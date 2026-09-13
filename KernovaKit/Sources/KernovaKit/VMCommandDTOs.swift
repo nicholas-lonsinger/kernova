@@ -155,6 +155,38 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     }
 }
 
+/// One USB accessory macOS has assigned to Kernova, and where it currently is.
+///
+/// `name` is what the device calls itself — its vendor and product strings —
+/// falling back to `VID:PID · class` for one that reports neither, and
+/// qualified by the port where two accessories would otherwise read alike.
+public struct USBAccessorySummary: Codable, Sendable, Hashable {
+    /// The accessory's IORegistry ID, and what an attach names it by. Valid
+    /// only while this Kernova process keeps holding the accessory.
+    public let registryID: UInt64
+    /// What a surface calls this accessory.
+    public let name: String
+    /// `idVendor` from the device descriptor.
+    public let vendorID: UInt16
+    /// `idProduct` from the device descriptor.
+    public let productID: UInt16
+    /// The attachment's device UUID while a guest holds this accessory, and
+    /// what a detach names it by; `nil` when it is available to attach.
+    public let deviceID: UUID?
+
+    /// Describes one accessory.
+    public init(
+        registryID: UInt64, name: String, vendorID: UInt16, productID: UInt16,
+        deviceID: UUID? = nil
+    ) {
+        self.registryID = registryID
+        self.name = name
+        self.vendorID = vendorID
+        self.productID = productID
+        self.deviceID = deviceID
+    }
+}
+
 /// What kind of consent a refusal is asking for, so a surface can pick its
 /// native affordance without parsing the copy.
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {
@@ -279,6 +311,17 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case invalidArgument(message: String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
+    /// This build cannot do what was asked, and no VM was named — a host-scoped
+    /// verb whose capability the build lacks, where naming a virtual machine
+    /// would describe something the caller never asked about.
+    case unsupportedByBuild(capability: String)
+    /// The VM answered; something the verb named *on* it did not. `item` is
+    /// what was looked for, in the words the user reads.
+    case itemNotFound(vm: VMSummary, item: String)
+    /// Something the verb named on the host did not answer, and no VM was
+    /// named — a USB accessory macOS has not assigned to Kernova, where naming
+    /// a virtual machine would describe something the caller never asked about.
+    case itemNotFoundOnHost(item: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The guest had not powered off `seconds` after the shutdown request, so
@@ -308,8 +351,8 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .ambiguous, .busy, .unsupported, .invalidState, .timedOut,
-            .invalidArgument:
+        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .unsupported,
+            .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -329,6 +372,10 @@ extension CommandErrorDTO {
         switch self {
         case .notFound(let selector):
             "No virtual machine named \u{201C}\(selector.displayText)\u{201D}."
+        case .itemNotFound(let vm, let item):
+            "\u{201C}\(vm.name)\u{201D} has no \(item)."
+        case .itemNotFoundOnHost(let item):
+            "Kernova has no \(item)."
         case .ambiguous(let selector, let candidates):
             "\u{201C}\(selector.displayText)\u{201D} names \(candidates.count) virtual machines. "
                 + "Use one of their identifiers instead: "
@@ -354,6 +401,8 @@ extension CommandErrorDTO {
             message
         case .unsupported(let capability):
             "This virtual machine does not support \(capability)."
+        case .unsupportedByBuild(let capability):
+            "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
             switch reason {
             case .macAddressInUse(let address):

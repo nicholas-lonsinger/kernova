@@ -48,6 +48,10 @@ final class MockVirtualizationService: VirtualizationProviding {
     var resumeError: (any Error)?
     var saveError: (any Error)?
     var takeSnapshotError: (any Error)?
+
+    /// Runs once the capture has entered its capturing phase, so a test can
+    /// reproduce what the real capture does to the instance while it runs.
+    var onTakeSnapshot: (@MainActor () -> Void)?
     var revertToSnapshotError: (any Error)?
 
     // MARK: - Snapshot call tracking
@@ -128,6 +132,10 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
+        // Stands in for what a real warm capture does to the VM mid-flight —
+        // notably taking every passthrough accessory off before it writes the
+        // guest's state.
+        onTakeSnapshot?()
         if let error = takeSnapshotError {
             instance.enter(phases.resting)
             throw error

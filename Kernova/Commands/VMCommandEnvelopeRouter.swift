@@ -128,6 +128,10 @@ struct VMCommandEnvelopeRouter {
             return .sharedDirectories(try commands.sharedDirectories(of: selector))
         case .portForwardingRules(let selector):
             return .portForwardingRules(try commands.portForwardingRules(of: selector))
+        case .usbAccessories(let selector):
+            return .usbAccessories(try commands.usbAccessories(of: selector))
+        case .availableUSBAccessories:
+            return .usbAccessories(try commands.availableUSBAccessories())
         case .events:
             // Streaming, not unary: a transport answers `.events` through
             // `snapshotAndEvents()` and never reaches here.
@@ -221,6 +225,9 @@ struct VMCommandEnvelopeRouter {
                 try commands.removePortForwardingRule(selector, claim: claim)
             }
             return .ok
+        case .editUSBAccessory(let selector, let edit):
+            try await apply(edit, to: selector)
+            return .ok
 
         case .guestAgentDisk(let selector, let edit):
             switch edit {
@@ -260,6 +267,16 @@ struct VMCommandEnvelopeRouter {
             try commands.setStorageDiskReadOnly(selector, disk: disk, readOnly: readOnly)
         case .reorder(let order):
             try commands.reorderStorageDisks(selector, order: order)
+        }
+    }
+
+    /// One USB accessory edit, dispatched on the payload the verb carries.
+    private func apply(_ edit: USBAccessoryEdit, to selector: VMSelector) async throws {
+        switch edit {
+        case .attach(let accessory):
+            try await commands.attachUSBAccessory(selector, accessory: accessory)
+        case .detach(let device):
+            try await commands.detachUSBAccessory(selector, device: device)
         }
     }
 

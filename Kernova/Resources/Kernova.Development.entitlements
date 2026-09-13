@@ -2,11 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The default entitlements: Kernova.entitlements minus the restricted
-	     com.apple.vm.networking key, which signing without an authorizing
-	     profile cannot carry (automatic signing refuses it, and amfid kills
-	     an ad-hoc-signed binary claiming it at exec). This variant is what
-	     lets a profile-less checkout build and run. Selected through
+	<!-- The default entitlements: Kernova.entitlements minus its restricted
+	     keys — com.apple.vm.networking and
+	     com.apple.developer.accessory-access.usb — which signing without an
+	     authorizing profile cannot carry (automatic signing refuses them, and
+	     amfid kills an ad-hoc-signed binary claiming one at exec). This variant
+	     is what lets a profile-less checkout build and run. Selected through
 	     KERNOVA_APP_ENTITLEMENTS in Config/Base.xcconfig; a machine holding
 	     the capability-enabled profile opts into the full set via
 	     Config/Local.xcconfig. Keep every key here identical to

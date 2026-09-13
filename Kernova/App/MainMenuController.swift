@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaKit
 import os
 
 /// The application-level seam a ``MainMenuController`` needs but cannot own:
@@ -55,6 +56,14 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// while AppKit matches key equivalents.
     private var revertSnapshotMenuModel: RevertSnapshotMenuModel?
 
+    /// The "USB Device" submenu, retained so it can be rebuilt from the live
+    /// accessory list when it opens. `nil` in a build that cannot pass
+    /// accessories through, where the item is never created at all.
+    private var usbAccessoryMenu: NSMenu?
+    /// What that submenu currently lists, for the reason
+    /// ``revertSnapshotMenuModel`` exists.
+    private var usbAccessoryMenuModel: USBAccessoryMenuModel?
+
     /// The Window menu, retained so its opening can set the clipboard item's
     /// enablement and so the presence check reads this controller's own menu.
     private var windowsMenu: NSMenu?
@@ -68,6 +77,14 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private struct RevertSnapshotMenuModel: Equatable {
         let instanceID: UUID?
         let snapshots: [VMSnapshot]
+        let isEnabled: Bool
+    }
+
+    /// Value snapshot of the USB submenu's rendered contents.
+    private struct USBAccessoryMenuModel: Equatable {
+        let instanceID: UUID?
+        let attached: [USBAccessorySummary]
+        let available: [USBAccessorySummary]
         let isEnabled: Bool
     }
 
@@ -168,9 +185,42 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             rebuildAppMenuQuitItems()
         } else if menu === revertSnapshotMenu {
             rebuildRevertSnapshotMenu(menu)
-        } else if menu === virtualMachineMenu, let revertSnapshotMenu {
-            rebuildRevertSnapshotMenu(revertSnapshotMenu)
+        } else if menu === usbAccessoryMenu {
+            rebuildUSBAccessoryMenu(menu)
+        } else if menu === virtualMachineMenu {
+            if let revertSnapshotMenu { rebuildRevertSnapshotMenu(revertSnapshotMenu) }
+            if let usbAccessoryMenu { rebuildUSBAccessoryMenu(usbAccessoryMenu) }
         }
+    }
+
+    /// Rebuilds the USB submenu from the accessories macOS has assigned to
+    /// Kernova and the ones the selected VM already holds.
+    ///
+    /// The unchanged-model guard is load-bearing for the reason
+    /// ``rebuildRevertSnapshotMenu(_:)`` states.
+    private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
+        guard let host else { return }
+        let instance = host.menuCommandTarget(of: nil)
+        // Both listings come from the facade, so the menu offers exactly what
+        // an attach would accept — the held-accessory filter lives at the
+        // enforcement point, not here.
+        let available = (try? viewModel.commands.availableUSBAccessories()) ?? []
+        let attached =
+            instance.flatMap { try? viewModel.commands.usbAccessories(of: .id($0.id)) } ?? []
+        let model = USBAccessoryMenuModel(
+            instanceID: instance?.id,
+            attached: attached,
+            available: available,
+            isEnabled: instance.map {
+                viewModel.capabilities.isAvailable(.editUSBAccessories, on: $0)
+            } ?? false)
+        guard model != usbAccessoryMenuModel else { return }
+        usbAccessoryMenuModel = model
+        USBAccessoryMenu.rebuild(
+            menu, for: instance, attached: attached, available: available,
+            isEnabled: model.isEnabled, target: nil,
+            attachAction: #selector(AppDelegate.attachUSBAccessory(_:)),
+            detachAction: #selector(AppDelegate.detachUSBAccessory(_:)))
     }
 
     /// Rebuilds the revert submenu from the selected VM's snapshots.
@@ -298,6 +348,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // validateMenuItem(_:).
         case #selector(AppDelegate.showClipboard(_:)): .showClipboard
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
+        case #selector(AppDelegate.attachUSBAccessory(_:)),
+            #selector(AppDelegate.detachUSBAccessory(_:)):
+            .editUSBAccessories
         case #selector(AppDelegate.togglePopOut(_:)): .togglePopOut
         case #selector(AppDelegate.toggleFullscreen(_:)): .toggleFullscreen
         case #selector(AppDelegate.toggleSettingsPane(_:)): .toggleSettingsPane
@@ -507,6 +560,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Seeded so the parent item is never a live entry onto an empty submenu.
         rebuildRevertSnapshotMenu(revertMenu)
         vmMenu.addItem(revertItem)
+        // The capability is a property of this build's signature and OS, so a
+        // build without it never grows the item — there is nothing here to
+        // disable, and nothing to explain.
+        if viewModel.supportsUSBAccessories {
+            let usbItem = NSMenuItem(title: USBAccessoryMenu.title, action: nil, keyEquivalent: "")
+            let usbMenu = NSMenu(title: USBAccessoryMenu.title)
+            usbMenu.delegate = self
+            usbItem.submenu = usbMenu
+            usbAccessoryMenu = usbMenu
+            rebuildUSBAccessoryMenu(usbMenu)
+            vmMenu.addItem(usbItem)
+        }
         vmMenu.delegate = self
         virtualMachineMenu = vmMenu
         vmMenu.addItem(.separator())
