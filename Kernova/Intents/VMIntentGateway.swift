@@ -252,17 +252,26 @@ final class VMIntentGateway {
         }
     }
 
-    /// The snapshot `picked` names, refusing one belonging to another VM.
+    /// The snapshot `picked` names, refusing one the VM does not list under
+    /// that identifier.
     ///
-    /// The VM parameter is authoritative — a Shortcut that changes it after
-    /// picking a snapshot must not act on the VM the stale pick names — and
-    /// this is where that is enforced for every snapshot verb, not only the
-    /// ones the core happens to catch. A revert or delete would be refused
-    /// there anyway; a rename or a note edit would not, because both are
-    /// documented no-ops for an identifier the manifest does not list, so the
-    /// mismatch would report success having changed nothing.
+    /// A pick is only as current as the run that made it — the Shortcut can
+    /// have been re-pointed at another VM since, and the snapshot itself can
+    /// have been deleted or dropped by a revert — so the identifier resolves
+    /// against the named VM's own listing, for every snapshot verb rather than
+    /// only the ones the core happens to catch. A revert or delete would be
+    /// refused there anyway; a rename or a note edit would not, because both
+    /// are documented no-ops for an identifier the manifest does not list, so
+    /// the miss would report success having changed nothing.
+    ///
+    /// Both halves of the pick are checked, because a clone carries its
+    /// source's snapshot identifiers: one the named VM lists can still be a
+    /// pick made in the VM it was copied from.
     private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
-        guard picked.vm != vm else { return picked.snapshot }
+        let listed = try commands.snapshots(of: .id(vm))
+        if picked.vm == vm, listed.contains(where: { $0.id == picked.snapshot }) {
+            return picked.snapshot
+        }
         guard let summary = commands.list().first(where: { $0.id == vm }) else {
             throw CommandError.notFound(.id(vm))
         }
