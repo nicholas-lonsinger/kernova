@@ -32,7 +32,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Shared folders** over VirtioFS | ✅ | ✅ |
 | **NAT** with **port forwarding** (TCP/UDP), **bridged**, **host-only** networking | ✅ | ✅ |
 | **Hot-plug** removable media (ISOs, disk images) | ✅ | ✅ |
-| **USB passthrough** of host accessories, remembered per VM | ✅ | ✅ |
+| **USB passthrough** of host accessories | ✅ | ✅ |
 | **Audio** out, opt-in **microphone** passthrough | ✅ | ✅ |
 | **Serial console** log and Unix-socket relay | ✅ | ✅ |
 | **Clipboard sharing** — text, rich text, images, files, folders | ✅ | text only |
@@ -80,7 +80,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
 
 > [!NOTE]
-> **Bridged** and **Host Only** need Apple's restricted `com.apple.vm.networking` entitlement, and **USB accessories** the restricted `com.apple.developer.accessory-access.usb`. A build without one hides what it gates, and everything else works unchanged.
+> **Bridged** and **Host Only** need `com.apple.vm.networking`, a capability Apple grants; **USB accessories** need `com.apple.developer.accessory-access.usb`, which any App ID can enable in Xcode as *Claim USB Accessory*. Both must be authorized by a provisioning profile, so an ad-hoc-signed build carries neither — it hides those features, and everything else works unchanged.
 
 <p align="center">
   <picture>
