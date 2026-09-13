@@ -301,6 +301,38 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.installerMountedConfig(vmName, purpose: purpose, delivery: delivery)) }
     }
 
+    /// Asks which guest a newly assigned USB accessory goes to.
+    ///
+    /// Held for the host rather than queued when there is no window: a drive
+    /// being plugged in is no reason to put one on screen, and the accessory is
+    /// still one menu item from being placed.
+    func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
+        guard window != nil else {
+            Self.logger.notice(
+                "Holding a USB accessory for the host: no window is on screen to ask which virtual machine should take it"
+            )
+            request.answer(nil)
+            return
+        }
+        enqueue { $0.presentUSBPairing(request) }
+    }
+
+    /// Shows the pairing alert, answering it as a hold if the window went away
+    /// while the request waited its turn — the alert is the only thing that can
+    /// answer it, so it must not be dropped unanswered.
+    private func presentUSBPairing(_ request: USBAccessoryPairingRequest) {
+        guard let window else {
+            request.answer(nil)
+            return
+        }
+        isShowingAlert = true
+        presentSheetAlert(USBAccessoryPairingAlert.configuration(for: request), in: window) {
+            [weak self] in
+            self?.isShowingAlert = false
+            self?.runNext()
+        }
+    }
+
     // MARK: - Serialization queue
 
     private func enqueue(_ work: @escaping (DetailAlertsPresenter) -> Void) {

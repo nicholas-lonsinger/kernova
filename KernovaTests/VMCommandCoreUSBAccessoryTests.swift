@@ -21,8 +21,13 @@ struct VMCommandCoreUSBAccessoryTests {
     private struct Harness {
         let core: VMCommandCore
         let library: VMLibrary
+        let lifecycle: VMLifecycleCoordinator
         let storage: MockVMStorageService
         let accessories: MockUSBAccessoryService?
+        /// Wired the way `VMLibraryViewModel` wires it, so what an attach and a
+        /// detach mean for the pairings is exercised rather than stubbed — and
+        /// held, because the core references it weakly.
+        let pairingCoordinator: USBAccessoryCoordinator?
     }
 
     private func makeHarness(withAccessorySupport: Bool = true) -> Harness {
@@ -47,7 +52,8 @@ struct VMCommandCoreUSBAccessoryTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(),
-            isVMNetworkingEntitled: true
+            isVMNetworkingEntitled: true,
+            usbPairingStore: MockUSBAccessoryPairingStore()
         )
         let core = VMCommandCore(
             library: library,
@@ -58,7 +64,17 @@ struct VMCommandCoreUSBAccessoryTests {
             fileSystem: fileSystem,
             preferences: preferences
         )
-        return Harness(core: core, library: library, storage: storage, accessories: accessories)
+        let pairingCoordinator = USBAccessoryCoordinator(
+            lifecycle: lifecycle, roster: library, pairings: library)
+        core.onUserAttachedAccessory = { [weak pairingCoordinator] instance, accessory in
+            pairingCoordinator?.userAttached(accessory, to: instance)
+        }
+        core.onUserReleasedAccessory = { [weak pairingCoordinator] instance, accessory in
+            pairingCoordinator?.userReleased(accessory, from: instance)
+        }
+        return Harness(
+            core: core, library: library, lifecycle: lifecycle, storage: storage,
+            accessories: accessories, pairingCoordinator: pairingCoordinator)
     }
 
     /// A VM with a live session an accessory can be attached to.
@@ -433,6 +449,90 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(refusal?.isOperationFailure == true)
         #expect(other.liveUSBAccessories.isEmpty)
         #expect(holder.liveUSBAccessories.count == 1)
+    }
+
+    // MARK: - What the Edits Remember
+
+    @Test("Attaching remembers the accessory for that virtual machine")
+    func attachRecordsThePairing() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1", vendorName: "Samsung",
+            productName: "Type-C")
+
+        _ = try await attach(accessory, to: instance, in: harness)
+
+        // Placing a device is the answer to "which VM", whichever surface asked
+        // — so a user who attaches from the menu with nothing else running is
+        // remembered too.
+        #expect(instance.usbPairings.pairings.map(\.key) == [accessory.identity?.key])
+        #expect(instance.usbPairings.pairings.first?.displayName == "Samsung Type-C")
+        #expect(instance.usbPairings.pairings.first?.form == .serialNumber)
+    }
+
+    @Test("An accessory with no durable identity is remembered by nothing")
+    func attachOfAnUnidentifiableAccessoryRemembersNothing() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 7), to: instance, in: harness)
+
+        #expect(instance.usbPairings.isEmpty)
+    }
+
+    @Test("Attaching on a second guest takes the rule off the first")
+    func attachElsewhereRewritesTheRule() async throws {
+        let harness = makeHarness()
+        let first = makeRunningInstance(in: harness, name: "First")
+        let second = makeRunningInstance(in: harness, name: "Second")
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let deviceID = try await attach(accessory, to: first, in: harness)
+        try await harness.core.detachUSBAccessory(.id(first.id), device: deviceID)
+
+        _ = try await attach(accessory, to: second, in: harness)
+
+        // One key names at most one VM, so a device moved between guests cannot
+        // leave both of them expecting it.
+        #expect(first.usbPairings.isEmpty)
+        #expect(second.usbPairings.pairings.map(\.key) == [accessory.identity?.key])
+    }
+
+    @Test("A detach the user asked for forgets the rule")
+    func detachForgetsThePairing() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let deviceID = try await attach(accessory, to: instance, in: harness)
+        #expect(!instance.usbPairings.isEmpty)
+
+        try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
+
+        // Taking a device back by hand is how a user ends a pairing without
+        // opening settings — and the only way the returning device stays with
+        // the Mac.
+        #expect(instance.usbPairings.isEmpty)
+    }
+
+    @Test("A detach the lifecycle performs on its own leaves the rule alone")
+    func alifecycleEjectKeepsThePairing() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        let sessionID = try #require(instance.attachableSessionID)
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let deviceID = try await attach(accessory, to: instance, in: harness)
+
+        // A stop, a suspend and a snapshot capture all take passthrough devices
+        // off without the user asking, and none of them is a decision about
+        // where the accessory belongs.
+        try await harness.lifecycle.detachUSBAccessory(
+            deviceID: deviceID, from: instance, for: sessionID)
+
+        #expect(instance.usbPairings.pairings.map(\.key) == [accessory.identity?.key])
     }
 }
 

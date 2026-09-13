@@ -516,7 +516,9 @@ final class VMLibraryViewModel {
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         self.sleepWake = sleepWake
-        self.usbAccessories = USBAccessoryCoordinator(lifecycle: lifecycle, roster: library)
+        let usbAccessories = USBAccessoryCoordinator(
+            lifecycle: lifecycle, roster: library, pairings: library)
+        self.usbAccessories = usbAccessories
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -557,6 +559,53 @@ final class VMLibraryViewModel {
         core.displayBootSurface = { [weak self] instance in
             self?.displayBootGeometryProvider?.displayBootSurface(for: instance)
         }
+        // What the user's own attach and detach mean for what a guest takes
+        // back on its own. Both hang off the verb rather than the surface, so
+        // the menu, the CLI and the prompt's answer write the same rule.
+        core.onUserAttachedAccessory = { [weak usbAccessories] instance, accessory in
+            usbAccessories?.userAttached(accessory, to: instance)
+        }
+        core.onUserReleasedAccessory = { [weak usbAccessories] instance, accessory in
+            usbAccessories?.userReleased(accessory, from: instance)
+        }
+        library.onSessionBecameAttachable = { [weak usbAccessories] instance in
+            usbAccessories?.sessionBecameAttachable(instance)
+        }
+        usbAccessories?.onPairingNeeded = { [weak self] request in
+            self?.presentUSBAccessoryPairing(request)
+        }
+    }
+
+    // MARK: - USB Accessory Pairing
+
+    /// Asks which guest a newly assigned accessory should go to, and runs the
+    /// attach the answer stands for.
+    ///
+    /// The answer goes back through ``attachUSBAccessory(_:to:)`` rather than
+    /// writing anything here: the pairing is created by the attach verb, on
+    /// every surface, so the prompt has one less thing to keep in step.
+    private func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
+        guard let presenter else {
+            Self.logger.notice(
+                "Holding a USB accessory for the host: no surface is attached to ask which virtual machine should take it"
+            )
+            request.answer(nil)
+            return
+        }
+        presenter.presentUSBAccessoryPairing(
+            USBAccessoryPairingRequest(
+                id: request.id, accessory: request.accessory, candidates: request.candidates,
+                answer: { [weak self] instance in
+                    request.answer(instance)
+                    guard let instance else { return }
+                    self?.attachUSBAccessory(request.accessory.registryID, to: instance)
+                }))
+    }
+
+    /// Drops one remembered accessory from `instance`, so it stays with the Mac
+    /// next time it is plugged in.
+    func forgetUSBAccessory(key: String, on instance: VMInstance) {
+        library.updateUSBPairings(of: instance) { $0.remove(key: key) }
     }
 
     // MARK: - Create

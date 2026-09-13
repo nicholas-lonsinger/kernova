@@ -55,6 +55,12 @@ extension VMCommandCore {
         do {
             let attached = try await lifecycle.attachUSBAccessory(
                 registryID, to: instance, for: sessionID)
+            // Placing a device *is* the answer to "which VM", whichever surface
+            // asked — the menu, the CLI, or the prompt an arrival raises. A
+            // rule created only by the prompt would leave a user who plugs a
+            // drive in with nothing running, and attaches it from the menu,
+            // re-placing it every time.
+            onUserAttachedAccessory?(instance, attached.accessory)
             Self.logger.notice(
                 "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
             )
@@ -69,13 +75,20 @@ extension VMCommandCore {
         // success: the lifecycle treats a device VZ has already let go as done,
         // which is right for an unplug that got there first and wrong for a
         // caller who named the wrong device.
-        guard instance.liveUSBAccessories.contains(where: { $0.deviceID == deviceID }) else {
+        guard
+            let held = instance.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
+        else {
             throw itemNotFound(
                 instance, item: "USB accessory with the device identifier \(deviceID.uuidString)")
         }
         do {
             try await lifecycle.detachUSBAccessory(
                 deviceID: deviceID, from: instance, for: sessionID)
+            // Read before the detach, which clears the record: taking a device
+            // back by hand is how a user ends a pairing without opening
+            // settings, and it is the only way the returning device stays with
+            // the Mac.
+            onUserReleasedAccessory?(instance, held.accessory)
             Self.logger.notice(
                 "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
             )

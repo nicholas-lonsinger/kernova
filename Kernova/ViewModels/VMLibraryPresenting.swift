@@ -64,6 +64,13 @@ protocol VMLibraryPresenting: AnyObject {
     /// `delivery` put the disk in front of the guest.
     func presentInstallerMounted(
         vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery)
+    /// Ask which running guest a newly assigned USB accessory should be passed
+    /// through to.
+    ///
+    /// The request's `answer` is called exactly once — with `nil` when there is
+    /// no window to ask in, which leaves the accessory with the host and the
+    /// USB Device menu as where it is placed.
+    func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

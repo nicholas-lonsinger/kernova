@@ -8,7 +8,7 @@ import KernovaTestSupport
 @MainActor
 final class MockUSBAccessoryService: USBAccessoryProviding {
     var accessories: [USBAccessoryInfo] = []
-    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
+    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo, USBAccessoryArrival) -> Void)?
     var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])?
 
     var startObservingCallCount = 0
@@ -27,20 +27,26 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
 
     /// Plays macOS assigning `info` to Kernova, listing it and telling whoever
     /// is watching — the callback the coordinator installs, and any wait.
+    ///
+    /// The arrival is derived the way the real service derives it: a wait that
+    /// was already parked for this exact unit makes it an awaited return.
     func assign(_ info: USBAccessoryInfo) {
         accessories.append(info)
-        resolveWaits(with: info)
-        onAccessoryAssigned?(info)
+        let answered = resolveWaits(with: info)
+        onAccessoryAssigned?(info, answered ? .awaitedReturn : .fresh)
     }
 
     /// Assigns a physical unit, composing its identity the way the real service
     /// does: against every key already spoken for, the guests' included.
     @discardableResult
     func assignComposing(
-        registryID: UInt64, serial: String? = nil, receptacle: String? = nil
+        registryID: UInt64, serial: String? = nil, receptacle: String? = nil,
+        vendorID: UInt16 = 0x0403, productID: UInt16 = 0x6001, vendorName: String? = nil,
+        productName: String? = nil
     ) -> USBAccessoryInfo {
         let info = Self.accessory(
-            registryID: registryID, serial: serial, receptacle: receptacle,
+            registryID: registryID, vendorID: vendorID, productID: productID, serial: serial,
+            receptacle: receptacle, vendorName: vendorName, productName: productName,
             claimedBy: accessories + (accessoriesHeldByGuests?() ?? []))
         assign(info)
         return info
@@ -98,10 +104,14 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         }
     }
 
-    private func resolveWaits(with info: USBAccessoryInfo) {
-        for (token, wait) in waits where wait.identity == info.identity {
+    @discardableResult
+    private func resolveWaits(with info: USBAccessoryInfo) -> Bool {
+        guard info.identity != nil else { return false }
+        let tokens = waits.filter { $0.value.identity == info.identity }.keys
+        for token in tokens {
             resolveWait(token, with: info)
         }
+        return !tokens.isEmpty
     }
 
     /// Answers every parked wait with "never came back", standing in for the
@@ -152,8 +162,13 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         }
     }
 
+    /// Fires whenever an attach is issued, for tests sequencing on the request
+    /// rather than on the record it eventually produces.
+    let attachIssued = AsyncGate()
+
     func attach(_ registryID: UInt64, to instance: VMInstance) async throws -> AttachedUSBAccessory {
         attachedRegistryIDs.append(registryID)
+        attachIssued.notify()
         await suspendIfNeeded()
         if let attachError { throw attachError }
         guard let info = accessories.first(where: { $0.registryID == registryID }) else {

@@ -13,19 +13,21 @@ import os
 ///
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
 /// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
-/// whose handling belongs elsewhere — ``onAgentBecameCurrent`` and
-/// ``onPoweredOff`` — leave through their own closures.
+/// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
+/// ``onPoweredOff`` and ``onSessionBecameAttachable`` — leave through their own
+/// closures.
 /// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
 /// wires them all.
 @MainActor
 @Observable
-final class VMLibrary: VMInstanceRoster {
+final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     nonisolated private static let logger = Logger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
 
     private let storageService: any VMStorageProviding
     private let snapshotStore: any VMSnapshotStoring
+    private let usbPairingStore: any USBAccessoryPairingStoring
     private let lifecycle: VMLifecycleCoordinator
 
     private let fileSystem: any FileSystemOperating
@@ -64,6 +66,10 @@ final class VMLibrary: VMInstanceRoster {
 
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
+
+    /// Fires when a VM reaches a state a device can be attached to, for the
+    /// accessories paired with it.
+    @ObservationIgnored var onSessionBecameAttachable: ((VMInstance) -> Void)?
 
     // MARK: - Capabilities
 
@@ -173,10 +179,12 @@ final class VMLibrary: VMInstanceRoster {
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
-        isVMNetworkingEntitled: Bool
+        isVMNetworkingEntitled: Bool,
+        usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore()
     ) {
         self.storageService = storageService
         self.snapshotStore = snapshotStore
+        self.usbPairingStore = usbPairingStore
         self.lifecycle = lifecycle
         self.fileSystem = fileSystem
         self.preferences = preferences
@@ -710,9 +718,16 @@ final class VMLibrary: VMInstanceRoster {
             guard let self, let instance else { return }
             self.onPoweredOff?(instance)
         }
+        // A guest that has just become attachable takes back the accessories
+        // paired with it.
+        instance.onSessionBecameAttachable = { [weak self, weak instance] in
+            guard let self, let instance else { return }
+            self.onSessionBecameAttachable?(instance)
+        }
         // The one construction-site hook every path runs through — load, create,
         // clone, import, and disk reconciliation alike.
         instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
+        instance.usbPairings = usbPairingStore.load(bundleURL: instance.bundleURL)
         // Every one of those paths hands the library a bundle it does not hold
         // an instance for yet, and a revert needs one — so a staging directory
         // found here belongs to no running revert, and reclaiming it does not
@@ -770,6 +785,46 @@ final class VMLibrary: VMInstanceRoster {
         // event.
         networkSlots.rebuildNetworksIfIdle()
         return saved
+    }
+
+    /// The single entry point for any change to what a VM takes its USB
+    /// accessories back from — the attach and detach verbs, the prompt's
+    /// answer, and the settings row's remove button alike.
+    ///
+    /// Applies the mutation, writes the bundle file, and no-ops when the
+    /// mutation produces the same set.
+    ///
+    /// - Returns: Whether the new set reached disk. A no-op mutation returns
+    ///   `true`; a failed write leaves the new value in memory, which is what
+    ///   the session it was made for acts on.
+    @discardableResult
+    func updateUSBPairings(
+        of instance: VMInstance,
+        mutate: (inout USBAccessoryPairingSet) -> Void
+    ) -> Bool {
+        let old = instance.usbPairings
+        var new = old
+        mutate(&new)
+        guard new != old else { return true }
+        instance.usbPairings = new
+        do {
+            try usbPairingStore.save(new, bundleURL: instance.bundleURL)
+            return true
+        } catch {
+            // Not surfaced: nothing the user did is refused by it — the guest
+            // still gets the accessory, and only the *remembering* is lost.
+            Self.logger.error(
+                "Failed to save the USB accessory pairings for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+    }
+
+    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) {
+        for other in instances where other !== instance {
+            updateUSBPairings(of: other) { $0.remove(key: pairing.key) }
+        }
+        updateUSBPairings(of: instance) { $0.upsert(pairing) }
     }
 
     /// Pushes a configuration change to a running VM.

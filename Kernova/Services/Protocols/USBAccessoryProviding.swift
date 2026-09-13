@@ -20,6 +20,17 @@ enum USBAccessoryError: LocalizedError, Equatable {
     }
 }
 
+/// Why an accessory arrived, which decides whether anything may act on it.
+enum USBAccessoryArrival: Sendable, Equatable {
+    /// Nobody was waiting for this unit: a device the user just plugged in and
+    /// assigned, or one coming back from a reset nothing asked for.
+    case fresh
+    /// A caller was already waiting for exactly this unit and has just been
+    /// answered — the put-back a warm capture owes. That caller owns the
+    /// accessory, so nothing else may route it.
+    case awaitedReturn
+}
+
 /// Observes the USB accessories macOS assigns to Kernova, and moves them on and
 /// off a running guest's USB controller.
 ///
@@ -32,8 +43,10 @@ protocol USBAccessoryProviding: AnyObject {
     /// The accessories macOS has assigned to Kernova, in arrival order.
     var accessories: [USBAccessoryInfo] { get }
 
-    /// Called when a newly assigned accessory arrives.
-    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)? { get set }
+    /// Called when a newly assigned accessory arrives, with why it did.
+    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo, USBAccessoryArrival) -> Void)? {
+        get set
+    }
 
     /// What the guests are holding, asked whenever a new assignment's identity
     /// is composed.
