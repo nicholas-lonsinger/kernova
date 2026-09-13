@@ -116,7 +116,7 @@ struct VMSnapshotIntentTests {
         let vm = UUID()
         let snapshot = UUID()
         let picked = SnapshotEntityID(vm: vm, snapshot: snapshot)
-        seed(commands, vm: vm)
+        seed(commands, vm: vm, snapshots: [VMIntentFixtures.snapshot(id: snapshot)])
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
@@ -130,8 +130,10 @@ struct VMSnapshotIntentTests {
         #expect(commands.deleteSnapshotCalls.map(\.selector) == [.id(vm)])
         #expect(commands.deleteSnapshotCalls.map(\.snapshot) == [snapshot])
         #expect(commands.renameSnapshotCalls.map(\.selector) == [.id(vm)])
+        #expect(commands.renameSnapshotCalls.map(\.snapshot) == [snapshot])
         #expect(commands.renameSnapshotCalls.map(\.newName) == ["Renamed"])
         #expect(commands.setSnapshotNotesCalls.map(\.selector) == [.id(vm)])
+        #expect(commands.setSnapshotNotesCalls.map(\.snapshot) == [snapshot])
         #expect(commands.setSnapshotNotesCalls.map(\.notes) == ["a note"])
     }
 
@@ -165,6 +167,97 @@ struct VMSnapshotIntentTests {
         #expect(commands.deleteSnapshotCalls.isEmpty)
         #expect(commands.renameSnapshotCalls.isEmpty)
         #expect(commands.setSnapshotNotesCalls.isEmpty)
+    }
+
+    /// A pick is only as current as the run that made it: the snapshot it names
+    /// can have been deleted, or dropped by a revert, between two runs of the
+    /// same Shortcut. A rename or a note edit is a documented no-op for an
+    /// identifier the manifest does not list, so the second run would report
+    /// success having changed nothing.
+    @Test("A snapshot the VM no longer lists is refused, not quietly written past")
+    func aSnapshotTheVMNoLongerListsIsRefused() async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        seed(commands, vm: vm, snapshots: [VMIntentFixtures.snapshot(name: "Kept")])
+        let gone = SnapshotEntityID(vm: vm, snapshot: UUID())
+        let refusal = CommandError.itemNotFound(
+            vm: commands.library[0],
+            item: "snapshot with the identifier \(gone.snapshot.uuidString)")
+        let gateway = makeGateway(commands)
+
+        await #expect(throws: refusal) {
+            try await gateway.renameSnapshot(vm, snapshot: gone, to: "Renamed")
+        }
+        await #expect(throws: refusal) {
+            try await gateway.setSnapshotNotes(vm, snapshot: gone, notes: "a note")
+        }
+
+        #expect(commands.renameSnapshotCalls.isEmpty)
+        #expect(commands.setSnapshotNotesCalls.isEmpty)
+    }
+
+    /// A clone carries its source's snapshot identifiers, so an identifier the
+    /// named VM lists can still be a pick made in the VM it was copied from —
+    /// which the VM parameter's authority refuses rather than redirects.
+    @Test("A pick from a clone's source is refused where the named VM lists that identifier")
+    func aSnapshotPickedInACloneSourceIsRefused() async throws {
+        let commands = MockVMCommanding()
+        let clone = UUID()
+        let shared = VMIntentFixtures.snapshot(name: "Before Update")
+        seed(commands, vm: clone, snapshots: [shared])
+        let pickedInTheSource = SnapshotEntityID(vm: UUID(), snapshot: shared.id)
+        let gateway = makeGateway(commands)
+
+        await #expect(
+            throws: CommandError.itemNotFound(
+                vm: commands.library[0],
+                item: "snapshot with the identifier \(shared.id.uuidString)")
+        ) {
+            try await gateway.renameSnapshot(clone, snapshot: pickedInTheSource, to: "Renamed")
+        }
+
+        #expect(commands.renameSnapshotCalls.isEmpty)
+    }
+
+    /// The core trims a snapshot name and writes nothing when none is left —
+    /// the inline field commits on end-editing whether or not the text
+    /// changed — so a Shortcut whose Name resolves to nothing would report
+    /// success having renamed nothing.
+    @Test(
+        "A rename carrying nothing but whitespace for a name is refused",
+        arguments: ["", "   ", "\n\t "])
+    func aRenameWithoutANameIsRefused(name: String) async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        let listed = VMIntentFixtures.snapshot()
+        seed(commands, vm: vm, snapshots: [listed])
+        let gateway = makeGateway(commands)
+
+        await #expect(
+            throws: CommandError.invalidArgument(
+                "A name is at least one character that is not a space.")
+        ) {
+            try await gateway.renameSnapshot(
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), to: name)
+        }
+
+        #expect(commands.renameSnapshotCalls.isEmpty)
+    }
+
+    /// An empty note is a legitimate value — it clears the note — so the note
+    /// edit takes what the rename refuses.
+    @Test("An empty note clears the note rather than being refused")
+    func anEmptyNoteIsWritten() async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        let listed = VMIntentFixtures.snapshot()
+        seed(commands, vm: vm, snapshots: [listed])
+        let gateway = makeGateway(commands)
+
+        try await gateway.setSnapshotNotes(
+            vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), notes: "")
+
+        #expect(commands.setSnapshotNotesCalls.map(\.notes) == [""])
     }
 
     // MARK: - Checkpoint
@@ -213,8 +306,9 @@ struct VMSnapshotIntentTests {
         for takingCheckpoint in [true, false] {
             let commands = MockVMCommanding()
             let vm = UUID()
-            let snapshot = SnapshotEntityID(vm: vm, snapshot: UUID())
-            seed(commands, vm: vm)
+            let listed = VMIntentFixtures.snapshot()
+            let snapshot = SnapshotEntityID(vm: vm, snapshot: listed.id)
+            seed(commands, vm: vm, snapshots: [listed])
             commands.revertConsentPrompt = ConfirmationPrompt(
                 kind: .revertToSnapshot,
                 title: "Revert?",
@@ -249,14 +343,16 @@ struct VMSnapshotIntentTests {
     func revertSurfacesAFailureAfterConsent() async throws {
         let commands = MockVMCommanding()
         let vm = UUID()
-        seed(commands, vm: vm)
-        commands.revertError = CommandError.invalidState(
+        let listed = VMIntentFixtures.snapshot()
+        seed(commands, vm: vm, snapshots: [listed])
+        let refusal = CommandError.invalidState(
             vm: commands.library[0], current: .running, allowed: [.stop])
+        commands.revertError = refusal
         let gateway = makeGateway(commands)
 
-        await #expect(throws: CommandError.self) {
+        await #expect(throws: refusal) {
             try await gateway.revertToSnapshot(
-                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: UUID()), takingCheckpoint: true,
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), takingCheckpoint: true,
                 confirmed: true)
         }
     }
@@ -265,7 +361,8 @@ struct VMSnapshotIntentTests {
     func deleteSnapshotConsentRetriesTheVerb() async throws {
         let commands = MockVMCommanding()
         let vm = UUID()
-        seed(commands, vm: vm)
+        let listed = VMIntentFixtures.snapshot()
+        seed(commands, vm: vm, snapshots: [listed])
         commands.deleteSnapshotConsentPrompt = ConfirmationPrompt(
             kind: .deleteSnapshot,
             title: "Delete?",
@@ -277,7 +374,7 @@ struct VMSnapshotIntentTests {
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
             try await gateway.deleteSnapshot(
-                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: UUID()), confirmed: confirmed)
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), confirmed: confirmed)
         }
 
         #expect(asked.map(\.kind) == [.deleteSnapshot])

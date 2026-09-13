@@ -240,8 +240,9 @@ final class VMIntentGateway {
 
     func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
         try await perform(.renameSnapshot, on: id) {
+            let named = try Self.requireName(newName)
             let listed = try self.listedSnapshot(snapshot, on: id)
-            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: newName)
+            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: named)
         }
     }
 
@@ -252,22 +253,31 @@ final class VMIntentGateway {
         }
     }
 
-    /// The snapshot `picked` names, refusing one belonging to another VM.
+    /// The snapshot `picked` names, refusing one the VM does not list under
+    /// that identifier.
     ///
-    /// The VM parameter is authoritative — a Shortcut that changes it after
-    /// picking a snapshot must not act on the VM the stale pick names — and
-    /// this is where that is enforced for every snapshot verb, not only the
-    /// ones the core happens to catch. A revert or delete would be refused
-    /// there anyway; a rename or a note edit would not, because both are
-    /// documented no-ops for an identifier the manifest does not list, so the
-    /// mismatch would report success having changed nothing.
+    /// A pick is only as current as the run that made it — the Shortcut can
+    /// have been re-pointed at another VM since, and the snapshot itself can
+    /// have been deleted or dropped by a revert — so the identifier resolves
+    /// against the named VM's own listing, for every snapshot verb rather than
+    /// only the ones the core happens to catch. A revert or delete would be
+    /// refused there anyway; a rename or a note edit would not, because both
+    /// are documented no-ops for an identifier the manifest does not list, so
+    /// the miss would report success having changed nothing.
+    ///
+    /// Both halves of the pick are checked, because a clone carries its
+    /// source's snapshot identifiers: one the named VM lists can still be a
+    /// pick made in the VM it was copied from.
     private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
-        guard picked.vm != vm else { return picked.snapshot }
         guard let summary = commands.list().first(where: { $0.id == vm }) else {
             throw CommandError.notFound(.id(vm))
         }
-        throw CommandError.itemNotFound(
-            vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
+        let listed = try commands.snapshots(of: .id(vm))
+        guard picked.vm == vm, listed.contains(where: { $0.id == picked.snapshot }) else {
+            throw CommandError.itemNotFound(
+                vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
+        }
+        return picked.snapshot
     }
 
     // MARK: - Library
@@ -302,7 +312,9 @@ final class VMIntentGateway {
     }
 
     func rename(_ id: UUID, to newName: String) async throws {
-        try await perform(.rename, on: id) { try self.commands.rename(.id(id), to: newName) }
+        try await perform(.rename, on: id) {
+            try self.commands.rename(.id(id), to: Self.requireName(newName))
+        }
     }
 
     /// Moves the VM's bundle to the Trash.
@@ -322,6 +334,26 @@ final class VMIntentGateway {
         try await perform(.cancelPreparing, on: id) {
             try self.commands.cancelPreparing(.id(id), confirmed: confirmed)
         }
+    }
+
+    // MARK: - Arguments
+
+    /// `name` with its surrounding whitespace gone, refusing one that carries
+    /// nothing else.
+    ///
+    /// Both rename verbs in the core trim and return without writing when
+    /// nothing is left, because an inline field commits on end-editing whether
+    /// or not the text changed and must not raise an alert about a rename
+    /// nobody made. A Shortcut supplies the name deliberately — often from a
+    /// variable that resolves to nothing — so the same input is a refusal
+    /// here, rather than a success that renamed nothing.
+    private static func requireName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CommandError.invalidArgument(
+                "A name is at least one character that is not a space.")
+        }
+        return trimmed
     }
 
     // MARK: - Dispatch
