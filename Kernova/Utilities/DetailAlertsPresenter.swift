@@ -303,25 +303,21 @@ final class DetailAlertsPresenter: NSObject {
 
     /// Asks which guest a newly assigned USB accessory goes to.
     ///
-    /// Held for the host rather than queued when there is no window: a drive
-    /// being plugged in is no reason to put one on screen, and the accessory is
-    /// still one menu item from being placed.
+    /// Answered rather than queued when it cannot be shown right now — no
+    /// window, or something else already on screen. Every other request here
+    /// waits its turn because the user asked for it; this one nobody asked for,
+    /// a drive being plugged in is no reason to put a window up, and the
+    /// coordinator holds its next prompt until this one answers, so a request
+    /// ``stop()`` drops with the rest of the queue would silence the prompt for
+    /// the rest of the session. Held is the right answer anyway: the accessory
+    /// stays with the Mac, one menu item from being placed.
     func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
-        guard window != nil else {
+        guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
+            !snapshotSheetPresenter.isShown, pending.isEmpty
+        else {
             Self.logger.notice(
-                "Holding a USB accessory for the host: no window is on screen to ask which virtual machine should take it"
+                "Holding a USB accessory for the host: there is nowhere on screen to ask which virtual machine should take it"
             )
-            request.answer(nil)
-            return
-        }
-        enqueue { $0.presentUSBPairing(request) }
-    }
-
-    /// Shows the pairing alert, answering it as a hold if the window went away
-    /// while the request waited its turn — the alert is the only thing that can
-    /// answer it, so it must not be dropped unanswered.
-    private func presentUSBPairing(_ request: USBAccessoryPairingRequest) {
-        guard let window else {
             request.answer(nil)
             return
         }

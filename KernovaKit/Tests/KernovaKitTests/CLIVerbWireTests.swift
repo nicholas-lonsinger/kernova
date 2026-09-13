@@ -179,4 +179,35 @@ struct CLIVerbWireTests {
 
         #expect(exchanged.sent == [.showInFinder(.idOrName("Alpha"))])
     }
+
+    @Test("usb rules names a machine only when the line did")
+    func usbRulesSendsAnOptionalSelector() throws {
+        let pairings = [
+            USBPairingSummary(
+                vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
+                pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        ]
+        let answered = VMCommandResponse(result: .usbPairings(pairings))
+
+        let everyMachine = try CLIWire.exchange(["usb", "rules"], answering: answered, tag: "rules")
+        #expect(everyMachine.sent == [.usbPairings(nil)])
+        #expect(try everyMachine.answer.payload() == .usbPairings(pairings))
+
+        let named = try CLIWire.exchange(
+            ["usb", "rules", "Alpha"], answering: answered, tag: "rules-vm")
+        #expect(named.sent == [.usbPairings(.idOrName("Alpha"))])
+    }
+
+    @Test("usb forget crosses as the durable key, verbatim")
+    func usbForgetSendsTheKey() throws {
+        // The key is what the user copied out of a listing, `@` and `:` and
+        // all, so nothing may reinterpret it on the way.
+        let exchanged = try CLIWire.exchange(
+            ["usb", "forget", "Alpha", "04e8:6300:0100@hub/Port-A@1"], answering: accepted,
+            tag: "forget")
+
+        #expect(
+            exchanged.sent
+                == [.forgetUSBPairing(.idOrName("Alpha"), key: "04e8:6300:0100@hub/Port-A@1")])
+    }
 }

@@ -534,6 +534,96 @@ struct VMCommandCoreUSBAccessoryTests {
 
         #expect(instance.usbPairings.pairings.map(\.key) == [accessory.identity?.key])
     }
+
+    // MARK: - Listing and Forgetting
+
+    @Test("The rules listing covers the whole library when no machine is named")
+    func pairingListingCoversEveryMachine() async throws {
+        let harness = makeHarness()
+        let first = makeRunningInstance(in: harness, name: "First")
+        let second = makeRunningInstance(in: harness, name: "Second")
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "AAA", vendorName: "Samsung", productName: "Type-C"),
+            to: first, in: harness)
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(
+                registryID: 2, receptacle: "hub/Port-A@1", productName: "Drive"),
+            to: second, in: harness)
+
+        let everyMachine = try harness.core.usbPairings(of: nil)
+        let justFirst = try harness.core.usbPairings(of: .id(first.id))
+
+        #expect(everyMachine.map(\.vm) == ["First", "Second"])
+        #expect(everyMachine.map(\.name) == ["Samsung Type-C", "Drive (Port-A@1)"])
+        // A rule keyed on a port is a claim about the port; one keyed on the
+        // device's own serial follows it anywhere, so naming a port there would
+        // say something the rule does not.
+        #expect(justFirst.map(\.key) == [everyMachine.first?.key])
+    }
+
+    @Test("Forgetting a rule stops the machine taking that accessory back")
+    func forgetDropsThePairing() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        let accessory = MockUSBAccessoryService.accessory(registryID: 7, serial: "0373")
+        _ = try await attach(accessory, to: instance, in: harness)
+        let key = try #require(accessory.identity?.key)
+
+        try harness.core.forgetUSBPairing(.id(instance.id), key: key)
+
+        #expect(instance.usbPairings.isEmpty)
+        #expect(try harness.core.usbPairings(of: nil).isEmpty)
+    }
+
+    @Test("Forgetting works on a machine that is not running")
+    func forgetDoesNotNeedALiveGuest() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        let accessory = MockUSBAccessoryService.accessory(registryID: 7, serial: "0373")
+        _ = try await attach(accessory, to: instance, in: harness)
+        let key = try #require(accessory.identity?.key)
+        instance.tearDownSession(restingAt: .stopped)
+
+        // A rule names hardware that is usually in a drawer, so requiring a
+        // live guest would make the rows that most need removing unremovable.
+        try harness.core.forgetUSBPairing(.id(instance.id), key: key)
+
+        #expect(instance.usbPairings.isEmpty)
+    }
+
+    @Test("Forgetting a key the machine does not hold is a miss, not a quiet success")
+    func forgetOfAnUnknownKeyIsRefused() async throws {
+        let harness = makeHarness()
+        let instance = makeRunningInstance(in: harness)
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"), to: instance,
+            in: harness)
+
+        let refusal = try #require(
+            await commandError { try harness.core.forgetUSBPairing(.id(instance.id), key: "nope") })
+
+        #expect(refusal.isItemNotFound)
+        #expect(
+            refusal.message
+                == "\u{201C}Core VM\u{201D} has no remembered USB accessory \u{201C}nope\u{201D}."
+        )
+        #expect(instance.usbPairings.pairings.count == 1)
+    }
+
+    @Test("Both remembered-accessory verbs refuse in a build without passthrough")
+    func pairingVerbsRefuseWithoutTheCapability() async throws {
+        let harness = makeHarness(withAccessorySupport: false)
+        let instance = makeRunningInstance(in: harness)
+
+        let listing = await commandError { _ = try harness.core.usbPairings(of: nil) }
+        let forget = await commandError {
+            try harness.core.forgetUSBPairing(.id(instance.id), key: "k")
+        }
+
+        #expect(listing == unsupportedByBuild)
+        #expect(forget == unsupportedByBuild)
+    }
 }
 
 extension CommandError {

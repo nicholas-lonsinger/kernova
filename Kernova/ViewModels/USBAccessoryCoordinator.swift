@@ -36,7 +36,7 @@ struct USBAccessoryPairingRequest {
 /// with the Mac rather than being handed straight back to the guest it just
 /// left.
 ///
-/// The one thing that has always happened on its own is reconciliation.
+/// Reconciliation runs on every arrival, whatever the routing then decides.
 /// Detaching a passthrough device resets the device, so the stick comes back as
 /// a new IORegistry node: an assignment carrying the identity of something a
 /// guest is still recorded as holding is proof that guest no longer holds it.

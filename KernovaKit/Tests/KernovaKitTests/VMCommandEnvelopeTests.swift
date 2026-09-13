@@ -126,6 +126,12 @@ struct VMCommandEnvelopeTests {
             // part of what has to survive the trip.
             .editUSBAccessory(selector, .attach(accessory: 4_294_967_296)),
             .editUSBAccessory(selector, .detach(device: diskID)),
+            .usbPairings(nil),
+            .usbPairings(selector),
+            // The key carries the `:` and `@` its two spellings are built from,
+            // and is what the caller copied out of a listing, so it has to
+            // cross untouched.
+            .forgetUSBPairing(selector, key: "04e8:6300:0100@hub/Port-A@1"),
             .configurationKeys,
             .configuration(selector, keys: nil),
             .configuration(selector, keys: ["cpus", "memory"]),

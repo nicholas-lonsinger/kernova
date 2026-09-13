@@ -433,6 +433,48 @@ struct CLIRenderingTests {
                 == accessories)
     }
 
+    // MARK: - Remembered USB accessories
+
+    private let pairings = [
+        USBPairingSummary(
+            vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
+            pairedAt: Date(timeIntervalSince1970: 1_700_000_000)),
+        USBPairingSummary(
+            vm: "Beta", key: "0403:6001:0100@hub/Port-A@1", name: "Drive (Port-A@1)",
+            pairedAt: Date(timeIntervalSince1970: 1_700_000_100)),
+    ]
+
+    @Test("A rules listing names the machine, and quiet prints the key forget takes back")
+    func usbRulesListingNamesTheMachine() throws {
+        let lines = TableRenderer.render(pairings, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines[0].hasPrefix("VM"))
+        #expect(lines[0].contains("NAME"))
+        #expect(lines[0].contains("KEY"))
+        #expect(lines[1].contains("Alpha"))
+        #expect(lines[2].contains("Beta"))
+
+        #expect(
+            TableRenderer.render(pairings, quiet: true)
+                == "04e8:6300:0100:0373\n0403:6001:0100@hub/Port-A@1")
+    }
+
+    @Test("A library that remembers nothing prints nothing at all")
+    func emptyUSBRulesListingIsEmpty() {
+        #expect(TableRenderer.render([USBPairingSummary](), quiet: false).isEmpty)
+        #expect(TableRenderer.render([USBPairingSummary](), quiet: true).isEmpty)
+    }
+
+    @Test("Rules JSON is the wire DTO itself, decodable back")
+    func usbRulesJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(pairings)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        #expect(
+            try decoder.decode([USBPairingSummary].self, from: Data(rendered.utf8)) == pairings)
+    }
+
     // MARK: - Forwarded ports
 
     private let rules = [

@@ -332,6 +332,17 @@ protocol VMCommanding: AnyObject {
     /// list's.
     func availableUSBAccessories() throws -> [USBAccessorySummary]
 
+    /// The accessories one VM takes back automatically, or every VM's when
+    /// `selector` is `nil`.
+    ///
+    /// Unlike the two listings above, these rows describe hardware that is
+    /// usually not plugged in — which is the whole reason they can be listed
+    /// and removed at all.
+    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary]
+
+    /// Stops the VM taking the accessory `key` names back.
+    func forgetUSBPairing(_ selector: VMSelector, key: String) throws
+
     /// Passes the accessory `accessory` names through to the VM's running
     /// guest.
     func attachUSBAccessory(_ selector: VMSelector, accessory: UInt64) async throws

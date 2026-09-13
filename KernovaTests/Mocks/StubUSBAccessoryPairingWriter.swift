@@ -12,12 +12,6 @@ import Foundation
 final class StubUSBAccessoryPairingWriter: USBAccessoryPairingWriting {
     weak var roster: StubVMInstanceRoster?
 
-    /// The VM each write named, in order.
-    private(set) var writtenInstanceIDs: [UUID] = []
-
-    /// Fails every write, for the path where a bundle cannot be written.
-    var refusesWrites = false
-
     init(roster: StubVMInstanceRoster? = nil) {
         self.roster = roster
     }
@@ -29,9 +23,8 @@ final class StubUSBAccessoryPairingWriter: USBAccessoryPairingWriting {
         var new = instance.usbPairings
         mutate(&new)
         guard new != instance.usbPairings else { return true }
-        writtenInstanceIDs.append(instance.id)
         instance.usbPairings = new
-        return !refusesWrites
+        return true
     }
 
     func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) {

@@ -210,7 +210,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         let pairings = instance.usbPairings.pairings
         // Absent rather than an empty list: a VM that has never been handed an
         // accessory has nothing to say about them.
-        pairingSection.isHidden = pairings.isEmpty
+        pairingSection.isHidden = instance.usbPairings.isEmpty
         clearGroupedFormStack(pairingListStack)
         for pairing in pairings {
             let row = USBAccessoryPairingRowView(

@@ -31,7 +31,48 @@ extension VMCommandCore {
             .map { summary(of: $0, named: names) }
     }
 
+    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
+        try requireUSBAccessoryService()
+        let instances = try selector.map { [try resolve($0)] } ?? library.instances
+        return instances.flatMap { instance in
+            instance.usbPairings.pairings.map { pairing in
+                USBPairingSummary(
+                    vm: instance.name, key: pairing.key, name: Self.pairingName(pairing),
+                    pairedAt: pairing.pairedAt)
+            }
+        }
+    }
+
+    /// What a listing calls a remembered accessory, qualified by the port when
+    /// the rule names one.
+    private static func pairingName(_ pairing: USBAccessoryPairing) -> String {
+        guard let label = pairing.namedReceptacleLabel else { return pairing.displayName }
+        return "\(pairing.displayName) (\(label))"
+    }
+
     // MARK: - Edits
+
+    func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
+        try requireUSBAccessoryService()
+        let instance = try resolve(selector)
+        try require(.forgetUSBPairing, on: instance)
+        // A key nothing answers to is a miss rather than a quiet success: the
+        // caller named something that is not there, and succeeding would tell a
+        // script the rule was removed.
+        guard instance.usbPairings.pairing(forKey: key) != nil else {
+            throw itemNotFound(instance, item: "remembered USB accessory \u{201C}\(key)\u{201D}")
+        }
+        guard library.updateUSBPairings(of: instance, mutate: { $0.remove(key: key) }) else {
+            throw CommandError.operationFailed(
+                verb: .forgetUSBPairing,
+                message:
+                    "That accessory was forgotten for now, but the change could not be written to the virtual machine's bundle."
+            )
+        }
+        Self.logger.notice(
+            "'\(instance.name, privacy: .public)' will no longer take USB accessory \(key, privacy: .public) back automatically"
+        )
+    }
 
     func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
         let (instance, sessionID, service) = try admitUSBAccessoryEdit(selector)

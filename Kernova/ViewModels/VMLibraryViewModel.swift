@@ -605,7 +605,9 @@ final class VMLibraryViewModel {
     /// Drops one remembered accessory from `instance`, so it stays with the Mac
     /// next time it is plugged in.
     func forgetUSBAccessory(key: String, on instance: VMInstance) {
-        library.updateUSBPairings(of: instance) { $0.remove(key: key) }
+        runEdit(on: instance) {
+            try self.commands.forgetUSBPairing(.id(instance.id), key: key)
+        }
     }
 
     // MARK: - Create

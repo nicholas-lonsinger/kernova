@@ -149,6 +149,10 @@ stateless ones are `Sendable` structs.
 - `VMStorageService` — creates, lists, clones and deletes VM bundles under
   `~/Library/Application Support/Kernova/VMs/`.
 - `VMSnapshotStore` — owns the `Snapshots/` directory inside a VM bundle.
+- `USBAccessoryPairingStore` — owns `usb-accessories.json` inside a VM bundle: which host USB
+  accessories that VM takes back automatically, keyed on `USBAccessoryIdentity`. Mirrored onto
+  `VMInstance.usbPairings` by `VMLibrary.wirePersistence(for:)`, and written only through
+  `VMLibrary.updateUSBPairings(of:mutate:)`.
 - `DiskImageService` — creates ASIF disk images by decompressing bundled templates in-process.
 - `DownloadService` — streams a remote file into a resumable bundle beside its destination,
   serialized per destination path so two callers can never write one bundle.
@@ -458,9 +462,10 @@ AppDelegate
     │                 │      └── VMNetworkSlotRegistry, VMRemovableMediaReconciler
     │                 ├── VMSleepWakeCoordinator
     │                 │      └── SystemSleepWatcher
-    │                 ├── USBAccessoryCoordinator?  (starts the accessory listener and drops a
-    │                 │      guest's record of one the host has taken back; nil without the
-    │                 │      capability. Attaching is always the user's instruction)
+    │                 ├── USBAccessoryCoordinator?  (starts the accessory listener, drops a
+    │                 │      guest's record of one the host has taken back, and routes each
+    │                 │      arrival: back to the VM it is paired with, to a prompt the adapter
+    │                 │      raises, or nowhere; nil without the capability)
     │                 ├── VMStorageService, VMSnapshotStore (one each, held by all three)
     │                 ├── DiskImageService
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)

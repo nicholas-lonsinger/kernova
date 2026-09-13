@@ -22,6 +22,16 @@ struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
 
     var id: String { key }
 
+    /// The port this rule names, or `nil` when it names the unit instead.
+    ///
+    /// A rule keyed on the device's own serial follows it to any port, so
+    /// naming the port it happened to be in would be a claim the rule does not
+    /// make. A rule keyed on a receptacle *is* that claim, and reads as
+    /// ambiguous without it when two units of a model are around.
+    var namedReceptacleLabel: String? {
+        form == .receptacle ? receptacleLabel : nil
+    }
+
     init(
         key: String, form: USBAccessoryIdentity.Form, displayName: String,
         receptacleLabel: String?, pairedAt: Date = Date()
@@ -35,13 +45,11 @@ struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
 
     /// The pairing that would name `accessory`, or `nil` when nothing durable
     /// identifies it.
-    static func make(for accessory: USBAccessoryInfo, at pairedAt: Date = Date())
-        -> USBAccessoryPairing?
-    {
+    static func make(for accessory: USBAccessoryInfo) -> USBAccessoryPairing? {
         guard let identity = accessory.identity else { return nil }
         return USBAccessoryPairing(
             key: identity.key, form: identity.form, displayName: accessory.displayName,
-            receptacleLabel: accessory.receptacleLabel, pairedAt: pairedAt)
+            receptacleLabel: accessory.receptacleLabel)
     }
 }
 
@@ -74,6 +82,11 @@ struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
     /// so key equality pins the port without any help.
     func pairing(matching identity: USBAccessoryIdentity) -> USBAccessoryPairing? {
         pairings.first { $0.key == identity.key && $0.form == identity.form }
+    }
+
+    /// The pairing stored under `key`, or `nil` when this VM holds none.
+    func pairing(forKey key: String) -> USBAccessoryPairing? {
+        pairings.first { $0.key == key }
     }
 
     /// Records `pairing`, replacing any this VM already held for the same key.

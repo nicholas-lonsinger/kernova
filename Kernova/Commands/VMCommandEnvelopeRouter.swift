@@ -132,6 +132,11 @@ struct VMCommandEnvelopeRouter {
             return .usbAccessories(try commands.usbAccessories(of: selector))
         case .availableUSBAccessories:
             return .usbAccessories(try commands.availableUSBAccessories())
+        case .usbPairings(let selector):
+            return .usbPairings(try commands.usbPairings(of: selector))
+        case .forgetUSBPairing(let selector, let key):
+            try commands.forgetUSBPairing(selector, key: key)
+            return .ok
         case .events:
             // Streaming, not unary: a transport answers `.events` through
             // `snapshotAndEvents()` and never reaches here.

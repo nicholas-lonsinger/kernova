@@ -7,11 +7,7 @@ import AppKit
 /// which is the whole reason this row exists rather than a menu item.
 @MainActor
 final class USBAccessoryPairingRowView: NSView {
-    /// The pairing key this row's remove button acts on.
-    let key: String
-
     init(pairing: USBAccessoryPairing, target: AnyObject, action: Selector) {
-        self.key = pairing.key
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -37,6 +33,8 @@ final class USBAccessoryPairingRowView: NSView {
         remove.imagePosition = .imageOnly
         remove.isBordered = false
         remove.contentTintColor = .secondaryLabelColor
+        // The key travels on the button, which is what the action reads it
+        // back off — the row itself is not addressed by anything.
         remove.identifier = NSUserInterfaceItemIdentifier(pairing.key)
         remove.target = target
         remove.action = action
@@ -62,16 +60,11 @@ final class USBAccessoryPairingRowView: NSView {
         fatalError("USBAccessoryPairingRowView does not support NSCoder")
     }
 
-    /// The secondary line: the port the accessory was in, when the pairing
-    /// names one port in particular, and when it was made.
-    ///
-    /// A pairing built on a serial follows the unit anywhere, so naming the
-    /// port it happened to be in would be a claim the rule does not make.
+    /// The secondary line: the port the rule names, when it names one, and when
+    /// the accessory was last placed.
     static func detailText(for pairing: USBAccessoryPairing) -> String {
         let placed = pairing.pairedAt.formatted(date: .abbreviated, time: .shortened)
-        guard pairing.form == .receptacle, let label = pairing.receptacleLabel else {
-            return placed
-        }
+        guard let label = pairing.namedReceptacleLabel else { return placed }
         return "\(label) \u{2014} \(placed)"
     }
 }

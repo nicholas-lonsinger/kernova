@@ -41,6 +41,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         /// USB accessories — the ones a VM holds, or the ones available to
         /// attach. Each summary says which it is.
         case usbAccessories([USBAccessorySummary])
+        /// The USB accessories virtual machines take back automatically.
+        case usbPairings([USBPairingSummary])
         /// Every configuration key the keyspace holds, in presentation order.
         case configurationKeys([ConfigurationKeyDescriptor])
         /// Configuration values, in the order they were asked for.

@@ -219,6 +219,35 @@ struct VMCommandEnvelopeRouterTests {
         #expect(double.detachUSBAccessoryCalls.map(\.device) == [deviceID])
     }
 
+    @Test("The remembered-accessory verbs cross the wire, one of them naming no machine")
+    func theUSBPairingVerbsCrossTheWire() async throws {
+        let double = MockVMCommanding()
+        let summary = VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable)
+        double.library = [summary]
+        let pairings = [
+            USBPairingSummary(
+                vm: "Stub", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
+                pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        ]
+        double.usbPairingsToReturn = pairings
+        let transport = makeTransport(over: double)
+        let selector = VMSelector.id(summary.id)
+
+        let everyMachine = try await transport.send(.usbPairings(nil)).result
+        #expect(everyMachine == .usbPairings(pairings))
+        let oneMachine = try await transport.send(.usbPairings(selector)).result
+        #expect(oneMachine == .usbPairings(pairings))
+        let forgotten = try await transport.send(
+            .forgetUSBPairing(selector, key: "04e8:6300:0100:0373")
+        ).result
+        #expect(forgotten == .ok)
+
+        // The listing addresses no machine when the caller named none: a key
+        // names at most one VM, so "which" is the answer being read off.
+        #expect(double.usbPairingsSelectors == [nil, selector])
+        #expect(double.forgetUSBPairingCalls.map(\.key) == ["04e8:6300:0100:0373"])
+    }
+
     @Test("A listing the facade refuses crosses the wire as that refusal, not as an empty list")
     func aRefusedListingCrossesTheWire() async throws {
         let double = MockVMCommanding()

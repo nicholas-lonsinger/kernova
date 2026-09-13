@@ -162,13 +162,8 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         }
     }
 
-    /// Fires whenever an attach is issued, for tests sequencing on the request
-    /// rather than on the record it eventually produces.
-    let attachIssued = AsyncGate()
-
     func attach(_ registryID: UInt64, to instance: VMInstance) async throws -> AttachedUSBAccessory {
         attachedRegistryIDs.append(registryID)
-        attachIssued.notify()
         await suspendIfNeeded()
         if let attachError { throw attachError }
         guard let info = accessories.first(where: { $0.registryID == registryID }) else {

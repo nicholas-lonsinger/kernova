@@ -341,6 +341,28 @@ struct CLICompletionTests {
         #expect(listener.requests().map(\.verb) == [.availableUSBAccessories])
     }
 
+    @Test("Forgetting a USB accessory offers the keys the named machine remembers")
+    func usbPairingKeysComeFromTheMachine() throws {
+        let listener = try TestCommandSocket(tag: "cmp-usb-rules")
+        defer { listener.close() }
+        listener.serve([
+            VMCommandResponse(
+                result: .usbPairings([
+                    USBPairingSummary(
+                        vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
+                        pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+                ]))
+        ])
+
+        let keys = CompletionSource.usbPairingKeys(
+            ofVM: "Alpha", byIdentifier: false, in: context(to: listener, asking: .zsh))
+
+        // The key carries colons, which zsh would otherwise read as the start
+        // of the description.
+        #expect(keys == ["04e8\\:6300\\:0100\\:0373:Samsung Type-C"])
+        #expect(listener.requests().map(\.verb) == [.usbPairings(.idOrName("Alpha"))])
+    }
+
     @Test("Under --id a virtual machine argument that is not one asks nothing")
     func anUnparseableIdentifierAsksNothing() throws {
         let opened = ConnectionCount()
