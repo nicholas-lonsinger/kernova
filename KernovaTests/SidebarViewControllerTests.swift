@@ -62,6 +62,24 @@ struct SidebarViewControllerTests {
         menu.items.map(\.title)
     }
 
+    /// `name`'s laid-out width in `font`, through a field configured like the
+    /// row's name label.
+    ///
+    /// An oracle independent of the cell's own measuring path, so a test using it
+    /// checks the fonts rather than re-running the code under test.
+    private func measuredWidth(of name: String, at font: NSFont) -> CGFloat {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.isEditable = false
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.cell?.usesSingleLineMode = true
+        field.font = font
+        field.stringValue = name
+        return ceil(field.fittingSize.width)
+    }
+
     private func menuItem(_ title: String, in menu: NSMenu) -> NSMenuItem? {
         menu.items.first { $0.title == title }
     }
@@ -626,6 +644,78 @@ struct SidebarViewControllerTests {
         #expect(long > short)
     }
 
+    @Test("emphasizedNameFont lays out as the font a selected source-list row draws")
+    func emphasizedFontMatchesSelectedRowRendering() {
+        // The oracle for the whole fix: the measuring font has to agree with what
+        // a real source-list outline view puts on screen for a selected row. It
+        // is asserted on laid-out width rather than font identity because AppKit
+        // spells the same resolved face differently — it keeps the body text
+        // style's usage attribute and adds an explicit 0.3 weight trait, where
+        // the conversion names the emphasized text style — so the two fonts are
+        // the same `.SFNS-Semibold` at the same size but are not `==`.
+        let name = "Ubuntu Desktop 26.04"
+        let probe = SelectedRowFontProbe(instance: makeInstance(name: name))
+
+        guard let label = probe.selectedRowLabel() else {
+            Issue.record("Expected the probe outline view to vend a configured row cell")
+            return
+        }
+        guard
+            let drawn = label.cell?.attributedStringValue.attribute(
+                .font, at: 0, effectiveRange: nil) as? NSFont
+        else {
+            Issue.record("Expected the selected row's drawn string to carry a font")
+            return
+        }
+
+        let renderedWidth = ceil(label.fittingSize.width)
+        let measuring = SidebarVMRowCellView.emphasizedNameFont
+        #expect(drawn.fontName == measuring.fontName)
+        #expect(drawn.pointSize == measuring.pointSize)
+        // The load-bearing property: the snap width is only right if the font it
+        // measures with lays the name out to the width the row renders it at.
+        #expect(measuredWidth(of: name, at: measuring) == renderedWidth)
+        // Discriminating. `NSFontManager.convert` returns its input untouched
+        // when that input already carries the trait, so a body font that ever
+        // went bold would silently make the conversion a no-op; the regular
+        // weight measures this name narrower, which fails here.
+        #expect(measuredWidth(of: name, at: Typography.body) < renderedWidth)
+        // Also keeps the probe — which the outline view references weakly — alive
+        // across every assertion above.
+        #expect(probe.outlineView.selectedRow == 0)
+    }
+
+    @Test("contentWidth measures names at the weight a selected row draws them")
+    func contentWidthUsesEmphasizedWeight() {
+        // A source-list outline view draws the selected row's name in the
+        // emphasized variant of its font, so a fit width measured at the regular
+        // weight leaves the selected name's tail under the trailing accessory.
+        let emphasized = NSFontManager.shared.convert(Typography.body, toHaveTrait: .boldFontMask)
+        #expect(emphasized != Typography.body)
+
+        let long = "An extremely long virtual machine name"
+        let short = "W"
+
+        // The row chrome is identical for both names, so differencing the two
+        // content widths leaves exactly the two measured name widths.
+        func contentWidth(_ name: String) -> CGFloat {
+            SidebarVMRowCellView.contentWidth(
+                forName: name, showsAgentAccessory: false, showsEphemeralAccessory: false)
+        }
+        let measuredDelta = contentWidth(long) - contentWidth(short)
+
+        #expect(
+            measuredDelta
+                == measuredWidth(of: long, at: emphasized)
+                - measuredWidth(of: short, at: emphasized))
+        // Discriminating: the emphasized weight is genuinely wider here, so the
+        // assertion above fails if the measurement falls back to the body font.
+        #expect(
+            measuredDelta
+                > measuredWidth(of: long, at: Typography.body)
+                - measuredWidth(of: short, at: Typography.body))
+    }
+
     @Test("contentWidth adds the agent accessory width and gap")
     func contentWidthAccessoryDelta() {
         let withoutBadge = SidebarVMRowCellView.contentWidth(
@@ -765,5 +855,70 @@ struct SidebarViewControllerTests {
         // view in this off-screen test harness (confirmed: `view(atColumn:
         // row:makeIfNecessary: false)` is always nil here), so an assertion on
         // it would silently never execute.
+    }
+}
+
+/// A minimal source-list `NSOutlineView` holding one configured VM row, used to
+/// read back the font AppKit actually draws that row's name in once selected.
+///
+/// Deliberately window-less and never displayed: `reloadData`, selecting the
+/// row and a layout pass are enough for AppKit to install the emphasized string,
+/// so the probe stays synchronous and needs no run-loop spin.
+@MainActor
+private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
+    NSOutlineViewDelegate
+{
+    let outlineView = NSOutlineView()
+    private let instance: VMInstance
+
+    init(instance: VMInstance) {
+        self.instance = instance
+        super.init()
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+        column.width = 280
+        outlineView.addTableColumn(column)
+        outlineView.outlineTableColumn = column
+        outlineView.style = .sourceList
+        outlineView.headerView = nil
+        outlineView.frame = NSRect(x: 0, y: 0, width: 300, height: 100)
+        outlineView.dataSource = self
+        outlineView.delegate = self
+    }
+
+    /// The name label of the single row, with that row selected.
+    func selectedRowLabel() -> NSTextField? {
+        outlineView.reloadData()
+        outlineView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        outlineView.layoutSubtreeIfNeeded()
+        let cell = outlineView.view(atColumn: 0, row: 0, makeIfNecessary: true)
+        return (cell as? SidebarVMRowCellView)?.textField
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        item == nil ? 1 : 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        instance
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { false }
+
+    func outlineView(
+        _ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any
+    ) -> NSView? {
+        let cell = SidebarVMRowCellView()
+        cell.configure(
+            instance: instance,
+            isRenaming: false,
+            installPromptDisabled: true,
+            isBusy: { false },
+            onCommitRename: { _, _ in },
+            onCancelRename: {},
+            onMountAgent: {},
+            onDismissAgentNudge: {}
+        )
+        return cell
     }
 }
