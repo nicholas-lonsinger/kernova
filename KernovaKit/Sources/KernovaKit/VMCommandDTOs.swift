@@ -187,6 +187,32 @@ public struct USBAccessorySummary: Codable, Sendable, Hashable {
     }
 }
 
+/// One USB accessory a virtual machine takes back automatically.
+///
+/// Unlike ``USBAccessorySummary``, every field here survives the accessory
+/// being unplugged: these rows describe hardware that is usually in a drawer,
+/// which is why they can be listed and removed at all.
+public struct USBPairingSummary: Codable, Sendable, Hashable {
+    /// The virtual machine that takes this accessory back.
+    public let vm: String
+    /// The durable key the accessory answers to, and what `usb forget` takes
+    /// back. Stable across a replug and a restart.
+    public let key: String
+    /// What a surface calls this accessory, qualified by the port when the rule
+    /// names one port in particular.
+    public let name: String
+    /// When the accessory was last passed through to that virtual machine.
+    public let pairedAt: Date
+
+    /// Describes one remembered accessory.
+    public init(vm: String, key: String, name: String, pairedAt: Date) {
+        self.vm = vm
+        self.key = key
+        self.name = name
+        self.pairedAt = pairedAt
+    }
+}
+
 /// What kind of consent a refusal is asking for, so a surface can pick its
 /// native affordance without parsing the copy.
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {

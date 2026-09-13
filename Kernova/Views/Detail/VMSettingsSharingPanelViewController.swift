@@ -1,7 +1,8 @@
 import AppKit
 
-/// The Sharing category: shared directories, and the guest-agent group (macOS)
-/// or the standalone clipboard section (Linux) beside them.
+/// The Sharing category: shared directories, the guest-agent group (macOS) or
+/// the standalone clipboard section (Linux) beside them, and the USB
+/// accessories this VM takes back on its own.
 @MainActor
 final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPanel {
     let context: VMSettingsPanelContext
@@ -39,7 +40,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
 
-        let sections = [
+        var sections = [
             buildSharedDirectoriesSection(),
             // macOS: clipboard rides the agent's vsock channel, so it nests in
             // the agent group rather than forming a sibling section. Linux:
@@ -47,6 +48,14 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS)
                 ? buildGuestAgentSection() : buildClipboardSection(),
         ]
+        // Absent, not disabled, in a build that cannot pass accessories
+        // through: there is nothing it could ever list.
+        pairingSection = nil
+        if viewModel.supportsUSBAccessories {
+            let section = buildUSBPairingsSection()
+            pairingSection = section
+            sections.append(section)
+        }
         for section in sections {
             panelStack.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
@@ -54,6 +63,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         // The monitored paths are this instance's, so a rebuild re-seeds them.
         context.seedFileMonitor()
         armFileMonitorLoop()
+        armPairingLoop()
     }
 
     /// ``prepareForDisappearance()`` cancels the observation loop, so
@@ -61,6 +71,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// the missing-folder badges for good.
     func hostDidAppear() {
         armFileMonitorLoop()
+        armPairingLoop()
     }
 
     func refresh() {
@@ -68,12 +79,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         refreshGuestAgent()
         refreshClipboard()
         refreshSharedList()
+        refreshUSBPairings()
         context.seedFileMonitor()
     }
 
     func prepareForDisappearance() {
         fileMonitorLoop?.cancel()
         fileMonitorLoop = nil
+        pairingLoop?.cancel()
+        pairingLoop = nil
     }
 
     /// Re-renders the shared list whenever a watched path appears or
@@ -114,6 +128,13 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // Drag and drop (macOS guests only)
     private var dropFilesSwitch = NSSwitch()
 
+    // Remembered USB accessories
+    private var pairingListStack = NSStackView()
+    /// The whole section, hidden while this VM remembers nothing; `nil` in a
+    /// build that never built one.
+    private var pairingSection: NSView?
+    private var pairingLoop: ObservationLoop?
+
     // Clipboard
     private var clipboardSwitch = NSSwitch()
     private var clipboardPassthroughSwitch = NSSwitch()
@@ -153,6 +174,65 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card,
         ])
+    }
+
+    // MARK: Remembered USB Accessories
+
+    /// The accessories this VM takes back on its own, each with the button that
+    /// forgets it.
+    ///
+    /// Here rather than in the Virtual Machine menu because the rows that most
+    /// need removing name hardware that is in a drawer, and a menu can only
+    /// list what is plugged in. Here rather than Storage because a passthrough
+    /// accessory is deliberately not part of the VM's configuration, while
+    /// Sharing is already what the host hands this guest while it runs.
+    private func buildUSBPairingsSection() -> NSView {
+        pairingListStack = makeGroupedFormListStack()
+        // Not lockable: a remembered accessory is a preference about what to
+        // attach, so it takes an edit whatever the VM is doing.
+        return makeGroupedFormSection([
+            lockRegistry.makeHeader(
+                "Remembered USB Accessories",
+                paragraphs: [
+                    .body(
+                        "Passing a USB accessory through to this virtual machine remembers it. Kernova hands it back whenever both the accessory and this virtual machine are available — when you plug it in, and when the virtual machine starts."
+                    ),
+                    .body(
+                        "Taking an accessory back from the USB Device menu forgets it, as does removing it here."
+                    ),
+                ]),
+            makeGroupedFormCard(rows: [pairingListStack]),
+        ])
+    }
+
+    private func refreshUSBPairings() {
+        guard let pairingSection else { return }
+        let pairings = instance.usbPairings.pairings
+        // Absent rather than an empty list: a VM that has never been handed an
+        // accessory has nothing to say about them.
+        pairingSection.isHidden = instance.usbPairings.isEmpty
+        clearGroupedFormStack(pairingListStack)
+        for pairing in pairings {
+            let row = USBAccessoryPairingRowView(
+                pairing: pairing, target: self, action: #selector(forgetPairingTapped))
+            pairingListStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: pairingListStack.widthAnchor).isActive = true
+        }
+    }
+
+    /// Re-renders the list whenever the set changes, so an accessory placed or
+    /// taken back while this panel is open lands without a revisit.
+    private func armPairingLoop() {
+        pairingLoop?.cancel()
+        guard pairingSection != nil else { return }
+        pairingLoop = observeRecurring(
+            track: { [instance] in _ = instance.usbPairings },
+            apply: { [weak self] in self?.refreshUSBPairings() })
+    }
+
+    @objc private func forgetPairingTapped(_ sender: NSButton) {
+        guard let key = sender.identifier?.rawValue else { return }
+        viewModel.forgetUSBAccessory(key: key, on: instance)
     }
 
     // MARK: Guest Agent

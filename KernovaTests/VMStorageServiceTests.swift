@@ -253,4 +253,32 @@ struct VMStorageServiceTests {
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: survivor.path(percentEncoded: false)))
     }
+
+    @Test("A clone copies only the files it was given, so it inherits no USB pairings")
+    func cloneLeavesUSBPairingsBehind() throws {
+        let source = VMConfiguration(name: "Pairing Source", guestOS: .linux, bootMode: .efi)
+        let sourceURL = try makeBundle(source)
+        let clone = VMConfiguration(name: "Pairing Clone", guestOS: .linux, bootMode: .efi)
+        let cloneURL = try service.bundleURL(for: clone)
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: cloneURL)
+        }
+        let store = USBAccessoryPairingStore()
+        try store.save(
+            USBAccessoryPairingSet(pairings: [
+                USBAccessoryPairing(
+                    key: "04e8:6300:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
+                    receptacleLabel: "Port-USB-C@2")
+            ]), bundleURL: sourceURL)
+
+        try service.cloneVMBundle(
+            from: sourceURL, to: cloneURL, newConfiguration: clone,
+            filesToCopy: ["Disk.asif", "EFIVariableStore"])
+
+        // The omission is silent by construction — nothing lists the file — so
+        // it is asserted here: two VMs expecting one device would race for it.
+        #expect(store.load(bundleURL: cloneURL).isEmpty)
+        #expect(!store.load(bundleURL: sourceURL).isEmpty)
+    }
 }

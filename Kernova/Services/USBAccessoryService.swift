@@ -13,7 +13,7 @@ import os
 @MainActor
 final class USBAccessoryService: USBAccessoryProviding {
     private(set) var accessories: [USBAccessoryInfo] = []
-    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
+    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo, USBAccessoryArrival) -> Void)?
     var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])?
 
     /// The live `AAUSBAccessory` behind each entry in `accessories`. VZ needs
@@ -103,8 +103,12 @@ final class USBAccessoryService: USBAccessoryProviding {
         Self.logger.notice(
             "USB accessory assigned to Kernova: \(info.displayName, privacy: .public) (\(registryID), \(Self.identityText(info), privacy: .public))"
         )
-        resolvePendingMatches(with: info)
-        onAccessoryAssigned?(info)
+        // Answered first, so the arrival says whether somebody was already
+        // waiting for this exact unit rather than leaving that to a guess
+        // about timing.
+        let arrival: USBAccessoryArrival =
+            resolvePendingMatches(with: info) ? .awaitedReturn : .fresh
+        onAccessoryAssigned?(info, arrival)
     }
 
     /// Drops an accessory macOS took back.
@@ -197,12 +201,15 @@ final class USBAccessoryService: USBAccessoryProviding {
         }
     }
 
-    /// Answers every caller waiting for the unit `info` is.
-    private func resolvePendingMatches(with info: USBAccessoryInfo) {
-        guard let identity = info.identity else { return }
-        for token in pendingMatches.filter({ $0.value.identity == identity }).keys {
+    /// Answers every caller waiting for the unit `info` is, reporting whether
+    /// any was.
+    private func resolvePendingMatches(with info: USBAccessoryInfo) -> Bool {
+        guard let identity = info.identity else { return false }
+        let tokens = pendingMatches.filter { $0.value.identity == identity }.keys
+        for token in tokens {
             resolvePendingMatch(token, with: info)
         }
+        return !tokens.isEmpty
     }
 
     private func resolvePendingMatch(_ token: UUID, with info: USBAccessoryInfo?) {

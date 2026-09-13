@@ -97,6 +97,8 @@ final class MockVMCommanding: VMCommanding {
     var usbAccessoriesByVM: [UUID: [USBAccessorySummary]] = [:]
     /// What `availableUSBAccessories()` answers with.
     var availableUSBAccessoriesToReturn: [USBAccessorySummary] = []
+    /// What `usbPairings(of:)` answers with, whichever VM is named.
+    var usbPairingsToReturn: [USBPairingSummary] = []
     /// What `externalAttachments(of:)` answers with.
     var externalAttachmentsToReturn: [ExternalAttachment] = []
     /// What `sharingVMNames(_:path:bookmark:)` answers with.
@@ -113,6 +115,8 @@ final class MockVMCommanding: VMCommanding {
     private(set) var portForwardingRulesSelectors: [VMSelector] = []
     private(set) var usbAccessoriesSelectors: [VMSelector] = []
     private(set) var availableUSBAccessoriesCallCount = 0
+    private(set) var usbPairingsSelectors: [VMSelector?] = []
+    private(set) var forgetUSBPairingCalls: [(selector: VMSelector, key: String)] = []
     private(set) var externalAttachmentsSelectors: [VMSelector] = []
     private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
         []
@@ -194,6 +198,8 @@ final class MockVMCommanding: VMCommanding {
     var portForwardingRulesError: (any Error)?
     var usbAccessoriesError: (any Error)?
     var availableUSBAccessoriesError: (any Error)?
+    var usbPairingsError: (any Error)?
+    var forgetUSBPairingError: (any Error)?
     var usbAccessoryEditError: (any Error)?
     var externalAttachmentsError: (any Error)?
     var sharingVMNamesError: (any Error)?
@@ -329,6 +335,19 @@ final class MockVMCommanding: VMCommanding {
         availableUSBAccessoriesCallCount += 1
         if let availableUSBAccessoriesError { throw availableUSBAccessoriesError }
         return availableUSBAccessoriesToReturn
+    }
+
+    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
+        usbPairingsSelectors.append(selector)
+        if let usbPairingsError { throw usbPairingsError }
+        if let selector { _ = try resolve(selector) }
+        return usbPairingsToReturn
+    }
+
+    func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
+        forgetUSBPairingCalls.append((selector, key))
+        if let forgetUSBPairingError { throw forgetUSBPairingError }
+        _ = try resolve(selector)
     }
 
     func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment] {

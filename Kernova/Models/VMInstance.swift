@@ -134,6 +134,14 @@ final class VMInstance {
     /// on-disk manifest in step; every surface reads it.
     var snapshotManifest = VMSnapshotManifest()
 
+    /// The host USB accessories this VM takes back on its own, mirrored from
+    /// `usb-accessories.json`.
+    ///
+    /// The library is the only writer — it keeps this and the file in step
+    /// through ``VMLibrary/updateUSBPairings(of:mutate:)``; every surface
+    /// reads it.
+    var usbPairings = USBAccessoryPairingSet()
+
     /// Where this VM's display currently lives.
     ///
     /// ``VMDisplayPlacementController`` owns every transition; the model writes
@@ -251,6 +259,18 @@ final class VMInstance {
     /// Ephemeral Mode VM to its baseline here. A suspend does not reach it:
     /// `save` tears the session down and rests at `.paused`.
     @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
+
+    /// Fired on the edge where this VM becomes something a device can be
+    /// attached to — ``attachableSessionID`` going from `nil` to naming a
+    /// session.
+    ///
+    /// An edge rather than every arrival at a live phase, so it fires once per
+    /// session: a pause and resume both rest at attachable phases and must not
+    /// re-run whatever this triggers.
+    ///
+    /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler hands the
+    /// guest the accessories paired with it.
+    @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
     /// Fired when something this VM did may let an app-managed network be
     /// recreated: its attachment recovery reported the network suspect, or the
@@ -859,7 +879,16 @@ final class VMInstance {
     /// is installed by ``settle(_:for:)`` or by ``attachSession(from:)``, and
     /// released by ``tearDownSession(restingAt:)``.
     func enter(_ phase: VMLifecyclePhase) {
-        self.phase = phase
+        setPhase(phase)
+    }
+
+    /// The one write of ``phase`` after construction, so the edge onto an
+    /// attachable session is noticed wherever the transition came from.
+    private func setPhase(_ new: VMLifecyclePhase) {
+        let wasAttachable = attachableSessionID != nil
+        phase = new
+        guard !wasAttachable, attachableSessionID != nil else { return }
+        onSessionBecameAttachable?()
     }
 
     /// Applies `phase` only while `sessionID` still names the live session,
@@ -873,7 +902,7 @@ final class VMInstance {
     @discardableResult
     func settle(_ phase: VMLifecyclePhase, for sessionID: UUID) -> Bool {
         guard liveSessionID == sessionID else { return false }
-        self.phase = phase
+        setPhase(phase)
         return true
     }
 
@@ -975,7 +1004,7 @@ final class VMInstance {
         }
         sessionContext?.tearDown()
         sessionContext = nil
-        self.phase = phase
+        setPhase(phase)
         // A VM with no session has no display to place, and `.hidden`
         // (headless) has no window whose close would say so.
         displayMode = .inline
@@ -1026,7 +1055,7 @@ final class VMInstance {
             return nil
         }
         sessionContext.session = session
-        phase = promoted
+        setPhase(promoted)
         await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
         return session
     }

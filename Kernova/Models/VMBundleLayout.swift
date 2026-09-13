@@ -45,6 +45,12 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("serial.log.1")
     }
 
+    /// The USB accessories this VM takes back automatically
+    /// (``USBAccessoryPairingSet``).
+    var usbPairingsURL: URL {
+        bundleURL.appendingPathComponent("usb-accessories.json")
+    }
+
     var additionalDisksDirectoryURL: URL {
         bundleURL.appendingPathComponent("AdditionalDisks")
     }

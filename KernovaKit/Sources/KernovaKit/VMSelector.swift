@@ -37,6 +37,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case portForwardingRules
     case usbAccessories
     case availableUSBAccessories
+    case usbPairings
+    case forgetUSBPairing
     case events
     case start
     case cancelGuestSetup
@@ -86,6 +88,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .portForwardingRules: "List Forwarded Ports"
         case .usbAccessories: "List USB Accessories"
         case .availableUSBAccessories: "List Available USB Accessories"
+        case .usbPairings: "List Remembered USB Accessories"
+        case .forgetUSBPairing: "Forget USB Accessory"
         case .events: "Watch Events"
         case .start: "Start"
         case .cancelGuestSetup: "Cancel Setup"
@@ -138,7 +142,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     public var isAdmittedInEveryState: Bool {
         switch self {
         case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
-            .portForwardingRules, .usbAccessories, .availableUSBAccessories, .events, .reveal,
+            .portForwardingRules, .usbAccessories, .availableUSBAccessories, .usbPairings,
+            .forgetUSBPairing, .events, .reveal,
             .showInFinder, .awaitPreparing, .configurationKeys, .configuration, .setConfiguration,
             .quit:
             true

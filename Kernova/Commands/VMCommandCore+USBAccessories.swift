@@ -31,7 +31,48 @@ extension VMCommandCore {
             .map { summary(of: $0, named: names) }
     }
 
+    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
+        try requireUSBAccessoryService()
+        let instances = try selector.map { [try resolve($0)] } ?? library.instances
+        return instances.flatMap { instance in
+            instance.usbPairings.pairings.map { pairing in
+                USBPairingSummary(
+                    vm: instance.name, key: pairing.key, name: Self.pairingName(pairing),
+                    pairedAt: pairing.pairedAt)
+            }
+        }
+    }
+
+    /// What a listing calls a remembered accessory, qualified by the port when
+    /// the rule names one.
+    private static func pairingName(_ pairing: USBAccessoryPairing) -> String {
+        guard let label = pairing.namedReceptacleLabel else { return pairing.displayName }
+        return "\(pairing.displayName) (\(label))"
+    }
+
     // MARK: - Edits
+
+    func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
+        try requireUSBAccessoryService()
+        let instance = try resolve(selector)
+        try require(.forgetUSBPairing, on: instance)
+        // A key nothing answers to is a miss rather than a quiet success: the
+        // caller named something that is not there, and succeeding would tell a
+        // script the rule was removed.
+        guard instance.usbPairings.pairing(forKey: key) != nil else {
+            throw itemNotFound(instance, item: "remembered USB accessory \u{201C}\(key)\u{201D}")
+        }
+        guard library.updateUSBPairings(of: instance, mutate: { $0.remove(key: key) }) else {
+            throw CommandError.operationFailed(
+                verb: .forgetUSBPairing,
+                message:
+                    "That accessory was forgotten for now, but the change could not be written to the virtual machine's bundle."
+            )
+        }
+        Self.logger.notice(
+            "'\(instance.name, privacy: .public)' will no longer take USB accessory \(key, privacy: .public) back automatically"
+        )
+    }
 
     func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
         let (instance, sessionID, service) = try admitUSBAccessoryEdit(selector)
@@ -55,6 +96,12 @@ extension VMCommandCore {
         do {
             let attached = try await lifecycle.attachUSBAccessory(
                 registryID, to: instance, for: sessionID)
+            // Placing a device *is* the answer to "which VM", whichever surface
+            // asked — the menu, the CLI, or the prompt an arrival raises. A
+            // rule created only by the prompt would leave a user who plugs a
+            // drive in with nothing running, and attaches it from the menu,
+            // re-placing it every time.
+            onUserAttachedAccessory?(instance, attached.accessory)
             Self.logger.notice(
                 "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
             )
@@ -69,13 +116,20 @@ extension VMCommandCore {
         // success: the lifecycle treats a device VZ has already let go as done,
         // which is right for an unplug that got there first and wrong for a
         // caller who named the wrong device.
-        guard instance.liveUSBAccessories.contains(where: { $0.deviceID == deviceID }) else {
+        guard
+            let held = instance.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
+        else {
             throw itemNotFound(
                 instance, item: "USB accessory with the device identifier \(deviceID.uuidString)")
         }
         do {
             try await lifecycle.detachUSBAccessory(
                 deviceID: deviceID, from: instance, for: sessionID)
+            // Read before the detach, which clears the record: taking a device
+            // back by hand is how a user ends a pairing without opening
+            // settings, and it is the only way the returning device stays with
+            // the Mac.
+            onUserReleasedAccessory?(instance, held.accessory)
             Self.logger.notice(
                 "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
             )

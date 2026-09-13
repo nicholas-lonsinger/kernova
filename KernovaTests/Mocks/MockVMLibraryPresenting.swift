@@ -35,6 +35,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// reaches the guest.
     private(set) var installerMountedDeliveries: [GuestAgentDiskDelivery] = []
     private(set) var creationWizardCount = 0
+    /// Pairing prompts raised, each still unanswered until a test answers it.
+    private(set) var usbPairingRequests: [USBAccessoryPairingRequest] = []
     private(set) var focusGuestDisplayInstances: [VMInstance] = []
 
     func presentError(_ message: String, title: String) {
@@ -70,6 +72,9 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         installerMountedNames.append(vmName)
         installerMountedPurposes.append(purpose)
         installerMountedDeliveries.append(delivery)
+    }
+    func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
+        usbPairingRequests.append(request)
     }
     func presentCreationWizard() { creationWizardCount += 1 }
     func focusGuestDisplay(for instance: VMInstance) {

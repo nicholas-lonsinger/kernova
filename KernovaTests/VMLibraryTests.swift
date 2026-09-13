@@ -708,4 +708,112 @@ struct VMLibraryTests {
         #expect(library.instances.count == 1)
         #expect(library.instances.first?.name == "Preparing VM")
     }
+
+    // MARK: - USB Accessory Pairings
+
+    /// A library whose pairings live in memory, and the store behind it.
+    private func makePairingLibrary() -> (VMLibrary, MockUSBAccessoryPairingStore) {
+        let store = MockUSBAccessoryPairingStore()
+        let library = VMLibrary(
+            storageService: MockVMStorageService(),
+            snapshotStore: VMSnapshotStore(),
+            lifecycle: VMLifecycleCoordinator(
+                virtualizationService: MockVirtualizationService(),
+                installService: MockMacOSInstallService(),
+                ipswService: MockIPSWService(),
+                removableMediaDeviceService: MockRemovableMediaDeviceService(),
+                linuxImageResolveService: MockLinuxImageResolveService(),
+                downloadService: MockDownloadService(),
+                fileSystem: fileSystem
+            ),
+            fileSystem: fileSystem,
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(),
+            isVMNetworkingEntitled: true,
+            usbPairingStore: store
+        )
+        library.onFailure = { [failures] title, message in
+            failures.record(title: title, message: message)
+        }
+        return (library, store)
+    }
+
+    private func pairing(key: String) -> USBAccessoryPairing {
+        USBAccessoryPairing(
+            key: key, form: .serialNumber, displayName: "Samsung Type-C",
+            receptacleLabel: "Port-USB-C@2", pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    @Test("wirePersistence mirrors the pairings the bundle holds")
+    func wirePersistenceLoadsPairings() {
+        let (library, store) = makePairingLibrary()
+        let instance = makeInstance(name: "Paired VM")
+        store.setPairings(
+            USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: instance.bundleURL)
+
+        library.wirePersistence(for: instance)
+
+        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
+    }
+
+    @Test("A bundle with no pairings mirrors an empty set")
+    func wirePersistenceLoadsNothingForAFreshBundle() {
+        let (library, _) = makePairingLibrary()
+        let instance = makeInstance(name: "Fresh VM")
+
+        library.wirePersistence(for: instance)
+
+        // A clone's bundle is a fresh directory, and the pairing file is
+        // deliberately not among the ones a clone copies — so the clone starts
+        // expecting nothing, rather than racing its source for one device.
+        #expect(instance.usbPairings.isEmpty)
+    }
+
+    @Test("updateUSBPairings writes the bundle, and writes nothing when nothing changed")
+    func updateUSBPairingsPersistsAndNoOps() {
+        let (library, store) = makePairingLibrary()
+        let instance = makeInstance(name: "Paired VM")
+        library.wirePersistence(for: instance)
+
+        #expect(library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) })
+        #expect(store.pairings(for: instance.bundleURL)?.pairings.map(\.key) == ["k"])
+        #expect(store.saveCount == 1)
+
+        // Removing a key the VM never held leaves the set as it was.
+        #expect(library.updateUSBPairings(of: instance) { $0.remove(key: "absent") })
+        #expect(store.saveCount == 1)
+    }
+
+    @Test("A failed write leaves the new set in memory and reports the failure")
+    func updateUSBPairingsReportsAFailedWrite() {
+        let (library, store) = makePairingLibrary()
+        let instance = makeInstance(name: "Paired VM")
+        library.wirePersistence(for: instance)
+        store.saveError = VMStorageError.bundleNotFound(instance.bundleURL)
+
+        let saved = library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) }
+
+        // The session it was made for still acts on it; only the remembering is
+        // lost, so nothing is put in front of the user.
+        #expect(!saved)
+        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
+        #expect(!failures.showError)
+    }
+
+    @Test("Pairing an accessory takes its key off every other virtual machine")
+    func pairUSBAccessoryIsLibraryWide() {
+        let (library, _) = makePairingLibrary()
+        let first = makeInstance(name: "First")
+        let second = makeInstance(name: "Second")
+        for instance in [first, second] {
+            library.wirePersistence(for: instance)
+            library.instances.append(instance)
+        }
+        library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
+
+        library.pairUSBAccessory(pairing(key: "k"), with: second)
+
+        #expect(first.usbPairings.isEmpty)
+        #expect(second.usbPairings.pairings.map(\.key) == ["k"])
+    }
 }

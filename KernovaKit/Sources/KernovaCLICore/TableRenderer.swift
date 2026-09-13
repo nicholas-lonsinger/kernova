@@ -124,6 +124,19 @@ enum TableRenderer {
             rows: rows.map { [$0.name, String($0.registryID), $0.deviceID?.uuidString ?? ""] })
     }
 
+    /// The USB accessories virtual machines take back automatically.
+    ///
+    /// The virtual machine is a column rather than a grouping, because the
+    /// listing with no machine named is the one this exists for: a key names at
+    /// most one virtual machine, and which one is the answer being read off.
+    /// `quiet` prints the key, which is what `usb forget` takes back.
+    static func render(_ rows: [USBPairingSummary], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(\.key).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        return columns(
+            headings: ["VM", "NAME", "KEY"], rows: rows.map { [$0.vm, $0.name, $0.key] })
+    }
+
     /// What `usb attach` or `usb detach` takes back for one accessory: the
     /// attachment while a guest holds it, the accessory itself while none does.
     private static func handle(_ accessory: USBAccessorySummary) -> String {

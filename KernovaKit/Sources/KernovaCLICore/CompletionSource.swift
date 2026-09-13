@@ -89,6 +89,15 @@ enum CompletionSource {
         return usbAccessoryDevices(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
     }
 
+    /// The accessories a `usb forget` argument offers, of whichever virtual
+    /// machine the line already named.
+    static let usbPairingKey = CompletionKind.custom { words, index, _ in
+        guard let subject = CompletionLine.vmSubject(in: words, completingAt: index) else {
+            return []
+        }
+        return usbPairingKeys(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
+    }
+
     /// The settings a `get` key argument offers.
     static let configurationKey = CompletionKind.custom { _, _, _ in configurationKeys() }
 
@@ -194,6 +203,17 @@ enum CompletionSource {
                 candidate($0.uuidString, describedBy: accessory.name, for: context.shell)
             }
         }
+    }
+
+    /// Every accessory the virtual machine `vm` names takes back on its own, by
+    /// the key `usb forget` takes back.
+    static func usbPairingKeys(
+        ofVM vm: String, byIdentifier: Bool, in context: CompletionContext = .live
+    ) -> [String] {
+        guard let selector = try? SelectorParsing.selector(from: vm, forcingID: byIdentifier),
+            case .usbPairings(let pairings)? = answer(to: .usbPairings(selector), in: context)
+        else { return [] }
+        return pairings.map { candidate($0.key, describedBy: $0.name, for: context.shell) }
     }
 
     /// Every setting `get` and `set` address, each with `suffix` appended.

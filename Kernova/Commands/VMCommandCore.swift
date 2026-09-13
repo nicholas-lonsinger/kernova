@@ -85,6 +85,23 @@ final class VMCommandCore: VMCommanding {
     /// quit is an AppKit termination, and the core performs none.
     var requestQuit: (() -> Void)?
 
+    /// Reports an accessory the user has just placed on a guest, so that guest
+    /// takes it back on its own from now on.
+    ///
+    /// A hook rather than a call: what an attach *means* for the future is the
+    /// accessory coordinator's policy, and a build that cannot pass accessories
+    /// through has no coordinator to hold it.
+    var onUserAttachedAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
+
+    /// Reports an accessory the user has just taken back by hand, which ends
+    /// that pairing — and, because the detach re-enumerates the device, has to
+    /// keep the return it causes from re-creating one.
+    ///
+    /// Deliberately not fired by the lifecycle's own eject sweeps: a stop, a
+    /// suspend or a snapshot capture takes an accessory off without the user
+    /// asking, and must leave the pairing alone.
+    var onUserReleasedAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
+
     /// Measures the window or screen a starting VM's display is about to occupy,
     /// for `displaySizesToWindow` — `nil` when nothing can measure one.
     ///

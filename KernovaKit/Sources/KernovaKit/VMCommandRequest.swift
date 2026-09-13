@@ -39,6 +39,12 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// The USB accessories macOS has assigned to Kernova and no guest holds.
         /// Host-scoped: accessories arrive before any VM claims one.
         case availableUSBAccessories
+        /// The USB accessories one VM takes back automatically, or every VM's
+        /// when no selector is given.
+        case usbPairings(VMSelector?)
+        /// Stops a VM taking one accessory back, naming it by the durable key
+        /// `usbPairings` prints — the device itself is usually not plugged in.
+        case forgetUSBPairing(VMSelector, key: String)
         /// Subscribe: a snapshot frame, then one frame per library event.
         case events
 
@@ -115,7 +121,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
                 .restart(_, let presentation, _):
                 presentation == .surface
             case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
-                .portForwardingRules, .usbAccessories, .availableUSBAccessories, .editUSBAccessory,
+                .portForwardingRules, .usbAccessories, .availableUSBAccessories, .usbPairings,
+                .forgetUSBPairing, .editUSBAccessory,
                 .events,
                 .cancelGuestSetup, .stop, .pause, .suspend, .showInFinder, .takeSnapshot,
                 .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
@@ -138,6 +145,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .portForwardingRules: .portForwardingRules
             case .usbAccessories: .usbAccessories
             case .availableUSBAccessories: .availableUSBAccessories
+            case .usbPairings: .usbPairings
+            case .forgetUSBPairing: .forgetUSBPairing
             case .events: .events
             case .start: .start
             case .cancelGuestSetup: .cancelGuestSetup

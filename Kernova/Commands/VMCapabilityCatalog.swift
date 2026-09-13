@@ -36,6 +36,7 @@ enum VMCapability: CaseIterable, Hashable {
     case editRemovableMedia
     case editSharedDirectories
     case editUSBAccessories
+    case forgetUSBPairing
     case editPortForwarding
     case editConfiguration
     case editLiveConfiguration
@@ -80,6 +81,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .editRemovableMedia: .editRemovableMedia
         case .editSharedDirectories: .editSharedDirectory
         case .editUSBAccessories: .editUSBAccessory
+        case .forgetUSBPairing: .forgetUSBPairing
         case .editPortForwarding: .editPortForwarding
         case .editConfiguration, .editLiveConfiguration, .switchNetworkMode: .setConfiguration
         case .clone: .clone
@@ -110,7 +112,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
             .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .editStorageDisks,
-            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories,
+            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
             .editPortForwarding, .editConfiguration,
             .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .showInFinder,
             .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
@@ -136,7 +138,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia,
-            .editSharedDirectories, .editUSBAccessories, .editPortForwarding, .editConfiguration,
+            .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing, .editPortForwarding,
+            .editConfiguration,
             .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .cancelPreparing,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
@@ -162,7 +165,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .editPortForwarding,
+            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
+            .editPortForwarding,
             .editConfiguration,
             .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .cancelPreparing,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
@@ -237,6 +241,12 @@ struct VMCapabilityCatalog {
             // guest already running — and a build that cannot claim an
             // accessory at all must not name the verb among those a VM accepts.
             library.supportsUSBAccessories && instance.hasLiveSession
+        case .forgetUSBPairing:
+            // A rule is a preference about what to attach rather than something
+            // the guest holds, so no state pins it — what it names is usually
+            // not even plugged in. Only a build that cannot pass accessories
+            // through has nothing to forget.
+            library.supportsUSBAccessories
         case .editPortForwarding, .editConfiguration:
             instance.canEditSettings
         case .editLiveConfiguration:
@@ -381,6 +391,7 @@ struct VMCapabilityCatalog {
             .restart, .forceStop, .discardSavedState, .pause, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editUSBAccessories,
+            .forgetUSBPairing,
             .editPortForwarding,
             .editConfiguration, .editLiveConfiguration, .switchNetworkMode, .clone, .delete,
             .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -471,5 +472,89 @@ struct DetailAlertsPresenterTests {
         #expect(alert.message.contains("discarded"))
         // The warm wording, which promises a replacement session, must not leak.
         #expect(!alert.message.contains("replaced by"))
+    }
+
+    // MARK: - USB accessory pairing prompts
+
+    /// Collects the answers the prompts under test are given.
+    private final class PairingAnswers {
+        var answered: [String] = []
+    }
+
+    private func pairingRequest(
+        named name: String, registryID: UInt64, candidates: [VMInstance],
+        answer: @escaping @MainActor (VMInstance?) -> Void
+    ) -> USBAccessoryPairingRequest {
+        USBAccessoryPairingRequest(
+            id: UUID(),
+            accessory: USBAccessorySummary(
+                registryID: registryID, name: name, vendorID: 0x04E8, productID: 0x6300),
+            candidates: candidates,
+            answer: answer)
+    }
+
+    @Test("Answering one pairing prompt leaves the next one able to be shown")
+    func answeringAPairingPromptFreesTheSlot() throws {
+        let (presenter, viewModel) = makePresenter()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        presenter.start(window: window)
+        let instance = makeInstance(name: "Work", in: viewModel)
+        let answers = PairingAnswers()
+
+        let second = pairingRequest(
+            named: "Second", registryID: 2, candidates: [instance],
+            answer: { _ in answers.answered.append("second") })
+        // The coordinator's own shape: at most one prompt outstanding, and the
+        // next raised from inside the answer to the one before it.
+        let first = pairingRequest(
+            named: "First", registryID: 1, candidates: [instance],
+            answer: { _ in
+                answers.answered.append("first")
+                presenter.presentUSBAccessoryPairing(second)
+            })
+
+        presenter.presentUSBAccessoryPairing(first)
+        #expect(presenter.isShowingAlertForTesting)
+
+        // "Keep on Mac", delivered the way the sheet handler delivers it.
+        #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
+
+        // The flag says "a sheet is up", and the sheet is down by the time the
+        // action runs — so the second prompt is shown rather than auto-answered
+        // as a hold.
+        #expect(answers.answered == ["first"])
+        #expect(presenter.isShowingAlertForTesting)
+
+        #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
+        #expect(answers.answered == ["first", "second"])
+        #expect(!presenter.isShowingAlertForTesting)
+    }
+
+    @Test("A pairing prompt raised while another alert is up is answered as a hold")
+    func aPairingPromptBehindAnotherAlertHolds() throws {
+        let (presenter, viewModel) = makePresenter()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        presenter.start(window: window)
+        let instance = makeInstance(name: "Work", in: viewModel)
+        let answers = PairingAnswers()
+        presenter.presentUSBAccessoryPairing(
+            pairingRequest(
+                named: "First", registryID: 1, candidates: [instance],
+                answer: { _ in answers.answered.append("first") }))
+        #expect(presenter.isShowingAlertForTesting)
+
+        presenter.presentUSBAccessoryPairing(
+            pairingRequest(
+                named: "Second", registryID: 2, candidates: [instance],
+                answer: { answers.answered.append($0 == nil ? "hold" : "pass") }))
+
+        // Nobody asked for this one, and the coordinator waits on its answer —
+        // so it is answered now rather than queued behind a sheet that may
+        // never be dismissed.
+        #expect(answers.answered == ["hold"])
     }
 }

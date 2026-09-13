@@ -5897,6 +5897,59 @@ struct VMLibraryViewModelTests {
         // Critical: path is the ORIGINAL one, not the failed-swap target.
         #expect(rolled.first?.path == "/tmp/old.iso")
     }
+
+    // MARK: - Remembered USB accessories
+
+    /// A view model that can pass accessories through, and one VM in its
+    /// library remembering `key`.
+    ///
+    /// The VM's bundle directory is never created, so the pairing write cannot
+    /// reach disk — which is the failure under test.
+    private func makeViewModelRememberingAnAccessory(key: String) -> (
+        VMLibraryViewModel, VMInstance
+    ) {
+        let viewModel = VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            usbAccessoryService: MockUSBAccessoryService(),
+            fileSystem: fileSystem,
+            preferences: preferences
+        )
+        viewModel.presenter = presenter
+        let instance = makeInstance(name: "Work")
+        viewModel.library.wirePersistence(for: instance)
+        viewModel.library.instances.append(instance)
+        instance.usbPairings.upsert(
+            USBAccessoryPairing(
+                key: key, form: .serialNumber, displayName: "Samsung Type-C",
+                receptacleLabel: nil))
+        return (viewModel, instance)
+    }
+
+    @Test("A remembered accessory that cannot be forgotten on disk says so")
+    func forgetUSBAccessoryReportsAFailedWrite() {
+        let (viewModel, instance) = makeViewModelRememberingAnAccessory(key: "k")
+
+        viewModel.forgetUSBAccessory(key: "k", on: instance)
+
+        // Silence would take the row off the list while the rule stayed in the
+        // bundle, and the accessory would go back to this VM at the next launch.
+        #expect(presenter.showError)
+    }
+
+    @Test("Forgetting an accessory the virtual machine does not remember says so")
+    func forgetUSBAccessoryReportsAMiss() {
+        let (viewModel, instance) = makeViewModelRememberingAnAccessory(key: "k")
+
+        viewModel.forgetUSBAccessory(key: "nope", on: instance)
+
+        #expect(presenter.showError)
+        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
+    }
 }
 
 /// Counts the quits the command core asked the adapter to perform.
