@@ -17,6 +17,19 @@ struct USBAccessoryCoordinatorTests {
             usbAccessoryService: service)
     }
 
+    /// The coordinator under test.
+    ///
+    /// Nothing else holds it — the closures it installs on the service capture
+    /// it weakly, as the one real owner is `VMLibraryViewModel` — so a test
+    /// that discards it is testing a coordinator that answers nothing, and
+    /// every "leaves it alone" assertion passes for the wrong reason. Callers
+    /// keep the returned value alive for the length of the test.
+    private func makeCoordinator(
+        _ lifecycle: VMLifecycleCoordinator, roster: any VMInstanceRoster
+    ) throws -> USBAccessoryCoordinator {
+        try #require(USBAccessoryCoordinator(lifecycle: lifecycle, roster: roster))
+    }
+
     private func makeInstance(sessionID: UUID, named name: String = "USB VM") -> VMInstance {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
@@ -28,9 +41,10 @@ struct USBAccessoryCoordinatorTests {
     }
 
     @Test("Starts the listener")
-    func startsObserving() {
+    func startsObserving() throws {
         let service = MockUSBAccessoryService()
-        _ = USBAccessoryCoordinator(lifecycle: makeLifecycle(service), roster: StubVMInstanceRoster())
+        let coordinator = try makeCoordinator(makeLifecycle(service), roster: StubVMInstanceRoster())
+        defer { withExtendedLifetime(coordinator) {} }
         #expect(service.startObservingCallCount == 1)
     }
 
@@ -49,10 +63,9 @@ struct USBAccessoryCoordinatorTests {
     func anAssignmentIsHeld() async throws {
         let service = MockUSBAccessoryService()
         let instance = makeInstance(sessionID: UUID())
-        let roster = StubVMInstanceRoster([instance])
-        let coordinator = USBAccessoryCoordinator(
-            lifecycle: makeLifecycle(service), roster: roster)
-        #expect(coordinator != nil)
+        let coordinator = try makeCoordinator(
+            makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
 
         service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
 
@@ -68,19 +81,48 @@ struct USBAccessoryCoordinatorTests {
         let sessionID = UUID()
         let instance = makeInstance(sessionID: sessionID)
         let lifecycle = makeLifecycle(service)
-        let coordinator = USBAccessoryCoordinator(
-            lifecycle: lifecycle, roster: StubVMInstanceRoster([instance]))
-        #expect(coordinator != nil)
+        let coordinator = try makeCoordinator(
+            lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
         service.accessories.append(
-            MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "0373", receptacle: "hub/Port-A@1"))
         try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+        service.accessories.removeAll()
         #expect(instance.liveUSBAccessories.count == 1)
 
         // The same stick, back from the reset a detach causes: same serial,
-        // new IORegistry node.
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "0373"))
+        // same receptacle, new IORegistry node. The guest's record holds that
+        // key, and this is the one arrival allowed to take it back.
+        let echo = service.assignComposing(
+            registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
 
+        #expect(echo.identity?.form == .serialNumber)
         #expect(instance.liveUSBAccessories.isEmpty)
+    }
+
+    @Test("Leaves a guest's record alone for a second unit reporting the same serial")
+    func aDuplicateSerialElsewhereLeavesTheRecordAlone() async throws {
+        let service = MockUSBAccessoryService()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let lifecycle = makeLifecycle(service)
+        let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        service.accessories.append(
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "0373", receptacle: "hub/Port-A@1"))
+        try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+        service.accessories.removeAll()
+
+        // A second stick of the same model, in another hole, whose vendor gave
+        // it the serial the first one reports. Dropping the guest's record here
+        // would leave it holding a device it could no longer detach.
+        let second = service.assignComposing(
+            registryID: 2, serial: "0373", receptacle: "hub/Port-A@2")
+
+        #expect(second.identity?.form == .receptacle)
+        #expect(instance.liveUSBAccessories.count == 1)
     }
 
     @Test("Leaves a guest's record alone when a different accessory arrives")
@@ -89,7 +131,8 @@ struct USBAccessoryCoordinatorTests {
         let sessionID = UUID()
         let instance = makeInstance(sessionID: sessionID)
         let lifecycle = makeLifecycle(service)
-        _ = USBAccessoryCoordinator(lifecycle: lifecycle, roster: StubVMInstanceRoster([instance]))
+        let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
         service.accessories.append(
             MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
         try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
@@ -105,7 +148,8 @@ struct USBAccessoryCoordinatorTests {
         let sessionID = UUID()
         let instance = makeInstance(sessionID: sessionID)
         let lifecycle = makeLifecycle(service)
-        _ = USBAccessoryCoordinator(lifecycle: lifecycle, roster: StubVMInstanceRoster([instance]))
+        let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 1))
         try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
 

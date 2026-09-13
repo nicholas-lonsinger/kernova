@@ -14,10 +14,7 @@ struct VMCommandCoreUSBAccessoryTests {
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.commandcore.usb")
 
     /// The refusal every verb owes a build that cannot pass accessories
-    /// through.
-    private let unsupported = CommandError.unsupported(capability: "USB accessory passthrough")
-
-    /// The refusal the host-scoped listing owes, which names no virtual machine.
+    /// through — the cause is the build, so no VM is named.
     private let unsupportedByBuild = CommandError.unsupportedByBuild(
         capability: "USB accessory passthrough")
 
@@ -120,13 +117,33 @@ struct VMCommandCoreUSBAccessoryTests {
             try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
         }
 
-        #expect(listing == unsupported)
-        #expect(edit == unsupported)
-        // The host-scoped read names no VM, so its refusal must not describe
-        // one: "This build of Kernova does not support …", not "This virtual
-        // machine does not support …".
+        // The cause is the build — the OS version, or a signature without the
+        // entitlement — and none of the three refusals may describe a VM as
+        // the thing that cannot do it.
+        #expect(listing == unsupportedByBuild)
+        #expect(edit == unsupportedByBuild)
         #expect(available == unsupportedByBuild)
         #expect(available?.message == "This build of Kernova does not support USB accessory passthrough.")
+    }
+
+    @Test("An accessory macOS has not assigned to Kernova is a miss, not a failed attach")
+    func attachingAnUnassignedAccessoryIsRefusedAsAMiss() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
+
+        let refusal = try #require(
+            await commandError {
+                try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
+            })
+
+        // Host-scoped: the VM is not what is missing, and a script reads this
+        // as the same kind of miss as a name nothing answers to.
+        #expect(refusal == .itemNotFoundOnHost(item: "USB accessory with the identifier 42"))
+        #expect(refusal.message == "Kernova has no USB accessory with the identifier 42.")
+        #expect(service.attachedRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
     }
 
     // MARK: - Reads

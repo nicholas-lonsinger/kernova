@@ -135,6 +135,23 @@ struct VirtualizationServiceTests {
         #expect(instance.liveUSBAccessories.count == 1)
     }
 
+    @Test("A sweep that throws part-way leaves only what it never reached attached")
+    func aPartialSweepClearsWhatItEjected() async {
+        let (instance, sessionID, deviceIDs) = instanceHoldingAccessories(2)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDetachError(
+            VMSessionError.usbControllerUnavailable, forDeviceID: deviceIDs[1])
+
+        await #expect(throws: VMSessionError.self) {
+            try await VirtualizationService.detachUSBAccessories(
+                from: instance, session: session, for: sessionID)
+        }
+
+        // What the instance still holds is what the sweep never got to, which
+        // is how the put-back after a failed capture knows what was ejected.
+        #expect(instance.liveUSBAccessories.map(\.deviceID) == [deviceIDs[1]])
+    }
+
     @Test("A session holding nothing asks VZ for no detach at all")
     func noAccessoriesMeansNoDetachCalls() async throws {
         let (instance, sessionID, _) = instanceHoldingAccessories(0)

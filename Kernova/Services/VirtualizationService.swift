@@ -662,6 +662,12 @@ final class VirtualizationService {
     /// writing a state that still carries a passthrough device produces a save
     /// nothing can restore, so the save must fail where the user can see it
     /// rather than succeed into an unusable file.
+    ///
+    /// Each entry is cleared as its device leaves, and the one that threw is
+    /// left, so what the instance still holds afterwards is exactly what this
+    /// never reached — which is how the put-back knows what a sweep that threw
+    /// part-way ejected. See
+    /// ``VMLifecycleCoordinator/reattachUSBAccessories(ejectedFrom:on:for:)``.
     @discardableResult
     static func detachUSBAccessories(
         from instance: VMInstance, session: any VMSnapshotSessionOperating, for sessionID: UUID

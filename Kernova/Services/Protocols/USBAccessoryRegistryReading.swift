@@ -18,15 +18,21 @@ struct USBAccessoryNodeProperties: Sendable, Equatable {
     /// `iSerialNumber` — the descriptor index, `0` when the device declares no
     /// serial at all.
     var serialNumberIndex: UInt8 = 0
-    /// `UsbIOPort` from the port node above this one: the registry path of the
-    /// service controlling the physical receptacle.
+    /// `UsbIOPort` from the port node directly above this one: the registry
+    /// path of the service controlling the physical receptacle.
     ///
     /// One receptacle fronts a high-speed and a SuperSpeed port node carrying
     /// different `locationID`s, and both name the same `UsbIOPort` — so this
-    /// is what stays put when a device comes back at another speed.
+    /// is what stays put when a device comes back at another speed. Only the
+    /// machine's own receptacles have one: a device plugged into a hub sits
+    /// behind that hub's ports, which carry none.
     var ioPortPath: String?
     /// `locationID` — the controller-and-port-path encoding, which stands in
     /// for the receptacle when the port node names none.
+    ///
+    /// It encodes the whole path through the port tree, a nibble per hub, so it
+    /// is what keys a device behind a hub: the position it occupies rather than
+    /// the hole in the side of the machine.
     var locationID: UInt32?
 
     /// Whether the device says it has a serial number.

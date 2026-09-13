@@ -29,12 +29,15 @@ final class VMLifecycleCoordinator {
     /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
     let usbAccessoryService: (any USBAccessoryProviding)?
 
-    /// How long a warm capture waits for an accessory it ejected to be assigned
-    /// again before giving up on putting it back.
+    /// How long a capture waits for the accessories it ejected to be assigned
+    /// again before putting back whichever of them arrived.
     ///
-    /// Generous because the happy path never reaches it: the assignment arrives
-    /// well under a second with the host idle, and the long case is the host
-    /// unmounting a volume it briefly owned again.
+    /// One bound over the whole put-back rather than one per accessory: the
+    /// waits run together. It covers the event arriving late — a detach's
+    /// re-assignment lands in well under a second — and deliberately does not
+    /// outlast an accessory that is not coming back, because the VM's operation
+    /// claim is held for the whole wait and a start arriving behind it would be
+    /// refused as busy.
     private let usbAccessoryReturnTimeout: Duration
 
     /// Trashes an image that failed verification.
@@ -78,7 +81,7 @@ final class VMLifecycleCoordinator {
         // process-wide AccessoryAccess listener. Absent is the capability
         // being absent, which every surface already reads as such.
         usbAccessoryService: (any USBAccessoryProviding)? = nil,
-        usbAccessoryReturnTimeout: Duration = .seconds(30),
+        usbAccessoryReturnTimeout: Duration = .seconds(5),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -261,6 +264,12 @@ final class VMLifecycleCoordinator {
         }
     }
 
+    /// Suspends the VM to disk.
+    ///
+    /// The accessories the write ejects stay off, on both outcomes: the guest
+    /// is going away, and a suspend that fails takes the session down with it
+    /// (``VirtualizationService/tearDownIfStillOwned(_:actingFor:restingAt:)``),
+    /// so there is no guest left to put anything back on.
     func save(_ instance: VMInstance) async throws {
         try await serialized(instance, action: "save") {
             try await virtualizationService.save(instance)
@@ -279,16 +288,34 @@ final class VMLifecycleCoordinator {
             // afterwards, so they go back on: a snapshot is not a reason to
             // unplug the user's hardware. Read before the capture, since the
             // capture is what clears them.
+            //
+            // A capture that threw ejected the same hardware, up to wherever it
+            // stopped, and left the guest running — so the put-back owes the
+            // user the same thing on that path as on the one that succeeded.
             let held = instance.liveUSBAccessories
             let sessionID = instance.attachableSessionID
-            try await virtualizationService.takeSnapshot(instance, snapshot: snapshot, store: store)
+            do {
+                try await virtualizationService.takeSnapshot(
+                    instance, snapshot: snapshot, store: store)
+            } catch {
+                if let sessionID {
+                    await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
+                }
+                throw error
+            }
             if let sessionID {
-                await reattachUSBAccessories(held, to: instance, for: sessionID)
+                await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
             }
         }
     }
 
-    /// Puts back the accessories a warm capture took off.
+    /// Puts back the accessories a capture took off `instance`.
+    ///
+    /// `held` is what the guest was holding before the capture ran; what it
+    /// still holds is what the capture never reached, so the difference is what
+    /// was ejected — on the path where the capture succeeded and on the one
+    /// where its detach sweep threw part-way through, having already ejected
+    /// and forgotten the items ahead of the failure.
     ///
     /// Each one has to be found again before it can be attached: the capture's
     /// detach reset the device, so the `registryID` it went off under names
@@ -302,18 +329,22 @@ final class VMLifecycleCoordinator {
     /// accessory that will not go back on leaves the guest exactly where a
     /// surprise unplug would.
     private func reattachUSBAccessories(
-        _ accessories: [AttachedUSBAccessory], to instance: VMInstance, for sessionID: UUID
+        ejectedFrom held: [AttachedUSBAccessory], on instance: VMInstance, for sessionID: UUID
     ) async {
-        guard let usbAccessoryService, !accessories.isEmpty else { return }
-        for item in accessories {
-            guard instance.attachableSessionID == sessionID else { return }
-            guard let returned = await returningAccessory(item, service: usbAccessoryService) else {
-                continue
-            }
+        guard let usbAccessoryService, !held.isEmpty,
+            instance.attachableSessionID == sessionID
+        else { return }
+        let stillHeld = Set(instance.liveUSBAccessories.map(\.deviceID))
+        let ejected = held.filter { !stillHeld.contains($0.deviceID) }
+        guard !ejected.isEmpty else { return }
+
+        let returned = await returningAccessories(ejected, on: instance, for: sessionID)
+        for item in ejected {
+            guard let accessory = returned[item.deviceID] else { continue }
             guard instance.attachableSessionID == sessionID else { return }
             do {
                 let reattached = try await usbAccessoryService.attach(
-                    returned.registryID, to: instance)
+                    accessory.registryID, to: instance)
                 guard instance.attachableSessionID == sessionID else {
                     try? await usbAccessoryService.detach(
                         deviceID: reattached.deviceID, from: instance)
@@ -322,31 +353,77 @@ final class VMLifecycleCoordinator {
                 instance.recordAttachedAccessory(reattached, for: sessionID)
             } catch {
                 Self.logger.warning(
-                    "Could not put USB accessory \(item.accessory.displayName, privacy: .public) back on '\(instance.name, privacy: .public)' after the snapshot: \(error.localizedDescription, privacy: .public)"
+                    "Could not put USB accessory \(item.accessory.displayName, privacy: .public) back on '\(instance.name, privacy: .public)' after the capture: \(error.localizedDescription, privacy: .public)"
                 )
             }
         }
     }
 
-    /// The accessory `item` describes, as macOS has assigned it back to
-    /// Kernova, or `nil` — logged — when it cannot be matched or never returns.
-    private func returningAccessory(
-        _ item: AttachedUSBAccessory, service: any USBAccessoryProviding
-    ) async -> USBAccessoryInfo? {
-        guard let identity = item.accessory.identity else {
-            Self.logger.warning(
-                "Cannot put USB accessory \(item.accessory.displayName, privacy: .public) back after the snapshot: nothing durable identifies it"
-            )
-            return nil
+    /// One accessory being waited for, and the attachment it went off under.
+    private struct PendingUSBReturn {
+        let item: AttachedUSBAccessory
+        let wait: Task<USBAccessoryInfo?, Never>
+    }
+
+    /// The accessories `ejected` names, as macOS has assigned them back, keyed
+    /// by the attachment each went off under.
+    ///
+    /// Every wait is started before any is awaited, so the deadline they carry
+    /// bounds the put-back once rather than once per accessory: the
+    /// re-assignments are independent and arrive when macOS is ready, while a
+    /// sequential wait would hold this VM's operation claim for the timeout
+    /// multiplied by however many accessories the guest had, with the last
+    /// one's budget starting only once the first had given up.
+    ///
+    /// The guest going away cancels them, because nothing can be put back on a
+    /// session that is gone and the deadline would otherwise keep the claim
+    /// past a stop the user is waiting on.
+    private func returningAccessories(
+        _ ejected: [AttachedUSBAccessory], on instance: VMInstance, for sessionID: UUID
+    ) async -> [UUID: USBAccessoryInfo] {
+        let timeout = usbAccessoryReturnTimeout
+        let pending = ejected.compactMap { item -> PendingUSBReturn? in
+            guard let identity = item.accessory.identity else {
+                Self.logger.warning(
+                    "Cannot put USB accessory \(item.accessory.displayName, privacy: .public) back after the capture: nothing durable identifies it"
+                )
+                return nil
+            }
+            return PendingUSBReturn(
+                item: item,
+                wait: Task { @MainActor [weak self] in
+                    guard let service = self?.usbAccessoryService else { return nil }
+                    return await service.accessory(matching: identity, appearingWithin: timeout)
+                })
         }
-        let returned = await service.accessory(
-            matching: identity, appearingWithin: usbAccessoryReturnTimeout)
-        if returned == nil {
-            Self.logger.warning(
-                "USB accessory \(item.accessory.displayName, privacy: .public) was not assigned back to Kernova after the snapshot, so it stayed off the guest"
-            )
+        guard !pending.isEmpty else { return [:] }
+
+        let sessionWatch = observeRecurring(
+            track: { _ = instance.attachableSessionID },
+            apply: {
+                guard instance.attachableSessionID != sessionID else { return }
+                for entry in pending { entry.wait.cancel() }
+            })
+        defer { sessionWatch.cancel() }
+
+        var found: [UUID: USBAccessoryInfo] = [:]
+        for entry in pending {
+            let returned = await entry.wait.value
+            guard instance.attachableSessionID == sessionID else {
+                Self.logger.notice(
+                    "'\(instance.name, privacy: .public)' went away before the USB accessories the capture took off came back, so they stay with the host"
+                )
+                return [:]
+            }
+            guard let returned else {
+                Self.logger.warning(
+                    "USB accessory \(entry.item.accessory.displayName, privacy: .public) was not assigned back to Kernova after the capture, so it stayed off the guest"
+                )
+                continue
+            }
+            found[entry.item.deviceID] = returned
         }
-        return returned
+        return found
     }
 
     func revertToSnapshot(

@@ -54,13 +54,22 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
     private(set) var detachedUSBDeviceIDs: [UUID] = []
     var detachError: (any Error)?
 
-    func setDetachError(_ error: any Error) {
+    /// The one device `detachError` answers for, `nil` for every one of them.
+    private var detachErrorDeviceID: UUID?
+
+    /// Fails the detach of `deviceID`, or of every device when none is named —
+    /// which is what separates a sweep that throws part-way from one that
+    /// throws on its first device.
+    func setDetachError(_ error: any Error, forDeviceID deviceID: UUID? = nil) {
         detachError = error
+        detachErrorDeviceID = deviceID
     }
 
     func detachUSBDevice(uuid: UUID) async throws {
         calls.append("detachUSBDevice")
-        if let detachError { throw detachError }
+        if let detachError, detachErrorDeviceID == nil || detachErrorDeviceID == uuid {
+            throw detachError
+        }
         detachedUSBDeviceIDs.append(uuid)
     }
 

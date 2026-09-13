@@ -16,6 +16,10 @@ import os
 /// passthrough device resets the device, so the stick comes back as a new
 /// IORegistry node: an assignment carrying the identity of something a guest
 /// is still recorded as holding is proof that guest no longer holds it.
+///
+/// It is also what tells the service which keys are already spoken for, so a
+/// second unit of a model whose vendor duplicated the serial cannot compose the
+/// key a guest's record carries.
 @MainActor
 final class USBAccessoryCoordinator {
     private static let logger = Logger(subsystem: "app.kernova", category: "USBAccessoryCoordinator")
@@ -26,6 +30,9 @@ final class USBAccessoryCoordinator {
         guard let service = lifecycle.usbAccessoryService else { return nil }
         self.roster = roster
 
+        service.accessoriesHeldByGuests = { [weak self] in
+            self?.roster.instances.flatMap { $0.liveUSBAccessories.map(\.accessory) } ?? []
+        }
         service.onAccessoryAssigned = { [weak self] info in
             self?.reconcile(info)
         }
@@ -36,9 +43,14 @@ final class USBAccessoryCoordinator {
     /// and logs the one that arrived.
     ///
     /// The match is on the durable identity, never on `registryID`: the whole
-    /// point is that the returning device carries a new one. A guest whose
-    /// device really did go away has usually been told so by VZ already, and
-    /// this is what covers the case where it was not.
+    /// point is that the returning device carries a new one. Identity equality
+    /// takes the receptacle with it, so what is dropped is the record of a unit
+    /// that came back in the hole it left — which is what a reset does, and
+    /// what a second unit of the same model arriving elsewhere does not.
+    ///
+    /// A guest whose device really did go away has usually been told so by VZ
+    /// already, so a drop here is worth a `.notice`: it means the disconnect
+    /// callback did not arrive.
     private func reconcile(_ info: USBAccessoryInfo) {
         if let identity = info.identity {
             for instance in roster.instances {
@@ -47,7 +59,7 @@ final class USBAccessoryCoordinator {
                 where stale.accessory.identity == identity {
                     instance.forgetAttachedAccessory(deviceID: stale.deviceID, for: sessionID)
                     Self.logger.notice(
-                        "Dropped '\(instance.name, privacy: .public)' record of USB accessory \(stale.accessory.displayName, privacy: .public): the host has it again"
+                        "Dropped '\(instance.name, privacy: .public)' record of USB accessory \(stale.accessory.displayName, privacy: .public): the host has it again, and VZ did not report the disconnect"
                     )
                 }
             }

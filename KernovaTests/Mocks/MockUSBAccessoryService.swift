@@ -9,6 +9,7 @@ import KernovaTestSupport
 final class MockUSBAccessoryService: USBAccessoryProviding {
     var accessories: [USBAccessoryInfo] = []
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
+    var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])?
 
     var startObservingCallCount = 0
     var attachedRegistryIDs: [UInt64] = []
@@ -30,6 +31,19 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         accessories.append(info)
         resolveWaits(with: info)
         onAccessoryAssigned?(info)
+    }
+
+    /// Assigns a physical unit, composing its identity the way the real service
+    /// does: against every key already spoken for, the guests' included.
+    @discardableResult
+    func assignComposing(
+        registryID: UInt64, serial: String? = nil, receptacle: String? = nil
+    ) -> USBAccessoryInfo {
+        let info = Self.accessory(
+            registryID: registryID, serial: serial, receptacle: receptacle,
+            claimedBy: accessories + (accessoriesHeldByGuests?() ?? []))
+        assign(info)
+        return info
     }
 
     // MARK: - Waiting for a Re-Assignment
@@ -54,6 +68,8 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
 
     private var waits: [UUID: Wait] = [:]
 
+    /// Answers on the assignment, at `timeout`, or on cancellation — the three
+    /// ways the real service's wait ends.
     func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
         async -> USBAccessoryInfo?
     {
@@ -61,19 +77,44 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         if let already = accessories.first(where: { $0.identity == identity }) { return already }
         if answersMissingAccessoryImmediately { return nil }
         let token = UUID()
-        return await withCheckedContinuation { continuation in
-            waits[token] = Wait(identity: identity, continuation: continuation)
-            parkedWaitCount += 1
-            waitStarted.notify()
+        let backstop = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            self?.resolveWait(token, with: nil)
+        }
+        defer { backstop.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                waits[token] = Wait(identity: identity, continuation: continuation)
+                parkedWaitCount += 1
+                waitStarted.notify()
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.resolveWait(token, with: nil) }
         }
     }
 
     private func resolveWaits(with info: USBAccessoryInfo) {
         for (token, wait) in waits where wait.identity == info.identity {
-            waits.removeValue(forKey: token)
-            parkedWaitCount -= 1
-            wait.continuation.resume(returning: info)
+            resolveWait(token, with: info)
         }
+    }
+
+    /// Answers every parked wait with "never came back", standing in for the
+    /// deadline expiring without depending on the clock — so a test can drive
+    /// an accessory that never returns as an event like any other.
+    func abandonPendingWaits() {
+        for token in waits.keys { resolveWait(token, with: nil) }
+    }
+
+    private func resolveWait(_ token: UUID, with info: USBAccessoryInfo?) {
+        guard let wait = waits.removeValue(forKey: token) else { return }
+        parkedWaitCount -= 1
+        wait.continuation.resume(returning: info)
     }
 
     // MARK: - Suspension
@@ -135,7 +176,7 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         registryID: UInt64, vendorID: UInt16 = 0x0403, productID: UInt16 = 0x6001,
         deviceClass: UInt8 = 0xFF, deviceVersion: UInt16 = 0x0100,
         serial: String? = nil, receptacle: String? = nil, vendorName: String? = nil,
-        productName: String? = nil
+        productName: String? = nil, claimedBy held: [USBAccessoryInfo] = []
     ) -> USBAccessoryInfo {
         let descriptor = USBDeviceDescriptor(
             usbVersion: 0x0200, deviceClass: deviceClass, deviceSubClass: 0,
@@ -149,6 +190,6 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
                 serialNumberIndex: serial == nil ? 0 : 3, ioPortPath: receptacle)
         return USBAccessoryInfo.make(
             registryID: registryID, descriptor: descriptor, configurationDescriptor: nil,
-            node: node)
+            node: node, claimedBy: held)
     }
 }

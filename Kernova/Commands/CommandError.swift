@@ -30,6 +30,12 @@ enum CommandError: Error, Sendable, Equatable {
     /// an attachment. The string names what was looked for, in the words the
     /// user reads.
     case itemNotFound(vm: VMSummary, item: String)
+    /// Something the verb named on the host did not answer — a USB accessory
+    /// macOS has not assigned to Kernova. The host-scoped sibling of
+    /// ``itemNotFound(vm:item:)``, for the same reason
+    /// ``unsupportedByBuild(capability:)`` is one: naming a VM would describe
+    /// something the caller never asked about.
+    case itemNotFoundOnHost(item: String)
     /// More than one VM answers to the selector; the candidates say which.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
@@ -95,6 +101,8 @@ extension CommandError {
             .notFound(selector: selector)
         case .itemNotFound(let vm, let item):
             .itemNotFound(vm: vm, item: item)
+        case .itemNotFoundOnHost(let item):
+            .itemNotFoundOnHost(item: item)
         case .ambiguous(let selector, let candidates):
             .ambiguous(selector: selector, candidates: candidates)
         case .invalidState(let vm, let current, let allowed):

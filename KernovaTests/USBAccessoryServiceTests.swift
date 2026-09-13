@@ -9,7 +9,8 @@ import Testing
 @Suite("USBAccessoryService Tests", .admissionGated)
 @MainActor
 struct USBAccessoryServiceTests {
-    private let identity = USBAccessoryIdentity(key: "04e8:6300:1100:0373", form: .serialNumber)
+    private let identity = USBAccessoryIdentity(
+        key: "04e8:6300:1100:0373", form: .serialNumber, receptacleKey: "hub/Port-USB-C@2")
 
     @Test("A wait for an accessory nothing answers to ends at its backstop")
     func aWaitForAMissingAccessoryGivesUp() async throws {

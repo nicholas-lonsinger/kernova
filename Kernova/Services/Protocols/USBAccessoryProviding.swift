@@ -35,6 +35,18 @@ protocol USBAccessoryProviding: AnyObject {
     /// Called when a newly assigned accessory arrives.
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)? { get set }
 
+    /// What the guests are holding, asked whenever a new assignment's identity
+    /// is composed.
+    ///
+    /// macOS withdraws an accessory a guest has captured, so `accessories`
+    /// alone says a key is free while a guest's record still answers to it —
+    /// and a second unit reporting the same serial would take that key and be
+    /// read as the first one coming back from a detach.
+    ///
+    /// `nil` is "no guest holds anything", which is what a harness with no
+    /// roster means.
+    var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])? { get set }
+
     /// Registers the listener that populates `accessories`. Idempotent; the
     /// registration lives for the process.
     func startObserving()
@@ -48,6 +60,10 @@ protocol USBAccessoryProviding: AnyObject {
     /// — under a second with the host idle, and far longer when it has a
     /// volume to unmount first. Event-driven for that reason: the wait ends on
     /// the assignment, and `timeout` is only the backstop.
+    ///
+    /// `identity` carries the receptacle the unit was in, so an accessory
+    /// reporting the same serial from somewhere else answers nothing here.
+    /// Cancelling the calling task ends the wait with `nil` immediately.
     func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
         async -> USBAccessoryInfo?
 

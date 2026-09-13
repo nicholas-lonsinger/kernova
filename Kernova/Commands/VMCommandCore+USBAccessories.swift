@@ -7,8 +7,9 @@ import KernovaKit
 /// Every one of them refuses on the capability first, so a build that cannot
 /// pass accessories through answers the same way whichever verb asks.
 extension VMCommandCore {
-    /// What a refusal calls the capability, completing "This virtual machine
-    /// does not support …".
+    /// What a refusal calls the capability, completing "This build of Kernova
+    /// does not support …" — or, for the one VM-scoped cause, "This virtual
+    /// machine does not support …".
     private static let usbAccessoryCapability = "USB accessory passthrough"
 
     // MARK: - Reads
@@ -22,10 +23,7 @@ extension VMCommandCore {
     }
 
     func availableUSBAccessories() throws -> [USBAccessorySummary] {
-        // Host-scoped: this names no VM, so a refusal must not describe one.
-        guard let service = lifecycle.usbAccessoryService else {
-            throw CommandError.unsupportedByBuild(capability: Self.usbAccessoryCapability)
-        }
+        let service = try requireUSBAccessoryService()
         let held = heldAccessoryIDs()
         let names = listingNames()
         return service.accessories
@@ -36,7 +34,15 @@ extension VMCommandCore {
     // MARK: - Edits
 
     func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
-        let (instance, sessionID) = try admitUSBAccessoryEdit(selector)
+        let (instance, sessionID, service) = try admitUSBAccessoryEdit(selector)
+        // An accessory macOS has not assigned to Kernova is a miss, not a
+        // failed attach: the caller named something that is not there, and the
+        // thing that is not there is the accessory rather than anything about
+        // the VM.
+        guard service.accessories.contains(where: { $0.registryID == registryID }) else {
+            throw CommandError.itemNotFoundOnHost(
+                item: "USB accessory with the identifier \(registryID)")
+        }
         // A guest captures an accessory exclusively, so a second attach could
         // only fail inside VZ. Refusing here is what makes the listings' filter
         // a presentation detail rather than the only thing standing between two
@@ -58,7 +64,7 @@ extension VMCommandCore {
     }
 
     func detachUSBAccessory(_ selector: VMSelector, device deviceID: UUID) async throws {
-        let (instance, sessionID) = try admitUSBAccessoryEdit(selector)
+        let (instance, sessionID, _) = try admitUSBAccessoryEdit(selector)
         // An identifier no attachment answers to is a refusal, not a quiet
         // success: the lifecycle treats a device VZ has already let go as done,
         // which is right for an unplug that got there first and wrong for a
@@ -78,28 +84,36 @@ extension VMCommandCore {
         }
     }
 
-    /// The VM an accessory edit acts on and the session it acts for, or the
-    /// refusal the build, the selector or the VM's state owes first.
+    /// The VM an accessory edit acts on, the session it acts for and the
+    /// service that performs it — or the refusal the build, the selector or the
+    /// VM's state owes first.
     ///
     /// The session is read here and carried into the lifecycle call, so an edit
     /// overtaken by a stop refuses rather than driving the controller of
     /// whichever session came next.
-    private func admitUSBAccessoryEdit(_ selector: VMSelector) throws -> (VMInstance, UUID) {
-        try requireUSBAccessoryService()
+    private func admitUSBAccessoryEdit(
+        _ selector: VMSelector
+    ) throws -> (VMInstance, UUID, any USBAccessoryProviding) {
+        let service = try requireUSBAccessoryService()
         let instance = try resolve(selector)
         try require(.editUSBAccessories, on: instance)
         guard let sessionID = instance.attachableSessionID else { throw invalidState(instance) }
-        return (instance, sessionID)
+        return (instance, sessionID, service)
     }
 
     // MARK: - Support
 
     /// The service that moves accessories on and off a guest, or the refusal a
     /// build without the capability owes.
+    ///
+    /// The cause is the build — the OS version, or a signature without the
+    /// entitlement — so the refusal says so. The one genuinely VM-scoped cause
+    /// is a VM configured without a USB controller, which ``usbRefusal(_:on:)``
+    /// answers separately.
     @discardableResult
     private func requireUSBAccessoryService() throws -> any USBAccessoryProviding {
         guard let service = lifecycle.usbAccessoryService else {
-            throw CommandError.unsupported(capability: Self.usbAccessoryCapability)
+            throw CommandError.unsupportedByBuild(capability: Self.usbAccessoryCapability)
         }
         return service
     }

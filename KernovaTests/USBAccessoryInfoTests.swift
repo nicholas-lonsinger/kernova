@@ -50,12 +50,19 @@ struct USBAccessoryInfoTests {
 
     private func info(
         descriptor: Data, configuration: Data? = nil, node: USBAccessoryNodeProperties? = nil,
-        registryID: UInt64 = 1
+        registryID: UInt64 = 1, claimedBy held: [USBAccessoryInfo] = []
     ) throws -> USBAccessoryInfo {
         let parsed = try #require(USBDeviceDescriptor.parse(descriptor))
         return USBAccessoryInfo.make(
             registryID: registryID, descriptor: parsed, configurationDescriptor: configuration,
-            node: node)
+            node: node, claimedBy: held)
+    }
+
+    /// A node reporting a serial, in a named receptacle — the shape every
+    /// question about which unit a key names is asked in.
+    private func node(serial: String, in receptacle: String) -> USBAccessoryNodeProperties {
+        USBAccessoryNodeProperties(
+            serialNumber: serial, serialNumberIndex: 3, ioPortPath: receptacle)
     }
 
     // MARK: - Device Descriptor Parsing
@@ -263,6 +270,34 @@ struct USBAccessoryInfoTests {
         let names = USBAccessoryInfo.listingNames(for: [first, second])
         #expect(names[1] == "Samsung Type-C")
         #expect(names[2] == "Samsung Type-C")
+    }
+
+    // MARK: - Keys Another Unit Already Holds
+
+    @Test("An accessory coming back in the receptacle a key was taken from retakes it")
+    func theEchoOfADetachRetakesItsKey() throws {
+        let held = try info(descriptor: descriptorBytes(), node: node(serial: "0373", in: "hub/A@1"))
+        // The same stick after the reset a detach causes: new registry ID, same
+        // serial, same hole in the side of the machine. It has to answer to the
+        // key the record still naming it carries, or that record can never be
+        // reconciled and the capture that ejected it can never find it.
+        let echo = try info(
+            descriptor: descriptorBytes(), node: node(serial: "0373", in: "hub/A@1"),
+            registryID: 2, claimedBy: [held])
+
+        #expect(echo.identity == held.identity)
+        #expect(echo.identity?.form == .serialNumber)
+    }
+
+    @Test("A second unit reporting the same serial elsewhere is keyed by its port instead")
+    func aDuplicateSerialInAnotherReceptacleTakesTheWeakKey() throws {
+        let held = try info(descriptor: descriptorBytes(), node: node(serial: "0373", in: "hub/A@1"))
+        let second = try info(
+            descriptor: descriptorBytes(), node: node(serial: "0373", in: "hub/A@2"),
+            registryID: 2, claimedBy: [held])
+
+        #expect(second.identity?.form == .receptacle)
+        #expect(second.identity != held.identity)
     }
 
     // MARK: - Attachment

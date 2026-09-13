@@ -11,7 +11,7 @@ extension CommandError {
     /// refusals the tool tells apart by exit code fold into them.
     var appleEventErrorNumber: Int {
         switch self {
-        case .notFound, .itemNotFound, .ambiguous:
+        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous:
             Int(errAENoSuchObject)
         case .invalidArgument:
             Int(errAETypeError)

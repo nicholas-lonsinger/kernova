@@ -111,6 +111,37 @@ struct USBAccessoryIdentityTests {
         #expect(first != second)
     }
 
+    @Test("Two units answering to one key in two receptacles are two identities")
+    func theReceptacleSeparatesTwoUnitsSharingAKey() throws {
+        // Composed blind of each other, as two accessories assigned while
+        // neither is claimed: the key each takes is the same, and what tells
+        // them apart is where each one is.
+        let first = try #require(
+            USBAccessoryIdentity.make(
+                descriptor: descriptor,
+                node: node(serial: "DUP", serialIndex: 3, ioPortPath: "hub/Port-A@1"),
+                claimedBy: []))
+        let second = try #require(
+            USBAccessoryIdentity.make(
+                descriptor: descriptor,
+                node: node(serial: "DUP", serialIndex: 3, ioPortPath: "hub/Port-A@2"),
+                claimedBy: []))
+        #expect(first.key == second.key)
+        #expect(first.receptacleKey == "hub/Port-A@1")
+        #expect(first != second)
+    }
+
+    @Test("Has no identity when the port key is claimed as well")
+    func aClaimedPortKeyLeavesNothingToTake() {
+        // Taking either would name a device that is somewhere else, which is
+        // worse than having no durable key at all.
+        #expect(
+            USBAccessoryIdentity.make(
+                descriptor: descriptor,
+                node: node(serial: "DUP", serialIndex: 3, ioPortPath: "hub/Port-A@1"),
+                claimedBy: ["04e8:6300:1100:DUP", "04e8:6300:1100@hub/Port-A@1"]) == nil)
+    }
+
     @Test("Keeps the serial key for a unit whose duplicate is already keyed on its port")
     func aPortKeyedDuplicateDoesNotClaimTheSerial() throws {
         // The order the two arrive in decides which form each takes, and the

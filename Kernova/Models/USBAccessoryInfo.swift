@@ -24,25 +24,51 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     /// Describes the accessory `registryID` names.
     ///
     /// `node` is what the IORegistry reports about it, `nil` when no node
-    /// answered. `claimed` is the identity key of every accessory Kernova
-    /// already holds — see ``USBAccessoryIdentity/make(descriptor:node:claimedBy:)``.
+    /// answered. `held` is every accessory some unit already answers to —
+    /// assigned to Kernova, or captured by a guest — and decides which keys are
+    /// still free for this one, see
+    /// ``USBAccessoryIdentity/make(descriptor:node:claimedBy:)``.
     static func make(
         registryID: UInt64,
         descriptor: USBDeviceDescriptor,
         configurationDescriptor: Data?,
         node: USBAccessoryNodeProperties?,
-        claimedBy claimed: Set<String> = []
+        claimedBy held: [USBAccessoryInfo] = []
     ) -> USBAccessoryInfo {
         USBAccessoryInfo(
             registryID: registryID,
             descriptor: descriptor,
             identity: node.flatMap {
-                USBAccessoryIdentity.make(descriptor: descriptor, node: $0, claimedBy: claimed)
+                USBAccessoryIdentity.make(
+                    descriptor: descriptor, node: $0,
+                    claimedBy: keysClaimedAgainst(arrivalIn: $0.receptacleKey, by: held))
             },
             displayName: name(
                 descriptor: descriptor, configurationDescriptor: configurationDescriptor,
                 node: node),
             receptacleLabel: node?.receptacleLabel)
+    }
+
+    /// The keys `held` holds that an accessory arriving in `receptacle` may not
+    /// take.
+    ///
+    /// A key held by a unit in that same receptacle is not among them:
+    /// detaching a passthrough device resets it, and what macOS hands back
+    /// about 700 ms later is the same stick in the same hole. It has to retake
+    /// its key, or the record still naming it could never be reconciled and the
+    /// accessory a warm capture ejected could never be found again. Every other
+    /// key belongs to a unit somewhere else — a second one of a model whose
+    /// vendor duplicated the serial, above all — and handing it the same key
+    /// would make one indistinguishable from the other.
+    private static func keysClaimedAgainst(
+        arrivalIn receptacle: String?, by held: [USBAccessoryInfo]
+    ) -> Set<String> {
+        Set(
+            held.compactMap { holder -> String? in
+                guard let identity = holder.identity else { return nil }
+                guard receptacle == nil || identity.receptacleKey != receptacle else { return nil }
+                return identity.key
+            })
     }
 
     /// What to call this accessory.

@@ -14,6 +14,7 @@ import os
 final class USBAccessoryService: USBAccessoryProviding {
     private(set) var accessories: [USBAccessoryInfo] = []
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
+    var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])?
 
     /// The live `AAUSBAccessory` behind each entry in `accessories`. VZ needs
     /// the object itself to capture the device; every other layer names it by
@@ -86,22 +87,17 @@ final class USBAccessoryService: USBAccessoryProviding {
         }
 
         let node = registry.properties(ofAccessory: registryID)
-        if node == nil {
-            Self.logger.warning(
-                "No IORegistry node answered for USB accessory \(registryID): it can be attached, but not recognised if it is detached and comes back"
-            )
-        } else if node?.declaresSerialNumber == true, node?.serialNumber == nil {
-            Self.logger.warning(
-                "USB accessory \(registryID) declares a serial number its IORegistry node does not carry: identifying it by its port instead"
-            )
-        }
-
+        // What a guest is holding counts as claimed even though macOS withdrew
+        // it: the guest's record still answers to that key, and a second unit
+        // reporting the same serial would otherwise be taken for that one
+        // coming back from a detach.
         let info = USBAccessoryInfo.make(
             registryID: registryID,
             descriptor: descriptor,
             configurationDescriptor: accessory.configurationDescriptorData,
             node: node,
-            claimedBy: Set(accessories.compactMap { $0.identity?.key }))
+            claimedBy: accessories + (accessoriesHeldByGuests?() ?? []))
+        logIdentityGaps(registryID, node: node, identity: info.identity)
         held[registryID] = accessory
         accessories.append(info)
         Self.logger.notice(
@@ -120,6 +116,43 @@ final class USBAccessoryService: USBAccessoryProviding {
         guard held.removeValue(forKey: registryID) != nil else { return }
         accessories.removeAll { $0.registryID == registryID }
         Self.logger.notice("USB accessory withdrawn from Kernova: \(registryID)")
+    }
+
+    /// Says why an assignment carries no durable key.
+    ///
+    /// Each shape is a `.warning` with the same consequence: what comes back
+    /// after a detach cannot be recognised as this unit, so a warm capture
+    /// cannot put it back on the guest and a stale record of it cannot be
+    /// reconciled. A node that answers while carrying neither a serial index
+    /// nor a receptacle is also the shape a denied property read takes —
+    /// `IORegistryEntryCreateCFProperties` reports success with the keys
+    /// missing.
+    private func logIdentityGaps(
+        _ registryID: UInt64, node: USBAccessoryNodeProperties?, identity: USBAccessoryIdentity?
+    ) {
+        guard let node else {
+            Self.logger.warning(
+                "No IORegistry node answered for USB accessory \(registryID): it can be attached, but not recognised if it is detached and comes back"
+            )
+            return
+        }
+        guard identity == nil else {
+            if node.declaresSerialNumber, node.serialNumber == nil {
+                Self.logger.warning(
+                    "USB accessory \(registryID) declares a serial number its IORegistry node does not carry: identifying it by its port instead"
+                )
+            }
+            return
+        }
+        if node.receptacleKey == nil {
+            Self.logger.warning(
+                "USB accessory \(registryID) reported neither a serial number nor a receptacle: it can be attached, but not recognised if it is detached and comes back"
+            )
+        } else {
+            Self.logger.warning(
+                "USB accessory \(registryID) answers to a serial and a port another accessory already holds: it can be attached, but not recognised if it is detached and comes back"
+            )
+        }
     }
 
     /// How the log names an accessory's durable key.
@@ -146,8 +179,21 @@ final class USBAccessoryService: USBAccessoryProviding {
         }
         defer { backstop.cancel() }
 
-        return await withCheckedContinuation { continuation in
-            pendingMatches[token] = PendingMatch(identity: identity, continuation: continuation)
+        // Cancellation ends the wait at once rather than at the backstop: the
+        // caller that cancels has stopped having anywhere to put the accessory,
+        // and a parked continuation would hold its operation open until the
+        // deadline. The in-line check covers a caller already cancelled when it
+        // arrived, whose handler has run before the continuation exists.
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                pendingMatches[token] = PendingMatch(identity: identity, continuation: continuation)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.resolvePendingMatch(token, with: nil) }
         }
     }
 

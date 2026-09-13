@@ -33,15 +33,25 @@ struct USBAccessoryRegistry: USBAccessoryRegistryReading {
     }
 
     /// The registry path of the service controlling the receptacle this node
-    /// sits behind.
+    /// sits in.
     ///
-    /// Searched upward because the property belongs to the port node, not the
-    /// device: a device is a child of the port it is plugged into.
+    /// Read one level up because the property belongs to the port node, not the
+    /// device: a device is a child of the port it is plugged into. Only that
+    /// one level — a search up the whole parent chain answers for the
+    /// machine's own receptacle from anywhere below it, which would give every
+    /// device behind one hub the same key and make them one unit to anything
+    /// matching on it. A hub's own ports carry no such property, so a device
+    /// behind one has none here and is keyed by its `locationID` instead.
     private func ioPortPath(above node: io_service_t) -> String? {
-        IORegistryEntrySearchCFProperty(
-            node, kIOServicePlane,
-            kUSBHostPortPropertyIOPortServicePath as CFString, kCFAllocatorDefault,
-            IOOptionBits(kIORegistryIterateParents | kIORegistryIterateRecursively)) as? String
+        var port: io_registry_entry_t = IO_OBJECT_NULL
+        guard IORegistryEntryGetParentEntry(node, kIOServicePlane, &port) == KERN_SUCCESS,
+            port != IO_OBJECT_NULL
+        else { return nil }
+        defer { IOObjectRelease(port) }
+
+        return IORegistryEntryCreateCFProperty(
+            port, kUSBHostPortPropertyIOPortServicePath as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? String
     }
 
     /// A descriptor index as the registry carries it — an `OSNumber` Kernova

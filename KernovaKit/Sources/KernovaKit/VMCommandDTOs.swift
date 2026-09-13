@@ -318,6 +318,10 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// The VM answered; something the verb named *on* it did not. `item` is
     /// what was looked for, in the words the user reads.
     case itemNotFound(vm: VMSummary, item: String)
+    /// Something the verb named on the host did not answer, and no VM was
+    /// named — a USB accessory macOS has not assigned to Kernova, where naming
+    /// a virtual machine would describe something the caller never asked about.
+    case itemNotFoundOnHost(item: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
     /// The guest had not powered off `seconds` after the shutdown request, so
@@ -347,8 +351,8 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .itemNotFound, .ambiguous, .busy, .unsupported, .unsupportedByBuild,
-            .invalidState, .timedOut, .invalidArgument:
+        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .unsupported,
+            .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -370,6 +374,8 @@ extension CommandErrorDTO {
             "No virtual machine named \u{201C}\(selector.displayText)\u{201D}."
         case .itemNotFound(let vm, let item):
             "\u{201C}\(vm.name)\u{201D} has no \(item)."
+        case .itemNotFoundOnHost(let item):
+            "Kernova has no \(item)."
         case .ambiguous(let selector, let candidates):
             "\u{201C}\(selector.displayText)\u{201D} names \(candidates.count) virtual machines. "
                 + "Use one of their identifiers instead: "

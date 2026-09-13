@@ -32,16 +32,26 @@ struct USBAccessoryIdentity: Sendable, Equatable, Hashable {
     /// Which of the two `key` is, so a caller can tell a claim about a unit
     /// from a claim about a port.
     let form: Form
+    /// The receptacle the unit was in when this was composed, `nil` when the
+    /// node named none.
+    ///
+    /// Compared alongside ``key``, so two accessories are equal only when they
+    /// are the same unit in the same place. The echo of a detach comes back in
+    /// the receptacle it left; a second unit of a model whose vendor duplicated
+    /// the serial arrives in a different one, and a key alone cannot tell those
+    /// apart.
+    let receptacleKey: String?
 
     /// The identity of the accessory `descriptor` describes on the node
-    /// `node` describes, or `nil` when neither a serial nor a receptacle is
-    /// readable and nothing durable names it.
+    /// `node` describes, or `nil` when nothing durable is left to name it —
+    /// neither a serial nor a receptacle is readable, or both keys it could
+    /// compose are already spoken for.
     ///
-    /// `claimed` is the key of every accessory Kernova already holds. A serial
-    /// one of them already answers to cannot name this unit as well — vendors
-    /// ship duplicates, and the USB 2.0 spec makes the serial optional in the
-    /// first place — so the newcomer falls back to its receptacle rather than
-    /// claiming a key that would match the wrong device.
+    /// `claimed` is the key of every accessory another unit already answers to.
+    /// A serial one of them holds cannot name this unit as well — vendors ship
+    /// duplicates, and the USB 2.0 spec makes the serial optional in the first
+    /// place — so the newcomer falls back to its receptacle, and gives up
+    /// rather than take a key that would match the wrong device.
     ///
     /// Composed once, at assignment, and never recomposed: a key already
     /// handed out has to keep naming the same unit for as long as Kernova
@@ -52,11 +62,17 @@ struct USBAccessoryIdentity: Sendable, Equatable, Hashable {
         claimedBy claimed: Set<String>
     ) -> USBAccessoryIdentity? {
         let model = descriptor.modelKey
+        let receptacle = node.receptacleKey
         if let serial = node.serialNumber, !serial.isEmpty {
             let key = "\(model):\(serial)"
-            if !claimed.contains(key) { return USBAccessoryIdentity(key: key, form: .serialNumber) }
+            if !claimed.contains(key) {
+                return USBAccessoryIdentity(
+                    key: key, form: .serialNumber, receptacleKey: receptacle)
+            }
         }
-        guard let receptacle = node.receptacleKey else { return nil }
-        return USBAccessoryIdentity(key: "\(model)@\(receptacle)", form: .receptacle)
+        guard let receptacle else { return nil }
+        let key = "\(model)@\(receptacle)"
+        guard !claimed.contains(key) else { return nil }
+        return USBAccessoryIdentity(key: key, form: .receptacle, receptacleKey: receptacle)
     }
 }
