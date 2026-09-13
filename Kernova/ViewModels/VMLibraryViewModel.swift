@@ -604,9 +604,17 @@ final class VMLibraryViewModel {
 
     /// Drops one remembered accessory from `instance`, so it stays with the Mac
     /// next time it is plugged in.
+    ///
+    /// Not through ``runEdit(on:_:)``: that logs an operation failure and says
+    /// nothing, which is right for an attachment edit a live guest refused and
+    /// wrong here. A write that did not reach the bundle takes the row off the
+    /// list while the rule stays on disk, so the accessory goes back to this VM
+    /// at the next launch — the user has to be told, or the list is lying.
     func forgetUSBAccessory(key: String, on instance: VMInstance) {
-        runEdit(on: instance) {
-            try self.commands.forgetUSBPairing(.id(instance.id), key: key)
+        do {
+            try commands.forgetUSBPairing(.id(instance.id), key: key)
+        } catch {
+            present(error, for: instance)
         }
     }
 

@@ -292,6 +292,92 @@ struct USBAccessoryCoordinatorTests {
         #expect(recorder.requests[1].accessory.registryID == 2)
     }
 
+    @Test("A queued prompt names the guests running when it is raised")
+    func aQueuedPromptRederivesItsCandidates() throws {
+        let service = MockUSBAccessoryService()
+        let first = makeInstance(sessionID: UUID(), named: "First")
+        let second = makeStoppedInstance(named: "Second")
+        let recorder = PromptRecorder()
+        let coordinator = try makeCoordinator(
+            makeLifecycle(service), roster: StubVMInstanceRoster([first, second]))
+        defer { withExtendedLifetime(coordinator) {} }
+        coordinator.onPairingNeeded = { recorder.requests.append($0) }
+        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
+        #expect(recorder.requests.first?.candidates.map(\.id) == [first.id])
+
+        // The library moves on while the second accessory waits its turn.
+        first.tearDownSession(restingAt: .stopped)
+        second.beginSessionContext()
+        second.enter(.running(sessionID: UUID()))
+        recorder.requests[0].answer(nil)
+
+        // Offering the guest that has since stopped would refuse the attach the
+        // answer runs, and leave the one that is running unoffered.
+        #expect(recorder.requests.count == 2)
+        #expect(recorder.requests[1].candidates.map(\.id) == [second.id])
+    }
+
+    @Test("A queued prompt is held when nothing is running by the time it is raised")
+    func aQueuedPromptWithNoCandidatesIsHeld() throws {
+        let service = MockUSBAccessoryService()
+        let instance = makeInstance(sessionID: UUID())
+        let recorder = PromptRecorder()
+        let coordinator = try makeCoordinator(
+            makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        coordinator.onPairingNeeded = { recorder.requests.append($0) }
+        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
+
+        instance.tearDownSession(restingAt: .stopped)
+        recorder.requests[0].answer(nil)
+
+        #expect(recorder.requests.count == 1)
+    }
+
+    @Test("A queued prompt whose accessory has gone is dropped rather than raised")
+    func aQueuedPromptForADepartedAccessoryIsDropped() throws {
+        let service = MockUSBAccessoryService()
+        let instance = makeInstance(sessionID: UUID())
+        let recorder = PromptRecorder()
+        let coordinator = try makeCoordinator(
+            makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        coordinator.onPairingNeeded = { recorder.requests.append($0) }
+        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 3, serial: "C"))
+
+        // Unplugged, or handed to another app, while it waited its turn.
+        service.accessories.removeAll { $0.registryID == 2 }
+        recorder.requests[0].answer(nil)
+
+        // The one behind it is still there and is asked about instead.
+        #expect(recorder.requests.count == 2)
+        #expect(recorder.requests[1].accessory.registryID == 3)
+    }
+
+    @Test("A queued prompt for an accessory a guest has taken is dropped")
+    func aQueuedPromptForAHeldAccessoryIsDropped() async throws {
+        let service = MockUSBAccessoryService()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let lifecycle = makeLifecycle(service)
+        let recorder = PromptRecorder()
+        let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        coordinator.onPairingNeeded = { recorder.requests.append($0) }
+        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
+
+        // Placed from the USB Device menu while its prompt waited its turn.
+        try await lifecycle.attachUSBAccessory(2, to: instance, for: sessionID)
+        recorder.requests[0].answer(nil)
+
+        #expect(recorder.requests.count == 1)
+    }
+
     @Test("Answering the same prompt twice raises nothing extra")
     func aSecondAnswerToOnePromptIsIgnored() throws {
         let service = MockUSBAccessoryService()

@@ -126,13 +126,35 @@ struct AlertConfiguration {
     }
 }
 
+/// What a sheet alert's dismissal does, in the order its callers' state
+/// machines depend on.
+///
+/// `didDismiss` runs first because the sheet is already off screen by then:
+/// state meaning *an alert is up* has to be clear before the chosen button's
+/// action, or an action that puts up its own alert is refused by the flag its
+/// own dismissal is about to drop. `completion` runs last, once the action has
+/// had its turn — which is what lets a queue drain into the slot the action did
+/// not take.
+@MainActor
+func makeSheetAlertDismissal(
+    buttons: [AlertButton], didDismiss: (() -> Void)?, completion: (() -> Void)?
+) -> @MainActor (NSApplication.ModalResponse) -> Void {
+    { response in
+        didDismiss?()
+        dispatchAction(for: response, buttons: buttons)
+        completion?()
+    }
+}
+
 /// Presents an `NSAlert` as a window-modal sheet on `window`.
 ///
-/// `completion` fires after the user's chosen button action has run.
+/// The two hooks fire either side of the chosen button's action — see
+/// ``makeSheetAlertDismissal(buttons:didDismiss:completion:)``.
 @MainActor
 func presentSheetAlert(
     _ config: AlertConfiguration,
     in window: NSWindow,
+    didDismiss: (() -> Void)? = nil,
     completion: (() -> Void)? = nil
 ) {
     assert(
@@ -149,9 +171,10 @@ func presentSheetAlert(
         configureNSAlertButton(nsButton, role: button.role)
     }
 
+    let dismissal = makeSheetAlertDismissal(
+        buttons: config.buttons, didDismiss: didDismiss, completion: completion)
     alert.beginSheetModal(for: window) { response in
-        dispatchAction(for: response, buttons: config.buttons)
-        completion?()
+        dismissal(response)
     }
 }
 

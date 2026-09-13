@@ -64,11 +64,14 @@ final class USBAccessoryCoordinator {
     /// and leaves the accessory with the host, one menu item from being placed.
     private var releasedByUser: Set<USBAccessoryIdentity> = []
 
-    /// Prompts not yet raised, and the one that is.
+    /// Accessories waiting to be asked about, and the prompt on screen.
     ///
-    /// macOS re-assigns every accessory after a fast user switch, so a machine
-    /// with several unpaired ones would otherwise raise several alerts at once.
-    private var pendingPrompts: [USBAccessoryPairingRequest] = []
+    /// Queued by `registryID` rather than as a built request: macOS re-assigns
+    /// every accessory after a fast user switch, so several can be waiting at
+    /// once, and by the time one reaches the front the guests that could take
+    /// it — and whether the accessory is even still assigned — have had time to
+    /// change. Everything the prompt says is derived when it is raised.
+    private var pendingPrompts: [UInt64] = []
     private var outstandingPromptID: UUID?
 
     /// Asks the user which guest an unpaired accessory should go to.
@@ -277,41 +280,76 @@ final class USBAccessoryCoordinator {
 
     /// Offers `info` to the running guests, or holds it when there are none.
     private func offerToRunningGuests(_ info: USBAccessoryInfo) {
-        let candidates = roster.instances.filter { $0.attachableSessionID != nil }
-        guard !candidates.isEmpty else {
+        guard !runningGuests().isEmpty else {
             Self.logger.notice(
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: no virtual machine is running"
             )
             return
         }
-        let id = UUID()
-        let names = USBAccessoryInfo.listingNames(
-            for: service.accessories + accessoriesHeldByGuests())
-        pendingPrompts.append(
-            USBAccessoryPairingRequest(
-                id: id,
-                accessory: USBAccessorySummary(
-                    registryID: info.registryID,
-                    name: names[info.registryID] ?? info.displayName,
-                    vendorID: info.descriptor.vendorID,
-                    productID: info.descriptor.productID),
-                candidates: candidates,
-                answer: { [weak self] instance in self?.promptAnswered(id, with: instance) }))
+        pendingPrompts.append(info.registryID)
         raiseNextPrompt()
     }
 
+    /// Raises the next accessory worth asking about, skipping the ones that
+    /// stopped being worth asking about while they waited.
+    ///
+    /// Loops rather than recurses so a long queue of stale entries settles in
+    /// one pass.
     private func raiseNextPrompt() {
-        guard outstandingPromptID == nil, !pendingPrompts.isEmpty else { return }
-        let request = pendingPrompts.removeFirst()
-        guard let onPairingNeeded else {
-            Self.logger.notice(
-                "Holding USB accessory \(request.accessory.name, privacy: .public) for the host: there is nowhere to ask which virtual machine should take it"
-            )
-            raiseNextPrompt()
-            return
+        while outstandingPromptID == nil, !pendingPrompts.isEmpty {
+            let registryID = pendingPrompts.removeFirst()
+            // Unplugged, handed to another app, or placed on a guest by hand
+            // while this waited its turn: there is nothing left to ask about.
+            guard let info = service.accessories.first(where: { $0.registryID == registryID }),
+                !accessoriesHeldByGuests().contains(where: { $0.registryID == registryID })
+            else {
+                Self.logger.notice(
+                    "Dropped the question about USB accessory \(registryID): it is no longer Kernova's to place"
+                )
+                continue
+            }
+            // Derived now, not when the accessory arrived: the guest that was
+            // running then may have stopped, and one that was not may have
+            // started.
+            let candidates = runningGuests()
+            guard !candidates.isEmpty else {
+                Self.logger.notice(
+                    "Holding USB accessory \(info.displayName, privacy: .public) for the host: no virtual machine is running"
+                )
+                continue
+            }
+            guard let onPairingNeeded else {
+                Self.logger.notice(
+                    "Holding USB accessory \(info.displayName, privacy: .public) for the host: there is nowhere to ask which virtual machine should take it"
+                )
+                continue
+            }
+            let id = UUID()
+            outstandingPromptID = id
+            onPairingNeeded(
+                USBAccessoryPairingRequest(
+                    id: id,
+                    accessory: summary(of: info),
+                    candidates: candidates,
+                    answer: { [weak self] instance in self?.promptAnswered(id, with: instance) }))
         }
-        outstandingPromptID = request.id
-        onPairingNeeded(request)
+    }
+
+    /// The guests an accessory could be handed to right now.
+    private func runningGuests() -> [VMInstance] {
+        roster.instances.filter { $0.attachableSessionID != nil }
+    }
+
+    /// One accessory as a prompt names it — qualified by its receptacle where
+    /// another accessory Kernova holds would read identically.
+    private func summary(of info: USBAccessoryInfo) -> USBAccessorySummary {
+        let names = USBAccessoryInfo.listingNames(
+            for: service.accessories + accessoriesHeldByGuests())
+        return USBAccessorySummary(
+            registryID: info.registryID,
+            name: names[info.registryID] ?? info.displayName,
+            vendorID: info.descriptor.vendorID,
+            productID: info.descriptor.productID)
     }
 
     /// Releases the prompt slot, ignoring an answer to a prompt that is no

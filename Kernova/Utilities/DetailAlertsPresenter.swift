@@ -104,6 +104,24 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     #if DEBUG
+    /// The shown alert's sheet handler, so a test can deliver a dismissal the
+    /// headless run loop never does — the real one, built by the same call
+    /// `beginSheetModal` was given.
+    private var shownAlertDismissal: (@MainActor (NSApplication.ModalResponse) -> Void)?
+
+    /// Delivers `response` to the alert on screen exactly as its sheet handler
+    /// would, and answers whether there was one.
+    @discardableResult
+    func dismissShownAlertForTesting(_ response: NSApplication.ModalResponse) -> Bool {
+        guard let dismissal = shownAlertDismissal else { return false }
+        shownAlertDismissal = nil
+        dismissal(response)
+        return true
+    }
+
+    /// Whether an alert is on screen.
+    var isShowingAlertForTesting: Bool { isShowingAlert }
+
     /// Number of presentation closures currently queued.
     var pendingCountForTesting: Int { pending.count }
 
@@ -321,12 +339,7 @@ final class DetailAlertsPresenter: NSObject {
             request.answer(nil)
             return
         }
-        isShowingAlert = true
-        presentSheetAlert(USBAccessoryPairingAlert.configuration(for: request), in: window) {
-            [weak self] in
-            self?.isShowingAlert = false
-            self?.runNext()
-        }
+        show(USBAccessoryPairingAlert.configuration(for: request), in: window)
     }
 
     // MARK: - Serialization queue
@@ -348,11 +361,24 @@ final class DetailAlertsPresenter: NSObject {
 
     private func present(_ config: AlertConfiguration) {
         guard let window else { return }
+        show(config, in: window)
+    }
+
+    /// Puts one alert on screen and owns the flag that says so.
+    ///
+    /// The flag drops on dismissal rather than on completion, so a button
+    /// action that raises its own alert — the pairing prompt answering into the
+    /// next queued one — is not refused by the slot it is about to free; the
+    /// queue then drains in `completion`, into whatever slot the action left.
+    private func show(_ config: AlertConfiguration, in window: NSWindow) {
         isShowingAlert = true
-        presentSheetAlert(config, in: window) { [weak self] in
-            self?.isShowingAlert = false
-            self?.runNext()
-        }
+        let didDismiss: () -> Void = { [weak self] in self?.isShowingAlert = false }
+        let completion: () -> Void = { [weak self] in self?.runNext() }
+        #if DEBUG
+        shownAlertDismissal = makeSheetAlertDismissal(
+            buttons: config.buttons, didDismiss: didDismiss, completion: completion)
+        #endif
+        presentSheetAlert(config, in: window, didDismiss: didDismiss, completion: completion)
     }
 
     private func showDeleteSheet() {

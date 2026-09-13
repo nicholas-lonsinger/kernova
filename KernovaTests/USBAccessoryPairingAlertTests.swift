@@ -106,6 +106,25 @@ struct USBAccessoryPairingAlertTests {
         #expect(answer.answered.map { $0?.id } == [work.id])
     }
 
+    @Test("Two guests sharing a name are still told apart")
+    func candidatesSharingANameStayDistinct() throws {
+        let answer = Answer()
+        let first = makeInstance(named: "Work")
+        let second = makeInstance(named: "Work")
+        let configuration = USBAccessoryPairingAlert.configuration(
+            for: makeRequest(candidates: [first, second], answer: answer))
+        let popUp = try #require(chooser(in: configuration))
+
+        // `addItem(withTitle:)` treats a title as an identity, and nothing
+        // makes VM names unique — a row short here would hand the accessory to
+        // a guest the user did not pick and write the pairing against it.
+        #expect(popUp.numberOfItems == 2)
+        popUp.selectItem(at: 1)
+        try #require(configuration.buttons.first).action()
+
+        #expect(answer.answered.map { $0?.id } == [second.id])
+    }
+
     @Test("Pass Through answers with whichever guest the popup is showing")
     func passThroughReadsTheChooser() throws {
         let answer = Answer()
