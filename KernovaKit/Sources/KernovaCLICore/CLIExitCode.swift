@@ -7,7 +7,7 @@ import KernovaKit
 /// A script's whole view of what happened, so every code names one kind of
 /// outcome and every refusal maps here rather than at the call site that
 /// raised it.
-public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
+enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
     case success = 0
     case operationFailed = 1
     case usage = 2
@@ -23,7 +23,7 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
     ///
     /// A `switch` rather than a table, so a code added without a line to
     /// describe it does not compile.
-    public var summary: String {
+    var summary: String {
         switch self {
         case .success: "The verb ran and did what was asked."
         case .operationFailed: "The verb ran and did not complete."
@@ -45,7 +45,7 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
     }
 
     /// The code a verb's own refusal exits with.
-    public init(_ failure: CommandErrorDTO) {
+    init(_ failure: CommandErrorDTO) {
         switch failure {
         case .notFound, .itemNotFound, .itemNotFoundOnHost: self = .notFound
         case .ambiguous: self = .ambiguous
@@ -63,7 +63,7 @@ public enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
     /// A version mismatch is `unavailable`, not a usage error: the command was
     /// well-formed and the app on the other end is simply not one this tool can
     /// talk to.
-    public init(_ refusal: VMCommandTransportRefusal) {
+    init(_ refusal: VMCommandTransportRefusal) {
         switch refusal {
         case .authorizationRefused: self = .authorizationRefused
         case .unsupportedProtocolVersion, .undecodableRequest: self = .unavailable

@@ -8,7 +8,7 @@ extension KernovaCommand {
     /// Neither flag follows Kernova's own clone preference, which is why this
     /// carries no third case: "whatever the app is set to" is the absence of a
     /// flag, not a flag of its own.
-    public enum CloneIdentity: String, EnumerableFlag {
+    enum CloneIdentity: String, EnumerableFlag {
         /// Mint a fresh identity, so both virtual machines can run at once.
         case newIdentity
         /// Keep the source's identity, so the clone is the same machine to its
@@ -24,7 +24,7 @@ extension KernovaCommand {
         }
 
         /// What each flag's help says.
-        public static func help(for value: CloneIdentity) -> ArgumentHelp? {
+        static func help(for value: CloneIdentity) -> ArgumentHelp? {
             switch value {
             case .newIdentity: "Give the clone a fresh machine identity, so both can run at once."
             case .keepIdentity: "Keep the source's machine identity, which the two cannot share."
@@ -33,9 +33,9 @@ extension KernovaCommand {
     }
 
     /// `kernova clone <vm>` — copy a virtual machine into a second one.
-    public struct Clone: GlobalOptionsCommand {
+    struct Clone: GlobalOptionsCommand {
         /// What `kernova clone --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "clone",
             abstract: "Copy a virtual machine into a new one.",
             discussion: "Returns once the copy has finished, printing the new virtual machine the "
@@ -45,25 +45,22 @@ extension KernovaCommand {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// What the clone does with the source's machine identity; absent
         /// follows the app's preference.
         @Flag(exclusivity: .exclusive)
-        public var identity: CloneIdentity?
+        var identity: CloneIdentity?
 
         /// Return as soon as the copy has started.
         @Flag(name: .long, help: "Return without waiting for the copy to finish.")
-        public var noWait = false
+        var noWait = false
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Clones the VM and writes the row the copy produced.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
@@ -77,9 +74,9 @@ extension KernovaCommand {
     }
 
     /// `kernova import <path>` — copy a bundle on this Mac into the library.
-    public struct Import: GlobalOptionsCommand {
+    struct Import: GlobalOptionsCommand {
         /// What `kernova import --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "import",
             abstract: "Copy a virtual machine bundle into the library.",
             discussion: "The bundle at <path> is copied and the original left where it is. When "
@@ -94,30 +91,27 @@ extension KernovaCommand {
         @Argument(
             help: "The path of the virtual machine bundle to import.",
             completion: .file(extensions: [VMBundleFormat.fileExtension]))
-        public var path: String
+        var path: String
 
         /// Return as soon as the copy has started.
         @Flag(name: .long, help: "Return without waiting for the copy to finish.")
-        public var noWait = false
+        var noWait = false
 
         /// How long to wait before giving up; absent waits as long as it takes,
         /// which is what a person answering the permission panel needs.
         @Option(name: .long, help: "Seconds to wait before giving up.")
-        public var timeout: Double?
+        var timeout: Double?
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Refuses a deadline that names no wait.
-        public func validate() throws {
+        func validate() throws {
             try TimeoutOption.validate(timeout)
         }
 
         /// Imports the bundle and writes the row the copy produced.
-        public func run() throws {
+        func run() throws {
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
             let row = try PreparingCopy.importing(
@@ -128,9 +122,9 @@ extension KernovaCommand {
     }
 
     /// `kernova rename <vm> <new-name>` — change a virtual machine's label.
-    public struct Rename: VerbCommand {
+    struct Rename: VerbCommand {
         /// What `kernova rename --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "rename",
             abstract: "Rename a virtual machine.",
             discussion: "A display name is a label rather than an identifier, so one another "
@@ -139,34 +133,31 @@ extension KernovaCommand {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// What to call it instead.
         @Argument(help: "The new display name.")
-        public var newName: String
+        var newName: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .rename(
                 try SelectorParsing.selector(from: vm, forcingID: options.id), newName: newName)
         }
 
         /// Renames the VM.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
 
     /// `kernova delete <vm>` — take a virtual machine out of the library.
-    public struct Delete: VerbCommand {
+    struct Delete: VerbCommand {
         /// What `kernova delete --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "delete",
             abstract: "Delete a virtual machine.",
             discussion: "Moves the virtual machine's bundle to the Trash, leaving external files "
@@ -176,20 +167,17 @@ extension KernovaCommand {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// Delete the bundle outright rather than moving it to the Trash.
         @Flag(name: .long, help: "Delete the bundle immediately, bypassing the Trash.")
-        public var permanent = false
+        var permanent = false
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             // External attachments are left alone: naming which files to take
             // with it is a choice the app's own sheet gathers, and a terminal
             // that cannot show what would go should not decide it silently.
@@ -199,18 +187,18 @@ extension KernovaCommand {
         }
 
         /// Deletes the VM.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
 
     /// `kernova reveal <vm>` — select the bundle in the Finder.
-    public struct Reveal: VerbCommand {
+    struct Reveal: VerbCommand {
         /// What `kernova reveal --help` says.
         ///
         /// The Finder is what comes forward, not Kernova: this answers where
         /// the virtual machine lives, which is a question about a file.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "reveal",
             abstract: "Select a virtual machine's bundle in the Finder.",
             discussion: "A virtual machine still being copied has no bundle to select — its "
@@ -219,21 +207,18 @@ extension KernovaCommand {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .showInFinder(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
         /// Reveals the VM's bundle.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }

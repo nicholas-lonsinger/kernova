@@ -9,15 +9,15 @@ import KernovaKit
 /// are joined here. Encoding writes the summary's own fields into the same
 /// object and adds one key, so the tool's JSON stays the wire's schema rather
 /// than a second declaration of it.
-public struct SnapshotRow: Encodable, Sendable, Hashable {
+struct SnapshotRow: Encodable, Sendable, Hashable {
     /// The restore point itself, exactly as the app described it.
-    public let snapshot: SnapshotSummary
+    let snapshot: SnapshotSummary
     /// Bytes the snapshot's files occupy, `nil` when the size read did not
     /// answer for it.
-    public let onDiskBytes: UInt64?
+    let onDiskBytes: UInt64?
 
     /// Pairs one restore point with its size.
-    public init(_ snapshot: SnapshotSummary, onDiskBytes: UInt64?) {
+    init(_ snapshot: SnapshotSummary, onDiskBytes: UInt64?) {
         self.snapshot = snapshot
         self.onDiskBytes = onDiskBytes
     }
@@ -27,7 +27,7 @@ public struct SnapshotRow: Encodable, Sendable, Hashable {
     }
 
     /// Writes the summary's fields and the size as one flat object.
-    public func encode(to encoder: any Encoder) throws {
+    func encode(to encoder: any Encoder) throws {
         try snapshot.encode(to: encoder)
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(onDiskBytes, forKey: .onDiskBytes)

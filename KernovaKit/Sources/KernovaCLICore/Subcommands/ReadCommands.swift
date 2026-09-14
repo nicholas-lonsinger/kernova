@@ -4,25 +4,22 @@ import KernovaKit
 
 extension KernovaCommand {
     /// `kernova list` — every virtual machine, in the order the sidebar shows.
-    public struct List: VerbCommand {
+    struct List: VerbCommand {
         /// What `kernova list --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "list",
             abstract: "List every virtual machine.")
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .list
         }
 
         /// Reads the library and writes it.
-        public func run() throws {
+        func run() throws {
             let result = try answer()
             guard case .summaries(let rows) = result else { throw result.unexpectedAnswer }
             Console.out(
@@ -33,29 +30,26 @@ extension KernovaCommand {
     }
 
     /// `kernova info <vm>` — everything one virtual machine reports.
-    public struct Info: VerbCommand {
+    struct Info: VerbCommand {
         /// What `kernova info --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "info",
             abstract: "Describe one virtual machine.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .info(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
         /// Reads the VM and writes it.
-        public func run() throws {
+        func run() throws {
             let result = try answer()
             guard case .info(let info) = result else { throw result.unexpectedAnswer }
             Console.out(
@@ -66,43 +60,40 @@ extension KernovaCommand {
     }
 
     /// `kernova ip <vm>` — the guest's address, or why there isn't one.
-    public struct IP: VerbCommand {
+    struct IP: VerbCommand {
         /// What `kernova ip --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "ip",
             abstract: "Print a guest's IP address.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// Keep asking until the guest has an address.
         @Flag(name: .long, help: "Keep asking until the guest has an address.")
-        public var wait = false
+        var wait = false
 
         /// How long `--wait` waits before giving up.
         @Option(name: .long, help: "Seconds to wait before giving up, with --wait.")
-        public var timeout: Double = 300
+        var timeout: Double = 300
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Refuses a deadline that names no wait.
-        public func validate() throws {
+        func validate() throws {
             try TimeoutOption.validate(timeout)
         }
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .ipAddress(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
         /// Reads the address and writes it, or refuses with what stands in its
         /// way.
-        public func run() throws {
+        func run() throws {
             let address = try resolve()
             // Classified before either renderer runs, so both formats exit the
             // same way: an answer that is not an address refuses whether or not
@@ -173,21 +164,18 @@ extension KernovaCommand {
     }
 
     /// `kernova version` — which tool this is.
-    public struct Version: ParsableCommand {
+    struct Version: ParsableCommand {
         /// What `kernova version --help` says.
         ///
         /// It contacts nothing: the tool and the app it was installed from ship
         /// together, so this answers whether the tool works at all, without
         /// launching anything.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "version",
             abstract: "Print this tool's version.")
 
-        /// Creates the subcommand.
-        public init() {}
-
         /// Writes the version.
-        public func run() throws {
+        func run() throws {
             Console.out(KernovaCommand.toolVersion)
         }
     }

@@ -82,7 +82,7 @@ enum TableRenderer {
     ///
     /// `quiet` prints the paths alone, which is exactly what `share remove`
     /// takes back.
-    public static func render(_ rows: [SharedDirectorySummary], quiet: Bool) -> String {
+    static func render(_ rows: [SharedDirectorySummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.path).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
         return columns(
@@ -96,7 +96,7 @@ enum TableRenderer {
     /// remove` names a rule by transport as well as by ports, so every line —
     /// under `quiet` above all — has to be one the same spelling of the verb
     /// takes back.
-    public static func render(_ rules: [PortForwardingRule], quiet: Bool) -> String {
+    static func render(_ rules: [PortForwardingRule], quiet: Bool) -> String {
         guard !quiet else {
             return rules.map(PortMapping.text(for:)).joined(separator: "\n")
         }

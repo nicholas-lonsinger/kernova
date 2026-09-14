@@ -5,28 +5,22 @@ import KernovaKit
 
 extension KernovaCommand {
     /// `kernova quit` — take Kernova down, saving whatever is running.
-    public struct Quit: GlobalOptionsCommand {
+    struct Quit: GlobalOptionsCommand {
         /// What `kernova quit --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "quit",
             abstract: "Quit Kernova, saving any running virtual machines.",
             discussion: "Quitting a Kernova that is not running has already happened, so this is "
                 + "the one verb that never starts it. Returns once macOS has released the app, so "
                 + "a line after this one is free to open it again.")
 
-        // Witnesses `GlobalOptionsCommand.options`, which completion reads through
-        // the protocol; quit itself has no option to act on, and carries the group
-        // so every verb accepts the same flags.
-        // periphery:ignore - protocol witness read only through GlobalOptionsCommand
-        /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        /// The options every subcommand carries. Quit acts on none of them; it
+        /// carries the group so every verb accepts the same flags.
+        @OptionGroup var options: GlobalOptions
 
         /// Quits the app and returns once it has gone, or reports success when
         /// there is none to quit.
-        public func run() throws {
+        func run() throws {
             guard let client = try CommandConnection.openIfRunning() else { return }
             defer { client.close() }
             try client.post(.quit)

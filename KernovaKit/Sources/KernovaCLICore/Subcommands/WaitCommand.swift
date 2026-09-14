@@ -3,7 +3,7 @@ import Foundation
 import KernovaKit
 
 /// What `kernova wait` is waiting for.
-public enum WaitCondition: String, ExpressibleByArgument, Sendable, CaseIterable {
+enum WaitCondition: String, ExpressibleByArgument, Sendable, CaseIterable {
     /// The guest is running.
     case running
     /// The guest is not running.
@@ -35,9 +35,9 @@ public enum WaitCondition: String, ExpressibleByArgument, Sendable, CaseIterable
 
 extension KernovaCommand {
     /// `kernova wait <vm> --until <condition>` — block until a VM gets there.
-    public struct Wait: GlobalOptionsCommand {
+    struct Wait: GlobalOptionsCommand {
         /// What `kernova wait --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "wait",
             abstract: "Block until a virtual machine reaches a state.",
             discussion: "Race-free against a virtual machine already in the state: the app "
@@ -45,29 +45,26 @@ extension KernovaCommand {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The state to wait for.
         @Option(name: .long, help: "The state to wait for: running, stopped, or agent.")
-        public var until: WaitCondition
+        var until: WaitCondition
 
         /// How long to wait before giving up.
         @Option(name: .long, help: "Seconds to wait before giving up.")
-        public var timeout: Double = 300
+        var timeout: Double = 300
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Refuses a deadline that names no wait.
-        public func validate() throws {
+        func validate() throws {
             try TimeoutOption.validate(timeout)
         }
 
         /// Waits, or refuses with what stood in the way.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }

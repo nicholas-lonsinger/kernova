@@ -7,7 +7,7 @@ import KernovaKit
 /// Blocking on purpose: the tool is one request and one answer, so a run loop
 /// would buy nothing and a plain `read`/`write` is what makes the exit code the
 /// only thing a caller has to interpret.
-public final class VMCommandClient {
+final class VMCommandClient {
     private let fd: Int32
     private var decoder = StreamFrameDecoder()
     private var isClosed = false
@@ -18,14 +18,14 @@ public final class VMCommandClient {
     /// exits — which is exactly when a caller wants it. A caller that gets
     /// `nil` has no instance to name and must fall back to whatever it can
     /// identify without one.
-    public let peerProcessIdentifier: pid_t?
+    let peerProcessIdentifier: pid_t?
 
     /// Connects to the socket at `path`.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable`` when nothing
     ///   is listening there — the app is not running, or this build resolves no
     ///   app-group container to hold the socket.
-    public init(socketPath: String) throws {
+    init(socketPath: String) throws {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
             throw CLIFailure(.unavailable, "Could not open a socket: \(Self.reason(errno)).")
@@ -70,7 +70,7 @@ public final class VMCommandClient {
     }
 
     /// Sends one verb and reads the single answer.
-    public func send(_ verb: VMCommandRequest.Verb) throws -> VMCommandResponse {
+    func send(_ verb: VMCommandRequest.Verb) throws -> VMCommandResponse {
         try write(try JSONEncoder().encode(VMCommandRequest(verb: verb)))
         guard let response = try nextResponse() else {
             throw CLIFailure(.unavailable, "Kernova closed the connection without answering.")
@@ -82,7 +82,7 @@ public final class VMCommandClient {
     ///
     /// For a caller reading frames itself — a subscription interleaves the
     /// answers to later verbs with the events it is following.
-    public func post(_ verb: VMCommandRequest.Verb) throws {
+    func post(_ verb: VMCommandRequest.Verb) throws {
         try write(try JSONEncoder().encode(VMCommandRequest(verb: verb)))
     }
 
@@ -90,7 +90,7 @@ public final class VMCommandClient {
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when
     ///   ``waitForFrames(upTo:)`` set a deadline and it expired first.
-    public func nextFrame() throws -> VMCommandResponse? {
+    func nextFrame() throws -> VMCommandResponse? {
         try nextResponse()
     }
 
@@ -100,7 +100,7 @@ public final class VMCommandClient {
     /// a wait cannot outlive it while parked in `read`. Both halves carry it:
     /// an app that has stopped draining its end would otherwise hold a caller
     /// in `write` for as long as it liked, past whatever deadline it set.
-    public func waitForFrames(upTo seconds: TimeInterval) {
+    func waitForFrames(upTo seconds: TimeInterval) {
         var deadline = timeval(
             tv_sec: Int(seconds), tv_usec: Int32((seconds - seconds.rounded(.down)) * 1_000_000))
         for half in [SO_RCVTIMEO, SO_SNDTIMEO] {
@@ -109,7 +109,7 @@ public final class VMCommandClient {
     }
 
     /// Closes the connection; idempotent.
-    public func close() {
+    func close() {
         guard !isClosed else { return }
         isClosed = true
         Darwin.close(fd)
@@ -183,7 +183,7 @@ extension VMCommandResponse {
     ///
     /// The single site any refusal — a verb's or the envelope's — becomes an
     /// exit code and a sentence.
-    public func payload() throws -> Result {
+    func payload() throws -> Result {
         switch result {
         case .failure(let error):
             throw CLIFailure(CLIExitCode(error), Self.message(for: error))

@@ -4,27 +4,23 @@ import KernovaKit
 
 extension KernovaCommand {
     /// `kernova forward` — a virtual machine's host→guest port mappings.
-    public struct Forward: ParsableCommand {
+    struct Forward: ParsableCommand {
         /// What `kernova forward --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "forward",
             abstract: "Work with a virtual machine's forwarded ports.",
             discussion: "Each mapping is written <host-port>:<guest-port>, and covers TCP unless "
                 + "--udp says otherwise. A host port is claimed across every virtual machine on "
                 + "the network, so one another rule already forwards is refused.",
             subcommands: [List.self, Add.self, Remove.self])
-
-        /// Creates the parent command; a bare `kernova forward` prints this
-        /// help.
-        public init() {}
     }
 }
 
 extension KernovaCommand.Forward {
     /// `kernova forward list <vm>` — every mapping the virtual machine carries.
-    public struct List: VerbCommand {
+    struct List: VerbCommand {
         /// What `kernova forward list --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "list",
             abstract: "List a virtual machine's forwarded ports.",
             discussion: "Each rule prints as the <host-port>:<guest-port> mapping `forward "
@@ -32,24 +28,21 @@ extension KernovaCommand.Forward {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// List the UDP rules rather than the TCP ones.
         @Flag(name: .long, help: "List the UDP rules rather than the TCP ones.")
-        public var udp = false
+        var udp = false
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
         ///
         /// One read whichever transport is asked for: the app answers every
         /// rule and `--udp` picks among them here, the way the completion for
         /// `forward remove` reads them too.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .portForwardingRules(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
@@ -66,7 +59,7 @@ extension KernovaCommand.Forward {
         }
 
         /// Reads the rules and writes the ones this spelling covers.
-        public func run() throws {
+        func run() throws {
             let answered = try answer()
             guard case .portForwardingRules(let rules) = answered else {
                 throw answered.unexpectedAnswer
@@ -81,9 +74,9 @@ extension KernovaCommand.Forward {
 
     /// `kernova forward add <vm> <host-port>:<guest-port>` — publish a guest
     /// port on this Mac.
-    public struct Add: VerbCommand {
+    struct Add: VerbCommand {
         /// What `kernova forward add --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "add",
             abstract: "Forward a host port to a guest port.",
             discussion: "The rule is carried by the network the virtual machine is joined to, "
@@ -91,40 +84,37 @@ extension KernovaCommand.Forward {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The mapping to add, written `<host-port>:<guest-port>`.
         @Argument(help: "The mapping to add, as <host-port>:<guest-port>.")
-        public var mapping: String
+        var mapping: String
 
         /// Forward UDP rather than TCP.
         @Flag(name: .long, help: "Forward UDP rather than TCP.")
-        public var udp = false
+        var udp = false
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .editPortForwarding(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
                 .add(rule: try PortMapping.rule(from: mapping, transport: udp ? .udp : .tcp)))
         }
 
         /// Adds the rule.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
 
     /// `kernova forward remove <vm> <host-port>:<guest-port>` — stop
     /// publishing one.
-    public struct Remove: VerbCommand, VMScopedCommandLine {
+    struct Remove: VerbCommand, VMScopedCommandLine {
         /// What `kernova forward remove --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "remove",
             abstract: "Stop forwarding a host port to a guest port.",
             discussion: "A network carries one rule per transport and host port, so the host "
@@ -133,26 +123,23 @@ extension KernovaCommand.Forward {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The mapping to drop, written `<host-port>:<guest-port>`.
         @Argument(
             help: "The mapping to drop, as <host-port>:<guest-port>.",
             completion: CompletionSource.portMapping)
-        public var mapping: String
+        var mapping: String
 
         /// Drop a UDP rule rather than a TCP one.
         @Flag(name: .long, help: "Drop the UDP rule rather than the TCP one.")
-        public var udp = false
+        var udp = false
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .editPortForwarding(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
                 .remove(
@@ -161,7 +148,7 @@ extension KernovaCommand.Forward {
         }
 
         /// Drops the rule.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
