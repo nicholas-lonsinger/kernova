@@ -373,6 +373,33 @@ func supportsVirtualMachine(_ url: URL, totalBytes: Int64) async -> Bool? {
     return lastIndex(of: [UInt8]("vma2".utf8), in: directory) != nil
 }
 
+// MARK: - 0. The published catalog
+
+var previousBuilds: Set<String> = []
+var published: [Candidate] = []
+if FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)) {
+    guard let existing = try? Data(contentsOf: outputURL),
+        let decoded = try? JSONSerialization.jsonObject(with: existing),
+        let object = decoded as? [String: Any],
+        let rows = object["images"] as? [[String: Any]],
+        rows.allSatisfy({ $0["build"] is String })
+    else {
+        fail(
+            "the published \(outputURL.lastPathComponent) exists but does not parse as a "
+                + "catalog — refusing to replace a file this run cannot compare against")
+    }
+    previousBuilds = Set(rows.compactMap { $0["build"] as? String })
+    published = rows.compactMap { row in
+        guard let build = row["build"] as? String, let version = row["version"] as? String,
+            let raw = row["url"] as? String, let url = URL(string: raw),
+            let source = row["source"] as? String
+        else { return nil }
+        return Candidate(
+            version: version, build: build, url: url, source: source,
+            snapshot: row["snapshot"] as? String)
+    }
+}
+
 // MARK: - 1. Apple, live
 
 log("Reading Apple's asset feed…")
@@ -438,9 +465,11 @@ let indexURL = requireURL(
         + "&filter=original:.*UniversalMac.*Restore%5C.ipsw"
         + "&output=json&collapse=urlkey&fl=original")
 var indexed = 0
+var indexedReadable = false
 if let data = await get(indexURL),
     let rows = try? JSONSerialization.jsonObject(with: data) as? [[String]]
 {
+    indexedReadable = true
     for row in rows.dropFirst() {
         // A crawler that lifted this URL out of a page can carry the markup
         // that followed it into the indexed string, as `…_Restore.ipsw%3Cspan`
@@ -463,7 +492,11 @@ if let data = await get(indexURL),
         indexed += 1
     }
 }
-log("  \(indexed) additional build(s) from the index, \(pool.count) distinct total")
+if indexedReadable {
+    log("  \(indexed) additional build(s) from the index, \(pool.count) distinct total")
+} else {
+    log("  could not read the index — it adds no build(s) this run")
+}
 
 // MARK: - 3b. Apple images this device was never listed for
 //
@@ -497,6 +530,22 @@ for raw in unlistedURLs {
     unlisted += 1
 }
 log("Adding \(unlisted) unlisted build(s), \(pool.count) distinct total")
+
+// MARK: - 3c. Published builds no step above reached
+//
+// Every build already published is an Apple URL an earlier run found, so it
+// stays a candidate and step 4 re-verifies it like any other. Without this, a
+// build the steps above cannot reach this run — one that left the live feed
+// before any snapshot caught it, or everything the index supplies while the
+// archive is down — reads as withdrawn and stops the run. A build filled in
+// here keeps the source it was published under.
+
+var republished = 0
+for candidate in published where pool[candidate.build] == nil {
+    pool[candidate.build] = candidate
+    republished += 1
+}
+log("Adding \(republished) published build(s) no source above reached, \(pool.count) distinct total")
 
 // MARK: - 4. Verify each release line against Apple
 
@@ -615,20 +664,6 @@ guard unanswered.isEmpty else {
 }
 guard !images.isEmpty else { fail("no image verified against Apple — nothing to write") }
 
-var previousBuilds: Set<String> = []
-if FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)) {
-    guard let existing = try? Data(contentsOf: outputURL),
-        let decoded = try? JSONSerialization.jsonObject(with: existing),
-        let object = decoded as? [String: Any],
-        let rows = object["images"] as? [[String: Any]],
-        rows.allSatisfy({ $0["build"] is String })
-    else {
-        fail(
-            "the published \(outputURL.lastPathComponent) exists but does not parse as a "
-                + "catalog — refusing to replace a file this run cannot compare against")
-    }
-    previousBuilds = Set(rows.compactMap { $0["build"] as? String })
-}
 let lost = previousBuilds.subtracting(images.map(\.build)).subtracting(supersededBuilds)
 guard lost.isEmpty || allowShrink else {
     fail(
