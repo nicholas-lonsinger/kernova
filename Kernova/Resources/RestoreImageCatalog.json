@@ -1,12 +1,20 @@
 {
   "device" : "VirtualMac2,1",
-  "generatedAt" : "2026-08-27",
+  "generatedAt" : "2026-09-14",
   "images" : [
+    {
+      "build" : "26A428",
+      "lastModified" : "Fri, 04 Sep 2026 16:13:07 GMT",
+      "sizeBytes" : 26626436228,
+      "source" : "apple-live",
+      "url" : "https://updates.cdn-apple.com/2026FallFCS/afcfc88e-bbe6-44bf-a5da-07c56eebc06c/UniversalMac_27.0_26A428_Restore.ipsw",
+      "version" : "27.0"
+    },
     {
       "build" : "25G83",
       "lastModified" : "Thu, 13 Aug 2026 22:11:09 GMT",
       "sizeBytes" : 19772231540,
-      "source" : "apple-live",
+      "source" : "apple-indexed",
       "url" : "https://updates.cdn-apple.com/2026SummerFCS/fullrestores/140-75212/A2A24B94-1FC1-45A3-93F7-C51B02AF1F4D/UniversalMac_26.6.2_25G83_Restore.ipsw",
       "version" : "26.6.2"
     },
