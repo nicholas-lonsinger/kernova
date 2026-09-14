@@ -5,27 +5,23 @@ import KernovaKit
 extension KernovaCommand {
     /// `kernova snapshot` — the verbs that address a virtual machine's restore
     /// points.
-    public struct Snapshot: ParsableCommand {
+    struct Snapshot: ParsableCommand {
         /// What `kernova snapshot --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "snapshot",
             abstract: "Work with a virtual machine's snapshots.",
             discussion: "Every verb here names its snapshot by name or identifier, matched "
                 + "against the virtual machine's own list — a name several snapshots carry "
                 + "exits 4 listing their identifiers.",
             subcommands: [List.self, Take.self, Revert.self, Delete.self, Rename.self])
-
-        /// Creates the parent command; a bare `kernova snapshot` prints this
-        /// help.
-        public init() {}
     }
 }
 
 extension KernovaCommand.Snapshot {
     /// `kernova snapshot list <vm>` — every restore point the bundle holds.
-    public struct List: GlobalOptionsCommand {
+    struct List: GlobalOptionsCommand {
         /// What `kernova snapshot list --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "list",
             abstract: "List a virtual machine's snapshots.",
             discussion: "Sizes count blocks a snapshot shares with the virtual machine's own "
@@ -34,16 +30,13 @@ extension KernovaCommand.Snapshot {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Reads the restore points and writes them.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
@@ -56,9 +49,9 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot take <vm>` — capture the state to come back to.
-    public struct Take: GlobalOptionsCommand {
+    struct Take: GlobalOptionsCommand {
         /// What `kernova snapshot take --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "take",
             abstract: "Take a snapshot of a virtual machine.",
             discussion: "A running guest is captured with its memory and pauses briefly while "
@@ -69,24 +62,21 @@ extension KernovaCommand.Snapshot {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// What to call the capture; empty leaves the naming to Kernova.
         @Option(name: .long, help: "What to call the snapshot.")
-        public var name: String = ""
+        var name: String = ""
 
         /// The free-form note to file with it.
         @Option(name: .long, help: "A note to keep with the snapshot.")
-        public var notes: String = ""
+        var notes: String = ""
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Takes the snapshot and writes the row it produced.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
@@ -106,9 +96,9 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot revert <vm> <snapshot>` — put the VM back.
-    public struct Revert: VMScopedCommandLine {
+    struct Revert: VMScopedCommandLine {
         /// What `kernova snapshot revert --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "revert",
             abstract: "Return a virtual machine to one of its snapshots.",
             discussion: "The state the virtual machine is in now is captured as a check-point "
@@ -117,11 +107,11 @@ extension KernovaCommand.Snapshot {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// Which snapshot, by name or identifier.
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
-        public var snapshot: String
+        var snapshot: String
 
         /// Whether to capture the current state before rolling back.
         ///
@@ -130,16 +120,13 @@ extension KernovaCommand.Snapshot {
         @Flag(
             inversion: .prefixedNo, exclusivity: .exclusive,
             help: "Capture the current state as a snapshot before reverting.")
-        public var checkpoint = true
+        var checkpoint = true
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Reverts the VM.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
@@ -154,9 +141,9 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot delete <vm> <snapshot>` — drop one restore point.
-    public struct Delete: VMScopedCommandLine {
+    struct Delete: VMScopedCommandLine {
         /// What `kernova snapshot delete --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "delete",
             abstract: "Delete one of a virtual machine's snapshots.",
             discussion: "The snapshot's captured files are moved to the Trash and the virtual "
@@ -165,20 +152,17 @@ extension KernovaCommand.Snapshot {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// Which snapshot, by name or identifier.
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
-        public var snapshot: String
+        var snapshot: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Deletes the snapshot.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
@@ -191,9 +175,9 @@ extension KernovaCommand.Snapshot {
     }
 
     /// `kernova snapshot rename <vm> <snapshot> <new-name>` — relabel one.
-    public struct Rename: VMScopedCommandLine {
+    struct Rename: VMScopedCommandLine {
         /// What `kernova snapshot rename --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "rename",
             abstract: "Rename one of a virtual machine's snapshots.",
             discussion: "A snapshot's name is a label rather than an identifier, so one another "
@@ -202,24 +186,21 @@ extension KernovaCommand.Snapshot {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// Which snapshot, by name or identifier.
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
-        public var snapshot: String
+        var snapshot: String
 
         /// What to call it instead.
         @Argument(help: "The new snapshot name.")
-        public var newName: String
+        var newName: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// Renames the snapshot.
-        public func run() throws {
+        func run() throws {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }

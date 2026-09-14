@@ -50,7 +50,7 @@ enum VMScriptSelector {
         guard let evaluated = specifier.objectsByEvaluatingSpecifier else {
             throw VMScriptEvaluationFailure(specifier)
         }
-        return try selectors(resolvedTo: evaluated, by: specifier)
+        return try selectors(resolvedTo: evaluated)
     }
 
     /// The VM `specifier` names by itself, `nil` when reading it takes an
@@ -76,10 +76,8 @@ enum VMScriptSelector {
         }
     }
 
-    /// The VMs Cocoa evaluated `specifier` to, each addressed by identifier.
-    private static func selectors(
-        resolvedTo evaluated: Any, by specifier: NSScriptObjectSpecifier
-    ) throws -> [VMSelector] {
+    /// The VMs a specifier evaluated to, each addressed by identifier.
+    private static func selectors(resolvedTo evaluated: Any) throws -> [VMSelector] {
         let objects = evaluated as? [Any] ?? [evaluated]
         return try objects.map { object in
             guard let vm = object as? VMScriptObject else {

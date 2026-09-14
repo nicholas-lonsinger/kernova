@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 import os
 
 /// Putting a file where a shell loads the `kernova` tool's completions from.

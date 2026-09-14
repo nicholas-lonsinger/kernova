@@ -4,9 +4,9 @@ import KernovaKit
 
 extension KernovaCommand {
     /// `kernova usb` — the host USB accessories a running guest can hold.
-    public struct USB: ParsableCommand {
+    struct USB: ParsableCommand {
         /// What `kernova usb --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "usb",
             abstract: "Work with the USB accessories a virtual machine's guest holds.",
             discussion: "An accessory is offered to Kernova by you, in macOS's Virtual Machine "
@@ -16,17 +16,14 @@ extension KernovaCommand {
                 + "the key `rules` prints does survive, which is what makes an accessory that is "
                 + "not plugged in something you can still name.",
             subcommands: [List.self, Attach.self, Detach.self, Rules.self, Forget.self])
-
-        /// Creates the parent command; a bare `kernova usb` prints this help.
-        public init() {}
     }
 }
 
 extension KernovaCommand.USB {
     /// `kernova usb list [<vm>]` — a guest's accessories, or the free ones.
-    public struct List: VerbCommand {
+    struct List: VerbCommand {
         /// What `kernova usb list --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "list",
             abstract: "List USB accessories.",
             discussion: "Named a virtual machine, this lists what its guest is holding, each "
@@ -38,22 +35,19 @@ extension KernovaCommand.USB {
         /// accessories no guest holds.
         @Argument(
             help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String?
+        var vm: String?
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             guard let vm else { return .availableUSBAccessories }
             return .usbAccessories(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
         /// Reads the accessories and writes them.
-        public func run() throws {
+        func run() throws {
             let answered = try answer()
             guard case .usbAccessories(let accessories) = answered else {
                 throw answered.unexpectedAnswer
@@ -66,9 +60,9 @@ extension KernovaCommand.USB {
     }
 
     /// `kernova usb attach <vm> <accessory>` — hand an accessory to a guest.
-    public struct Attach: VerbCommand {
+    struct Attach: VerbCommand {
         /// What `kernova usb attach --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "attach",
             abstract: "Pass a USB accessory through to a running guest.",
             discussion: "The guest has to be running: a passthrough accessory is held by the "
@@ -76,25 +70,22 @@ extension KernovaCommand.USB {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The accessory to hand over, as `usb list` prints it.
         @Argument(
             help: "The accessory identifier, as `usb list` prints it.",
             completion: CompletionSource.availableUSBAccessory)
-        public var accessory: String
+        var accessory: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
         ///
         /// - Throws: ``CLIFailure`` with ``CLIExitCode/usage`` when `accessory`
         ///   is not an identifier a listing printed.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             guard let registryID = UInt64(accessory) else {
                 throw CLIFailure(
                     .usage, "\u{201C}\(accessory)\u{201D} is not an accessory identifier.")
@@ -105,15 +96,15 @@ extension KernovaCommand.USB {
         }
 
         /// Hands the accessory over.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
 
     /// `kernova usb detach <vm> <device>` — take an accessory back.
-    public struct Detach: VerbCommand, VMScopedCommandLine {
+    struct Detach: VerbCommand, VMScopedCommandLine {
         /// What `kernova usb detach --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "detach",
             abstract: "Take a USB accessory back off a running guest.",
             discussion: "The accessory returns to the list `usb list` prints with no virtual "
@@ -121,25 +112,22 @@ extension KernovaCommand.USB {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The attachment to take back, as `usb list <vm>` prints it.
         @Argument(
             help: "The device identifier, as `usb list <vm>` prints it.",
             completion: CompletionSource.usbAccessory)
-        public var device: String
+        var device: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
         ///
         /// - Throws: ``CLIFailure`` with ``CLIExitCode/usage`` when `device` is
         ///   not an identifier a listing printed.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             guard let deviceID = UUID(uuidString: device) else {
                 throw CLIFailure(
                     .usage, "\u{201C}\(device)\u{201D} is not a device identifier.")
@@ -150,15 +138,15 @@ extension KernovaCommand.USB {
         }
 
         /// Takes the accessory back.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
 
     /// `kernova usb rules [<vm>]` — what each guest takes back on its own.
-    public struct Rules: VerbCommand {
+    struct Rules: VerbCommand {
         /// What `kernova usb rules --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "rules",
             abstract: "List the USB accessories virtual machines take back automatically.",
             discussion: "Passing an accessory through to a guest is what creates one of these, "
@@ -169,21 +157,18 @@ extension KernovaCommand.USB {
         /// Which virtual machine, by name or identifier; omitted for every one.
         @Argument(
             help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String?
+        var vm: String?
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .usbPairings(try vm.map { try SelectorParsing.selector(from: $0, forcingID: options.id) })
         }
 
         /// Reads the rules and writes them.
-        public func run() throws {
+        func run() throws {
             let answered = try answer()
             guard case .usbPairings(let pairings) = answered else {
                 throw answered.unexpectedAnswer
@@ -196,9 +181,9 @@ extension KernovaCommand.USB {
     }
 
     /// `kernova usb forget <vm> <key>` — stop a guest taking one back.
-    public struct Forget: VerbCommand, VMScopedCommandLine {
+    struct Forget: VerbCommand, VMScopedCommandLine {
         /// What `kernova usb forget --help` says.
-        public static let configuration = CommandConfiguration(
+        static let configuration = CommandConfiguration(
             commandName: "forget",
             abstract: "Stop a virtual machine taking a USB accessory back automatically.",
             discussion: "The accessory stays with this Mac next time it is plugged in. Passing "
@@ -206,28 +191,25 @@ extension KernovaCommand.USB {
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        public var vm: String
+        var vm: String
 
         /// The accessory to forget, as `usb rules` prints it.
         @Argument(
             help: "The accessory key, as `usb rules` prints it.",
             completion: CompletionSource.usbPairingKey)
-        public var key: String
+        var key: String
 
         /// The options every subcommand carries.
-        @OptionGroup public var options: GlobalOptions
-
-        /// Creates the subcommand.
-        public init() {}
+        @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
-        public func verb() throws -> VMCommandRequest.Verb {
+        func verb() throws -> VMCommandRequest.Verb {
             .forgetUSBPairing(
                 try SelectorParsing.selector(from: vm, forcingID: options.id), key: key)
         }
 
         /// Forgets the accessory.
-        public func run() throws {
+        func run() throws {
             try perform()
         }
     }
