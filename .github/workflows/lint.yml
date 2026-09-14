@@ -14,7 +14,7 @@ jobs:
   # Renaming this job means editing the "Required actions" ruleset in the same
   # change — docs/BUILD.md "CI".
   lint:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 5
     steps:
       - name: Checkout repository
@@ -23,13 +23,7 @@ jobs:
           fetch-depth: 1
 
       - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          # xcodebuild, not the linter itself: `swift-format --version` reports
-          # the branch name `main`, which names no toolchain, while this records
-          # the Xcode whose bundled rule set decides the run. It doubles as the
-          # full-Xcode assert — Command Line Tools carries swift-format alone.
-          xcodebuild -version
+        uses: ./.github/actions/select-xcode
 
       # The macOS runner images ship shellcheck; install it only if a future
       # image drops it, so `make lint` never silently skips static analysis

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 45
     steps:
       - name: Checkout repository
@@ -24,9 +24,7 @@ jobs:
           fetch-depth: 1
 
       - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          xcodebuild -version
+        uses: ./.github/actions/select-xcode
 
       - name: Install Periphery
         run: Tools/install-periphery.sh
