@@ -1,8 +1,8 @@
 {
-  "generatedAt" : "2026-08-27",
+  "generatedAt" : "2026-09-14",
   "images" : [
     {
-      "approxSizeBytes" : 4161089536,
+      "approxSizeBytes" : 4154798080,
       "checksumManifest" : "SHA256SUMS",
       "directoryURL" : "https://cdimage.ubuntu.com/ubuntu/releases/resolute/release/",
       "distribution" : "Ubuntu Desktop",
@@ -11,7 +11,7 @@
       "version" : "26.04 LTS"
     },
     {
-      "approxSizeBytes" : 3540299776,
+      "approxSizeBytes" : 3967463424,
       "checksumManifest" : "SHA256SUMS",
       "directoryURL" : "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/",
       "distribution" : "Ubuntu Desktop",
@@ -20,7 +20,7 @@
       "version" : "24.04 LTS"
     },
     {
-      "approxSizeBytes" : 3068473344,
+      "approxSizeBytes" : 3076861952,
       "checksumManifest" : "SHA256SUMS",
       "directoryURL" : "https://cdimage.ubuntu.com/ubuntu/releases/resolute/release/",
       "distribution" : "Ubuntu Server",
@@ -29,7 +29,7 @@
       "version" : "26.04 LTS"
     },
     {
-      "approxSizeBytes" : 3059724288,
+      "approxSizeBytes" : 3825512448,
       "checksumManifest" : "SHA256SUMS",
       "directoryURL" : "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/",
       "distribution" : "Ubuntu Server",
