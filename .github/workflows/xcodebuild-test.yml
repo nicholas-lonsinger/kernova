@@ -11,10 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # AccessoryAccess and VZUSBPassthroughDeviceConfiguration are macOS 27 SDK
-  # APIs, which an Xcode 26 toolchain cannot resolve at all — so this job runs
-  # on `xcode-27`, the only image carrying one. That image is a preview, so a
-  # run can sit queued for a while before a runner picks it up.
   build-and-test:
     runs-on: xcode-27
     timeout-minutes: 30
@@ -24,19 +20,8 @@ jobs:
         with:
           fetch-depth: 1
 
-      # The image carries one Xcode and an Xcode.app symlink to it, so taking
-      # the newest resolves to that toolchain either way — and stays right on an
-      # image that gains a second. The inventory and SDK version are printed
-      # because a toolchain too old to carry the SDK otherwise surfaces as a
-      # bare "unable to resolve module dependency" naming no Xcode at all.
       - name: Select Xcode
-        run: |
-          ls -d /Applications/Xcode*.app
-          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
-          sudo xcode-select -s "$newest/Contents/Developer"
-          xcodebuild -version
-          xcrun --show-sdk-version
-          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
+        uses: ./.github/actions/select-xcode
 
       # Package.resolved pins each dependency to a commit, so the hash misses
       # exactly when a dependency is bumped and hits otherwise. No
