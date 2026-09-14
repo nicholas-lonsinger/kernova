@@ -973,15 +973,38 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .running)
     }
 
-    @Test("start of an inline-display VM asks the presenter to focus the guest display")
+    @Test("start of an inline-display VM focuses the guest display without asking for the library")
     func startRequestsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
         await viewModel.start(instance)
 
         #expect(presenter.focusGuestDisplayInstances.count == 1)
+        #expect(presenter.focusGuestDisplayInstances.last === instance)
+        #expect(libraryRequests == 0)
+    }
+
+    /// A start with no window yet — an automation verb on a headless process —
+    /// still selects the VM and buffers its focus for whenever the user opens
+    /// the library, but does not open it for them.
+    @Test("start of an inline-display VM with no window buffers its focus and asks for no library")
+    func startWithNoWindowBuffersFocusWithoutTheLibrary() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        viewModel.presenter = nil
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        await viewModel.start(instance)
+
+        #expect(libraryRequests == 0)
+        #expect(viewModel.selectedID == instance.id)
+        viewModel.presenter = presenter
         #expect(presenter.focusGuestDisplayInstances.last === instance)
     }
 
@@ -997,17 +1020,20 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.isEmpty)
     }
 
-    @Test("resume of an inline-display VM asks the presenter to focus the guest display")
+    @Test("resume of an inline-display VM focuses the guest display without asking for the library")
     func resumeRequestsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
         await viewModel.resume(instance)
 
         #expect(presenter.focusGuestDisplayInstances.count == 1)
         #expect(presenter.focusGuestDisplayInstances.last === instance)
+        #expect(libraryRequests == 0)
     }
 
     @Test("resume of a pop-out VM opens the display window instead of requesting inline focus")
@@ -4490,14 +4516,13 @@ struct VMLibraryViewModelTests {
         #expect(virtService.resumeCallCount == 0)
     }
 
-    /// A login launch runs this pass with no window and no Dock icon. Surfacing
-    /// any guest's display would undo both: a pop-out VM opens its own window,
-    /// and an inline one asks for the library.
+    /// A login launch runs this pass with no window and no Dock icon, which a
+    /// pop-out VM opening its own window would undo.
     @Test("startAutomaticVMsForLaunch without surfacing boots marked VMs and opens no window")
     func autoStartHeadlessOpensNoWindow() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         // No window exists on a headless launch, which is what leaves the
-        // presenter nil — the state that routes an inline VM to the library.
+        // presenter nil.
         viewModel.presenter = nil
         let popOut = markAutoStart(makeInstance(name: "Pop Out"))
         popOut.configuration.displayPreference = .popOut

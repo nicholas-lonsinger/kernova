@@ -26,7 +26,7 @@ extension VMCommandCore {
                 throw CommandError.busy(
                     vm: summary(instance), operation: instance.status.displayName.lowercased())
             }
-            if presentation == .surface { surfaceDisplay?(instance) }
+            if presentation == .surface { readyDisplay?(instance) }
             return try await joinBringUp(instance, verb: .start) {
                 startFailure($0, on: instance)
             }
@@ -54,7 +54,7 @@ extension VMCommandCore {
             return
         }
 
-        if presentation == .surface { surfaceDisplay?(instance) }
+        if presentation == .surface { readyDisplay?(instance) }
         applyMatchWindowBootResolution(to: instance)
         do {
             try await lifecycle.start(instance, bootIntoRecovery: recovery)
@@ -633,7 +633,7 @@ extension VMCommandCore {
         try require(.resume, on: instance)
 
         if case .restoringSavedState = instance.phase {
-            if presentation == .surface { surfaceDisplay?(instance) }
+            if presentation == .surface { readyDisplay?(instance) }
             return try await joinBringUp(instance, verb: .resume) {
                 failure($0, verb: .resume, on: instance)
             }
@@ -647,7 +647,7 @@ extension VMCommandCore {
             try refuseDuplicateIdentity(instance)
         }
 
-        if presentation == .surface { surfaceDisplay?(instance) }
+        if presentation == .surface { readyDisplay?(instance) }
         do {
             try await lifecycle.resume(instance)
         } catch {

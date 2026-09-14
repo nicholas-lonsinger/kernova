@@ -12,7 +12,7 @@ import os
 /// It presents nothing and imports no AppKit. Anything a user has to see leaves
 /// as a thrown ``CommandError`` at the call that caused it, or through
 /// ``onFailure`` when no call is waiting; anything a user has to look at leaves
-/// through ``surfaceDisplay`` or ``revealInLibrary``.
+/// through ``surfaceDisplay``, ``readyDisplay`` or ``revealInLibrary``.
 @MainActor
 final class VMCommandCore: VMCommanding {
     nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMCommandCore")
@@ -40,11 +40,20 @@ final class VMCommandCore: VMCommanding {
 
     /// Puts a VM's display in front of the user — the detached window for a
     /// pop-out or fullscreen VM, keyboard focus in the inline display
-    /// otherwise.
+    /// otherwise, with the library brought forward to carry it.
     ///
     /// A hook rather than a call: which surface a display lands on is an AppKit
     /// question, and the core answers none.
     var surfaceDisplay: ((VMInstance) -> Void)?
+
+    /// Readies a VM's display for a bring-up — the same surfaces as
+    /// ``surfaceDisplay``, without bringing anything forward.
+    ///
+    /// A separate hook because a bring-up is not a request to look: a start
+    /// clicked in the library is already in front, and one that lands later —
+    /// the boot chained after an install, an automation verb — must not take
+    /// the screen from whatever the user moved on to.
+    var readyDisplay: ((VMInstance) -> Void)?
 
     /// Puts a VM with no display to surface in front of the user: its row in
     /// the library, with the library itself brought forward.

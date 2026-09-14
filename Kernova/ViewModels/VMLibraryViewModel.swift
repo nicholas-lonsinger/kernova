@@ -543,7 +543,10 @@ final class VMLibraryViewModel {
             self?.present(failure, for: instance)
         }
         core.surfaceDisplay = { [weak self] instance in
-            self?.surfaceDisplay(for: instance)
+            self?.surfaceDisplay(for: instance, bringingLibraryForward: true)
+        }
+        core.readyDisplay = { [weak self] instance in
+            self?.surfaceDisplay(for: instance, bringingLibraryForward: false)
         }
         core.revealInLibrary = { [weak self] instance in
             self?.revealInLibrary(instance)
@@ -636,9 +639,10 @@ final class VMLibraryViewModel {
 
     // MARK: - Lifecycle
 
-    /// Surfaces the display a start/resume lands on: the detached window for
-    /// pop-out/fullscreen VMs, else keyboard focus in the inline guest display.
-    private func surfaceDisplay(for instance: VMInstance) {
+    /// Surfaces a VM's display: the detached window for pop-out/fullscreen VMs,
+    /// else keyboard focus in the inline guest display — and, when
+    /// `bringingLibraryForward`, the library window that carries it.
+    private func surfaceDisplay(for instance: VMInstance, bringingLibraryForward: Bool) {
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
         } else {
@@ -652,7 +656,7 @@ final class VMLibraryViewModel {
             // library window, so one buried behind another app, miniaturized,
             // or never created has surfaced nothing — and `focusGuestDisplay`
             // only moves the first responder, which nobody can see.
-            onSurfaceLibrary?()
+            if bringingLibraryForward { onSurfaceLibrary?() }
             guard let presenter else {
                 // No window has ever been created, so there is no inline display
                 // to focus yet. The one just asked for focuses when it attaches.
@@ -1187,9 +1191,9 @@ final class VMLibraryViewModel {
     /// finish, since abandoning one mid-flight is worse than completing it.
     ///
     /// `surfacingDisplays` is `false` for a launch that came up headless: a
-    /// login launch boots its marked VMs with no window, and surfacing one would
-    /// give the process the library window and Dock icon it was asked not to
-    /// have.
+    /// login launch boots its marked VMs with no window, and a pop-out VM's
+    /// display window would give the process the window and Dock icon it was
+    /// asked not to have.
     func startAutomaticVMsForLaunch(surfacingDisplays: Bool) async {
         let presentation: VMDisplayPresentation = surfacingDisplays ? .surface : .headless
         let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
