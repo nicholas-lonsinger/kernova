@@ -321,16 +321,19 @@ struct VMCommandCoreTests {
         #expect(instance.status == .running)
     }
 
-    @Test("start surfaces the VM's display before it boots")
-    func startSurfacesTheDisplay() async throws {
+    @Test("start readies the VM's display before it boots, bringing nothing forward")
+    func startReadiesTheDisplay() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
+        var readied: [UUID] = []
         var surfaced: [UUID] = []
+        harness.core.readyDisplay = { readied.append($0.id) }
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
 
         try await harness.core.start(.id(instance.id), recovery: false)
 
-        #expect(surfaced == [instance.id])
+        #expect(readied == [instance.id])
+        #expect(surfaced.isEmpty)
     }
 
     @Test("pause, resume, and suspend each reach the service")

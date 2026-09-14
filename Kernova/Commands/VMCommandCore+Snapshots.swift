@@ -252,7 +252,7 @@ extension VMCommandCore {
         // place, so the window it comes up in is chosen before the teardown. A
         // cold snapshot ends the session for good, so there is none to choose.
         if instance.hasLiveVirtualMachine, snapshot.kind == .warm {
-            surfaceDisplay?(instance)
+            readyDisplay?(instance)
         }
         var revertFailure: CommandError?
         do {
