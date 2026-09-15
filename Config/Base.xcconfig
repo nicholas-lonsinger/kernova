@@ -28,7 +28,7 @@ KERNOVA_AGENT_DEPLOYMENT_TARGET = 12.0
 
 // The app's marketing version, shared with the two test bundles. The guest
 // agent's is independent and lives in Config/Targets/KernovaMacOSAgent.xcconfig.
-KERNOVA_MARKETING_VERSION = 0.9.1
+KERNOVA_MARKETING_VERSION = 0.10.0
 
 // MARK: - Code generation
 
