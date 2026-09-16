@@ -1,6 +1,5 @@
 import Foundation
 import KernovaKit
-import os
 
 /// Guest-side control-channel agent that talks to the host's
 /// `VsockControlService` on `KernovaVsockPort.control`.
@@ -11,7 +10,7 @@ import os
 /// closes the channel once inbound traffic stops for `terminateAfter`, leaving
 /// `VsockGuestClient` to rebuild it.
 final class VsockGuestControlAgent: @unchecked Sendable {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
 
     private let clock: any EngineClock
