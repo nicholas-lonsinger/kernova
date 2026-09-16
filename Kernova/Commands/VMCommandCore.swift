@@ -46,13 +46,13 @@ final class VMCommandCore: VMCommanding {
     /// question, and the core answers none.
     var surfaceDisplay: ((VMInstance) -> Void)?
 
-    /// Readies a VM's display for a bring-up — the same surfaces as
-    /// ``surfaceDisplay``, without bringing anything forward.
+    /// Reports that a VM is coming up, so its display can be readied to receive
+    /// the guest.
     ///
-    /// A separate hook because a bring-up is not a request to look: a start
-    /// clicked in the library is already in front, and one that lands later —
-    /// the boot chained after an install, an automation verb — must not take
-    /// the screen from whatever the user moved on to.
+    /// Asked on every bring-up, whoever asked for it. Whether anything is put
+    /// on screen is the adapter's decision, taken from the app's own posture —
+    /// a bring-up is not a request to look at the guest, which is what
+    /// ``surfaceDisplay`` carries.
     var readyDisplay: ((VMInstance) -> Void)?
 
     /// Puts a VM with no display to surface in front of the user: its row in

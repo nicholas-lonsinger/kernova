@@ -1008,7 +1008,10 @@ struct VMLibraryViewModelTests {
         #expect(presenter.focusGuestDisplayInstances.last === instance)
     }
 
-    @Test("start of a pop-out VM opens the display window instead of requesting inline focus")
+    /// A detached VM's window belongs to the bring-up's own readying, decided
+    /// from the app's posture — the door asks for nothing but the inline focus
+    /// it can give.
+    @Test("start of a pop-out VM requests no inline focus")
     func startPopOutSkipsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
@@ -1036,7 +1039,7 @@ struct VMLibraryViewModelTests {
         #expect(libraryRequests == 0)
     }
 
-    @Test("resume of a pop-out VM opens the display window instead of requesting inline focus")
+    @Test("resume of a pop-out VM requests no inline focus, as start does")
     func resumePopOutSkipsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
@@ -4289,68 +4292,6 @@ struct VMLibraryViewModelTests {
         return instance
     }
 
-    /// One row of the launch auto-start decision table.
-    struct AutoStartCase: Sendable, CustomStringConvertible {
-        let marked: Bool
-        let isPreparing: Bool
-        let hasPendingSetup: Bool
-        let phase: VMLifecyclePhase
-        let expected: VMLibraryViewModel.AutoStartStep
-
-        init(
-            marked: Bool, preparing: Bool = false, pendingSetup: Bool = false,
-            _ phase: VMLifecyclePhase,
-            _ expected: VMLibraryViewModel.AutoStartStep
-        ) {
-            self.marked = marked
-            self.isPreparing = preparing
-            self.hasPendingSetup = pendingSetup
-            self.phase = phase
-            self.expected = expected
-        }
-
-        var description: String {
-            "marked \(marked), preparing \(isPreparing), pendingSetup \(hasPendingSetup), "
-                + "\(phase) → \(expected)"
-        }
-    }
-
-    @Test(
-        "autoStartStep decides start, resume, or skip from state",
-        arguments: [
-            AutoStartCase(marked: true, .stopped, .start),
-            AutoStartCase(marked: true, .failed(message: "Boot failed."), .start),
-            AutoStartCase(marked: true, .suspended, .resume),
-            // A VM that never finished setup would begin an unattended install
-            // or image download, so it is skipped despite passing `canStart`.
-            AutoStartCase(marked: true, .initialBoot, .skip),
-            AutoStartCase(marked: true, pendingSetup: true, .initialBoot, .skip),
-            // A failed install leaves the context intact at `.failed`, where
-            // `start(_:)` still routes into the installer — the phase alone
-            // would read this as an ordinary boot retry.
-            AutoStartCase(marked: true, pendingSetup: true, .failed(message: "Install failed."), .skip),
-            AutoStartCase(marked: true, pendingSetup: true, .stopped, .skip),
-            AutoStartCase(marked: true, preparing: true, .stopped, .skip),
-            AutoStartCase(marked: true, .running(sessionID: UUID()), .skip),
-            AutoStartCase(marked: true, .starting(sessionID: UUID()), .skip),
-            AutoStartCase(marked: true, .saving(sessionID: UUID()), .skip),
-            AutoStartCase(marked: true, .revertingToSnapshot, .skip),
-            AutoStartCase(marked: true, .installing(sessionID: UUID()), .skip),
-            // Live-paused: the VZ object is already in memory, so the launch
-            // pass has nothing to bring up.
-            AutoStartCase(marked: true, .livePaused(sessionID: UUID()), .skip),
-            AutoStartCase(marked: false, .stopped, .skip),
-            AutoStartCase(marked: false, .suspended, .skip),
-        ])
-    func autoStartStepMatrix(testCase: AutoStartCase) {
-        #expect(
-            VMLibraryViewModel.autoStartStep(
-                startsAutomaticallyOnLaunch: testCase.marked,
-                isPreparing: testCase.isPreparing,
-                hasPendingSetup: testCase.hasPendingSetup,
-                phase: testCase.phase) == testCase.expected)
-    }
-
     @Test("macOSVMNamesMarkedForAutoStart lists marked macOS VMs in library order")
     func markedMacOSVMNamesFollowLibraryOrder() {
         let (viewModel, _, _, _, _) = makeViewModel()
@@ -4373,7 +4314,7 @@ struct VMLibraryViewModelTests {
         let unmarked = makeInstance(name: "Unmarked")
         viewModel.instances = [marked1, marked2, unmarked]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 2)
         #expect(marked1.status == .running)
@@ -4388,21 +4329,25 @@ struct VMLibraryViewModelTests {
         saved.enter(.suspended)
         viewModel.instances = [saved]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.resumeCallCount == 1)
         #expect(virtService.startCallCount == 0)
         #expect(saved.status == .running)
     }
 
+    /// A VM awaiting its initial boot carries the setup context that put it
+    /// there — `VMLibrary.initialPhase` assigns the phase from nothing else —
+    /// and that context is what a start would run.
     @Test("startAutomaticVMsForLaunch leaves a marked VM awaiting initial boot alone")
     func autoStartSkipsInitialBoot() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let fresh = markAutoStart(makeInstance(name: "Never Booted"))
+        fresh.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
         fresh.enter(.initialBoot)
         viewModel.instances = [fresh]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 0)
         #expect(fresh.status == .initialBoot)
@@ -4419,7 +4364,7 @@ struct VMLibraryViewModelTests {
         stalled.enter(.failed(message: "Test failure"))
         viewModel.instances = [stalled]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 0)
         #expect(stalled.status == .error)
@@ -4434,7 +4379,7 @@ struct VMLibraryViewModelTests {
         let following = markAutoStart(makeInstance(name: "Following"))
         viewModel.instances = [failing, following]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 2)
         #expect(presenter.showError == true)
@@ -4457,7 +4402,7 @@ struct VMLibraryViewModelTests {
         let following = markAutoStart(makeInstance(name: "Following"))
         viewModel.instances = [suspended, following]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.resumeCallCount == 1)
         #expect(virtService.startCallCount == 1)
@@ -4473,7 +4418,7 @@ struct VMLibraryViewModelTests {
         let second = markAutoStart(makeInstance(name: "Second"))
         viewModel.instances = [first, second]
 
-        let pass = Task { await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true) }
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
         // Suspended inside the first VM's start — the quit lands here.
         await suspending.waitUntilSuspended()
         pass.cancel()
@@ -4492,7 +4437,7 @@ struct VMLibraryViewModelTests {
         let second = markAutoStart(makeInstance(name: "Second"))
         viewModel.instances = [first, second]
 
-        let pass = Task { await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true) }
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
         // Deleted while the first VM is still booting, so the pass's snapshot
         // holds an instance the library no longer has.
         await suspending.waitUntilSuspended()
@@ -4510,16 +4455,17 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         viewModel.instances = [makeInstance(name: "Unmarked")]
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 0)
         #expect(virtService.resumeCallCount == 0)
     }
 
-    /// A login launch runs this pass with no window and no Dock icon, which a
-    /// pop-out VM opening its own window would undo.
-    @Test("startAutomaticVMsForLaunch without surfacing boots marked VMs and opens no window")
-    func autoStartHeadlessOpensNoWindow() async {
+    /// Nobody is at the machine for this pass, so it takes no surface: each
+    /// bring-up is only reported as one, and what that costs on screen is the
+    /// app delegate's decision from the app's own posture.
+    @Test("startAutomaticVMsForLaunch reports every bring-up and surfaces nothing itself")
+    func autoStartReadiesWithoutSurfacing() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         // No window exists on a headless launch, which is what leaves the
         // presenter nil.
@@ -4530,35 +4476,26 @@ struct VMLibraryViewModelTests {
         let saved = markAutoStart(makeInstance(name: "Suspended"))
         saved.enter(.suspended)
         viewModel.instances = [popOut, inline, saved]
+        viewModel.selectedID = inline.id
+        var readied: [UUID] = []
         var displayWindows = 0
         var libraryRequests = 0
+        viewModel.onReadyDisplay = { readied.append($0.id) }
         viewModel.onOpenDisplayWindow = { _ in displayWindows += 1 }
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: false)
+        await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 2)
         #expect(virtService.resumeCallCount == 1)
         #expect(popOut.status == .running)
         #expect(inline.status == .running)
         #expect(saved.status == .running)
+        #expect(readied == [popOut.id, inline.id, saved.id])
         #expect(displayWindows == 0)
         #expect(libraryRequests == 0)
-    }
-
-    @Test("startAutomaticVMsForLaunch with surfacing opens a pop-out VM's display window")
-    func autoStartSurfacingOpensTheDisplayWindow() async {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let popOut = markAutoStart(makeInstance(name: "Pop Out"))
-        popOut.configuration.displayPreference = .popOut
-        viewModel.instances = [popOut]
-        var displayWindows = 0
-        viewModel.onOpenDisplayWindow = { _ in displayWindows += 1 }
-
-        await viewModel.startAutomaticVMsForLaunch(surfacingDisplays: true)
-
-        #expect(displayWindows == 1)
-        #expect(popOut.status == .running)
+        // The pass leaves the library showing whatever the user left it on.
+        #expect(viewModel.selectedID == inline.id)
     }
 
     // MARK: - Import

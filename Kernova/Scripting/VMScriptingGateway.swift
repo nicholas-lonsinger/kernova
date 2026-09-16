@@ -223,7 +223,7 @@ final class VMScriptingGateway {
     // MARK: - Lifecycle
 
     func start(_ selectors: [VMSelector], recoveryMode: Bool) async throws {
-        try await perform(.start, surfacing: true, on: selectors) {
+        try await perform(.start, surfacing: false, on: selectors) {
             try await self.commands.start($0, recovery: recoveryMode)
         }
     }
@@ -252,8 +252,8 @@ final class VMScriptingGateway {
     }
 
     func restart(_ selectors: [VMSelector], givingUpAfter timeout: TimeInterval?) async throws {
-        try await perform(.restart, surfacing: true, on: selectors) {
-            try await self.commands.restart($0, presentation: .surface, timeout: timeout)
+        try await perform(.restart, surfacing: false, on: selectors) {
+            try await self.commands.restart($0, timeout: timeout)
         }
     }
 
@@ -264,7 +264,7 @@ final class VMScriptingGateway {
     }
 
     func resume(_ selectors: [VMSelector]) async throws {
-        try await perform(.resume, surfacing: true, on: selectors) {
+        try await perform(.resume, surfacing: false, on: selectors) {
             try await self.commands.resume($0)
         }
     }
@@ -286,7 +286,8 @@ final class VMScriptingGateway {
     /// Runs `verb` on each VM once the library read has landed, logging and
     /// rethrowing the first refusal.
     ///
-    /// A `surfacing` verb brings the app forward first, so the window it puts
+    /// A `surfacing` verb — one whose whole purpose is to show something, which
+    /// a bring-up is not — brings the app forward first, so the window it puts
     /// up opens in front of the person who ran the script rather than behind
     /// Script Editor. A refusal stops the run where it happened: an event
     /// addressing several VMs carries back one error, and finishing the rest

@@ -70,11 +70,10 @@ protocol VMCommanding: AnyObject {
     /// flight and answers by its outcome. `recovery` cold-boots a stopped macOS
     /// guest into macOS Recovery, and asks for a different guest than a boot
     /// already under way, so it refuses that one as busy rather than joining.
-    /// `presentation` is `.headless` only where a window would be wrong — the
-    /// launch auto-start pass of a process that came up with no GUI.
-    func start(
-        _ selector: VMSelector, recovery: Bool, presentation: VMDisplayPresentation
-    ) async throws
+    ///
+    /// Puts nothing in front of the user: a bring-up is not a request to look
+    /// at the guest, which is what ``open(_:)`` asks for.
+    func start(_ selector: VMSelector, recovery: Bool) async throws
 
     /// Detaches the attachment a failed start named and starts again — the
     /// confirmed action of the start-failed alert.
@@ -111,22 +110,20 @@ protocol VMCommanding: AnyObject {
 
     func pause(_ selector: VMSelector) async throws
 
-    /// Resumes the VM, surfacing its display as ``start(_:recovery:presentation:)``
-    /// does — and joining a restore already in flight the same way.
-    func resume(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws
+    /// Resumes the VM, presenting nothing as ``start(_:recovery:)`` does — and
+    /// joining a restore already in flight the same way.
+    func resume(_ selector: VMSelector) async throws
 
     /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws
 
     /// Shuts the guest down and starts it again once it has powered off,
-    /// bringing it back up the way ``start(_:recovery:presentation:)`` would.
+    /// bringing it back up the way ``start(_:recovery:)`` would.
     ///
     /// `timeout` seconds bounds the shutdown half alone. A guest still up when
     /// it expires refuses with ``CommandError/timedOut(vm:verb:seconds:)`` and
     /// is not started again; `nil` waits as long as the guest takes.
-    func restart(
-        _ selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?
-    ) async throws
+    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
@@ -411,29 +408,7 @@ protocol VMCommanding: AnyObject {
     func events() -> AsyncStream<[VMLibraryEvent]>
 }
 
-/// The surfacing spellings of the three verbs that can come up headless.
-///
-/// An in-process front door is a GUI by construction, so a caller that spells
-/// the verb without a presentation gets ``VMDisplayPresentation/surface``. The
-/// launch auto-start pass and the wire router are the callers that say which
-/// they want, because they are the ones that can be running with nowhere to
-/// present.
-extension VMCommanding {
-    func start(_ selector: VMSelector, recovery: Bool) async throws {
-        try await start(selector, recovery: recovery, presentation: .surface)
-    }
-
-    func resume(_ selector: VMSelector) async throws {
-        try await resume(selector, presentation: .surface)
-    }
-
-    func restart(_ selector: VMSelector) async throws {
-        try await restart(selector, presentation: .surface, timeout: nil)
-    }
-}
-
-/// The unbounded spelling of `stop` — `restart`'s is the surfacing one above,
-/// which drops the deadline along with the presentation.
+/// The unbounded spelling of `stop`.
 ///
 /// Only a door whose caller is sitting there waiting supplies a deadline — the
 /// `kernova` tool's `--timeout`. An in-process door spells the verb without

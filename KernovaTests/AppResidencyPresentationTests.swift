@@ -4,8 +4,8 @@ import Testing
 @testable import Kernova
 
 /// Covers ``AppResidencyController/prepareToPresentWindow()`` — the chokepoint
-/// every window that bypasses the summon path goes through, and the one place
-/// such a window arms the auto-start pass asking for surfaced displays.
+/// every window that bypasses the summon path goes through, and where such a
+/// window arms the auto-start pass.
 ///
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``:
 /// that creates the menu-bar status item and installs a process-wide `willClose`
@@ -19,15 +19,12 @@ struct AppResidencyPresentationTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appresidency")
 
-    /// Records the ``AppLaunchHosting/armAutoStartPass(surfacingDisplays:)`` seam
-    /// the launch cluster owns. Held alongside the controller, which references
-    /// it weakly.
+    /// Records the ``AppLaunchHosting/armAutoStartPass()`` seam the launch
+    /// cluster owns. Held alongside the controller, which references it weakly.
     private final class StubLaunchHost: AppLaunchHosting {
-        /// One entry per arming call, carrying the surfacing it asked for.
-        var armings: [Bool] = []
-        var count: Int { armings.count }
+        private(set) var count = 0
 
-        func armAutoStartPass(surfacingDisplays: Bool) { armings.append(surfacingDisplays) }
+        func armAutoStartPass() { count += 1 }
         func awaitLibraryReady() async {}
         func requestFullQuit() {}
     }
@@ -71,18 +68,5 @@ struct AppResidencyPresentationTests {
         controller.prepareToPresentWindow()
 
         #expect(launchHost.count == 2)
-    }
-
-    /// A headless launch arms the pass with no window, so the presentation that
-    /// may follow it must still ask for surfacing — the delegate's
-    /// once-per-process latch is what keeps the second arming from re-running
-    /// the pass, and this seam must not pre-empt that by lying about surfacing.
-    @Test("A presentation arms the auto-start pass asking for surfaced displays")
-    func presentationArmsTheSurfacingPass() {
-        let (controller, launchHost) = makeController()
-
-        controller.prepareToPresentWindow()
-
-        #expect(launchHost.armings == [true])
     }
 }

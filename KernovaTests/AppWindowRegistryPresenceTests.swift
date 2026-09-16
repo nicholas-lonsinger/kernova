@@ -24,6 +24,7 @@ struct AppWindowRegistryPresenceTests {
     private final class StubResidencyHost: WindowResidencyHosting {
         var prepareCount = 0
         var syncCount = 0
+        var guiPosture = GUIPosture.foreground
 
         func prepareToPresentWindow() { prepareCount += 1 }
         func syncActivationPolicy() { syncCount += 1 }

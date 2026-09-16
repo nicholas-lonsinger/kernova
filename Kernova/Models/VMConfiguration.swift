@@ -289,6 +289,16 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Install Intent
 
+    /// The setup a first start runs before the guest can boot.
+    ///
+    /// The one spelling of "this start runs guest setup": the start dispatch,
+    /// the Start control's wording and the unattended bring-up rule all read
+    /// ``pendingGuestSetup`` rather than the stored contexts.
+    enum PendingGuestSetup: Sendable, Equatable {
+        case macOSInstall(MacOSInstallContext)
+        case linuxImageDownload(LinuxInstallContext)
+    }
+
     /// Pending macOS install plan from the creation wizard.
     ///
     /// Non-nil ⇔ this VM has never completed its initial boot: its presence
@@ -668,14 +678,17 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         UInt64(memorySizeInGB) * 1024 * 1024 * 1024
     }
 
-    /// Whether this VM has yet to complete its initial boot — a surviving
-    /// install context of either guest's kind.
+    /// The setup a first start runs before the guest can boot, or `nil` when a
+    /// start boots the guest directly.
     ///
-    /// The canonical signal, and the one ``VMStatus/initialBoot`` is derived
-    /// from: a start here runs the macOS install or the Linux image download
-    /// rather than booting the guest.
-    var hasPendingSetup: Bool {
-        installContext != nil || linuxInstallContext != nil
+    /// The canonical signal that this VM has yet to complete its initial boot,
+    /// and the one ``VMStatus/initialBoot`` is derived from. A configuration
+    /// carrying both contexts answers with the macOS one, which is what the
+    /// start dispatch runs.
+    var pendingGuestSetup: PendingGuestSetup? {
+        if let installContext { return .macOSInstall(installContext) }
+        if let linuxInstallContext { return .linuxImageDownload(linuxInstallContext) }
+        return nil
     }
 
     /// The stored `displayWidth`/`displayHeight`/`displayPPI` trio as one value.

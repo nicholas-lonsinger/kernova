@@ -37,8 +37,8 @@ extension KernovaCommand {
         static let configuration = CommandConfiguration(
             commandName: "start",
             abstract: "Start a virtual machine.",
-            discussion: "The guest comes up without surfacing its display; `kernova open` is the "
-                + "verb that puts a display in front of you.")
+            discussion: "Nothing is brought in front of you; `kernova open` is the verb that puts "
+                + "a display there.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -53,11 +53,9 @@ extension KernovaCommand {
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            // Headless, always. A command typed in a terminal is not a request
-            // for a window to jump in front of whatever is on screen.
             .start(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                recovery: recovery, presentation: .headless)
+                recovery: recovery)
         }
 
         /// Starts the VM.
@@ -166,8 +164,8 @@ extension KernovaCommand {
         static let configuration = CommandConfiguration(
             commandName: "resume",
             abstract: "Resume a paused guest.",
-            discussion: "The guest resumes without surfacing its display; `kernova open` is the "
-                + "verb that puts a display in front of you.")
+            discussion: "Nothing is brought in front of you; `kernova open` is the verb that puts "
+                + "a display there.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -176,12 +174,9 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
-        /// The request this command line stands for, headless for the same
-        /// reason `start` is.
+        /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .resume(
-                try SelectorParsing.selector(from: vm, forcingID: options.id),
-                presentation: .headless)
+            .resume(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
         /// Resumes the VM.
@@ -196,9 +191,9 @@ extension KernovaCommand {
         static let configuration = CommandConfiguration(
             commandName: "restart",
             abstract: "Shut a guest down and start it again.",
-            discussion: "The guest comes back up without surfacing its display, as `start` does. "
-                + "--timeout bounds the shutdown half: a guest still up when it expires exits 7 "
-                + "and is not started again.")
+            discussion: "Nothing is brought in front of you, as with `start`; `kernova open` is "
+                + "the verb that puts a display there. --timeout bounds the shutdown half: a "
+                + "guest still up when it expires exits 7 and is not started again.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -220,8 +215,7 @@ extension KernovaCommand {
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
             .restart(
-                try SelectorParsing.selector(from: vm, forcingID: options.id),
-                presentation: .headless, timeout: timeout)
+                try SelectorParsing.selector(from: vm, forcingID: options.id), timeout: timeout)
         }
 
         /// Restarts the VM.

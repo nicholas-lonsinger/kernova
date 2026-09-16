@@ -33,9 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
     private var libraryLoad: Task<Void, Never>?
-    /// Latched once ``armAutoStartPass(surfacingDisplays:)`` has armed the pass,
-    /// so whoever arms it first decides whether its guests surface a display and
-    /// no later call runs the pass a second time.
+    /// Latched once ``armAutoStartPass()`` has armed the pass, so no later call
+    /// runs it a second time.
     private var hasArmedAutoStartPass = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
@@ -123,6 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)
         }
+        viewModel.onReadyDisplay = { [weak self] instance in
+            self?.windows.displayPlacement.readyDisplay(for: instance)
+        }
         viewModel.onRevealInFinder = { instance in
             NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
         }
@@ -197,17 +199,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Arms the launch pass that brings up the VMs marked to start
     /// automatically, once per process.
     ///
-    /// The latch settles the surfacing question: whoever arms the pass first
-    /// decides it, and a headless launch arms it before any window exists to
-    /// surface into.
-    func armAutoStartPass(surfacingDisplays: Bool) {
+    /// Every posture arms the same pass; the latch is what keeps a later
+    /// arming from running it a second time.
+    func armAutoStartPass() {
         guard !hasArmedAutoStartPass else { return }
         hasArmedAutoStartPass = true
         termination.registerLaunchWork(
             Task { @MainActor in
                 await self.libraryLoad?.value
-                await self.viewModel.startAutomaticVMsForLaunch(
-                    surfacingDisplays: surfacingDisplays)
+                await self.viewModel.startAutomaticVMsForLaunch()
             })
     }
 

@@ -48,19 +48,18 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// Subscribe: a snapshot frame, then one frame per library event.
         case events
 
-        case start(VMSelector, recovery: Bool, presentation: VMDisplayPresentation)
+        case start(VMSelector, recovery: Bool)
         case cancelGuestSetup(VMSelector, confirmed: Bool)
         /// `timeout` bounds the wait for the guest to power off, in seconds;
         /// `nil` returns as soon as the guest has been asked to go down.
         case stop(
             VMSelector, disposition: StopDisposition, confirmed: Bool, timeout: TimeInterval?)
         case pause(VMSelector)
-        case resume(VMSelector, presentation: VMDisplayPresentation)
+        case resume(VMSelector)
         case suspend(VMSelector)
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
-        case restart(
-            VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?)
+        case restart(VMSelector, timeout: TimeInterval?)
         case open(VMSelector)
         case reveal(VMSelector)
         /// Selects the VM's bundle in the Finder, which is what comes forward.
@@ -110,20 +109,18 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         ///
         /// A door outside the app has to bring the app forward before it does —
         /// a window ordered front behind the terminal that asked for it has not
-        /// answered anybody. Read from the request rather than the verb name,
-        /// because the two bring-up verbs surface only when their caller says
-        /// so.
+        /// answered anybody. Only the two verbs whose whole purpose is to show
+        /// something qualify: bringing a guest up is not a request to look at
+        /// it, and `open` is the verb that asks for that.
         public var surfacesInterface: Bool {
             switch self {
             case .open, .reveal:
                 true
-            case .start(_, _, let presentation), .resume(_, let presentation),
-                .restart(_, let presentation, _):
-                presentation == .surface
             case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
                 .portForwardingRules, .usbAccessories, .availableUSBAccessories, .usbPairings,
                 .forgetUSBPairing, .editUSBAccessory,
                 .events,
+                .start, .resume, .restart,
                 .cancelGuestSetup, .stop, .pause, .suspend, .showInFinder, .takeSnapshot,
                 .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
                 .rename, .delete, .importVM, .cancelPreparing, .awaitPreparing, .editStorageDisk,

@@ -437,9 +437,15 @@ final class VMLibraryViewModel {
 
     var activeRename: RenameTarget?
 
-    /// Called when a VM with a non-inline `displayPreference` is about to start or resume,
-    /// allowing the app delegate to pre-create the display window with a spinner.
+    /// Asks for a VM's display window, for a verb that puts the display in
+    /// front of the user.
     @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
+
+    /// Reports that a VM is coming up, so its display can be readied.
+    ///
+    /// What that costs on screen is the delegate's decision, taken from the
+    /// app's own posture — a bring-up is not a request to look at the guest.
+    @ObservationIgnored var onReadyDisplay: ((VMInstance) -> Void)?
 
     /// Asks for the library window, for an inline surface with nowhere to land.
     ///
@@ -543,10 +549,12 @@ final class VMLibraryViewModel {
             self?.present(failure, for: instance)
         }
         core.surfaceDisplay = { [weak self] instance in
-            self?.surfaceDisplay(for: instance, bringingLibraryForward: true)
+            self?.surfaceDisplay(for: instance)
         }
+        // Straight through: what a bring-up puts on screen is decided from the
+        // app's own posture, which only the delegate can read.
         core.readyDisplay = { [weak self] instance in
-            self?.surfaceDisplay(for: instance, bringingLibraryForward: false)
+            self?.onReadyDisplay?(instance)
         }
         core.revealInLibrary = { [weak self] instance in
             self?.revealInLibrary(instance)
@@ -640,31 +648,48 @@ final class VMLibraryViewModel {
     // MARK: - Lifecycle
 
     /// Surfaces a VM's display: the detached window for pop-out/fullscreen VMs,
-    /// else keyboard focus in the inline guest display — and, when
-    /// `bringingLibraryForward`, the library window that carries it.
-    private func surfaceDisplay(for instance: VMInstance, bringingLibraryForward: Bool) {
-        if instance.configuration.displayPreference != .inline {
+    /// else keyboard focus in the inline guest display, with the library window
+    /// that carries it brought forward.
+    private func surfaceDisplay(for instance: VMInstance) {
+        guard instance.configuration.displayPreference == .inline else {
             onOpenDisplayWindow?(instance)
-        } else {
-            // The inline display renders whichever VM is selected, so selecting
-            // is what surfacing *is* here — `focusGuestDisplay` on an unselected
-            // VM only arms a focus that the next display-state pass clears.
-            // Detached windows are their own surface and need no selection.
-            selectedID = instance.id
-            // Whether or not a window already exists, exactly as
-            // `revealInLibrary` asks: the inline display *is* part of the
-            // library window, so one buried behind another app, miniaturized,
-            // or never created has surfaced nothing — and `focusGuestDisplay`
-            // only moves the first responder, which nobody can see.
-            if bringingLibraryForward { onSurfaceLibrary?() }
-            guard let presenter else {
-                // No window has ever been created, so there is no inline display
-                // to focus yet. The one just asked for focuses when it attaches.
-                bufferedDisplayFocus = instance.id
-                return
-            }
-            presenter.focusGuestDisplay(for: instance)
+            return
         }
+        // The inline display renders whichever VM is selected, so selecting is
+        // what surfacing *is* here — `focusGuestDisplay` on an unselected VM
+        // only arms a focus that the next display-state pass clears.
+        selectedID = instance.id
+        // Whether or not a window already exists, exactly as `revealInLibrary`
+        // asks: the inline display *is* part of the library window, so one
+        // buried behind another app, miniaturized, or never created has
+        // surfaced nothing — and `focusGuestDisplay` only moves the first
+        // responder, which nobody can see.
+        onSurfaceLibrary?()
+        deliverInlineFocus(to: instance)
+    }
+
+    /// Selects the VM and puts the keyboard in its inline guest display — what
+    /// an in-app bring-up gesture asks for beyond the verb itself.
+    ///
+    /// A pop-out or fullscreen VM is left alone: its window is opened by the
+    /// bring-up's own readying, and a gesture in the library is not a request
+    /// to be taken to another window.
+    private func focusInlineDisplay(for instance: VMInstance) {
+        guard instance.configuration.displayPreference == .inline else { return }
+        selectedID = instance.id
+        deliverInlineFocus(to: instance)
+    }
+
+    /// Moves the first responder into the selected VM's inline display, holding
+    /// the ask until a window exists to move it in.
+    private func deliverInlineFocus(to instance: VMInstance) {
+        guard let presenter else {
+            // No window has ever been created, so there is no inline display to
+            // focus yet. The one just asked for focuses when it attaches.
+            bufferedDisplayFocus = instance.id
+            return
+        }
+        presenter.focusGuestDisplay(for: instance)
     }
 
     /// Selects the VM and asks for the library window — what a reveal lands on
@@ -674,13 +699,18 @@ final class VMLibraryViewModel {
         onSurfaceLibrary?()
     }
 
-    func start(
-        _ instance: VMInstance, bootIntoRecovery: Bool = false,
-        presentation: VMDisplayPresentation = .surface
-    ) async {
+    /// The door every in-app start gesture funnels through: the verb, plus the
+    /// look at the guest the gesture also asked for.
+    ///
+    /// Every caller is somebody in the library clicking Start — the toolbar,
+    /// the menus, the sidebar's context menu, the display window's Resume — so
+    /// the VM becomes the selected one and the keyboard lands in its display,
+    /// ahead of the boot rather than at the end of it. A start arriving from
+    /// anywhere else goes through ``VMCommanding`` and moves nothing.
+    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
+        focusInlineDisplay(for: instance)
         await run(on: instance) {
-            try await self.commands.start(
-                .id(instance.id), recovery: bootIntoRecovery, presentation: presentation)
+            try await self.commands.start(.id(instance.id), recovery: bootIntoRecovery)
         }
     }
 
@@ -731,11 +761,12 @@ final class VMLibraryViewModel {
         await run(on: instance) { try await self.commands.pause(.id(instance.id)) }
     }
 
-    func resume(
-        _ instance: VMInstance, presentation: VMDisplayPresentation = .surface
-    ) async {
+    /// The resume half of the in-app door, surfacing what ``start(_:bootIntoRecovery:)``
+    /// surfaces for the same reason.
+    func resume(_ instance: VMInstance) async {
+        focusInlineDisplay(for: instance)
         await run(on: instance) {
-            try await self.commands.resume(.id(instance.id), presentation: presentation)
+            try await self.commands.resume(.id(instance.id))
         }
     }
 
@@ -1134,8 +1165,7 @@ final class VMLibraryViewModel {
     // MARK: - Launch Auto-Start
 
     /// Names of the macOS VMs marked to start automatically, in library order —
-    /// which is the order ``startAutomaticVMsForLaunch(surfacingDisplays:)``
-    /// reaches them in.
+    /// which is the order ``startAutomaticVMsForLaunch()`` reaches them in.
     ///
     /// Feeds the Startup section's capacity warning: macOS caps how many macOS
     /// guests run at once, so a longer list than that cap cannot come up whole.
@@ -1146,35 +1176,6 @@ final class VMLibraryViewModel {
                     && $0.configuration.startsAutomaticallyOnLaunch
             }
             .map(\.name)
-    }
-
-    /// What the launch auto-start pass does with one VM.
-    enum AutoStartStep: Equatable {
-        case start
-        case resume
-        case skip
-    }
-
-    /// The pass's move for one VM, decided from state alone.
-    ///
-    /// A VM that has yet to finish setup is skipped: its start runs the macOS
-    /// install or the Linux image download, neither of which may begin
-    /// unattended. ``VMConfiguration/hasPendingSetup`` is what decides that, not
-    /// the phase — ``VMCommandCore/start(_:recovery:presentation:)`` dispatches on the
-    /// surviving install context too, so a failed install sitting at `.failed`
-    /// still routes into the installer, and `.failed` otherwise means "retry the
-    /// boot".
-    nonisolated static func autoStartStep(
-        startsAutomaticallyOnLaunch: Bool,
-        isPreparing: Bool,
-        hasPendingSetup: Bool,
-        phase: VMLifecyclePhase
-    ) -> AutoStartStep {
-        guard startsAutomaticallyOnLaunch, !isPreparing, !hasPendingSetup,
-            phase != .initialBoot
-        else { return .skip }
-        if phase.isColdPaused { return .resume }
-        return phase.canStart ? .start : .skip
     }
 
     /// Starts every VM marked to start automatically, one after another.
@@ -1190,12 +1191,10 @@ final class VMLibraryViewModel {
     /// Cancelling stops it between VMs — a start already inside VZ is left to
     /// finish, since abandoning one mid-flight is worse than completing it.
     ///
-    /// `surfacingDisplays` is `false` for a launch that came up headless: a
-    /// login launch boots its marked VMs with no window, and a pop-out VM's
-    /// display window would give the process the window and Dock icon it was
-    /// asked not to have.
-    func startAutomaticVMsForLaunch(surfacingDisplays: Bool) async {
-        let presentation: VMDisplayPresentation = surfacingDisplays ? .surface : .headless
+    /// Nobody is at the machine for this, so it selects and focuses nothing: it
+    /// goes through the verbs rather than the in-app door, and the library is
+    /// left showing whatever the user left it on.
+    func startAutomaticVMsForLaunch() async {
         let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
         guard !marked.isEmpty else {
             Self.logger.debug("Launch auto-start: no VMs are marked to start automatically")
@@ -1227,23 +1226,24 @@ final class VMLibraryViewModel {
             // Re-read at the moment of acting rather than trusting the snapshot:
             // the user can start a VM by hand while this pass runs, and the
             // previous iteration's boot is what can make the next one a
-            // duplicate-identity conflict.
-            let step = Self.autoStartStep(
-                startsAutomaticallyOnLaunch: instance.configuration.startsAutomaticallyOnLaunch,
-                isPreparing: instance.isPreparing,
-                hasPendingSetup: instance.configuration.hasPendingSetup,
-                phase: instance.phase)
-            switch step {
-            case .start:
-                await start(instance, presentation: presentation)
-            case .resume:
-                await resume(instance, presentation: presentation)
-            case .skip:
+            // duplicate-identity conflict. The marking is this pass's own
+            // criterion; what the VM's state admits is the catalog's.
+            guard instance.configuration.startsAutomaticallyOnLaunch,
+                let step = capabilities.unattendedBringUp(for: instance)
+            else {
                 Self.logger.debug(
                     "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
                 )
                 skippedCount += 1
                 continue
+            }
+            // Through the verbs rather than the in-app door: a failure still
+            // buffers for the status item, and nothing is selected or focused.
+            await run(on: instance) {
+                switch step {
+                case .start: try await self.commands.start(.id(instance.id), recovery: false)
+                case .resume: try await self.commands.resume(.id(instance.id))
+                }
             }
             if instance.isActive {
                 startedCount += 1

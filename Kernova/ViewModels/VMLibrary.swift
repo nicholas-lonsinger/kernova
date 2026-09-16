@@ -234,7 +234,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     nonisolated static func initialPhase(for config: VMConfiguration, layout: VMBundleLayout)
         -> VMLifecyclePhase
     {
-        if config.hasPendingSetup {
+        if config.pendingGuestSetup != nil {
             return .initialBoot
         }
         return layout.hasSaveFile ? .suspended : .stopped

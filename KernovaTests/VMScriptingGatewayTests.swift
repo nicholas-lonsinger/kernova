@@ -258,7 +258,7 @@ struct VMScriptingGatewayTests {
         #expect(commands.stopCalls.map(\.timeout) == [30])
         #expect(commands.restartCalls.map(\.timeout) == [nil])
         #expect(commands.pauseSelectors == [alpha])
-        #expect(commands.resumeCalls.map(\.selector) == [alpha])
+        #expect(commands.resumeSelectors == [alpha])
         #expect(commands.suspendSelectors == [alpha])
         #expect(commands.revealSelectors == [alpha])
     }
@@ -425,16 +425,14 @@ struct VMScriptingGatewayTests {
         let commands = MockVMCommanding()
         var activations = 0
         let gateway = makeGateway(commands, activate: { activations += 1 })
-        let alpha = VMSelector.name("Alpha")
 
-        try await gateway.start([alpha], recoveryMode: false)
-        try await gateway.resume([alpha])
-        try await gateway.restart([alpha], givingUpAfter: nil)
-        try await gateway.reveal([alpha])
+        try await gateway.reveal([.name("Alpha")])
 
-        #expect(activations == 4)
+        #expect(activations == 1)
     }
 
+    /// Bringing a guest up is not a request to look at it, so a scripted start
+    /// leaves the script's own app in front.
     @Test("A verb that puts nothing up leaves the app where it is, as does one addressing no VM")
     func nonSurfacingVerbsDoNotActivate() async throws {
         let commands = MockVMCommanding()
@@ -442,6 +440,9 @@ struct VMScriptingGatewayTests {
         let gateway = makeGateway(commands, activate: { activations += 1 })
         let alpha = VMSelector.name("Alpha")
 
+        try await gateway.start([alpha], recoveryMode: false)
+        try await gateway.resume([alpha])
+        try await gateway.restart([alpha], givingUpAfter: nil)
         try await gateway.stop([alpha], method: .graceful, confirmed: false, givingUpAfter: nil)
         try await gateway.pause([alpha])
         try await gateway.suspend([alpha])

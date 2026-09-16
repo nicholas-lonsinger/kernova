@@ -3,6 +3,16 @@ import Cocoa
 import KernovaKit
 import os
 
+/// What the app is presenting, read at the moment a VM comes up.
+enum GUIPosture: Equatable {
+    /// Status-item-only (`.accessory`): no window may appear.
+    case absent
+    /// Windows exist but another app is frontmost.
+    case background
+    /// Kernova is the active app.
+    case foreground
+}
+
 /// The residency decisions a window owner needs but cannot make.
 @MainActor
 protocol WindowResidencyHosting: AnyObject {
@@ -10,6 +20,9 @@ protocol WindowResidencyHosting: AnyObject {
     func prepareToPresentWindow()
     /// Re-decides the activation policy now, rather than on the next runloop turn.
     func syncActivationPolicy()
+    /// What the app is presenting, for a window deciding whether — and how — to
+    /// go on screen.
+    var guiPosture: GUIPosture { get }
 }
 
 /// Everything ``AppDelegate`` asks of the process's residency — what it is
@@ -60,10 +73,7 @@ protocol AppResidencyHosting: WindowResidencyHosting {
 protocol AppLaunchHosting: AnyObject {
     /// Arms the pass that brings up the VMs marked to start automatically, once
     /// per process.
-    ///
-    /// `surfacingDisplays` is `false` only where the pass runs with no GUI: a
-    /// headless login launch, whose guests must not drag a window on screen.
-    func armAutoStartPass(surfacingDisplays: Bool)
+    func armAutoStartPass()
     /// Awaits the app's first library read.
     func awaitLibraryReady() async
     /// Terminates the app unconditionally, bypassing the keep-in-menu-bar
@@ -271,10 +281,9 @@ final class AppResidencyController: AppResidencyHosting {
     /// The status item, the residency observation and the window-close reconcile
     /// are set up for every provenance — they are what the process needs to be
     /// reachable and to answer for itself, whoever started it. The two postures
-    /// differ only in what goes on screen; both arm the auto-start pass, so VMs
-    /// marked `VMConfiguration.startsAutomaticallyOnLaunch` come up once the
-    /// library read lands, surfacing their displays only where there is a GUI
-    /// to surface into.
+    /// differ only in what goes on screen; both arm the same auto-start pass, so
+    /// VMs marked `VMConfiguration.startsAutomaticallyOnLaunch` come up once the
+    /// library read lands.
     ///
     /// `.headless` drops straight to `.accessory` — deliberately *not* through
     /// ``syncActivationPolicy()``, which reads a window list this launch has not
@@ -318,11 +327,7 @@ final class AppResidencyController: AppResidencyHosting {
             presentSummonedInterface()
         case .headless:
             setActivationPolicy(.accessory)
-            // Not `armAutoStartForPresentation`: nothing went on screen, so a
-            // guest booting here has no window to surface into. A later summon
-            // asks for surfacing, and its own arming call is a no-op behind the
-            // delegate's once-per-process latch.
-            host?.armAutoStartPass(surfacingDisplays: false)
+            host?.armAutoStartPass()
         }
     }
 
@@ -650,16 +655,7 @@ final class AppResidencyController: AppResidencyHosting {
         // runs first and a VM booting here finds the measurable surface
         // `applyMatchWindowBootResolution` needs. The marked VMs only exist in
         // `instances` once that read applies.
-        armAutoStartForPresentation()
-    }
-
-    /// Arms the auto-start pass for a GUI surface going on screen, so the guests
-    /// it boots can surface their displays.
-    ///
-    /// Every presenting path calls it; the delegate's once-per-process latch is
-    /// what makes the second call a no-op.
-    private func armAutoStartForPresentation() {
-        host?.armAutoStartPass(surfacingDisplays: true)
+        host?.armAutoStartPass()
     }
 
     /// Brings the app forward for a surface something outside the process asked
@@ -675,13 +671,27 @@ final class AppResidencyController: AppResidencyHosting {
         requestSummonActivation()
     }
 
+    /// What the resident app is presenting.
+    ///
+    /// The activation policy is the whole signal for absence: `.accessory` is
+    /// asserted exactly while the app is status-item-only — a login or hidden
+    /// launch (``start(provenance:)``) and a soft quit
+    /// (``closeGUIForSoftQuit()``) — and every path that puts a window up
+    /// asserts `.regular` first, through ``prepareToPresentWindow()`` or
+    /// ``presentSummonedInterface()``. ``syncActivationPolicy()`` then keeps
+    /// the two in step for the life of the process.
+    var guiPosture: GUIPosture {
+        guard NSApp.activationPolicy() == .regular else { return .absent }
+        return NSApp.isActive ? .foreground : .background
+    }
+
     /// Re-asserts `.regular` before a window is shown, so a window can never be
     /// presented while the resident app is still headless `.accessory`.
     func prepareToPresentWindow() {
         // The chokepoint every window that bypasses `presentSummonedInterface`
         // passes through — a display window an `open` verb asked for, a
         // clipboard window, Settings.
-        armAutoStartForPresentation()
+        host?.armAutoStartPass()
         setActivationPolicy(.regular)
     }
 

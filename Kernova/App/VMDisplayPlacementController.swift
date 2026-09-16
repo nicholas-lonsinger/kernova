@@ -66,6 +66,15 @@ final class VMDisplayPlacementController {
         case popOut
     }
 
+    /// How a display window goes on screen.
+    enum WindowShow: Equatable {
+        /// Key and frontmost, in fullscreen when asked for it.
+        case front(fullscreen: Bool)
+        /// Ordered into Kernova's own window layer, taking neither key nor the
+        /// screen from the app the user is in.
+        case behind
+    }
+
     /// How a pop-in restores the library window.
     enum LibraryRestore: Equatable {
         /// The user popped in from the display window — focus the library.
@@ -125,6 +134,30 @@ final class VMDisplayPlacementController {
         }
     }
 
+    /// How a bring-up readies this VM's display, or `nil` when it readies
+    /// nothing.
+    ///
+    /// Two VMs get nothing. An inline one shows in whichever row is selected,
+    /// and a bring-up does not change the user's selection. And an app that is
+    /// presenting no GUI was asked not to have one — a window here would hand
+    /// it the Dock icon and menu bar it came up without.
+    ///
+    /// A bring-up is not a request to look at the guest, so the window takes
+    /// key and the screen only where the user is already in Kernova. From
+    /// another app it goes up behind what they are looking at, which is also
+    /// why fullscreen is reserved for the foreground: entering it moves the
+    /// user to a Space they did not ask for.
+    nonisolated static func readying(
+        preference: VMDisplayPreference, posture: GUIPosture
+    ) -> WindowShow? {
+        guard preference != .inline else { return nil }
+        switch posture {
+        case .absent: return nil
+        case .background: return .behind
+        case .foreground: return .front(fullscreen: preference == .fullscreen)
+        }
+    }
+
     /// Decides how a pop-in brings the library back.
     nonisolated static func libraryRestore(
         wasKeyWindow: Bool, appWasActive: Bool
@@ -162,7 +195,25 @@ final class VMDisplayPlacementController {
     func showDisplayWindow(for instance: VMInstance) {
         openDisplayWindow(
             for: instance,
-            enterFullscreen: instance.configuration.displayPreference == .fullscreen)
+            show: .front(fullscreen: instance.configuration.displayPreference == .fullscreen))
+    }
+
+    /// Readies a VM's display for a bring-up: opens its window when it has none,
+    /// and leaves one already open exactly where it is.
+    ///
+    /// Deliberately not ``showDisplayWindow(for:)``: readying is not surfacing,
+    /// so a bring-up reaching a Kernova the user is not in puts the window up
+    /// behind what they are looking at — and a fullscreen VM readied that way
+    /// runs in a pop-out window, its persisted preference untouched, until the
+    /// user brings it forward and enters fullscreen themselves.
+    func readyDisplay(for instance: VMInstance) {
+        guard
+            let show = Self.readying(
+                preference: instance.configuration.displayPreference,
+                posture: residency?.guiPosture ?? .absent)
+        else { return }
+        guard windows[instance.instanceID] == nil else { return }
+        openDisplayWindow(for: instance, show: show)
     }
 
     func togglePopOut(for instance: VMInstance) {
@@ -179,7 +230,7 @@ final class VMDisplayPlacementController {
             viewModel.presenter?.focusGuestDisplay(for: instance)
         case .popOut:
             viewModel.updateConfiguration(of: instance) { $0.displayPreference = .popOut }
-            openDisplayWindow(for: instance, enterFullscreen: false)
+            openDisplayWindow(for: instance, show: .front(fullscreen: false))
         }
     }
 
@@ -189,7 +240,7 @@ final class VMDisplayPlacementController {
             return
         }
         viewModel.updateConfiguration(of: instance) { $0.displayPreference = .fullscreen }
-        openDisplayWindow(for: instance, enterFullscreen: true)
+        openDisplayWindow(for: instance, show: .front(fullscreen: true))
     }
 
     /// Closes the VM's display window as an explicit Pop In.
@@ -223,13 +274,17 @@ final class VMDisplayPlacementController {
         controller.closeFromOwner()
     }
 
-    private func openDisplayWindow(for instance: VMInstance, enterFullscreen: Bool) {
+    private func openDisplayWindow(for instance: VMInstance, show: WindowShow) {
         let vmID = instance.instanceID
+        let enterFullscreen = show == .front(fullscreen: true)
 
         // Already open (e.g. resuming a live-paused VM from the library):
         // surface the existing window so keyboard input lands in the guest.
         if let existing = windows[vmID] {
-            existing.window?.makeKeyAndOrderFront(nil)
+            switch show {
+            case .front: existing.window?.makeKeyAndOrderFront(nil)
+            case .behind: existing.window?.orderFront(nil)
+            }
             return
         }
         residency?.prepareToPresentWindow()
@@ -275,7 +330,10 @@ final class VMDisplayPlacementController {
         }
 
         apply(Self.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
-        controller.showWindow(nil)
+        switch show {
+        case .front: controller.showWindow(nil)
+        case .behind: controller.showWindowBehind()
+        }
     }
 
     /// The best screen for entering fullscreen: the display the VM was last

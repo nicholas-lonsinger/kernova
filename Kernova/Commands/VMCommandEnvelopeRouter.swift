@@ -147,8 +147,8 @@ struct VMCommandEnvelopeRouter {
                     message: "This transport does not deliver event subscriptions.",
                     recovery: nil))
 
-        case .start(let selector, let recovery, let presentation):
-            try await commands.start(selector, recovery: recovery, presentation: presentation)
+        case .start(let selector, let recovery):
+            try await commands.start(selector, recovery: recovery)
             return .ok
         case .cancelGuestSetup(let selector, let confirmed):
             try commands.cancelGuestSetup(selector, confirmed: confirmed)
@@ -160,14 +160,14 @@ struct VMCommandEnvelopeRouter {
         case .pause(let selector):
             try await commands.pause(selector)
             return .ok
-        case .resume(let selector, let presentation):
-            try await commands.resume(selector, presentation: presentation)
+        case .resume(let selector):
+            try await commands.resume(selector)
             return .ok
         case .suspend(let selector):
             try await commands.suspend(selector)
             return .ok
-        case .restart(let selector, let presentation, let timeout):
-            try await commands.restart(selector, presentation: presentation, timeout: timeout)
+        case .restart(let selector, let timeout):
+            try await commands.restart(selector, timeout: timeout)
             return .ok
         case .open(let selector):
             try commands.open(selector)
