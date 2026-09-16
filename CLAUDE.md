@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-The project's operating guide — build commands, architecture summary, and the coding/testing/review/git conventions — is agent-neutral and lives in [AGENTS.md](AGENTS.md), imported here so it loads into context every session:
+The project's operating guide — the principles, and the coding/documentation/review/git rules — is agent-neutral and lives in [AGENTS.md](AGENTS.md), imported here so it loads into context every session:
 
 @AGENTS.md
 
-Deep-dive documentation is indexed in [docs/README.md](docs/README.md) — read those files on demand when AGENTS.md points at them. Everything below is Claude Code-specific.
+Everything below is Claude Code-specific.
 
 ## Worktree branch naming and pushing
 
@@ -18,7 +18,7 @@ anyway — the right one depends on the full scope of the work, which you only k
 once it's ready to push.
 
 When the work is ready to push, give the **remote** branch a clean
-`<type>/<short-description>` name (the convention in AGENTS.md's Branch Naming
+`<type>/<short-description>` name (the convention in AGENTS.md's Git Workflow
 section) while the local branch keeps its `worktree-` name — and because the
 names differ, a bare `git push` pushes nothing, so **every push spells the
 refspec**:
@@ -36,10 +36,10 @@ each push with `git status -sb` — no `[ahead N]` means the push landed.
 
 ## Post-merge cleanup in an `EnterWorktree` session
 
-AGENTS.md's post-merge steps hold from an `EnterWorktree` session up to the
-branch deletion: confirm the merge and fast-forward the default branch as
-written, but keep this worktree's branch — `ExitWorktree(remove)` deletes
-it — and first drop its now-redundant commits, still inside this worktree:
+Confirm the merge first — `gh pr view <N> --json state -q .state` reports
+`"MERGED"` — then fast-forward the local default branch onto the remote. Keep
+this worktree's branch, which `ExitWorktree(remove)` deletes, and drop its
+now-redundant commits, still inside this worktree:
 
 ```bash
 git fetch origin main && git reset --hard origin/main

@@ -1,6 +1,6 @@
 # TESTING.md
 
-Read this before writing any test that waits on async state or needs access to private production state: the async-wait seams, the injected-timeout rule, test-only exposure patterns, and the guest-agent precondition for live tests. The basic conventions (Swift Testing, mocks, factories, happy + error paths) are in [AGENTS.md](../AGENTS.md#unit-tests).
+Read this before writing any test that waits on async state or needs access to private production state: the async-wait seams, the injected-timeout rule, test-only exposure patterns, and the guest-agent precondition for live tests.
 
 ## Async waits in tests
 

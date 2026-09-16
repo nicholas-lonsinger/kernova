@@ -293,9 +293,8 @@ public func drainMainQueue() async {
 /// parked pull there costs a kernel thread rather than one of the cooperative
 /// pool's 3-4 CI threads. Parked on the cooperative pool instead, enough pulls
 /// exhaust it, the tasks the reply depends on starve, and the bundle freezes
-/// until the shortest injected timeout fires — the 2026-07-19 CI mass failures
-/// (#608), #618 for the guest bundle. See docs/TESTING.md "Blocking bridge calls
-/// run on GCD".
+/// until the shortest injected timeout fires — the 2026-07-19 CI mass failures.
+/// See docs/TESTING.md "Blocking bridge calls run on GCD".
 public func offCooperativePool<T: Sendable>(
     _ body: @escaping @Sendable () -> T
 ) async -> T {

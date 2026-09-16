@@ -5,7 +5,7 @@
 # fresh `git worktree add` and lets a worktree that predates
 # `make install-hooks` catch up on its next `git switch`. Hooks activate only
 # once `make install-hooks` sets core.hooksPath (git never auto-runs
-# checked-in hooks) — see README "Development setup".
+# checked-in hooks) — see README "Building Kernova".
 #
 # Git runs post-checkout from the working-tree root, so the relative path
 # below resolves within whichever worktree was just created or switched.

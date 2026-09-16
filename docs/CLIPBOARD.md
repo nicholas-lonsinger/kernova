@@ -243,9 +243,8 @@ it later. Beyond AGENTS.md's sandbox rules: archive with AppleArchive, never `di
 
 ### 12. Complexity is an acceptable price for a measurable win
 
-The general rule ([AGENTS.md](../AGENTS.md#principles)) applies here with full force: when the
-simpler and the sophisticated implementation differ on a real metric — disk, memory, I/O, CPU, or
-UX — take the sophisticated one, and reject complexity that moves no real metric.
+The simplest-path-first principle ([AGENTS.md](../AGENTS.md#principles)) applies here with full
+force.
 
 ### 13. Making slow work legible
 

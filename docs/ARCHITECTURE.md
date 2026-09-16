@@ -7,9 +7,9 @@ actor isolation. It records what exists and how the pieces connect; what a compo
 owned by its own doc comment.
 
 Kernova manages virtual machines through Apple's Virtualization.framework, with macOS and Linux
-guests. Pure AppKit (no `import SwiftUI` in the app target), Swift 6 strict concurrency,
-no non-Apple dependencies. The app targets macOS 26; the guest agent and `KernovaKit` deploy back
-to macOS 12 so the agent runs in every macOS guest the catalog can install.
+guests. Pure AppKit (no `import SwiftUI` in the app target), Swift 6 strict concurrency. The app
+targets macOS 26; the guest agent and `KernovaKit` deploy back to macOS 12 so the agent runs in
+every macOS guest the catalog can install.
 
 Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 [SANDBOX.md](SANDBOX.md), toolbar construction in [TOOLBAR.md](TOOLBAR.md).

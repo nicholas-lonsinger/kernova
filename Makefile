@@ -220,7 +220,7 @@ doctor: ## Check the local toolchain, signing, optional tooling, and repo setup
 # sweeps registrations and arenas on new checkouts; this reports whatever
 # remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
 # outrank the installed /Applications copy in the LaunchServices
-# CFBundleVersion election (#454). `ghosts` only reports; `clean-ghosts` also
+# CFBundleVersion election. `ghosts` only reports; `clean-ghosts` also
 # unregisters/kills/prunes/evicts, prompting only for live competing copies.
 ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
 	@Tools/ghosts.sh
