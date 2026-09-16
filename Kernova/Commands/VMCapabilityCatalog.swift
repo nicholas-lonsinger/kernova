@@ -331,6 +331,24 @@ struct VMCapabilityCatalog {
         return instance.ephemeralBaselineSnapshot == nil ? .discardSavedState : .revertToBaseline
     }
 
+    /// The verb a bring-up nobody is present for brings a VM up with.
+    enum UnattendedBringUp: Equatable {
+        case start
+        case resume
+    }
+
+    /// What a bring-up nobody is present for may do with this VM, or `nil`.
+    ///
+    /// A start that runs guest setup — the macOS install or the Linux image
+    /// download — is refused here: neither may begin unattended. A live-paused
+    /// VM is refused too: it takes a resume, but its memory never left the
+    /// host, so there is no bring-up owed.
+    func unattendedBringUp(for instance: VMInstance) -> UnattendedBringUp? {
+        guard instance.configuration.pendingGuestSetup == nil else { return nil }
+        if isAvailable(.resume, on: instance), instance.isColdPaused { return .resume }
+        return isAvailable(.start, on: instance) ? .start : nil
+    }
+
     /// Whether the stop slot can be invoked now.
     ///
     /// The slot stands for two capabilities, and layers the baseline's own rule
@@ -363,8 +381,8 @@ struct VMCapabilityCatalog {
         case .start:
             // A start committed against a VM already coming up is asking for the
             // state that bring-up is producing, so it joins it
-            // (``VMCommandCore/start(_:recovery:presentation:)``) rather than
-            // refusing a VM on its way to running. Both bring-up phases count:
+            // (``VMCommandCore/start(_:recovery:)``) rather than refusing a VM
+            // on its way to running. Both bring-up phases count:
             // a boot with a save file passes through `.starting` into
             // `.restoringSavedState` before its first await, so the restore is
             // the whole of what another caller can observe. Offering it is the

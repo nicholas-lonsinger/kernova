@@ -71,8 +71,8 @@ struct VMCommandEnvelopeTests {
             .usbAccessories(selector),
             .availableUSBAccessories,
             .events,
-            .start(selector, recovery: true, presentation: .surface),
-            .start(selector, recovery: false, presentation: .headless),
+            .start(selector, recovery: true),
+            .start(selector, recovery: false),
             .cancelGuestSetup(selector, confirmed: false),
             .cancelGuestSetup(selector, confirmed: true),
             .stop(selector, disposition: .graceful, confirmed: false, timeout: nil),
@@ -80,11 +80,10 @@ struct VMCommandEnvelopeTests {
             .stop(selector, disposition: .resumeThenShutDown, confirmed: true, timeout: nil),
             .stop(selector, disposition: .force, confirmed: true, timeout: 0.5),
             .pause(selector),
-            .resume(selector, presentation: .surface),
-            .resume(selector, presentation: .headless),
+            .resume(selector),
             .suspend(selector),
-            .restart(selector, presentation: .surface, timeout: nil),
-            .restart(selector, presentation: .headless, timeout: 120),
+            .restart(selector, timeout: nil),
+            .restart(selector, timeout: 120),
             .open(selector),
             .reveal(selector),
             .showInFinder(selector),
@@ -216,9 +215,6 @@ struct VMCommandEnvelopeTests {
         let surfacing: [VMCommandRequest.Verb] = [
             .open(selector),
             .reveal(selector),
-            .start(selector, recovery: false, presentation: .surface),
-            .resume(selector, presentation: .surface),
-            .restart(selector, presentation: .surface, timeout: nil),
         ]
         for verb in surfacing {
             #expect(verb.surfacesInterface, "\(verb)")
@@ -226,7 +222,8 @@ struct VMCommandEnvelopeTests {
         // A quit takes the app down; there is nothing to bring forward first,
         // and doing so would flash a window on the way out. A Finder reveal
         // brings the Finder forward, and an import asks for permission only
-        // when it has to, bringing the app forward itself at that point.
+        // when it has to, bringing the app forward itself at that point. The
+        // three bring-up verbs put a guest on the CPU, not on the screen.
         let silent: [VMCommandRequest.Verb] = [
             .quit,
             .list,
@@ -237,9 +234,9 @@ struct VMCommandEnvelopeTests {
             .showInFinder(selector),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova"),
             .awaitPreparing(selector),
-            .start(selector, recovery: false, presentation: .headless),
-            .resume(selector, presentation: .headless),
-            .restart(selector, presentation: .headless, timeout: nil),
+            .start(selector, recovery: false),
+            .resume(selector),
+            .restart(selector, timeout: nil),
         ]
         for verb in silent {
             #expect(!verb.surfacesInterface, "\(verb)")

@@ -61,17 +61,15 @@ struct CLIVerbWireTests {
 
     // MARK: - Lifecycle
 
-    @Test("start crosses headless, carrying --recovery when the line asks for it")
-    func startSendsAHeadlessBoot() throws {
+    @Test("start crosses carrying --recovery when the line asks for it")
+    func startSendsItsRecoveryFlag() throws {
         let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted, tag: "start")
-        #expect(
-            plain.sent == [.start(.idOrName("Alpha"), recovery: false, presentation: .headless)])
+        #expect(plain.sent == [.start(.idOrName("Alpha"), recovery: false)])
         #expect(try plain.answer.payload() == .ok)
 
         let recovery = try CLIWire.exchange(
             ["start", "Alpha", "--recovery"], answering: accepted, tag: "start-rec")
-        #expect(
-            recovery.sent == [.start(.idOrName("Alpha"), recovery: true, presentation: .headless)])
+        #expect(recovery.sent == [.start(.idOrName("Alpha"), recovery: true)])
     }
 
     @Test("stop crosses with the disposition its method names, its consent, and its deadline")
@@ -116,24 +114,22 @@ struct CLIVerbWireTests {
         #expect(exchanged.sent == [.pause(.idOrName("Alpha"))])
     }
 
-    @Test("resume crosses headless, the way start does")
-    func resumeSendsAHeadlessResume() throws {
+    @Test("resume crosses as the verb that lets a paused guest run again")
+    func resumeSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(
             ["resume", "Alpha"], answering: accepted, tag: "resume")
 
-        #expect(exchanged.sent == [.resume(.idOrName("Alpha"), presentation: .headless)])
+        #expect(exchanged.sent == [.resume(.idOrName("Alpha"))])
     }
 
-    @Test("restart crosses headless with the deadline bounding its shutdown half")
+    @Test("restart crosses with the deadline bounding its shutdown half")
     func restartSendsItsDeadline() throws {
         let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted, tag: "restart")
-        #expect(
-            bare.sent == [.restart(.idOrName("Alpha"), presentation: .headless, timeout: nil)])
+        #expect(bare.sent == [.restart(.idOrName("Alpha"), timeout: nil)])
 
         let bounded = try CLIWire.exchange(
             ["restart", "Alpha", "--timeout", "45"], answering: accepted, tag: "restart-t")
-        #expect(
-            bounded.sent == [.restart(.idOrName("Alpha"), presentation: .headless, timeout: 45)])
+        #expect(bounded.sent == [.restart(.idOrName("Alpha"), timeout: 45)])
     }
 
     @Test("open is the one verb that crosses asking for something to come forward")

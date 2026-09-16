@@ -161,7 +161,7 @@ struct VMLifecycleScriptCommandsTests {
         try await makeCommand(VMRevealScriptCommand.init(commandDescription:), code: "Revl").run(gateway, on: [alpha])
 
         #expect(commands.pauseSelectors == [alpha])
-        #expect(commands.resumeCalls.map(\.selector) == [alpha])
+        #expect(commands.resumeSelectors == [alpha])
         #expect(commands.suspendSelectors == [alpha])
         #expect(commands.revealSelectors == [alpha])
     }

@@ -541,4 +541,72 @@ struct VMCapabilityCatalogTests {
         instance.configuration.clipboardSharingEnabled = true
         #expect(harness.catalog.isApplicable(.showClipboard, to: instance))
     }
+
+    // MARK: - Unattended bring-up
+
+    @Test(
+        "An unattended bring-up boots a resting VM and restores a suspended one",
+        arguments: [
+            (VMLifecyclePhase.stopped, VMCapabilityCatalog.UnattendedBringUp.start),
+            (.failed(message: "Boot failed."), .start),
+            (.suspended, .resume),
+        ] as [(VMLifecyclePhase, VMCapabilityCatalog.UnattendedBringUp)])
+    func unattendedBringUpByPhase(
+        phase: VMLifecyclePhase, expected: VMCapabilityCatalog.UnattendedBringUp
+    ) {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: phase)
+
+        #expect(harness.catalog.unattendedBringUp(for: instance) == expected)
+    }
+
+    @Test(
+        "No phase that is already live, or on its way somewhere, takes an unattended bring-up",
+        arguments: [
+            VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session),
+            // Live-paused: the VZ object is already in memory, so there is
+            // nothing to bring up.
+            .livePaused(sessionID: VMLifecyclePhaseFixtures.session),
+            .starting(sessionID: VMLifecyclePhaseFixtures.session),
+            .saving(sessionID: VMLifecyclePhaseFixtures.session),
+            .revertingToSnapshot,
+            .installing(sessionID: VMLifecyclePhaseFixtures.session),
+        ])
+    func unattendedBringUpRefusesLivePhases(phase: VMLifecyclePhase) {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: phase)
+
+        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+    }
+
+    /// A start here runs the macOS install or the Linux image download, and
+    /// neither may begin with nobody at the machine. The context decides, not
+    /// the phase: a failed install keeps its context at `.failed`, where the
+    /// phase alone reads as an ordinary boot retry.
+    @Test(
+        "A VM that has yet to finish guest setup takes no unattended bring-up",
+        arguments: [
+            VMLifecyclePhase.initialBoot,
+            .failed(message: "Install failed."),
+            .stopped,
+        ])
+    func unattendedBringUpRefusesPendingSetup(phase: VMLifecyclePhase) {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: phase)
+        instance.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
+
+        #expect(instance.configuration.pendingGuestSetup != nil)
+        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+    }
+
+    @Test("A bundle still being copied takes no unattended bring-up")
+    func unattendedBringUpRefusesPreparing() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .stopped)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+
+        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+    }
 }

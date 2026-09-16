@@ -284,12 +284,11 @@ struct VMIntentGatewayTests {
         #expect(commands.stopCalls.map(\.selector) == [.id(id)])
         #expect(commands.stopCalls.map(\.disposition) == [.force])
         #expect(commands.pauseSelectors == [.id(id)])
-        #expect(commands.resumeCalls.map(\.selector) == [.id(id)])
+        #expect(commands.resumeSelectors == [.id(id)])
         #expect(commands.suspendSelectors == [.id(id)])
         #expect(commands.restartCalls.map(\.selector) == [.id(id)])
-        // An intent runs in a GUI session, so its restart surfaces like the
-        // menu item's.
-        #expect(commands.restartCalls.map(\.presentation) == [.surface])
+        // An intent's caller is not sitting there waiting on a deadline.
+        #expect(commands.restartCalls.map(\.timeout) == [nil])
         #expect(commands.openSelectors == [.id(id)])
         #expect(commands.revealSelectors == [.id(id)])
         #expect(commands.ipAddressSelectors == [.id(id)])

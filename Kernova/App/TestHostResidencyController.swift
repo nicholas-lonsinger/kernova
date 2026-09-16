@@ -80,6 +80,10 @@ final class TestHostResidencyController: AppResidencyHosting {
     /// Nothing to sync: this is a plain foreground `.regular` app, and stays one.
     func syncActivationPolicy() {}
 
+    /// Never absent: this is a plain foreground `.regular` app, which shows the
+    /// library at launch, so only the app's own activation is left to read.
+    var guiPosture: GUIPosture { NSApp.isActive ? .foreground : .background }
+
     /// No headless state to downgrade a quit into, which is what makes every quit
     /// in the test host a real one — see
     /// ``AppTerminationController/shouldTerminateOnQuit``.

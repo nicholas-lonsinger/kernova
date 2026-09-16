@@ -336,6 +336,26 @@ struct VMCommandCoreTests {
         #expect(surfaced.isEmpty)
     }
 
+    /// The core asks on every bring-up and knows nothing about who asked: what
+    /// a readying costs on screen is the adapter's decision.
+    @Test("resume and restart ready the display too")
+    func everyBringUpReadiesTheDisplay() async throws {
+        let harness = makeHarness()
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        let running = makeInstance(
+            in: harness, name: "Running", phase: .running(sessionID: UUID()))
+        var readied: [UUID] = []
+        var surfaced: [UUID] = []
+        harness.core.readyDisplay = { readied.append($0.id) }
+        harness.core.surfaceDisplay = { surfaced.append($0.id) }
+
+        try await harness.core.resume(.id(suspended.id))
+        try await harness.core.restart(.id(running.id), timeout: nil)
+
+        #expect(readied == [suspended.id, running.id])
+        #expect(surfaced.isEmpty)
+    }
+
     @Test("pause, resume, and suspend each reach the service")
     func pauseResumeSuspend() async throws {
         let harness = makeHarness()
@@ -2269,7 +2289,7 @@ struct VMCommandCoreTests {
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
-        let restart = Task { try await harness.core.restart(.id(instance.id)) }
+        let restart = Task { try await harness.core.restart(.id(instance.id), timeout: nil) }
         // The stop powers the guest off, which queues the baseline revert; the
         // revert then parks mid-copy. The VM already reads `.stopped` here, so
         // only the revert registry holds the restart back.
@@ -2293,7 +2313,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id))
+        try await harness.core.restart(.id(instance.id), timeout: nil)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
@@ -2362,7 +2382,7 @@ struct VMCommandCoreTests {
             }
         }
         let restart = await commandError {
-            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 0)
+            try await harness.core.restart(.id(instance.id), timeout: 0)
         }
         guard case .invalidArgument = try #require(restart) else {
             Issue.record("Expected an argument refusal, got \(String(describing: restart))")
@@ -2382,7 +2402,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
 
         let error = await commandError {
-            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 30)
+            try await harness.core.restart(.id(instance.id), timeout: 30)
         }
 
         guard case .timedOut(_, let verb, let seconds) = try #require(error) else {
@@ -2471,7 +2491,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
 
         let restart = Task {
-            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+            try await harness.core.restart(.id(instance.id), timeout: 60)
         }
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
 
@@ -2505,7 +2525,7 @@ struct VMCommandCoreTests {
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let restart = Task {
-            try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+            try await harness.core.restart(.id(instance.id), timeout: 60)
         }
         await harness.virtualization.waitUntilSuspended()
 
@@ -2528,7 +2548,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), presentation: .headless, timeout: 60)
+        try await harness.core.restart(.id(instance.id), timeout: 60)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)

@@ -6,17 +6,12 @@ import KernovaKit
 extension VMCommandCore {
     // MARK: - Start
 
-    func start(
-        _ selector: VMSelector, recovery: Bool, presentation: VMDisplayPresentation
-    ) async throws {
-        try await start(try resolve(selector), recovery: recovery, presentation: presentation)
+    func start(_ selector: VMSelector, recovery: Bool) async throws {
+        try await start(try resolve(selector), recovery: recovery)
     }
 
     /// The start every surface reaches, with the instance already resolved.
-    func start(
-        _ instance: VMInstance, recovery: Bool = false,
-        presentation: VMDisplayPresentation = .surface
-    ) async throws {
+    func start(_ instance: VMInstance, recovery: Bool = false) async throws {
         try require(.start, on: instance)
         // Both phases a bring-up stands in: a boot with a save file leaves
         // `.starting` for `.restoringSavedState` before its first await.
@@ -26,7 +21,7 @@ extension VMCommandCore {
                 throw CommandError.busy(
                     vm: summary(instance), operation: instance.status.displayName.lowercased())
             }
-            if presentation == .surface { readyDisplay?(instance) }
+            readyDisplay?(instance)
             return try await joinBringUp(instance, verb: .start) {
                 startFailure($0, on: instance)
             }
@@ -45,16 +40,20 @@ extension VMCommandCore {
 
         // Dispatch on the surviving setup context, not status, so `.error`
         // retries route through the same pipeline too.
-        if instance.configuration.installContext != nil {
-            installAndAutoBoot(instance, presentation: presentation)
+        switch instance.configuration.pendingGuestSetup {
+        case .macOSInstall(let context):
+            installAndAutoBoot(instance, context: context)
             return
-        }
-        if instance.configuration.linuxInstallContext != nil {
-            downloadAndAutoBoot(instance, presentation: presentation)
+        case .linuxImageDownload(let context):
+            downloadAndAutoBoot(instance, context: context)
             return
+        case nil:
+            break
         }
 
-        if presentation == .surface { readyDisplay?(instance) }
+        // Before the boot geometry is applied: a pop-out VM's window is what
+        // `displayBootSurface` measures, and readying is what opens it.
+        readyDisplay?(instance)
         applyMatchWindowBootResolution(to: instance)
         do {
             try await lifecycle.start(instance, bootIntoRecovery: recovery)
@@ -287,7 +286,6 @@ extension VMCommandCore {
     /// the `.kernovadownload` bundle if present.
     private func runGuestSetup(
         on instance: VMInstance,
-        presentation: VMDisplayPresentation,
         _ pipeline: @escaping (VMLifecycleCoordinator) async throws -> Void
     ) {
         if instance.setupTask != nil { return }  // guard against rapid double-click
@@ -352,10 +350,7 @@ extension VMCommandCore {
             // while touching a task no longer doing anything cancellable.
             instance.setupTask = nil
             do {
-                // The caller's presentation, not the default: a setup started
-                // from a door with nowhere to present must not surface the
-                // display the boot after it brings up.
-                try await self.start(instance, presentation: presentation)
+                try await self.start(instance)
             } catch let failure as CommandError {
                 self.report(failure, on: instance)
             } catch {
@@ -366,29 +361,16 @@ extension VMCommandCore {
         }
     }
 
-    /// Drives the macOS install pipeline for a VM carrying an `installContext`.
-    private func installAndAutoBoot(
-        _ instance: VMInstance, presentation: VMDisplayPresentation
-    ) {
-        guard let context = instance.configuration.installContext else {
-            assertionFailure("installAndAutoBoot called without installContext")
-            return
-        }
-        runGuestSetup(on: instance, presentation: presentation) { lifecycle in
+    /// Drives the macOS install pipeline, then chains the boot.
+    private func installAndAutoBoot(_ instance: VMInstance, context: MacOSInstallContext) {
+        runGuestSetup(on: instance) { lifecycle in
             try await lifecycle.installMacOS(on: instance, context: context)
         }
     }
 
-    /// Drives the Linux installer-image pipeline for a VM carrying a
-    /// `linuxInstallContext`.
-    private func downloadAndAutoBoot(
-        _ instance: VMInstance, presentation: VMDisplayPresentation
-    ) {
-        guard let context = instance.configuration.linuxInstallContext else {
-            assertionFailure("downloadAndAutoBoot called without linuxInstallContext")
-            return
-        }
-        runGuestSetup(on: instance, presentation: presentation) { lifecycle in
+    /// Drives the Linux installer-image pipeline, then chains the boot.
+    private func downloadAndAutoBoot(_ instance: VMInstance, context: LinuxInstallContext) {
+        runGuestSetup(on: instance) { lifecycle in
             try await lifecycle.downloadLinuxImage(on: instance, context: context)
         }
     }
@@ -628,12 +610,12 @@ extension VMCommandCore {
         }
     }
 
-    func resume(_ selector: VMSelector, presentation: VMDisplayPresentation) async throws {
+    func resume(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
         try require(.resume, on: instance)
 
         if case .restoringSavedState = instance.phase {
-            if presentation == .surface { readyDisplay?(instance) }
+            readyDisplay?(instance)
             return try await joinBringUp(instance, verb: .resume) {
                 failure($0, verb: .resume, on: instance)
             }
@@ -647,7 +629,7 @@ extension VMCommandCore {
             try refuseDuplicateIdentity(instance)
         }
 
-        if presentation == .surface { readyDisplay?(instance) }
+        readyDisplay?(instance)
         do {
             try await lifecycle.resume(instance)
         } catch {
@@ -696,9 +678,7 @@ extension VMCommandCore {
     /// it back suspended on the baseline's memory image, and that is the state
     /// the mode promises — so it is resumed rather than booted, and never waited
     /// on for a `.stopped` that is not coming.
-    func restart(
-        _ selector: VMSelector, presentation: VMDisplayPresentation, timeout: TimeInterval?
-    ) async throws {
+    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
         try require(.restart, on: instance)
@@ -708,13 +688,10 @@ extension VMCommandCore {
             !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
                 && (instance.canStart || instance.canResume)
         }
-        // The bring-up half inherits the caller's presentation: a restart from a
-        // door with nowhere to present is still a restart, not a request for a
-        // window.
         if instance.canStart {
-            try await start(instance, presentation: presentation)
+            try await start(instance)
         } else {
-            try await resume(.id(instance.id), presentation: presentation)
+            try await resume(.id(instance.id))
         }
     }
 
