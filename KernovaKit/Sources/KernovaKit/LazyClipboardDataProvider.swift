@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import os
 
 /// Serves a clipboard offer's representations to a pasteboard lazily.
 ///
@@ -33,7 +32,8 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
 
     // Same category as `LazyClipboardProviderRegistry`, so a fire and the
     // release of the provider that served it read as one sequence.
-    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardProvider")
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardProvider")
 
     /// - Parameters:
     ///   - provide: produces the bytes for a requested type, or `nil` to leave

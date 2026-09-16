@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaKit
 
 // MARK: - TestAdmissionGate
 
@@ -86,7 +86,8 @@ final class TestAdmissionGate: @unchecked Sendable {
 /// non-negative integer. Zero — and no source at all — means pass-through, so
 /// the same binary serves both arms of a measurement.
 public enum TestAdmission {
-    private static let logger = Logger(subsystem: "app.kernova", category: "TestAdmission")
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "TestAdmission")
 
     /// Environment variable naming the width. `xcodebuild` forwards only
     /// `TEST_RUNNER_`-prefixed variables from its own environment into the test

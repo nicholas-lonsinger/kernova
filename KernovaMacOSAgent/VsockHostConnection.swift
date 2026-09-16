@@ -6,6 +6,10 @@ import os
 ///
 /// Connection lifecycle is delegated to `VsockGuestClient`; this class layers
 /// log-specific buffering and inbound drain on top.
+///
+/// Its own logging uses raw `os.Logger`, never `KernovaLogger` — this class is
+/// the sink `KernovaLogger` forwards through, so a converted line would re-enter
+/// `forwardLog` from inside the send it is reporting on.
 final class VsockHostConnection: @unchecked Sendable {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockHostConnection")
 

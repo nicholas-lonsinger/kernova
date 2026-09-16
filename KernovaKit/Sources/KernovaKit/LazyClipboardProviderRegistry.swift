@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import os
 
 /// Owner of the live clipboard pasteboard data providers, holding each alive
 /// until its pasteboard promise is finished.
@@ -18,7 +17,8 @@ public final class LazyClipboardProviderRegistry: @unchecked Sendable {
     /// guest agent and tests construct their own instances.
     public static let shared = LazyClipboardProviderRegistry()
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardProvider")
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardProvider")
 
     private let lock = NSLock()
     private var live: Set<LazyClipboardDataProvider> = []

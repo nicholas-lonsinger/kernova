@@ -1,11 +1,12 @@
 import Foundation
-import os
 
 /// Numeric rendering and reading of an operating-system version, shared by the
 /// host and the guest agent so the restore-image UI and the
 /// `AgentInfo.os_version` handshake field agree on one shape.
 public enum KernovaOSVersion {
-    private static let logger = Logger(subsystem: "app.kernova", category: "KernovaOSVersion")
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "KernovaOSVersion")
+
     /// `version` rendered the way Apple names a release: a zero patch is left
     /// off, so `26.6.0` reads as `"26.6"` and matches the catalog's own strings.
     ///

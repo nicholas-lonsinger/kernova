@@ -1,6 +1,5 @@
 import AppKit
 import KernovaKit
-import os
 
 /// Owns the agent's menu-bar `NSStatusItem` and its dropdown.
 ///
@@ -10,7 +9,8 @@ import os
 /// updated live so it tracks state while the menu is closed.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
-    private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
