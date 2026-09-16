@@ -315,6 +315,59 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     }
 }
 
+/// The account a start is waiting for a password for, as data.
+///
+/// The second thing a verb refuses without and takes as a parameter, beside
+/// ``ConfirmationPrompt``: the core describes what it is asking for and leaves
+/// each surface to gather it — a sheet, a terminal, a flag — then re-issue the
+/// start with a ``GuestAccountAnswer``.
+///
+/// Carries no password and never will: the bundle stores the other four fields
+/// of the account (its name, its username, and what it does on login), and the
+/// secret exists only inside the call that supplies it.
+public struct GuestAccountPrompt: Codable, Sendable, Hashable {
+    /// The VM whose start is waiting.
+    public let vm: VMSummary
+    /// The account's short name — what the user logs in as.
+    public let username: String
+    /// The account's full name, as the guest will display it.
+    public let fullName: String
+    /// What a surface tells the user, in the words they read.
+    public let message: String
+
+    /// Describes one account a start is waiting on.
+    public init(vm: VMSummary, username: String, fullName: String, message: String) {
+        self.vm = vm
+        self.username = username
+        self.fullName = fullName
+        self.message = message
+    }
+}
+
+/// What a start does about the account its VM owes the guest.
+///
+/// Rides the verb the way `confirmed` does, and for the same reason: the core
+/// has no surface to ask on, so the answer arrives as a parameter of the call
+/// it authorises and belongs to that call alone.
+public enum GuestAccountAnswer: Codable, Sendable, Hashable, CustomStringConvertible {
+    /// Create the account, with this password.
+    case password(String)
+    /// Boot without creating it, leaving macOS to ask for an account in Setup
+    /// Assistant. The boot this answers for is the one macOS would have created
+    /// the account on, so coming up is what ends it — a start that never got
+    /// there leaves the account for the next one to ask about.
+    case skip
+
+    /// Redacts the password, so interpolating an answer into a log line or a
+    /// debugger dump cannot spill it.
+    public var description: String {
+        switch self {
+        case .password: "password(<redacted>)"
+        case .skip: "skip"
+        }
+    }
+}
+
 /// A command failure, as it crosses a wire.
 ///
 /// The in-process vocabulary carries one payload this cannot: a recovery a
@@ -332,6 +385,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.
     case confirmationRequired(prompt: ConfirmationPrompt)
+    /// The start would spend the one boot macOS creates a guest account on, and
+    /// no answer about that account was supplied.
+    case guestAccountPasswordRequired(prompt: GuestAccountPrompt)
     /// An argument named something the verb does not offer, or carried a value
     /// it cannot use. `message` is the whole refusal.
     case invalidArgument(message: String)
@@ -382,6 +438,8 @@ extension CommandErrorDTO {
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
+        case .guestAccountPasswordRequired(let prompt):
+            "Couldn\u{2019}t Start \u{201C}\(prompt.vm.name)\u{201D}"
         case .conflict(_, _, let reason):
             switch reason {
             case .machineIdentity: "Duplicate Machine ID"
@@ -422,6 +480,8 @@ extension CommandErrorDTO {
         case .busy(let vm, let operation):
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
         case .confirmationRequired(let prompt):
+            prompt.message
+        case .guestAccountPasswordRequired(let prompt):
             prompt.message
         case .invalidArgument(let message):
             message

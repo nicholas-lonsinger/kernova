@@ -557,4 +557,215 @@ struct DetailAlertsPresenterTests {
         // never be dismissed.
         #expect(answers.answered == ["hold"])
     }
+
+    // MARK: - The guest account a VM still owes
+
+    /// Collects the answers the account prompts under test are given.
+    private final class AccountAnswers {
+        var answered: [GuestAccountPasswordAnswer] = []
+    }
+
+    private func accountRequest(
+        vmName: String = "Sequoia", vmID: UUID = Self.accountVMID, answers: AccountAnswers
+    ) -> GuestAccountPasswordRequest {
+        GuestAccountPasswordRequest(
+            prompt: GuestAccountPrompt(
+                vm: VMSummary(
+                    id: vmID, name: vmName, status: "stopped", ipAddress: .unavailable),
+                username: "ada", fullName: "Ada Lovelace",
+                message: "\u{201C}\(vmName)\u{201D} creates the macOS account."),
+            answer: { answers.answered.append($0) })
+    }
+
+    /// One identifier across requests, so two prompts for it are the same VM
+    /// asking twice — which is what the presenter tells apart.
+    private static let accountVMID =
+        UUID(uuidString: "5E00A1A0-0000-4000-8000-000000000001") ?? UUID()
+
+    private func makeWindow() -> NSWindow {
+        NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: true)
+    }
+
+    @Test("An account prompt with no window to ask in starts nothing")
+    func anAccountPromptWithNoWindowIsCancelled() {
+        let (presenter, _) = makePresenter()
+        let answers = AccountAnswers()
+
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+
+        // The start is suspended on this answer, so it is answered now rather
+        // than queued behind a window that may never arrive — and cancelled
+        // rather than waved through, because proceeding retracts the account
+        // and only the user may decide that.
+        #expect(answers.answered == [.cancelled])
+        #expect(presenter.pendingCountForTesting == 0)
+    }
+
+    @Test("An account prompt raised while another alert is up starts nothing")
+    func anAccountPromptBehindAnotherAlertIsCancelled() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        presenter.presentError("Something else", title: "Couldn't Start")
+        #expect(presenter.isShowingAlertForTesting)
+        let answers = AccountAnswers()
+
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+
+        #expect(answers.answered == [.cancelled])
+    }
+
+    @Test("A second Start while the prompt is up is turned away, not asked twice")
+    func aSecondStartUnderThePromptIsTurnedAway() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let first = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: first))
+        let second = AccountAnswers()
+
+        // The status-item menu and a detached display window are not blocked by
+        // a window-modal sheet, so a second Start really can arrive here.
+        presenter.presentGuestAccountPassword(accountRequest(answers: second))
+
+        // The newcomer is answered so its start does not hang, and the sheet
+        // already asking about this VM is brought forward — the click lands on
+        // the question gating the start. Only the answer is assertable here;
+        // that the window comes to the front is not observable headlessly.
+        #expect(second.answered == [.cancelled])
+        #expect(first.answered.isEmpty)
+        #expect(presenter.isShowingAlertForTesting)
+        presenter.stop()
+    }
+
+    @Test("Tearing the window down answers the start suspended on the prompt")
+    func stoppingAnswersTheWaitingStart() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let answers = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+
+        presenter.stop()
+
+        // A suspended `withCheckedContinuation` nothing resumes strands that
+        // start for the rest of the session.
+        #expect(answers.answered == [.cancelled])
+    }
+
+    @Test("Tearing the window down takes the sheet with it, and frees the slot")
+    func stoppingDismissesTheShownAlert() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        presenter.presentGuestAccountPassword(accountRequest(answers: AccountAnswers()))
+        #expect(presenter.isShowingAlertForTesting)
+
+        presenter.stop()
+
+        // Left up, the sheet stays on a window that is going away with buttons
+        // that answer nothing, and the flag under it wedges the queue for the
+        // next window this presenter serves.
+        #expect(!presenter.isShowingAlertForTesting)
+        #expect(!presenter.dismissShownAlertForTesting(.alertFirstButtonReturn))
+
+        // The freed slot really is free: the next window's first request shows.
+        presenter.start(window: makeWindow())
+        presenter.presentError("Something else", title: "Couldn't Start")
+        #expect(presenter.isShowingAlertForTesting)
+        presenter.stop()
+    }
+
+    @Test("A pairing prompt on screen when the window goes is answered as a hold")
+    func stoppingHoldsAShownPairingPrompt() {
+        let (presenter, viewModel) = makePresenter()
+        presenter.start(window: makeWindow())
+        let instance = makeInstance(name: "Work", in: viewModel)
+        let answers = PairingAnswers()
+        presenter.presentUSBAccessoryPairing(
+            pairingRequest(
+                named: "First", registryID: 1, candidates: [instance],
+                answer: { answers.answered.append($0 == nil ? "hold" : "pass") }))
+        #expect(presenter.isShowingAlertForTesting)
+
+        presenter.stop()
+
+        // The coordinator holds its next prompt until this one answers, so a
+        // sheet dismissed without a click still owes it one — and the accessory
+        // staying with the Mac is what an unanswerable question means.
+        #expect(answers.answered == ["hold"])
+    }
+
+    @Test("A prompt put back up after a refusal is answered by the teardown too")
+    func stoppingAnswersARefusedPrompt() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let answers = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+        // "Set Up Account" with the fields untouched: the refusal sends the
+        // request back through the queue, which `stop()` drops.
+        #expect(presenter.dismissShownAlertForTesting(.alertFirstButtonReturn))
+
+        presenter.stop()
+
+        #expect(answers.answered == [.cancelled])
+    }
+
+    @Test("A prompt answered once is not answered again by the teardown")
+    func stoppingDoesNotAnswerTwice() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let answers = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+        #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
+
+        presenter.stop()
+
+        // Resuming a checked continuation twice traps, so this is the other
+        // half of "exactly once".
+        #expect(answers.answered == [.answered(.skip)])
+    }
+
+    @Test("Skip Setup answers the waiting start and frees the slot")
+    func skipSetupAnswersAndFreesTheSlot() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let answers = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+        #expect(presenter.isShowingAlertForTesting)
+
+        #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
+
+        #expect(answers.answered == [.answered(.skip)])
+        #expect(!presenter.isShowingAlertForTesting)
+    }
+
+    @Test("Cancel answers with no start")
+    func cancelAnswersWithNoStart() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let answers = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+
+        #expect(presenter.dismissShownAlertForTesting(.alertThirdButtonReturn))
+
+        #expect(answers.answered == [.cancelled])
+        #expect(!presenter.isShowingAlertForTesting)
+    }
+
+    @Test("A refused password puts the sheet back up instead of answering the start")
+    func aRefusedPasswordReturnsToTheSheet() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: makeWindow())
+        let answers = AccountAnswers()
+        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
+
+        // "Set Up Account" with both fields untouched: the refusal is the
+        // form's own, and the start hears nothing about it.
+        #expect(presenter.dismissShownAlertForTesting(.alertFirstButtonReturn))
+        #expect(answers.answered.isEmpty)
+        #expect(presenter.isShowingAlertForTesting)
+
+        #expect(presenter.dismissShownAlertForTesting(.alertThirdButtonReturn))
+        #expect(answers.answered == [.cancelled])
+        #expect(!presenter.isShowingAlertForTesting)
+    }
 }

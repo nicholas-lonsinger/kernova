@@ -762,6 +762,92 @@ struct VMConfigurationTests {
         #expect(jsonObject["installContext"] == nil)
     }
 
+    // MARK: - Pending Guest Account
+
+    @Test("A pending guest account round-trips through JSON")
+    func pendingGuestAccountRoundTrips() throws {
+        let account = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: true,
+            enablesRemoteLogin: true)
+        let config = VMConfiguration(
+            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS,
+            pendingGuestAccount: account)
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.pendingGuestAccount == account)
+    }
+
+    @Test("A config omitting the pending guest account decodes it as nil")
+    func configOmittingPendingGuestAccountDecodesNil() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.pendingGuestAccount == nil)
+    }
+
+    @Test("A pending guest account outlives the install context it was gathered with")
+    func pendingGuestAccountIsIndependentOfTheInstallContext() throws {
+        let json = Self.makeBaseJSON(
+            extraFields: """
+                "pendingGuestAccount": {
+                    "fullName": "Ada Lovelace",
+                    "username": "ada",
+                    "logsInAutomatically": true,
+                    "enablesRemoteLogin": false
+                }
+                """)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        // What a VM interrupted between a finished install and the boot that
+        // would have delivered the account looks like on disk.
+        #expect(config.installContext == nil)
+        #expect(config.pendingGuestAccount?.username == "ada")
+    }
+
+    @Test("A clone owes no account: the bundle it copies has already booted")
+    func cloneDropsThePendingGuestAccount() {
+        var config = VMConfiguration(name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
+        config.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: true,
+            enablesRemoteLogin: false)
+
+        #expect(config.clonedForNewInstance(existingNames: []).pendingGuestAccount == nil)
+    }
+
+    @Test("The account password never reaches the serialized configuration")
+    func accountPasswordNeverReachesTheWireFormat() throws {
+        let password = "kernova-sentinel-account-password"
+        let credentials = GuestProvisioningCredentials(
+            fullName: "Ada Lovelace", username: "ada", password: password,
+            logsInAutomatically: true, enablesRemoteLogin: true)
+        // The only shape the boundary offers: four values to the configuration,
+        // the password left with the credentials.
+        let config = VMConfiguration(
+            name: "Unattended VM", guestOS: .macOS, bootMode: .macOS,
+            pendingGuestAccount: GuestAccountIntent(
+                fullName: credentials.fullName, username: credentials.username,
+                logsInAutomatically: credentials.logsInAutomatically,
+                enablesRemoteLogin: credentials.enablesRemoteLogin))
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let text = try #require(String(data: data, encoding: .utf8))
+        #expect(!text.contains(password))
+
+        // On the keys the file carries, because a `nil` Swift value reads the
+        // same whether the field was dropped on the way out or never written.
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let intent = try #require(object["pendingGuestAccount"] as? [String: Any])
+        #expect(
+            Set(intent.keys) == ["fullName", "username", "logsInAutomatically", "enablesRemoteLogin"]
+        )
+    }
+
     // MARK: - linuxInstallContext Tests
 
     @Test("linuxInstallContext round-trips through JSON")

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Why the guest-agent installer disk was attached, so the post-mount alert can
 /// point the user at the right next step.
@@ -30,6 +31,41 @@ struct StartFailedAttachment: Equatable, Sendable {
     let label: String
     /// The full user-facing error description (item, path, likely cause).
     let message: String
+}
+
+/// What the user decided about the account their macOS guest still owes a
+/// password.
+///
+/// The verb's own two answers, plus the one only a sheet has: walking away.
+/// Cancelling is not a third thing to tell the core — it is the absence of a
+/// re-issued start.
+enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
+    /// What the start carries — the password to create the account with, or the
+    /// decision to go without it.
+    case answered(GuestAccountAnswer)
+    /// Don't start at all.
+    case cancelled
+
+    /// Redacts the password, so interpolating an answer into a log line or a
+    /// debugger dump cannot spill it.
+    var description: String {
+        switch self {
+        case .answered(let answer): "answered(\(answer))"
+        case .cancelled: "cancelled"
+        }
+    }
+}
+
+/// The one thing a macOS guest still needs to create the account its VM was set
+/// up with: the password no bundle carries.
+///
+/// The answer writes nothing itself — it goes back to the start that raised it,
+/// which is the one path that spends or retracts the account.
+struct GuestAccountPasswordRequest {
+    /// What the core is asking about: the VM, the account, and the words.
+    let prompt: GuestAccountPrompt
+    /// Answers the prompt: a password, a boot without the account, or no start.
+    let answer: @MainActor (GuestAccountPasswordAnswer) -> Void
 }
 
 /// Imperative presentation interface the view model calls to surface alerts,
@@ -71,6 +107,15 @@ protocol VMLibraryPresenting: AnyObject {
     /// no window to ask in, which leaves the accessory with the host and the
     /// USB Device menu as where it is placed.
     func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest)
+    /// Ask for the password a macOS guest still needs to create the account its
+    /// VM was set up with.
+    ///
+    /// The request's `answer` is called exactly once — the start that raised it
+    /// is suspended until it arrives. With
+    /// ``GuestAccountPasswordAnswer/cancelled`` when there is nowhere to ask
+    /// right now: only the user may decide to boot without the account, because
+    /// that decision retracts it.
+    func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

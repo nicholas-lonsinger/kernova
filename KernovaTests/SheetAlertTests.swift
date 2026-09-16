@@ -85,13 +85,30 @@ struct SheetAlertTests {
         #expect(fired == [2])
     }
 
-    @Test("out-of-range response is a no-op")
+    @Test("a response naming no button is a no-op")
     func outOfRangeResponseNoOp() {
         var fired = false
         let buttons = [AlertButton("Only", action: { fired = true })]
         // .alertSecondButtonReturn requested but only one button → skip
         dispatchAction(for: .alertSecondButtonReturn, buttons: buttons)
         #expect(!fired)
+    }
+
+    @Test("a response naming no button runs no action, cancel included")
+    func outOfRangeResponseRunsNothing() {
+        var fired: [String] = []
+        let buttons = [
+            AlertButton("Go", role: .default, action: { fired.append("go") }),
+            AlertButton("Stop", role: .cancel, action: { fired.append("stop") }),
+        ]
+
+        // Nothing was chosen, so nothing the user chose runs. An alert whose
+        // answer something is waiting on gets it from whatever ended the sheet
+        // — `DetailAlertsPresenter.stop()` — not from a reading of a response
+        // code this has no way to check.
+        dispatchAction(for: .stop, buttons: buttons)
+
+        #expect(fired.isEmpty)
     }
 
     // MARK: - AlertConfiguration shape
@@ -238,5 +255,29 @@ struct SheetAlertTests {
             title: "Couldn't Install", message: "Run it yourself.", accessoryView: hint)
 
         #expect(config.accessoryView === hint)
+    }
+
+    // MARK: - initialFirstResponder
+
+    @Test("An alert that asks for nothing names no first responder")
+    func aTextOnlyAlertNamesNoFirstResponder() {
+        let config = AlertConfiguration(
+            title: "Error", message: "It failed.", buttons: [AlertButton("OK", role: .default)])
+
+        #expect(config.initialFirstResponder == nil)
+        let confirmation = AlertConfiguration(
+            confirming: destructiveConfirmPrompt(), confirm: {}, alternative: { _ in })
+        #expect(confirmation.initialFirstResponder == nil)
+    }
+
+    @Test("An alert with something to fill in names the control the typing lands in")
+    func anEditableAlertNamesItsField() {
+        let field = NSSecureTextField()
+        let config = AlertConfiguration(
+            title: "Enter the Password", message: "It is needed again.",
+            buttons: [AlertButton("OK", role: .default)], accessoryView: field,
+            initialFirstResponder: field)
+
+        #expect(config.initialFirstResponder === field)
     }
 }

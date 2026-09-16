@@ -21,6 +21,9 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     /// The `bootIntoRecovery` argument from the most recent `start` call.
     var lastStartBootIntoRecovery = false
+    /// The account the last `start` was handed, so a test can read what the
+    /// boot would have carried into VZ.
+    private(set) var lastStartProvisioning: GuestProvisioningCredentials?
 
     /// The configuration as it stood when `start` was called, so a caller that
     /// must persist a change *before* the VZ configuration is built can be
@@ -63,9 +66,13 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     // MARK: - VirtualizationProviding
 
-    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
+    func start(
+        _ instance: VMInstance, bootIntoRecovery: Bool = false,
+        provisioning: GuestProvisioningCredentials? = nil
+    ) async throws {
         startCallCount += 1
         lastStartBootIntoRecovery = bootIntoRecovery
+        lastStartProvisioning = provisioning
         configurationAtStart = instance.configuration
         statusAtStart = instance.status
         if let error = startError {

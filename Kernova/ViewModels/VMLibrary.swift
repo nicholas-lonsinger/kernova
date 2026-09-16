@@ -691,8 +691,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `instances`.
         instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
-            guard let self, let instance else { return }
-            self.updateConfiguration(of: instance, mutate: mutate)
+            // Nothing left to write to, so nothing reached disk.
+            guard let self, let instance else { return false }
+            return self.updateConfiguration(of: instance, mutate: mutate)
         }
         // Auto-eject the installer disk once the agent handshakes a current version.
         // Wired here so it fires regardless of which window is open.

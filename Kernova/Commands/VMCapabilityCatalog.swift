@@ -343,8 +343,15 @@ struct VMCapabilityCatalog {
     /// download — is refused here: neither may begin unattended. A live-paused
     /// VM is refused too: it takes a resume, but its memory never left the
     /// host, so there is no bring-up owed.
+    ///
+    /// So is a VM whose start would ask about the macOS account it owes its
+    /// guest: a start that asks a question is not a bring-up nobody is present
+    /// for. Refused here rather than left to the verb's own refusal, because a
+    /// pass that runs at login has no window for the alert that refusal earns.
     func unattendedBringUp(for instance: VMInstance) -> UnattendedBringUp? {
-        guard instance.configuration.pendingGuestSetup == nil else { return nil }
+        guard instance.configuration.pendingGuestSetup == nil,
+            !instance.startAsksForGuestAccount
+        else { return nil }
         if isAvailable(.resume, on: instance), instance.isColdPaused { return .resume }
         return isAvailable(.start, on: instance) ? .start : nil
     }
@@ -381,7 +388,7 @@ struct VMCapabilityCatalog {
         case .start:
             // A start committed against a VM already coming up is asking for the
             // state that bring-up is producing, so it joins it
-            // (``VMCommandCore/start(_:recovery:)``) rather than refusing a VM
+            // (``VMCommandCore/start(_:recovery:guestAccount:)``) rather than refusing a VM
             // on its way to running. Both bring-up phases count:
             // a boot with a save file passes through `.starting` into
             // `.restoringSavedState` before its first await, so the restore is

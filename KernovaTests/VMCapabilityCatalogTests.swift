@@ -609,4 +609,25 @@ struct VMCapabilityCatalogTests {
 
         #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
     }
+
+    /// The pass reads the same predicate the verb does, so a VM whose start
+    /// would raise a question is passed over rather than alerted about at a
+    /// login with no window to alert in.
+    @available(macOS 27.0, *)
+    @Test(
+        "A VM whose start would ask about its guest account takes no unattended bring-up",
+        arguments: [VMLifecyclePhase.stopped, .suspended, .failed(message: "Boot failed.")])
+    func unattendedBringUpRefusesAnOutstandingAccount(phase: VMLifecyclePhase) {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS)
+        // Answered first, to show the phase alone would have brought it up.
+        #expect(harness.catalog.unattendedBringUp(for: instance) != nil)
+
+        instance.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+
+        #expect(instance.startAsksForGuestAccount)
+        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+    }
 }

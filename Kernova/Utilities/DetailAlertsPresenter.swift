@@ -2,6 +2,34 @@ import AppKit
 import KernovaKit
 import os
 
+/// A ``GuestAccountPasswordRequest`` whose answer fires at most once, whichever
+/// of the prompt's endings arrives first — a button, a re-ask that never gets
+/// back on screen, or the window going away under it.
+///
+/// The start that raised the request is suspended on a `withCheckedContinuation`
+/// until it is answered, and a continuation resumed twice traps while one never
+/// resumed strands the start for the rest of the session: both are what this
+/// exists to make unrepresentable.
+@MainActor
+private final class OneShotGuestAccountAnswer {
+    /// What the sheet draws. The request's own answer hook stays in here: one
+    /// reachable from outside is one a caller could fire a second time, which
+    /// is what this exists to make unrepresentable.
+    let prompt: GuestAccountPrompt
+    private var answer: (@MainActor (GuestAccountPasswordAnswer) -> Void)?
+
+    init(_ request: GuestAccountPasswordRequest) {
+        self.prompt = request.prompt
+        self.answer = request.answer
+    }
+
+    func callAsFunction(_ value: GuestAccountPasswordAnswer) {
+        guard let answer else { return }
+        self.answer = nil
+        answer(value)
+    }
+}
+
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
 /// sheet on behalf of `DetailContainerViewController`.
 ///
@@ -29,6 +57,10 @@ final class DetailAlertsPresenter: NSObject {
     /// sheet is up; cancelled when the sheet closes.
     private var snapshotSheetKindObservation: ObservationLoop?
     private var isShowingAlert = false
+    /// The alert on screen and the buttons it offered, so ``stop()`` can take
+    /// the sheet off the window it is attached to and still run exactly one of
+    /// its actions; `nil` when no alert is up.
+    private var shownAlert: (alert: NSAlert, buttons: [AlertButton])?
     /// A requested VM deletion (target + disposition).
     private struct PendingDelete {
         let instance: VMInstance
@@ -63,6 +95,12 @@ final class DetailAlertsPresenter: NSObject {
     /// Presentation requests deferred because the presenter was busy (an alert
     /// or sheet was up) or had no window yet; drained in order once free.
     private var pending: [(DetailAlertsPresenter) -> Void] = []
+    /// The guest-account prompt this presenter owes an answer — on screen, or
+    /// queued for a re-ask after a refusal; `nil` when none is outstanding.
+    ///
+    /// Held so ``stop()`` can answer it. Every other request here is one the
+    /// user can raise again; this one has a start suspended behind it.
+    private var outstandingGuestAccount: OneShotGuestAccountAnswer?
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -89,8 +127,22 @@ final class DetailAlertsPresenter: NSObject {
         deleteSheetToken += 1
         pending.removeAll()
         // A resolution task that resolves after teardown can't present on the
-        // disappearing window once this is nil.
+        // disappearing window once this is nil — and neither can an alert
+        // action below, which is why this comes first: the pairing prompt
+        // answers into the coordinator's next request, and that one belongs on
+        // the next window or nowhere.
+        let host = window
         window = nil
+        // The alert on screen is attached to a window that is going away, so
+        // it is dismissed as a cancel: its buttons would otherwise stay on a
+        // sheet nobody can act on, with `isShowingAlert` left true under them.
+        dismissShownAlert(attachedTo: host)
+        // The queue just went, and a guest-account prompt waiting in it has a
+        // suspended start behind it — one nothing else will ever resume. A
+        // prompt that was on screen answered above; the one-shot is what makes
+        // both endings exactly one answer.
+        outstandingGuestAccount?(.cancelled)
+        outstandingGuestAccount = nil
         // Reset, not close: `reset()` drops `isShown` *synchronously* rather than
         // via the async dismissal completion, so a sheet whose parent window is
         // torn down before that completion fires can't leave `isShown` stuck
@@ -342,6 +394,89 @@ final class DetailAlertsPresenter: NSObject {
         show(USBAccessoryPairingAlert.configuration(for: request), in: window)
     }
 
+    /// Asks for the password the account a macOS guest was set up with still
+    /// needs.
+    ///
+    /// Answered rather than queued when it cannot be shown right now — the same
+    /// treatment the pairing prompt gets, for a different reason: the start that
+    /// raised this is suspended on the answer, so a request waiting in a queue
+    /// that ``stop()`` drops would leave that start suspended for the rest of
+    /// the session. ``GuestAccountPasswordAnswer/cancelled`` is what an
+    /// unaskable prompt answers, because the alternative retracts the account
+    /// and only the user may decide that.
+    ///
+    /// A prompt already on screen is one of those cases, which is also what
+    /// keeps a second Start from booting the guest out from under the question
+    /// the first one is asking: the menu key equivalents stay live under a
+    /// window-modal sheet, and a detached display window is not covered by one
+    /// at all.
+    func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest) {
+        // A second start for a VM already being asked about: the question on
+        // screen is the one gating it, so bring that forward rather than
+        // letting the click land on nothing. Answering the newcomer leaves the
+        // suspended start it came from resumed, and the sheet still owns the
+        // one that matters.
+        if let outstanding = outstandingGuestAccount,
+            outstanding.prompt.vm.id == request.prompt.vm.id, let window
+        {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            Self.logger.notice(
+                "Already asking for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; raising that question"
+            )
+            request.answer(.cancelled)
+            return
+        }
+        guard window != nil, !isShowingAlert, !deleteSheetPresenter.isShown,
+            !snapshotSheetPresenter.isShown, pending.isEmpty
+        else {
+            Self.logger.notice(
+                "Nowhere to ask for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; not starting it"
+            )
+            request.answer(.cancelled)
+            return
+        }
+        showGuestAccountPassword(
+            OneShotGuestAccountAnswer(request), fields: GuestAccountPasswordFields(), refusal: nil)
+    }
+
+    /// Puts the prompt up, carrying `refusal` when a previous click was turned
+    /// down — same `fields`, so the password the user typed is still in it.
+    ///
+    /// The re-ask goes back through the queue, where ``stop()`` can drop it, so
+    /// the answer travels as a one-shot the teardown can fire instead: a
+    /// suspended start that is never answered is never resumed.
+    private func showGuestAccountPassword(
+        _ answer: OneShotGuestAccountAnswer, fields: GuestAccountPasswordFields,
+        refusal: String?
+    ) {
+        guard let window else {
+            answer(.cancelled)
+            return
+        }
+        outstandingGuestAccount = answer
+        fields.show(refusal: refusal)
+        show(
+            GuestAccountPasswordAlert.configuration(
+                prompt: answer.prompt, fields: fields,
+                answer: { [weak self] value in
+                    if self?.outstandingGuestAccount === answer {
+                        self?.outstandingGuestAccount = nil
+                    }
+                    answer(value)
+                },
+                retry: { [weak self] message in
+                    // Through the queue rather than straight back to `show`: the
+                    // dismissal that is running this has yet to reach its
+                    // `completion`, and the queue is what decides the order the
+                    // slot it frees is filled in.
+                    self?.enqueue {
+                        $0.showGuestAccountPassword(answer, fields: fields, refusal: message)
+                    }
+                }),
+            in: window)
+    }
+
     // MARK: - Serialization queue
 
     private func enqueue(_ work: @escaping (DetailAlertsPresenter) -> Void) {
@@ -372,13 +507,40 @@ final class DetailAlertsPresenter: NSObject {
     /// queue then drains in `completion`, into whatever slot the action left.
     private func show(_ config: AlertConfiguration, in window: NSWindow) {
         isShowingAlert = true
-        let didDismiss: () -> Void = { [weak self] in self?.isShowingAlert = false }
+        let didDismiss: () -> Void = { [weak self] in
+            self?.isShowingAlert = false
+            self?.shownAlert = nil
+        }
         let completion: () -> Void = { [weak self] in self?.runNext() }
         #if DEBUG
         shownAlertDismissal = makeSheetAlertDismissal(
             buttons: config.buttons, didDismiss: didDismiss, completion: completion)
         #endif
-        presentSheetAlert(config, in: window, didDismiss: didDismiss, completion: completion)
+        let alert = presentSheetAlert(
+            config, in: window, didDismiss: didDismiss, completion: completion)
+        shownAlert = (alert, config.buttons)
+    }
+
+    /// Takes the alert on screen off the window that is going away, as if its
+    /// cancel button had been clicked.
+    ///
+    /// Synchronous, for the reason ``SheetPresenter/reset()`` is: the flag
+    /// saying an alert is up has to be down before the next ``start(window:)``,
+    /// or the queue is wedged on a sheet nobody can see. The action runs here
+    /// too, because the sheet is leaving without a click and something is
+    /// waiting on the answer it would have carried — a suspended start, or the
+    /// accessory coordinator holding its next prompt. `.cancel` names no
+    /// button, so the dismissal AppKit delivers afterwards fires none of them a
+    /// second time.
+    private func dismissShownAlert(attachedTo host: NSWindow?) {
+        guard let shown = shownAlert else { return }
+        shownAlert = nil
+        isShowingAlert = false
+        #if DEBUG
+        shownAlertDismissal = nil
+        #endif
+        host?.endSheet(shown.alert.window, returnCode: .cancel)
+        shown.buttons.first { $0.role == .cancel }?.action()
     }
 
     private func showDeleteSheet() {

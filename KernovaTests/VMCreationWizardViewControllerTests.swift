@@ -160,6 +160,65 @@ struct VMCreationWizardViewControllerTests {
             findLabel(withText: "Enter a name for your virtual machine.", in: wizard.view) != nil)
     }
 
+    // MARK: - The account step
+
+    /// A wizard model on an image that can be provisioned, with the account
+    /// toggle on and the form filled.
+    private func makeAccountModel() -> VMCreationViewModel {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
+        vm.unattendedSetupEnabled = true
+        vm.guestAccountFullName = "Ada Lovelace"
+        vm.guestAccountUsername = "ada"
+        vm.guestAccountPassword = "analytical-engine"
+        vm.guestAccountVerifyPassword = "analytical-engine"
+        return vm
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The account step mounts its own view controller and joins the indicator")
+    func accountStepMounts() {
+        let vm = makeAccountModel()
+        vm.currentStep = .guestAccount
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.loadViewIfNeeded()
+
+        #expect(wizard.children.count == 1)
+        #expect(wizard.children.first is GuestAccountContentViewController)
+        #expect(findLabel(withText: "Account", in: wizard.view) != nil)
+        #expect(findButton(titled: "Next", in: wizard.view)?.isEnabled == true)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Next from Resources mounts the account step when an account is being created")
+    func nextFromResourcesMountsTheAccountStep() {
+        let vm = makeAccountModel()
+        vm.currentStep = .resources
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.loadViewIfNeeded()
+
+        findButton(titled: "Next", in: wizard.view)?.performClick(nil)
+
+        #expect(vm.currentStep == .guestAccount)
+        #expect(wizard.children.first is GuestAccountContentViewController)
+    }
+
+    @Test("Next from Resources mounts Review when no account is being created")
+    func nextFromResourcesSkipsTheAccountStep() {
+        let vm = VMCreationViewModel()  // Download Latest, nothing looked up yet
+        vm.currentStep = .resources
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.loadViewIfNeeded()
+
+        // The step is absent, not disabled: nothing about it is on the indicator.
+        #expect(findLabel(withText: "Account", in: wizard.view) == nil)
+
+        findButton(titled: "Next", in: wizard.view)?.performClick(nil)
+
+        #expect(vm.currentStep == .review)
+        #expect(wizard.children.first is ReviewContentViewController)
+    }
+
     // MARK: - Helpers
 
     @MainActor

@@ -416,6 +416,10 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentUSBAccessoryPairing(request)
     }
 
+    func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest) {
+        alertsPresenter.presentGuestAccountPassword(request)
+    }
+
     func focusGuestDisplay(for instance: VMInstance) {
         guard let window = view.window else { return }
         if let backing = backingViews[instance.id], !backing.isHidden {

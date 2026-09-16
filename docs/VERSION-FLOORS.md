@@ -13,6 +13,7 @@ Two different questions live here and are easy to conflate. **Guest-side** floor
 | Guest-initiated virtio-vsock connects to a host listener | none within what Virtualization can install | [2026-07-31 note](research/2026-07-31-macos12-guest-vsock.md) — 12.0.1 and 12.7.6 both complete the handshake |
 | `VZMacTrackpadConfiguration` is used instead of the USB pointing device | macOS **13.0** | `VZMacTrackpadConfiguration.h` discussion; exactly one device pair is attached, chosen by `GuestInputDevices.resolve` — the Mac devices at 13+, the USB pair below |
 | SPICE clipboard | never, at any version | macOS ships no `spice-vdagent` counterpart; macOS guests reach the clipboard over vsock instead (`ConfigurationBuilder.configureClipboardSharing`) |
+| The guest creates the user account the host hands it | macOS **27.0** | `VZMacGuestProvisioningOptions.h` — the options are read on the first boot after restore, and a guest below the floor ignores them with no error raised anywhere |
 
 A guest's version is not a thing Kernova can look up on demand — see `VMConfiguration.effectiveGuestMacOSVersion`, which reads the agent's last report and falls back to the image the VM was installed from.
 
@@ -22,4 +23,4 @@ A guest's version is not a thing Kernova can look up on demand — see `VMConfig
 
 Anything else — a storage device, a network device, a socket device — costs a restart. That is why a guest taking the agent disk over virtio carries it at every boot rather than on demand.
 
-**`VZUSBPassthroughDeviceConfiguration` is macOS 27.0**, above Kernova's deployment target, so it needs an availability guard. Every other Virtualization API Kernova uses is available unconditionally.
+**These Virtualization APIs Kernova calls are macOS 27.0**, above its deployment target, so each sits behind an availability guard: USB device passthrough (`VZUSBPassthroughDeviceConfiguration`) and the account a macOS guest is created with (`VZMacGuestProvisioningOptions`). Everything else Virtualization offers Kernova is available unconditionally.

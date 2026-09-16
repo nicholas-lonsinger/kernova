@@ -45,6 +45,9 @@ enum CommandError: Error, Sendable, Equatable {
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.
     case confirmationRequired(ConfirmationPrompt)
+    /// The start would spend the one boot macOS creates a guest account on, and
+    /// the caller answered nothing about that account.
+    case guestAccountPasswordRequired(GuestAccountPrompt)
     /// An argument named something the verb does not offer — a configuration
     /// key that is not in the keyspace — or carried a value it cannot use.
     /// The string is the whole refusal, in the words the user reads.
@@ -94,6 +97,13 @@ extension CommandError {
         return prompt
     }
 
+    /// The guest account this refusal is asking about, or `nil` when it is not
+    /// asking about one.
+    var guestAccountPrompt: GuestAccountPrompt? {
+        guard case .guestAccountPasswordRequired(let prompt) = self else { return nil }
+        return prompt
+    }
+
     /// This failure as it crosses a wire.
     var dto: CommandErrorDTO {
         switch self {
@@ -111,6 +121,8 @@ extension CommandError {
             .busy(vm: vm, operation: operation)
         case .confirmationRequired(let prompt):
             .confirmationRequired(prompt: prompt)
+        case .guestAccountPasswordRequired(let prompt):
+            .guestAccountPasswordRequired(prompt: prompt)
         case .invalidArgument(let message):
             .invalidArgument(message: message)
         case .unsupported(let capability):

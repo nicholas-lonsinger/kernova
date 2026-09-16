@@ -8,6 +8,13 @@ import AppKit
 /// intra-step change is the latest-image lookup.
 @MainActor
 final class ReviewContentViewController: NSViewController {
+    /// What the Account section shows in place of the guest password.
+    ///
+    /// A fixed run, not one bullet per character: the length is part of the
+    /// secret, and a summary row has nothing to do with the password beyond
+    /// saying one was set.
+    private static let redactedPassword = String(repeating: "\u{2022}", count: 8)
+
     private let creationVM: VMCreationViewModel
     private let startSwitch = NSSwitch()
     /// Rebuilt by ``rebuildSummary()`` when the latest-image lookup lands.
@@ -166,6 +173,18 @@ final class ReviewContentViewController: NSViewController {
                     valueRow("Save to", wizardAbbreviateWithTilde(creationVM.ipswDownloadPath)))
             }
             addSection("Installation", rows: rows, to: summary)
+
+            if let account = creationVM.unattendedSetupIntent {
+                addSection(
+                    "Account",
+                    rows: [
+                        valueRow("Full name", account.fullName),
+                        valueRow("Account name", account.username),
+                        valueRow("Password", Self.redactedPassword),
+                        valueRow("Automatic login", account.logsInAutomatically ? "On" : "Off"),
+                        valueRow("Remote Login (SSH)", account.enablesRemoteLogin ? "On" : "Off"),
+                    ], to: summary)
+            }
         }
 
         if creationVM.selectedOS == .linux {

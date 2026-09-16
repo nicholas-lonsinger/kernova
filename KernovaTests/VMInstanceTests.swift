@@ -1545,6 +1545,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             persistCallCount += 1
+            return true
         }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1567,6 +1568,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             persistCallCount += 1
+            return true
         }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1585,6 +1587,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             persistCallCount += 1
+            return true
         }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1609,6 +1612,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             persistCallCount += 1
+            return true
         }
 
         instance.recordObservedAgentInfo(
@@ -1710,6 +1714,32 @@ struct VMInstanceTests {
         #expect(instance.agentStatus == .waiting)
     }
 
+    // MARK: - performConfigurationMutation
+
+    @Test("A mutation the persistence pipeline could not write reports that it did not land")
+    func mutationReportsAFailedWrite() {
+        let instance = makeInstance()
+        // What the library answers when the write threw or the mutation was
+        // refused: the new value stands in memory, and a caller that needs
+        // memory and disk to agree has to be told they do not.
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return false
+        }
+
+        #expect(!instance.performConfigurationMutation { $0.displayHiDPI.toggle() })
+    }
+
+    @Test("A mutation on an instance with no persistence wired lands")
+    func mutationWithoutPersistenceLands() {
+        let instance = makeInstance()
+
+        // No bundle to disagree with: nothing refused the write, so nothing
+        // reads as a failure.
+        #expect(instance.performConfigurationMutation { $0.displayHiDPI = true })
+        #expect(instance.configuration.displayHiDPI)
+    }
+
     // MARK: - recordObservedAgentInfo
 
     @Test("recordObservedAgentInfo persists when the version changes")
@@ -1719,6 +1749,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             savedConfig = instance.configuration
+            return true
         }
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
@@ -1740,6 +1771,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             saveCount += 1
+            return true
         }
 
         instance.recordObservedAgentInfo(
@@ -1758,6 +1790,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             saveCount += 1
+            return true
         }
 
         let info = ObservedAgentInfo(
@@ -1781,6 +1814,7 @@ struct VMInstanceTests {
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             saveCount += 1
+            return true
         }
 
         instance.recordObservedAgentInfo(
@@ -1796,7 +1830,10 @@ struct VMInstanceTests {
         // one — Unknown beats stale.
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
@@ -1809,7 +1846,10 @@ struct VMInstanceTests {
         // lastSeen must differ from the reported version so the persist guard
         // doesn't short-circuit before the auto-eject hook.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
@@ -1825,7 +1865,10 @@ struct VMInstanceTests {
         // sentinel, so "0.0.1" genuinely classifies as outdated.
         try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
@@ -1842,7 +1885,10 @@ struct VMInstanceTests {
         // same-version reconnect — even when an OS-version change makes the
         // write itself go through.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: bundled)
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 

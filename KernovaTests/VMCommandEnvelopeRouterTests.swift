@@ -272,7 +272,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness)
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, guestAccount: nil))
 
         #expect(response.result == .ok)
         #expect(harness.virtualization.startCallCount == 1)
@@ -347,7 +347,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, guestAccount: nil))
 
         guard case .invalidState(_, let current, let allowed)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -391,7 +391,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, name: "Capped")
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, guestAccount: nil))
 
         guard case .operationFailed(_, let title, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -474,7 +474,7 @@ struct VMCommandEnvelopeRouterTests {
         harness.storage.bundles[bundleURL] = config
 
         let started = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, guestAccount: nil))
         #expect(started.result == .ok)
         for await _ in installService.installStartedStream { break }
 
@@ -540,7 +540,7 @@ struct VMCommandEnvelopeRouterTests {
         library.instances.append(instance)
         storage.bundles[bundleURL] = config
 
-        let started = try await transport.send(.start(.id(instance.id), recovery: false))
+        let started = try await transport.send(.start(.id(instance.id), recovery: false, guestAccount: nil))
         #expect(started.result == .ok)
 
         // The install completes synchronously (`MockMacOSInstallService` has no
@@ -935,7 +935,7 @@ struct VMCommandEnvelopeRouterTests {
     func foreignProtocolVersionIsRefused() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false))
+        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false, guestAccount: nil))
         request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
 
         let response = try await harness.transport.sendRaw(try JSONEncoder().encode(request))

@@ -254,6 +254,8 @@ struct VMScriptingGatewayTests {
 
         #expect(commands.startCalls.map(\.selector) == [alpha])
         #expect(commands.startCalls.map(\.recovery) == [true])
+        // A script has no password to give and no prompt to raise.
+        #expect(commands.startCalls.map(\.guestAccount) == [nil])
         #expect(commands.stopCalls.map(\.disposition) == [.force])
         #expect(commands.stopCalls.map(\.timeout) == [30])
         #expect(commands.restartCalls.map(\.timeout) == [nil])

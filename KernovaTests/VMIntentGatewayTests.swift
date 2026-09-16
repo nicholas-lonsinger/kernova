@@ -281,6 +281,9 @@ struct VMIntentGatewayTests {
 
         #expect(commands.startCalls.map(\.selector) == [.id(id)])
         #expect(commands.startCalls.map(\.recovery) == [true])
+        // Shortcuts gathers a confirmation and not a password, so the start
+        // answers nothing about the guest account and the refusal surfaces.
+        #expect(commands.startCalls.map(\.guestAccount) == [nil])
         #expect(commands.stopCalls.map(\.selector) == [.id(id)])
         #expect(commands.stopCalls.map(\.disposition) == [.force])
         #expect(commands.pauseSelectors == [.id(id)])

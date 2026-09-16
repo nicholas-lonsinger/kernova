@@ -1141,14 +1141,50 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.core.capabilities.accepts(.editStorageDisks, on: instance))
         #expect(harness.core.capabilities.accepts(.editRemovableMedia, on: instance))
 
-        await harness.core.removeStartFailedAttachmentAndStart(
+        try await harness.core.removeStartFailedAttachmentAndStart(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"))
+                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"),
+            guestAccount: nil)
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         // The file the start could not open is left exactly where it is.
         #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A start-failed removal refuses an unanswered account before it removes anything")
+    func removeStartFailedRefusesBeforeRemoving() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, phase: .failed(message: "Boot failed."), guestOS: .macOS)
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
+        instance.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.removeStartFailedAttachmentAndStart(
+                .id(instance.id),
+                attachment: StartFailedAttachment(
+                    kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"),
+                guestAccount: nil)
+        }
+
+        // Nothing removed, so the call the door re-issues with the answer still
+        // has its removal to do — one that found nothing would stop short of
+        // the start it was meant to retry.
+        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
+
+        try await harness.core.removeStartFailedAttachmentAndStart(
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"),
+            guestAccount: .skip)
+
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
     }
 
     @Test("A start-failed removal naming an entry that is already gone retries nothing")
@@ -1156,10 +1192,11 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed."))
 
-        await harness.core.removeStartFailedAttachmentAndStart(
+        try await harness.core.removeStartFailedAttachmentAndStart(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open"))
+                kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open"),
+            guestAccount: nil)
 
         #expect(instance.status == .error)
     }

@@ -306,6 +306,16 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// after a successful install. Always `nil` for Linux guests.
     var installContext: MacOSInstallContext?
 
+    /// The macOS account this VM still owes its guest, minus the password.
+    ///
+    /// Outlives ``installContext`` on purpose: the install is over when the
+    /// image lands, and the account is owed until a boot has spent the one
+    /// window macOS reads it in — the boot chained onto a completed install, or
+    /// the next Start when something interrupted the two. Retracted by
+    /// ``VMInstance/retractGuestAccount()``, which is what every ending goes
+    /// through.
+    var pendingGuestAccount: GuestAccountIntent?
+
     /// Pending Linux installer-image download from the creation wizard.
     ///
     /// Non-nil ⇒ this VM has never completed its initial boot: its presence
@@ -373,6 +383,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
         installContext: MacOSInstallContext? = nil,
+        pendingGuestAccount: GuestAccountIntent? = nil,
         linuxInstallContext: LinuxInstallContext? = nil,
         createdAt: Date = Date(),
         installedImage: InstalledImage? = nil
@@ -424,6 +435,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories
         self.installContext = installContext
+        self.pendingGuestAccount = pendingGuestAccount
         self.linuxInstallContext = linuxInstallContext
         self.createdAt = createdAt
         self.installedImage = installedImage
@@ -495,6 +507,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
+        self.pendingGuestAccount = try c.decodeIfPresent(
+            GuestAccountIntent.self, forKey: .pendingGuestAccount)
         self.linuxInstallContext = try c.decodeIfPresent(
             LinuxInstallContext.self, forKey: .linuxInstallContext)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
@@ -647,8 +661,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
         // The clone copies the source bundle's post-install artifacts, so
         // preserving either install context would falsely mark it as awaiting
-        // an initial boot.
+        // an initial boot — and the guest inside those artifacts has already
+        // spent the one boot an account could have been created on.
         clone.installContext = nil
+        clone.pendingGuestAccount = nil
         clone.linuxInstallContext = nil
 
         // A clone's guest-agent state hasn't been evaluated by the user, so let

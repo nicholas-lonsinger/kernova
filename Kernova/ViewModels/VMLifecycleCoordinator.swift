@@ -226,9 +226,13 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Lifecycle
 
-    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
+    func start(
+        _ instance: VMInstance, bootIntoRecovery: Bool = false,
+        provisioning: GuestProvisioningCredentials? = nil
+    ) async throws {
         try await serialized(instance, action: "start") {
-            try await virtualizationService.start(instance, bootIntoRecovery: bootIntoRecovery)
+            try await virtualizationService.start(
+                instance, bootIntoRecovery: bootIntoRecovery, provisioning: provisioning)
         }
     }
 
@@ -666,12 +670,30 @@ final class VMLifecycleCoordinator {
                 // Clear the persisted install intent so subsequent Starts take the
                 // normal boot path, record the image this VM now carries, and
                 // clear `setupState` so the progress UI tears down before the
-                // caller chains an auto-boot.
+                // caller chains an auto-boot. The account the VM was set up with
+                // is deliberately untouched: the boot that delivers it has not
+                // run yet, and anything interrupting the two must leave the next
+                // Start something to ask about.
                 instance.performConfigurationMutation {
                     $0.installContext = nil
                     $0.installedImage = installedImage
                 }
                 instance.setupState = nil
+
+                // The image the install ran from is the first authoritative
+                // reading of the guest's version — the account was offered
+                // against a filename, and a pinned URL or a picked file can
+                // name anything. Dropped rather than refused: the install has
+                // already landed, and there is no per-VM editor to turn the
+                // intent off with.
+                if instance.configuration.pendingGuestAccount != nil,
+                    !MacOSGuestProvisioning.canProvision(instance.configuration)
+                {
+                    Self.logger.warning(
+                        "Dropping the guest account for '\(instance.name, privacy: .public)': \(installedImage.displayName, privacy: .public) does not run the guest provisioning protocol"
+                    )
+                    instance.retractGuestAccount()
+                }
             } catch is CancellationError {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
                 // Re-throw so the caller knows to flip the VM back to

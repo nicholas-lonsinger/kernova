@@ -42,6 +42,8 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Number of `start` calls, so a test can prove a second start joined the
     /// first rather than issuing its own.
     private(set) var startCallCount = 0
+    /// The account the last `start` was handed.
+    private(set) var lastStartProvisioning: GuestProvisioningCredentials?
 
     // MARK: - Suspension Mechanism
 
@@ -86,8 +88,12 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     // MARK: - VirtualizationProviding
 
-    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
+    func start(
+        _ instance: VMInstance, bootIntoRecovery: Bool = false,
+        provisioning: GuestProvisioningCredentials? = nil
+    ) async throws {
         startCallCount += 1
+        lastStartProvisioning = provisioning
         // Before the suspension, as the real service enters it before its first
         // await: a start in flight is what every other caller reads off the VM.
         instance.enter(.starting(sessionID: nil))

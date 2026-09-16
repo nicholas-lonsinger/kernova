@@ -313,6 +313,48 @@ final class IPSWSelectionContentViewController: NSViewController {
                     ))
             }
         }
+
+        addGuestAccountOffer()
+    }
+
+    /// Adds the account offer for a pick that can deliver one.
+    ///
+    /// It lives on this step because this is where the image — and so the
+    /// capability — is chosen, and the whole card is **absent** for a pick that
+    /// cannot deliver rather than shown disabled: a control that explains why it
+    /// is unavailable is a control the user is asked to reason about.
+    private func addGuestAccountOffer() {
+        guard creationVM.offersUnattendedSetup else { return }
+
+        let toggle = makeGroupedFormSwitch(
+            target: self, action: #selector(unattendedSetupToggled(_:)))
+        toggle.state = creationVM.unattendedSetupEnabled ? .on : .off
+
+        if let last = conditionalContainer.arrangedSubviews.last {
+            conditionalContainer.setCustomSpacing(Spacing.section, after: last)
+        }
+        let header = makeGroupedFormSectionHeader("Account")
+        conditionalContainer.addArrangedSubview(header)
+        conditionalContainer.setCustomSpacing(Spacing.small, after: header)
+
+        let card = makeGroupedFormCard(
+            rows: [makeGroupedFormCardRow("Set up macOS automatically", control: toggle)])
+        conditionalContainer.addArrangedSubview(card)
+        card.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
+        conditionalContainer.setCustomSpacing(Spacing.small, after: card)
+
+        let caption = makeGroupedFormCaption(
+            "macOS skips its setup questions and creates the account you enter "
+                + "on the Account step.")
+        conditionalContainer.addArrangedSubview(caption)
+        caption.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
+    }
+
+    /// Reads the sender rather than a held reference: this card is rebuilt
+    /// wholesale on every ``refresh()``, so the switch on screen is the only one
+    /// that can have been clicked.
+    @objc private func unattendedSetupToggled(_ sender: NSSwitch) {
+        creationVM.unattendedSetupEnabled = sender.state == .on
     }
 
     /// Adds the one badge a source shows: which image it names, and where that

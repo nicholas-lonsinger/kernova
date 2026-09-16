@@ -1558,6 +1558,390 @@ struct VMCreationViewModelTests {
         #expect(vm.latestImage?.version == "26.5.2")
         #expect(vm.latestImageSizeBytes == nil)
     }
+
+    // MARK: - Guest Account
+
+    /// A wizard on an image that can be provisioned, with the toggle on and the
+    /// form filled — the state the account assertions vary from.
+    private func makeAccountWizard(
+        fullName: String = "Ada Lovelace",
+        username: String = "ada",
+        password: String = "analytical-engine",
+        verify: String? = nil
+    ) -> VMCreationViewModel {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
+        vm.unattendedSetupEnabled = true
+        vm.guestAccountFullName = fullName
+        vm.guestAccountUsername = username
+        vm.guestAccountPassword = password
+        vm.guestAccountVerifyPassword = verify ?? password
+        return vm
+    }
+
+    private var stepsWithoutAccount: [VMCreationStep] {
+        [.osSelection, .bootConfig, .resources, .review]
+    }
+
+    @Test("A Linux guest walks no account step")
+    func linuxWalksNoAccountStep() {
+        let vm = makeAccountWizard()
+        vm.selectedOS = .linux
+
+        #expect(!vm.offersUnattendedSetup)
+        #expect(vm.steps == stepsWithoutAccount)
+    }
+
+    @Test("A macOS guest with the toggle off walks no account step")
+    func toggleOffWalksNoAccountStep() {
+        let vm = makeAccountWizard()
+        vm.unattendedSetupEnabled = false
+
+        #expect(!vm.unattendedSetupActive)
+        #expect(vm.steps == stepsWithoutAccount)
+    }
+
+    @Test("An image below the provisioning floor walks no account step")
+    func belowFloorWalksNoAccountStep() {
+        let vm = makeAccountWizard()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
+
+        #expect(!vm.offersUnattendedSetup)
+        #expect(vm.steps == stepsWithoutAccount)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("An image at the provisioning floor puts the account step before Review")
+    func atFloorWalksTheAccountStep() {
+        let vm = makeAccountWizard()
+
+        #expect(vm.offersUnattendedSetup)
+        #expect(vm.unattendedSetupActive)
+        #expect(vm.steps == [.osSelection, .bootConfig, .resources, .guestAccount, .review])
+    }
+
+    @available(macOS 27.0, *)
+    @Test("goNext from Resources lands on the account step when one is being created")
+    func goNextFromResourcesReachesTheAccountStep() {
+        let vm = makeAccountWizard()
+        vm.currentStep = .resources
+
+        vm.goNext()
+        #expect(vm.currentStep == .guestAccount)
+
+        vm.goNext()
+        #expect(vm.currentStep == .review)
+
+        vm.goBack()
+        #expect(vm.currentStep == .guestAccount)
+    }
+
+    @Test("goNext from Resources lands on Review when no account is being created")
+    func goNextFromResourcesSkipsTheAccountStep() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .resources
+
+        vm.goNext()
+        #expect(vm.currentStep == .review)
+
+        vm.goBack()
+        #expect(vm.currentStep == .resources)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Picking an image that can't be provisioned retracts the offer, leaving the toggle alone")
+    func pre27PickRetractsTheOffer() {
+        let vm = makeAccountWizard()
+        #expect(vm.unattendedSetupActive)
+
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
+
+        #expect(!vm.unattendedSetupActive)
+        #expect(vm.steps == stepsWithoutAccount)
+        #expect(vm.unattendedSetupIntent == nil)
+        // The answer the user gave is still theirs; only the offer retracted. A
+        // pick that can deliver again restores it without re-asking.
+        #expect(vm.unattendedSetupEnabled)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.1", build: "27B100"))
+        #expect(vm.unattendedSetupActive)
+    }
+
+    // MARK: - Selected Image Version
+
+    @Test("Download Latest names no version until the lookup answers")
+    func downloadLatestVersionFollowsTheLookup() async {
+        let ipswService = MockIPSWService()
+        ipswService.fetchResult = makeLatestImage(version: "27.0", build: "27A100")
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+
+        #expect(vm.selectedImageVersion == nil)
+
+        await vm.loadLatestImageDetails()?.value
+        #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 0))
+    }
+
+    @Test("A catalog pick names the version the catalog recorded")
+    func catalogPickNamesItsVersion() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.1", build: "27B100"))
+
+        #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 1))
+    }
+
+    @Test("A pasted URL names a version only when its filename carried one")
+    func pastedURLNamesItsVersionWhenTheFilenameHasOne() {
+        let vm = VMCreationViewModel()
+        vm.selectPastedImage(makeProbedImage(version: "27.0", build: "27A100"))
+        #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 0))
+
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://example.com/image.ipsw", version: nil, build: nil))
+        #expect(vm.selectedImageVersion == nil)
+    }
+
+    @Test("A local file names no version until its inspection lands")
+    func localFileVersionFollowsTheInspection() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "27.0", build: "27A100", isSupportedOnThisHost: true, sizeBytes: nil)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+
+        vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
+        #expect(vm.selectedImageVersion == nil)
+
+        await vm.localFileInspectionTask?.value
+        #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 0))
+    }
+
+    // MARK: - Guest Account Validation
+
+    @available(macOS 27.0, *)
+    @Test("A form with a field still blank asks for the details rather than judging them")
+    func blankAccountAsksForTheDetails() {
+        let vm = makeAccountWizard(fullName: "", username: "", password: "", verify: "")
+        vm.currentStep = .guestAccount
+
+        #expect(!vm.canAdvance)
+        #expect(vm.validationMessage == "Enter the account details to continue.")
+
+        // One field short reads the same — the form is incomplete either way.
+        vm.guestAccountFullName = "Ada Lovelace"
+        vm.guestAccountUsername = "ada"
+        vm.guestAccountPassword = "analytical-engine"
+        #expect(vm.validationMessage == "Enter the account details to continue.")
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Whitespace alone is not a name — what is validated is what would be created")
+    func whitespaceOnlyFieldsAreIncomplete() {
+        let vm = makeAccountWizard(fullName: "   ", username: "  ")
+
+        #expect(vm.guestAccountValidationMessage == "Enter the account details to continue.")
+        #expect(!vm.canCreate)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The persisted account is trimmed, as the VM name is")
+    func theAccountIsTrimmedBeforeItIsPersisted() throws {
+        let vm = makeAccountWizard(fullName: "  Ada Lovelace  ", username: " ada ")
+        vm.vmName = "Provisioned VM"
+
+        let account = try #require(vm.buildConfiguration().pendingGuestAccount)
+        #expect(account.fullName == "Ada Lovelace")
+        #expect(account.username == "ada")
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Create is refused while the account the wizard is creating is incomplete")
+    func createIsRefusedForAnIncompleteAccount() {
+        let vm = makeAccountWizard(fullName: "", username: "", password: "", verify: "")
+        vm.vmName = "Provisioned VM"
+        // Review is reachable with the toggle on and the form untouched, and
+        // creating there would persist an empty account and arm an empty
+        // password — a prompt nothing could ever satisfy.
+        vm.currentStep = .review
+
+        #expect(!vm.canCreate)
+
+        vm.unattendedSetupEnabled = false
+        #expect(vm.canCreate)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Create is refused while the two spellings of the password differ")
+    func createIsRefusedForAMismatchedPassword() {
+        let vm = makeAccountWizard(password: "analytical-engine", verify: "difference-engine")
+        vm.vmName = "Provisioned VM"
+
+        #expect(!vm.canCreate)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A verification that doesn't match the password says so")
+    func mismatchedPasswordsSaySo() {
+        let vm = makeAccountWizard(password: "analytical-engine", verify: "difference-engine")
+        vm.currentStep = .guestAccount
+
+        #expect(!vm.canAdvance)
+        #expect(vm.validationMessage == "The passwords don\u{2019}t match.")
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A complete account Virtualization accepts advances with nothing to say")
+    func completeAccountAdvances() {
+        let vm = makeAccountWizard()
+        vm.currentStep = .guestAccount
+
+        #expect(vm.canAdvance)
+        #expect(vm.validationMessage == nil)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("An account Virtualization refuses surfaces the framework's own message")
+    func refusedAccountSurfacesTheFrameworkMessage() throws {
+        let vm = makeAccountWizard(password: "a")
+        vm.currentStep = .guestAccount
+
+        #expect(!vm.canAdvance)
+        let message = try #require(vm.validationMessage)
+        // Whatever Apple words it as — what matters is that it is Apple's and
+        // not one of the two the form states for itself.
+        #expect(!message.isEmpty)
+        #expect(message != "Enter the account details to continue.")
+        #expect(message != "The passwords don\u{2019}t match.")
+    }
+
+    @Test("A wizard creating no account has nothing to validate")
+    func inactiveAccountValidatesNothing() {
+        let vm = makeAccountWizard(fullName: "", username: "", password: "", verify: "")
+        vm.unattendedSetupEnabled = false
+
+        #expect(vm.guestAccountValidationMessage == nil)
+    }
+
+    // MARK: - The Persisted Account
+
+    @available(macOS 27.0, *)
+    @Test("An active account is persisted beside the install, and its password rides with it")
+    func activeAccountIsPersistedBesideTheInstall() throws {
+        let vm = makeAccountWizard()
+        vm.guestAccountLogsInAutomatically = true
+        vm.guestAccountEnablesRemoteLogin = true
+
+        let intent = try #require(vm.unattendedSetupIntent)
+        #expect(intent.fullName == "Ada Lovelace")
+        #expect(intent.username == "ada")
+        #expect(intent.logsInAutomatically)
+        #expect(intent.enablesRemoteLogin)
+        #expect(vm.guestAccountForCreate == .password("analytical-engine"))
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The install context still describes only its source")
+    func accountLeavesTheSourceIntact() {
+        let vm = makeAccountWizard()
+
+        let context = vm.buildInstallContext()
+        #expect(context.source == .catalogVersion)
+        #expect(context.version == "27.0")
+        #expect(context.build == "27A100")
+    }
+
+    @Test("A wizard creating no account persists none, and hands the create verb no password")
+    func inactiveAccountPersistsNothing() {
+        let vm = makeAccountWizard()
+        vm.vmName = "Plain VM"
+        vm.unattendedSetupEnabled = false
+
+        #expect(vm.buildConfiguration().pendingGuestAccount == nil)
+        #expect(vm.unattendedSetupIntent == nil)
+        #expect(vm.guestAccountForCreate == nil)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The account outlives the install context it was gathered with")
+    func buildConfigurationCarriesTheAccount() throws {
+        let vm = makeAccountWizard()
+        vm.vmName = "Provisioned VM"
+
+        let configuration = vm.buildConfiguration()
+        // Beside the install rather than inside it: the install ends when the
+        // image lands, and the account is owed for one boot longer.
+        let intent = try #require(configuration.pendingGuestAccount)
+        #expect(intent.username == "ada")
+        #expect(configuration.installContext != nil)
+    }
+
+    // MARK: - A Step That Disappears Under the User
+
+    @available(macOS 27.0, *)
+    @Test("A pick that retracts the account step moves the user off it, not nowhere")
+    func retractingTheAccountStepClampsTheCurrentStep() {
+        let vm = makeAccountWizard()
+        vm.currentStep = .guestAccount
+
+        // What a local file's inspection landing does: the offer goes while the
+        // user is standing on the step it belongs to.
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
+
+        #expect(vm.currentStep == .resources)
+        #expect(vm.steps.contains(vm.currentStep))
+        // Next and Back both work again, which is what the clamp is for.
+        vm.goNext()
+        #expect(vm.currentStep == .review)
+        vm.goBack()
+        #expect(vm.currentStep == .resources)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A step that comes back does not mount itself under the user")
+    func aRestoredStepDoesNotMoveTheUser() {
+        let vm = makeAccountWizard()
+        vm.currentStep = .guestAccount
+
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
+        #expect(vm.currentStep == .resources)
+
+        // The step is walkable again, and the user is still where the clamp
+        // left them: a pick landing — a file's inspection, the latest-image
+        // lookup — is nobody's request to be moved forward, and moving them
+        // swaps the fields under whatever they are typing into.
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.1", build: "27B100"))
+        #expect(vm.currentStep == .resources)
+        #expect(vm.steps.contains(.guestAccount))
+        // Forward is theirs to ask for — the account step sits after Resources.
+        vm.goNext()
+        #expect(vm.currentStep == .guestAccount)
+    }
+
+    // MARK: - What Blocks Create
+
+    @available(macOS 27.0, *)
+    @Test("Review names the step that blocks Create rather than greying it in silence")
+    func reviewNamesTheStepBlockingCreate() throws {
+        let vm = makeAccountWizard(password: "analytical-engine", verify: "difference-engine")
+        vm.vmName = "Provisioned VM"
+        vm.currentStep = .review
+
+        #expect(!vm.canCreate)
+        // Review has no account controls, so the hint has to say where the
+        // problem is as well as what it is.
+        let message = try #require(vm.validationMessage)
+        #expect(message == "Account: The passwords don\u{2019}t match.")
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Review says nothing once nothing blocks Create")
+    func reviewSaysNothingWhenCreateIsReady() {
+        let vm = makeAccountWizard()
+        vm.vmName = "Provisioned VM"
+        vm.currentStep = .review
+
+        #expect(vm.canCreate)
+        #expect(vm.validationMessage == nil)
+    }
 }
 
 /// Inspector stand-in that stays inside `inspect` until the test releases it,

@@ -127,6 +127,7 @@ final class VMCreationWizardViewController: NSViewController {
                 track: { [weak self] in
                     guard let self else { return }
                     _ = self.creationVM.currentStep
+                    _ = self.creationVM.steps
                     _ = self.creationVM.canAdvance
                     _ = self.creationVM.canCreate
                     _ = self.creationVM.validationMessage
@@ -248,6 +249,7 @@ final class VMCreationWizardViewController: NSViewController {
         nextButton.keyEquivalent = isReview ? "" : "\r"
         createButton.keyEquivalent = isReview ? "\r" : ""
 
+        stepIndicator.steps = creationVM.steps
         stepIndicator.currentStep = step
 
         if displayedStep != step {
@@ -294,6 +296,8 @@ final class VMCreationWizardViewController: NSViewController {
             return BootConfigContentViewController(creationVM: creationVM)
         case .resources:
             return ResourceConfigContentViewController(creationVM: creationVM)
+        case .guestAccount:
+            return GuestAccountContentViewController(creationVM: creationVM)
         case .review:
             return ReviewContentViewController(creationVM: creationVM)
         }

@@ -2,9 +2,10 @@ import AppKit
 
 /// The dotted step-progress bar at the top of the creation wizard.
 ///
-/// Renders one dot + title per ``VMCreationStep`` with thin connectors between
+/// Renders one dot + title per step in ``steps`` with thin connectors between
 /// them, highlighting the current step in the accent color. Purely a display of
-/// ``currentStep`` — it holds no model reference and reports no events.
+/// ``steps`` and ``currentStep`` — it holds no model reference and reports no
+/// events.
 @MainActor
 final class WizardStepIndicatorView: NSView {
     private struct StepViews {
@@ -12,7 +13,20 @@ final class WizardStepIndicatorView: NSView {
         let label: NSTextField
     }
 
+    private let mainStack = NSStackView()
     private var stepViews: [VMCreationStep: StepViews] = [:]
+
+    /// The steps to render, in order; setting it redraws the bar.
+    ///
+    /// The wizard's own list rather than every case, because a configuration
+    /// that cannot use a step does not walk it — and a bar listing a step the
+    /// user never reaches misstates how far along they are.
+    var steps: [VMCreationStep] = VMCreationStep.allCases {
+        didSet {
+            guard oldValue != steps else { return }
+            rebuild()
+        }
+    }
 
     /// The step to highlight; setting it restyles the dots and labels.
     var currentStep: VMCreationStep = .osSelection {
@@ -27,8 +41,12 @@ final class WizardStepIndicatorView: NSView {
 
     init() {
         super.init(frame: .zero)
-        build()
-        updateHighlight()
+        mainStack.orientation = .horizontal
+        mainStack.alignment = .centerY
+        mainStack.spacing = Spacing.tight
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        addFullSizeSubview(mainStack)
+        rebuild()
     }
 
     @available(*, unavailable)
@@ -36,22 +54,20 @@ final class WizardStepIndicatorView: NSView {
         fatalError("WizardStepIndicatorView does not support NSCoder")
     }
 
-    private func build() {
-        let mainStack = NSStackView()
-        mainStack.orientation = .horizontal
-        mainStack.alignment = .centerY
-        mainStack.spacing = Spacing.tight
-        mainStack.translatesAutoresizingMaskIntoConstraints = false
+    private func rebuild() {
+        for view in mainStack.arrangedSubviews {
+            mainStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        stepViews.removeAll()
 
-        let steps = VMCreationStep.allCases
         for (index, step) in steps.enumerated() {
             mainStack.addArrangedSubview(makeStepGroup(for: step))
             if index < steps.count - 1 {
                 mainStack.addArrangedSubview(makeConnector())
             }
         }
-
-        addFullSizeSubview(mainStack)
+        updateHighlight()
     }
 
     private func makeStepGroup(for step: VMCreationStep) -> NSView {
