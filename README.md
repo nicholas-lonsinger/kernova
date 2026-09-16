@@ -183,7 +183,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 
 | `make setup` step | What it does |
 |---|---|
-| **Git hooks** | Activates the checked-in `.githooks/` — a pre-push `make lint` matching the required check on `main` (`git push --no-verify` bypasses once) and a post-checkout hook that readies new worktrees ([docs/BUILD.md](docs/BUILD.md)). |
+| **Git hooks** | Activates the checked-in `.githooks/` — a pre-push `make lint` matching the required check on `main` (`git push --no-verify` bypasses once), a commit-msg check that an agent's co-author trailer names the model and version, and a post-checkout hook that readies new worktrees ([docs/BUILD.md](docs/BUILD.md)). |
 | **Homebrew tools** | `shellcheck`, `gh`, `protoc`, `xcode-build-server` — skipped if present or if [Homebrew](https://brew.sh) is absent; none is needed to build or test. |
 | **`buildServer.json`** | Gives editors and language servers the project's real compiler flags; build once for them to resolve. |
 | **Periphery** | The pinned release `make dead-code` scans with. |

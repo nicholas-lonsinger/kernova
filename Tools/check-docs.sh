@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks the two documentation rules that a machine can decide: the 80-word
 # line cap from AGENTS.md's "Documentation and Comments", and that every
-# relative Markdown link resolves.
+# relative Markdown link resolves — the file it names, and the heading its
+# `#fragment` names.
 #
 # These two are here and the rest of the convention is not, because they are
 # the only rules whose violation can be fixed without deleting anything. An
@@ -38,17 +39,71 @@ while IFS= read -r doc; do
     ' "$doc")
 done < <(git ls-files '*.md')
 
+# The anchor ids GitHub gives a Markdown file's headings, in document order:
+# the heading text lowercased, everything but letters, digits, hyphens,
+# underscores and spaces dropped, spaces turned into hyphens, and a repeat of
+# an earlier id suffixed -1, -2. A fenced block holds no headings — the commit
+# template in AGENTS.md's "Commit Messages" is `## Summary` inside one.
+heading_slugs() {
+    awk '
+        {
+            marker = ""
+            if ($0 ~ /^[[:space:]]*```/)  marker = "`"
+            if ($0 ~ /^[[:space:]]*~~~/)  marker = "~"
+            if (marker != "") {
+                if (fence == "") fence = marker
+                else if (fence == marker) fence = ""
+                next
+            }
+            if (fence != "") next
+
+            if ($0 !~ /^#+[[:space:]]/) next
+            hashes = $0
+            sub(/[[:space:]].*$/, "", hashes)
+            if (length(hashes) > 6) next
+
+            text = $0
+            sub(/^#+[[:space:]]+/, "", text)
+            sub(/[[:space:]]+#+[[:space:]]*$/, "", text)
+
+            slug = tolower(text)
+            gsub(/[^a-z0-9 _-]/, "", slug)
+            gsub(/ /, "-", slug)
+            if (slug == "") next
+
+            repeats = seen[slug]++
+            if (repeats) slug = slug "-" repeats
+            print slug
+        }
+    ' "$1"
+}
+
 while IFS= read -r doc; do
     dir="$(dirname "$doc")"
     while IFS= read -r target; do
-        # Strip an anchor, then resolve against the linking file's directory.
-        path="${target%%#*}"
-        [ -n "$path" ] || continue
-        case "$path" in
+        case "$target" in
             http://* | https://* | mailto:*) continue ;;
         esac
-        [ -e "$dir/$path" ] && continue
-        fail "$doc — dead link: $target"
+        # Split the anchor off, then resolve the path against the linking
+        # file's directory. An empty path anchors within the linking file.
+        path="${target%%#*}"
+        case "$target" in
+            *'#'*) fragment="${target#*#}" ;;
+            *) fragment="" ;;
+        esac
+        if [ -n "$path" ]; then
+            target_doc="$dir/$path"
+            if [ ! -e "$target_doc" ]; then
+                fail "$doc — dead link: $target"
+                continue
+            fi
+        else
+            target_doc="$doc"
+        fi
+        [ -n "$fragment" ] || continue
+        case "$target_doc" in *.md) ;; *) continue ;; esac
+        heading_slugs "$target_doc" | grep -qxF -- "$fragment" && continue
+        fail "$doc — dead anchor: $target"
     done < <(grep -oE '\]\([^)]+\)' "$doc" | sed -E 's/^\]\(//; s/\)$//')
 done < <(git ls-files '*.md')
 
