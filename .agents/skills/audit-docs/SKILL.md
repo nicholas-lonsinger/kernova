@@ -181,7 +181,9 @@ behavior — placed in the entry-point doc the reader starts from.
 
 ## Mechanisms the audit proposes
 
-A `fix mechanism` verdict names lint, a hook, a CI check, or a repo setting.
+A `fix mechanism` verdict names lint, a hook, a CI check, a repo setting, or
+a GitHub template: a PR or issue body shape written out in a doc is a
+`.github/` template, which the web UI and `gh` present at the point of use.
 Two constraints on what gets proposed:
 
 - A tool never silently changes what an author wrote. When a check could

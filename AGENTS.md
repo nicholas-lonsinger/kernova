@@ -78,8 +78,8 @@ Every review finding — tooling, a bot or human PR comment, your own reading of
 | Category | What it means |
 |---|---|
 | **Fix now** | Valid, in scope, reasonable effort — fix it as part of the current work |
-| **Fix later** | Valid but out of scope or too large — file a GitHub issue immediately |
-| **Annotate** | A last resort: a `RATIONALE:` comment only when it clears all four conditions in [docs/REVIEW.md](docs/REVIEW.md); `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar) |
+| **Fix later** | Valid but out of scope or too large — file a GitHub issue immediately from `.github/ISSUE_TEMPLATE/review-debt.md` |
+| **Annotate** | A last resort: a `RATIONALE:` comment only for a concern a review actually raised or an alternative actually tried and failed — one a reviewer *would* raise is not enough; `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar) |
 | **Dismiss** | Style nits, cosmetic preferences, negligible-impact improvements — and anything failing the severity bar that doesn't clear the annotation bar |
 
 A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than a cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from). When a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain: dismiss rather than filing the next link, and don't annotate it.
@@ -135,7 +135,7 @@ Deleted wholesale, not adjudicated sentence by sentence:
 - Hand-maintained test inventories
 - Version changelogs written into prose
 - Roadmap, status, and known-gap notes ("currently only logs", "D1b follows") — an issue, or nothing
-- An "Alternatives" clause in a doc defending a rejected design — the PR body holds the argument, or a call-site `RATIONALE:` clearing [docs/REVIEW.md](docs/REVIEW.md)'s four conditions
+- An "Alternatives" clause in a doc defending a rejected design — the PR body holds the argument, or a call-site `RATIONALE:`
 
 ### Comments
 
