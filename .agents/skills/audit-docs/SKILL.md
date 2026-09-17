@@ -193,9 +193,11 @@ Two constraints on what gets proposed:
 - **Dangling references:** for every section the audit deletes, grep the
   other docs for its anchor and for its name in prose, and for any sentence
   describing what the audited file contains.
-- **Coverage of AGENTS.md's own meta-rules:** AGENTS.md sets rules for docs
-  (read-trigger opener, named reader, 80-word line cap, "never kept" list).
-  Check every audited doc against every one of them.
+- **Coverage of the doc rules:** AGENTS.md's "Never kept" list (annotated
+  trees, issue-keyed tables, inventories, changelogs, status notes,
+  alternatives clauses); `Tools/check-docs.sh` owns the line cap and link
+  resolution, so lint reports those. A doc's read-trigger is its
+  `docs/README.md` row, and the row must match the file's opener.
 - **Self-consistency:** does AGENTS.md obey its own routing tests and layer
   table? Apply them to AGENTS.md as strictly as to any other file.
 

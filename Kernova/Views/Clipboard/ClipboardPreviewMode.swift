@@ -17,7 +17,7 @@ enum ClipboardPreviewMode: Equatable {
     case empty
     /// Editable text editor.
     case text(String)
-    /// Read-only styled preview of inline rich text (RTF/HTML) decoded from `data`.
+    /// Read-only styled preview of inline rich text (RTF) decoded from `data`.
     case richText(data: Data, uti: String)
     /// Image preview decoded from `data`.
     case image(data: Data, uti: String)

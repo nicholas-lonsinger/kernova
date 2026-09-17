@@ -1,648 +1,81 @@
 # Architecture
 
-## Overview
-
-Read this before a structural change — a new service or protocol, a changed data flow, a changed
-actor isolation. It records what exists and how the pieces connect; what a component *does* is
-owned by its own doc comment.
-
-Kernova manages virtual machines through Apple's Virtualization.framework, with macOS and Linux
-guests. Pure AppKit (no `import SwiftUI` in the app target), Swift 6 strict concurrency. The app
-targets macOS 26; the guest agent and `KernovaKit` deploy back to macOS 12 so the agent runs in
-every macOS guest the catalog can install.
-
-Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
-[SANDBOX.md](SANDBOX.md), toolbar construction in [TOOLBAR.md](TOOLBAR.md).
-
-## Component Map
-
-### App Layer
-
-- `AppDelegate` — the entry point. Creates `VMLibraryViewModel`, `VMLifecycleCoordinator`,
-  `AppWindowRegistry`, `MainMenuController`, `AppTerminationController` and one `AppResidencyHosting`,
-  and reads what the launch asked for. `main()` picking that residency is the only place the process
-  mode is branched on; every delegate method below it forwards without forking. It answers the
-  residency's `AppLaunchHosting` seam — the auto-start pass, the first library read, the true quit.
-- `AppResidencyHosting` — everything the delegate asks of the process's residency: the launch, the
-  reopen, the summon, the quit-after-last-window answer, and the automation front doors. Two peer
-  implementations, `AppResidencyController` and `TestHostResidencyController`. It refines
-  `WindowResidencyHosting`, which is the narrower seam the window layer holds.
-- `AppResidencyController` — the resident app's residency: the activation policy, the menu-bar
-  status item, the GUI summon, and the automation front doors it opens. It decides what a launch
-  puts on screen (`launchPosture`) from what the launch asked for and the residency preference, and
-  reaches the quit through `AppLaunchHosting`.
-- `TestHostResidencyController` — the test host's residency, built only under XCTest: a plain
-  foreground `.regular` app that shows the library at launch and idle-quits once no window is on
-  screen, the app is not hidden, and no guest is live. It opens no automation front door and offers
-  no soft quit.
-- `AppTerminationController` — the one owner of what a quit does: which senders terminate the agent
-  rather than downgrade to a GUI close, the save pass that suspends every live guest before the
-  process exits, and the relaunch a TCC revocation needs. Every quit reaches it, whether the app
-  initiated it (`requestFullQuit`) or AppKit did (`applicationShouldTerminate`). It reaches the GUI
-  close through `SoftQuitHosting`, which the residency answers with itself or with `nil`; `nil` is
-  what makes every quit in the test host a real one.
-- `MainMenuController` — the one owner of the menu bar: its construction, the rebuilds an opening
-  menu asks for, and menu-item validation. It reaches the app through `MainMenuHosting`, conformed
-  to by `AppDelegate`, which keeps the `@objc` actions the items name — every call site dispatches
-  them nil-target down the responder chain.
-- `AppWindowRegistry` — the one owner of which user-facing windows exist and whether any is on
-  screen: the library window, the Settings window, the per-VM clipboard windows, and the
-  `VMDisplayPlacementController` it holds. It reaches residency through `WindowResidencyHosting`,
-  and answers `VMDisplayPlacementHosting` for the display windows it holds.
-- `VMDisplayPlacementController` — the one owner of where each VM's display lives: the display-window
-  registry, and the sole writer of `VMInstance.displayMode` and `VMConfiguration.displayPreference`
-  for every transition. It reaches the window layer through `VMDisplayPlacementHosting`, conformed
-  to by `AppWindowRegistry`, and residency through `WindowResidencyHosting`.
-- `HostAgentStatusItemController` — the menu-bar status item, created and torn down by
-  `AppResidencyController` as *Continue running in Status Bar* flips. Kernova is a resident `.accessory` app whose VMs keep
-  running with no window open, so this is the only affordance while headless; the test host's
-  residency creates none.
-- `MainWindowController` — the library window: a `SnapToFitSplitViewController` holding the
-  `SidebarViewController` source list and `DetailContainerViewController`, plus an `NSToolbar`.
-- `VMToolbarManager` — the toolbar items shared between the library window and the pop-out display
-  window; window-specific items stay with their own controller.
-- `VMDisplayWindowController` — per VM, created by `VMDisplayPlacementController`, to which it
-  reports the transitions AppKit performs. `ClipboardWindowController` is per VM under
-  `AppWindowRegistry`; `SettingsWindowController` is an app-level singleton.
-- `DisplayBootGeometryProviding` — the App→ViewModel seam for on-screen geometry, conformed to by
-  `AppDelegate` and read by `VMLibraryViewModel.start` before the VZ configuration is built.
-
-Lifecycle commands surface on the menu bar, the sidebar context menu, and the toolbar, and all
-three take their titles from `VMInstance` display helpers rather than spelling their own — no
-surface can name an action differently. Advanced actions are always visible in the menu bar and
-Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvancedOptions`.
-
-### Models
-
-- `VMConfiguration` — a VM's persisted identity: a `Codable` `Sendable` struct written as
-  `config.json` inside the VM bundle.
-- `VMInstance` — a VM's runtime representation: an `@Observable` `@MainActor` class wrapping a
-  `VMConfiguration`, an optional `VMSessionContext`, and a `VMLifecyclePhase`. What outlives a
-  session belongs to it — the admission gate, the data sinks, the transfer reporter, the host
-  clipboard publisher — and it projects the context's state read-only for its callers.
-- `VMLifecyclePhase` — where a VM is in its lifecycle, and the one value its `VMStatus`, its failure
-  message and every liveness predicate are read off. A live phase carries the identity of the
-  session it describes.
-- `VMSessionContext` — everything scoped to one `VZVirtualMachine`'s lifetime, so its state is
-  created and released as a unit rather than as loose fields on `VMInstance`, which holds exactly
-  one optional of this type for a session's duration.
-- `VMSession` — one running VM's isolation domain: an actor whose executor is the private serial
-  queue its `VZVirtualMachine` was created with, and the only type that calls into that VM or any
-  of its device objects. It retains the VM's `VsockListenerHost`s, each for as long as its port is
-  bound. It owns both VZ delegates — the VM's own and, on macOS 27, each USB controller's, which
-  reports a passthrough accessory whose host device went away. Their callbacks arrive on that queue
-  and leave as `VMSessionEvent`s stamped with the session's id, which `VMInstance` hops to main and
-  drops once the id no longer names the live session.
-- `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path from the bundle root; the one
-  place path logic lives.
-- `VMSnapshot` / `VMSnapshotManifest` — a named restore point and the `Snapshots/manifest.json`
-  payload listing them.
-- `VMStatus` — the vocabulary a phase projects into for the wire and the UI, carrying no predicates
-  of its own. `VMBootMode`, `VMGuestOS` — plain enums.
-- `GuestSetupState` — the runtime step model behind the one setup-progress view both guests share,
-  with per-flow copy supplied by a `GuestSetupDescriptor`.
-
-**Storage topology mirrors VZ.** `VMConfiguration.storageDisks` maps onto `vzConfig.storageDevices`
-and `removableMedia` onto `usbControllers[0].usbDevices`. Removable media is hot-pluggable; storage
-disks are deliberately *not* live-editable, because VZ requires that device list fixed at start
-time. Physical sizes are read from the files at display time and never stored — they change out of
-band.
-
-**Device UUIDs are persisted, never regenerated per launch.** `restoreMachineStateFrom(url:)`
-matches `VZUSBDeviceConfiguration.uuid` against the saved-state file's recorded device list, so
-`RemovableMediaItem.id` is written to `config.json` and reused as the device UUID, and the
-synthesized main disk derives its own from the bundle path
-(`StorageDisk.mainDisk(layout:)`, through `StableID.uuid(seed:)`). Fresh UUIDs break restore.
-`clonedForNewInstance` regenerates them so two bundles never share device identity.
-
-### Services
-
-The services the view models inject conform to a protocol in `Services/Protocols/` so tests can
-substitute mocks. Services split by concurrency: those that mutate `VMInstance` are `@MainActor`;
-stateless ones are `Sendable` structs.
-
-`@MainActor`:
-
-- `VirtualizationService` — start, stop, pause, resume, save and restore VM state, plus snapshot
-  capture and revert against an injected `VMSnapshotStoring`.
-- `MacOSInstallService` — restore-image load, platform-file creation, and the `VZMacOSInstaller`
-  run with KVO progress.
-- `RemovableMediaDeviceService` — runtime USB mass-storage attach/detach against the live XHCI
-  controller. Owned by `VMLifecycleCoordinator`.
-- `USBAccessoryService` — the only type that touches AccessoryAccess, and the only one that builds
-  a `VZUSBPassthroughDevice`. Registers one unfiltered `AAUSBAccessoryListener` for the process and
-  publishes the accessories macOS assigns to Kernova; it never enumerates the host's USB devices.
-  macOS 27.0-only, so `VMLifecycleCoordinator` holds it as an optional whose `nil` is the
-  capability's absence — both causes of it, the OS and the entitlement, collapsed by
-  `EntitlementService.supportsUSBAccessories`. It also answers waits for a named unit to be
-  assigned again, which is how a warm capture puts back what it ejected.
-- `USBAccessoryRegistryReading` / `USBAccessoryRegistry` — the IOKit read behind each assignment,
-  answering what AccessoryAccess does not carry: the device's vendor, product and serial strings
-  and the receptacle it sits in. A pure composition over that turns into `USBAccessoryIdentity`,
-  the key that outlives the `registryID` a detach invalidates
-  ([research note](research/2026-09-12-usb-accessory-identity.md)).
-- `SystemSleepWatcher` — `NSWorkspace` sleep/wake observer owned by `VMSleepWakeCoordinator`,
-  which auto-pauses running VMs before sleep and resumes them on wake.
-
-`Sendable` structs:
-
-- `VMStorageService` — creates, lists, clones and deletes VM bundles under
-  `~/Library/Application Support/Kernova/VMs/`.
-- `VMSnapshotStore` — owns the `Snapshots/` directory inside a VM bundle.
-- `USBAccessoryPairingStore` — owns `usb-accessories.json` inside a VM bundle: which host USB
-  accessories that VM takes back automatically, keyed on `USBAccessoryIdentity`. Mirrored onto
-  `VMInstance.usbPairings` by `VMLibrary.wirePersistence(for:)`, and written only through
-  `VMLibrary.updateUSBPairings(of:mutate:)`.
-- `DiskImageService` — creates ASIF disk images by decompressing bundled templates in-process.
-- `DownloadService` — streams a remote file into a resumable bundle beside its destination,
-  serialized per destination path so two callers can never write one bundle.
-- `IPSWService` — resolves the latest supported restore image through VZ, handing the transfer to
-  the `DownloadService` it owns.
-- `RestoreImageCatalogService`, `LinuxImageCatalogService` — decode the bundled catalog resources
-  behind the wizard's "Choose a Version…" and "Choose a Distribution…" sources; neither networks.
-- `LocalRestoreImageInspector` — reads a restore image already on disk through `VZMacOSRestoreImage`.
-- `RestoreImageProbeService`, `LinuxImageResolveService` — admit a remote restore image or Linux
-  installer before any download, sizing it through the `RemoteFileSizeProbe` they share. The
-  wizard's "Image URL…" check and the install pipeline both reach the resolver.
-
-`ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
-single VZ-facing translation point for every device a VM gets.
-
-The network attachment follows the VM's persisted mode: shared over the app-managed vmnet
-shared network in an entitled build (system NAT otherwise), bridged over a host interface
-resolved through `BridgedInterfaceProviding` — the same seam the settings section's Mode picker
-reads its interface list from — or host-only on the app-managed host-mode network, both reached
-through `VmnetNetworkProviding`. A bridged VM whose interface cannot resolve, or a vmnet network
-that cannot materialize, builds the device detached rather than failing the boot or restore.
-
-`VmnetNetworkService` (lock-guarded `Sendable`, process-wide — it serves `ConfigurationBuilder`'s
-off-main assembly and the main-actor live-switch path) owns the app's managed vmnet networks and
-the per-VM DHCP reservations and port-forwarding rules riding them, materialized over the
-`VmnetNetworkOperating` seam. Each VM holds a slot keyed on its persisted MAC, and slots and rules
-alike are kept in step with configurations by `VMNetworkSlotRegistry`, which `VMLibrary`
-sequences from its persistence funnel.
-
-While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by
-`VMSessionContext`, activated when the VM first reaches `.running`) keeps the live attachment
-realizing the persisted mode, driving the device through `NetworkDeviceControlling` and reconciling
-on VZ's attachment-disconnect callback, on `NetworkLinkObserving` (`HostNetworkLinkObserver`,
-SCDynamicStore), and on `applyLivePolicy` edits. A session with no realizable attachment surfaces
-as `VMInstance.networkAttachmentPending`. Recreating an app-managed network is not its call: a
-session that suspects its network is defective publishes that upward through
-`VMInstance.onNetworkArbitrationNeeded`, and `VMNetworkSlotRegistry` — the one type holding
-`VmnetNetworkRecreating`, and the one that can see every VM sharing the network — decides whether
-to drop it, then nudges each detached session back onto the recreated one.
-
-**VZ is only ever handed symlink-resolved URLs.** VZ resolves no symlinks and rejects a path
-containing one in any component, reporting it as a missing or invalid file while `FileManager`
-reports the file present and readable. `ConfigurationBuilder` and `MacOSInstallService` resolve
-through `PathValidation` before every hand-off. This is not defensive: under the sandbox
-`.downloadsDirectory` is the container's `Downloads`, itself a symlink to the real one.
-
-The vsock stack (macOS guests only):
-
-- `KernovaVsockPort` — the port registry. Each service gets its own listener instead of in-band
-  multiplexing, and the clipboard and drop kinds get a second port apiece, carrying one
-  guest-dialed connection per transfer in place of a long-lived channel. What a connection
-  costs, and why nothing above the kernel meters a
-  stream: [research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md](research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
-- `VsockListenerHost` — one `VZVirtioSocketListener` per port, nonisolated so the whole accept path
-  runs on whatever queue VZ delivers the callback on. Every feature listener is wired to the
-  VM's `VsockAdmissionGate` — the lock-guarded snapshot the control service publishes its completed
-  handshake and advertised capabilities into — so no feature channel is admitted before the
-  handshake, and each names the guest capability it additionally requires. The two data listeners
-  forward through a `VsockDataConnectionSink` apiece. Socket-buffer sizing and its
-  measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
-- `VsockFeatureCoordinator` — the per-session owner of the four channels, one per
-  `VMSessionContext`, driven by a static `VsockFeatureDescriptor` table saying what each channel
-  binds, gates, builds and releases. The gate and both data sinks are the
-  VM's and handed in, because the accept path reads them without touching the main actor.
-- `VsockFeatureService` — the settle contract the four services conform to, which the coordinator
-  wires at accept.
-- `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
-  `Hello`/`Heartbeat` exchange, the observed `agentVersion`, and `PolicyUpdate` pushes carrying an
-  `AgentPolicySnapshot`. Built per accepted channel by `VMInstance.makeControlService(for:)`, and
-  installed for every macOS guest with a socket device, independent of clipboard sharing.
-- `VsockGuestLogService` — forwards guest `LogRecord` frames into the `app.kernova.guest` subsystem.
-- `VsockDropService` — `@MainActor` `@Observable` owner of the drop channel, send-only, driving
-  `KernovaKit`'s `ClipboardEndpoint` over the same transfer machinery the clipboard uses, with
-  `DropPromiseStaging` behind it for a drag carrying promises. Installed for a guest with a socket
-  device whose `dropFilesEnabled` is set, gated in turn on the guest's `drop.files.v3`;
-  `VMInstance.displayDropAvailability` is the single read site deciding whether the display
-  registers as a drag destination at all.
-
-The log, clipboard and drop listeners are gated on their configuration toggles and re-evaluated at
-runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`, each pair's data listener rising
-and falling with its channel; only the control listener has no toggle to track. Linux clipboard
-sharing is restart-only — its SPICE port must be declared at config-build time.
-
-Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
-
-- `ClipboardServicing` — the `@MainActor` protocol both transports implement.
-  `VMInstance.clipboardService` projects over the vsock service the feature coordinator owns and the
-  SPICE one `VMSessionContext.clipboardService` holds, so the window controllers never branch on
-  transport. Agent install/version state lives on `VsockControlService` instead, which runs whether
-  or not clipboard sharing is enabled.
-- `SpiceClipboardService` — the Linux transport, over raw `VZFileHandleSerialPortAttachment` pipes
-  parsed by `SpiceAgentParser`. Text only.
-- `VsockClipboardService` — the macOS transport, over `VsockChannel`, driving `KernovaKit`'s
-  `ClipboardEndpoint`. Offers are metadata-only; a transfer's bytes ride its own data connection.
-- `ClipboardEndpoint` — `KernovaKit`'s `@MainActor` owner of one clipboard-protocol control
-  channel, parameterized by role (`.host`/`.guest`) and kind (`.clipboard`/`.drop`).
-  `Configuration.dataLink` says how it reaches the kind's data port; `ClipboardEndpointDelegate` is
-  the seam an owner sees. All four owners drive one: the two host services above and the guest
-  agent's `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
-- `ClipboardControlSession`, `ClipboardTransferInbox`, `ClipboardTransferOutbox`,
-  `ClipboardTransferSender`, `ClipboardTransferReceiver` — the layers beneath that endpoint. The
-  session owns the control channel and the two transfer tables, lock-guarded rather than
-  actor-isolated so a transfer's own thread can reach them; each live transfer gets a sender or a
-  receiver on its own serial queue, calling into the stateless `ClipboardDataConnection` and
-  `ClipboardArchiveCodec` namespaces.
-- `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
-  guest content, and the auto-publish path. Both reach the pasteboard through KernovaKit's
-  `ClipboardPasteboardPublisher` — the one promised write on either side of the wire, driven by the
-  guest agent too. Its read counterpart is `ClipboardPasteboardReader`, the one snapshot-to-offer
-  intake, driven by the host clipboard window, the passthrough poll, `VsockDropService` and the
-  guest agent's pasteboard poll; each caller maps its outcomes to its own surface's wording.
-- `ClipboardTransferReporter` — one per `VMInstance`, fed by `VsockClipboardService`,
-  `VsockDropService` and `ClipboardPassthroughCoordinator`. `VMInstance.clipboardTransferReport`
-  mirrors it as the observable value every surface renders; `HostAgentStatusItemController` ranks
-  the running reports across `VMLibraryViewModel.instances` rather than keeping a registry.
-- `ClipboardTransferOperation` — KernovaKit's lock-based per-operation accumulator, opened by both
-  host services and by the guest agent's clipboard and drop agents, which drive it off main.
-- `AgentStatus` — the enum driving install/update/reinstall affordances, sourced from
-  `VsockControlService` (macOS) or `SpiceClipboardService` (Linux) and read through
-  `VMInstance.agentStatus`.
-- `KernovaMacOSAgentInfo` — accessors for the bundled agent's version and installer DMG, the version
-  read from a build-phase-written sidecar (`Tools/package-guest-agent-dmg.sh`).
-
-Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the login-item toggle),
-`EntitlementService` (what this build's signature authorizes, so feature UI can degrade in builds
-signed without a restricted entitlement), `AttachmentFileMonitor` (existence watching for the
-settings pane's disk, removable-media and shared-directory rows, held by the panel context they
-share), and `RuntimeFileAccess` (per-boot security-scoped access, released once in
-`VMSessionContext.tearDown`).
-
-Two AF_UNIX listeners share `UnixSocketListener`, which owns the bind/listen/accept plumbing and
-hands each accepted descriptor to its owner on the listener's queue with no lock held:
-`SerialSocketRelay` (below) and `VMCommandSocketListener`.
-
-`VMCommandSocketListener` is the out-of-process front door — the socket in the app-group container
-the `kernova` tool connects to. It admits a peer only when `SameTeamPeerAuthorizer` matches the
-peer's audit token against a requirement naming this build's own team, then gives each connection a
-`VMCommandConnection` confined to the listener's private queue: framing and JSON stay off the main
-actor, and only the verb itself hops to it through `VMCommandEnvelopeRouter`. A build resolving no
-group container or no team binds nothing and the tool finds no socket. The container's ID is
-resolved from the process's own signature by `KernovaAppGroup`, never spelled in code.
-
-**Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
-rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through
-`VMLibrary.updateConfiguration(of:mutate:)`, which persists and then calls
-`applyLivePolicy`. No control writes `instance.configuration` directly.
-
-**Ephemeral Mode reverts through one seam.** `VMInstance.resetToStopped()` fires `onPoweredOff`,
-which `VMLibrary` relays to the core, landing on the same revert a user confirms. A save-suspend tears the
-session down without that hook, so a suspended session survives to revert at its next shutdown.
-
-### ViewModels
-
-- `VMLibrary` — the headless `@Observable` source of truth. Owns `[VMInstance]`, the selection and
-  sidebar order (persisted through an injected `AppPreferences`), the library read, the directory
-  watcher, the configuration-write funnel, and the revert registry. It imports no AppKit and
-  presents nothing: failures and the per-instance hooks answered elsewhere leave through
-  `onFailure`, `onAgentBecameCurrent` and `onPoweredOff`.
-- `VMNetworkSlotRegistry` and `VMRemovableMediaReconciler` — collaborators `VMLibrary` owns and
-  sequences: the DHCP-reservation, port-forwarding and MAC-uniqueness bookkeeping, and the live
-  XHCI removable-media reconcile. Each reads the instance list through the `VMInstanceRoster`
-  seam rather than owning it.
-- `VMSleepWakeCoordinator` — the sleep/wake pass, wired at the composition root beside the
-  library. Reads the roster and drives `VMLifecycleCoordinator.pause`/`resume` directly.
-- `VMCommandCore` — the headless implementation of every VM verb, beneath the UI and every
-  automation surface, conforming to the `VMCommanding` facade. `@MainActor` and deliberately not
-  `@Observable`: it holds no state, only `VMLibrary` and `VMLifecycleCoordinator`. VMs are addressed
-  by `VMSelector` and refusals speak one `CommandError` vocabulary; consent is a non-defaulted
-  `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
-  confirming entails, and a start's answer about the macOS account a VM owes its guest is the second
-  such parameter — `guestAccount:`, refused without by a `GuestAccountPrompt`. It presents nothing and imports no AppKit — a display a verb asks to look at
-  leaves through the `surfaceDisplay` hook, one a bring-up readies without bringing the app forward
-  through `readyDisplay`, a VM with no display to surface through `revealInLibrary`, a VM's bundle
-  in the Finder through `revealInFinder`, an unawaited
-  failure through `onFailure`, and the quit verb's termination through `requestQuit` — and
-  `events()` vends an
-  `AsyncStream<[VMLibraryEvent]>`, one element per diffing pass, plus the clone/import copy
-  failures no model field survives to hold, for callers that cannot observe the model. Whether a given VM
-  admits a given command is derived in one place, `VMCapabilityCatalog`: every AppKit surface's
-  enablement reads it, and so does every verb guard in the core save two deliberate ones in `stop`
-  — it leads with the preparing refusal, and its `.force` disposition takes no state gate at all,
-  because the states a force stop is most needed in are the ones no gate predicts. Create, clone and
-  import register a preparing "phantom" `VMInstance` **synchronously, before any `await`** — that is
-  what reserves the destination atomically on the MainActor, so overlapping imports and clones
-  cannot claim the same bundle URL. An import and a shared-directory add cross the wire as a path
-  their sandboxed caller holds no grant for, so the core puts each through the
-  `SandboxSourceAuthorizing` hook — `PowerboxSourceAuthority` in the app — which answers a URL this
-  process may read, asking the user through an open panel when the sandbox does not already admit
-  it. It is consulted after the VM and its state have decided the answer, so a refusal never costs
-  the user a panel.
-- `VMCommandEnvelopeRouter` — the wire boundary: decodes a `VMCommandRequest`, calls `VMCommanding`,
-  encodes a `VMCommandResponse`, and decides nothing else. It depends on the protocol, never the
-  concrete core.
-- `VMConfigurationKeyRegistry` — the dotted configuration keyspace `configuration` and
-  `setConfiguration` address, one table of keys each naming its reader, its writer, and the
-  `VMCapabilityCatalog` gate a write of it passes. Every automation surface reads this one table.
-- `VMIntentGateway` — the App Intents boundary, built and published through `AppDependencyManager`
-  by `AppResidencyController` so every
-  intent and both entity queries resolve the same one. Addresses VMs by `.id` alone (the entity
-  carries the resolved identifier), and awaits the app's first library read before any verb or read,
-  since an intent can be delivered while that read is still in flight. It presents nothing: a
-  `CommandError` reaches Shortcuts through `CustomLocalizedStringResourceConvertible`, and consent is
-  gathered by re-issuing the verb with `confirmed: true`. An import arrives as a `FileEntity`
-  whose security scope is the caller's, so it is the one verb the gateway awaits to settlement
-  (`awaitPreparing`), holding that scope for as long as the copy reads through it. It
-  follows `events()` from the first library read on: each batch writes the VMs it added, renamed,
-  or removed to the Spotlight index through `VMEntityIndexing`, the index Spotlight search matches
-  a VM name in.
-- `VMURLGateway` — the `kernova:` link boundary, built and held by `AppResidencyController` and
-  reached from `application(_:open:)`, which tells a link from a `.kernova` bundle by scheme
-  before the import path sees either. `VMURLRoute` reads the URL — a pure function over it — into
-  the `open` or `reveal` verb and a `.idOrName` selector, so a name several VMs answer to refuses
-  as ambiguous here. It awaits the app's first library read before the verb, since a clicked link
-  is what launched the app, and presents its own refusals through `VMLibraryViewModel`: a link has
-  no caller to answer to.
-- `VMScriptingGateway` — the Apple event boundary, built and held by `AppResidencyController` and
-  reached by each `NSScriptCommand` through the app delegate, which Cocoa's scripting root asks for
-  the `virtualMachines` element. A name or identifier reaches the core as a `VMSelector`, so a
-  duplicate name refuses as ambiguous there — on a verb and on a property read alike — rather than
-  resolving to whichever VM the container listed first. Every command, and every element read a
-  command is executing for, waits for the app's first library read before it resolves anything. It
-  presents nothing: a refusal becomes the script error the event carries back.
-- `VMLibraryViewModel` — the AppKit adapter over `VMCommanding` and `VMLibrary`. Runs no verb
-  itself: each method shows the sheet a verb is owed, calls the facade with explicit consent, and
-  routes the returned `CommandError` to a surface. It also owns the inline rename state and the
-  settings edits the facade does not cover, forwards the library's reads so UI sees one
-  surface, and drives alerts, sheets and the wizard by calling its `VMLibraryPresenting` delegate
-  imperatively rather than toggling observed flags.
-- `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
-  `IPSWService`, `RemovableMediaDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
-  `Downloading`), and orchestrates the macOS install and Linux install pipelines, each driven by
-  the install context persisted on `VMConfiguration` (`installContext` / `linuxInstallContext`)
-  until it completes. It serializes lifecycle operations per VM, and a serialized operation first
-  waits out any removable-media reconcile the instance's live session owes
-  (`VMRemovableMediaReconciler` marks the debt on the session context); `stop` and `forceStop`
-  deliberately bypass both so a hung operation can always be cancelled.
-- `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
-  UI-framework dependency. Every image source is backed by an injected service protocol, so the
-  wizard can name what a source will install before anything is downloaded.
-- `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
-  `VMLibrary` when the library changes on disk.
-
-### Views
-
-Pure AppKit throughout: `NSViewController`/`NSView` subclasses plus free `make*` atom factories,
-observing `VMLibraryViewModel` and individual `VMInstance`s through the Observation framework —
-usually the `observeRecurring` seam below, occasionally a hand-rolled `withObservationTracking`
-re-arm loop. Content controllers decouple from the view model through delegate protocols; their
-hosts implement the delegates and forward the user's choice on.
-
-Constraints the file layout does not show:
-
-- **No shared callout, form container, or base class.** Consistency comes from shared token sets
-  (`CalloutStyle`, `GroupedFormStyle`, `Spacing`, `Typography`), not inheritance; genuinely
-  shareable controllers are reused by init parameterization. The settings panels follow the same
-  rule: `VMSettingsPanel` is a protocol with default hook bodies, and what they share beyond it is
-  a context object, `VMSettingsKeyedListController` behind every list of keyed rows, and the form
-  atoms.
-- **The settings pane holds one surface at a time.** `VMOverviewResolver` answers, without views,
-  everything the configuration cannot — host state, injected services, and two off-main reads —
-  so the overview's cards need no panel to exist to state a figure, and the panel stating the same
-  figure reads it there rather than resolving it again. A panel is built on the first drill-in and
-  rebuilt when the VM under it moves.
-- **Popover anchors target a wrapper `NSView`, never an inner control**, so
-  `NSPopover.preferredEdge` is interpreted in an unflipped coordinate system.
-- **The clipboard window renders inline RTF only, never HTML.**
-- **`VZVirtualMachineView` is fed only through `VMDisplayHandle`** — the session's one `Sendable`
-  crossing, handed to `VMDisplayBackingView` by the controllers that render a live VM. Every other
-  view asks `VMInstance.hasLiveVirtualMachine` instead of reaching for the VM.
-
-```
-NSSplitViewController (MainWindowController)
-├── Sidebar: SidebarViewController → NSOutlineView (source list) → SidebarVMRowCellView (per VM)
-└── Detail:  DetailContainerViewController  (owns DetailAlertsPresenter)
-    ├── VMDisplayBackingView (layered on top; VZVirtualMachineView + overlays)
-    └── DetailEmptyStateView ⇆ VMDetailRouterViewController  (routes via DetailRoute.resolve)
-            ├── VMSettingsViewController                    (stopped / running-settings; shell)
-            │       ├── VMOverviewResolver                  (view-less; what both surfaces state)
-            │       ├── VMSettingsOverviewViewController    (category cards ⇆ VMSettingsOverviewDelegate)
-            │       └── VMSettings{General,System,Storage,Network,Sharing,Snapshots}PanelViewController
-            │               (one per VMSettingsCategory, built on drill-in;
-            │                VMSettingsPanel ⇆ VMSettingsPanelHost)
-            ├── DetailBannerView + VMSettingsViewController (initial boot / error)
-            ├── DetailStatusPlaceholderViewController       (preparing / transition)
-            ├── GuestSetupProgressViewController            (setup)
-            └── VMDisplayPlaceholderContentViewController   (external / suspended / unavailable)
-
-VMCreationWizardViewController (modal sheet, presented by DetailContainerViewController)
-├── OSSelectionContentViewController
-├── IPSWSelectionContentViewController / BootConfigContentViewController
-├── ResourceConfigContentViewController
-└── ReviewContentViewController
-```
-
-**Serial console.** `VMInstance.startSerialReading` is the guest output pipe's single reader; it
-fans out to `serial.log` (authoritative, always on, size-capped by `SerialLogWriter`) and to
-`SerialSocketRelay` (best-effort tee, gated on `serialSocketRelayEnabled`), whose `AF_UNIX` socket
-is the sole host-side writer of serial input. There is no in-app terminal emulator — emulation is
-delegated to the user's terminal.
-
-### Data Flow
-
-```
-AppDelegate
-    ├── creates → VMLibraryViewModel (AppKit adapter: sheets, consent, presentation)
-    │                 ├── VMCommandCore (the verbs, headless; conforms to VMCommanding)
-    │                 ├── VMLibrary (owns [VMInstance])
-    │                 │      ├── VMDirectoryWatcher
-    │                 │      └── VMNetworkSlotRegistry, VMRemovableMediaReconciler
-    │                 ├── VMSleepWakeCoordinator
-    │                 │      └── SystemSleepWatcher
-    │                 ├── USBAccessoryCoordinator?  (starts the accessory listener, drops a
-    │                 │      guest's record of one the host has taken back, and routes each
-    │                 │      arrival: back to the VM it is paired with, to a prompt the adapter
-    │                 │      raises, or nowhere; nil without the capability)
-    │                 ├── VMStorageService, VMSnapshotStore (one each, held by all three)
-    │                 ├── DiskImageService
-    │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)
-    ├── creates → VMLifecycleCoordinator
-    │                 ├── VirtualizationService
-    │                 ├── MacOSInstallService
-    │                 ├── IPSWService
-    │                 ├── RemovableMediaDeviceService
-    │                 └── USBAccessoryService?  (nil without macOS 27 + the entitlement)
-    ├── creates → MainMenuController
-    ├── creates → AppResidencyHosting: AppResidencyController (activation policy, status item,
-    │                 summon, intent gateway) or TestHostResidencyController
-    ├── creates → AppTerminationController (quit gate, save pass, relaunch)
-    └── creates → AppWindowRegistry
-                      ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
-                      ├── manages → ClipboardWindowController (per VM), SettingsWindowController
-                      └── holds → VMDisplayPlacementController
-                                      └── manages → VMDisplayWindowController (per VM)
-
-AppKit views ──observe──→ VMLibraryViewModel ──forwards──→ VMLibrary (state, persistence)
-                          VMLibraryViewModel ──calls────→ VMCommanding (VMCommandCore)
-                          VMLibraryViewModel ──presents──→ VMLibraryPresenting (DetailContainerViewController)
-
-VMCommandCore ──requestQuit──→ VMLibraryViewModel ──→ AppDelegate ──→ AppTerminationController
-
-kernova (CLI) ──bytes over the app-group AF_UNIX socket──→ VMCommandSocketListener
-kernova (CLI) ──NSWorkspace hidden launch of its enclosing bundle──→ Kernova.app
-                       VMCommandEnvelopeRouter ──calls──→ VMCommanding (same verbs, same refusals)
-
-Shortcuts / Spotlight ──App Intents──→ VMIntentGateway ──calls──→ VMCommanding
-                                       VMIntentGateway ──writes─→ Spotlight index (VMEntityIndexing)
-
-kernova: link ──application(_:open:)──→ VMURLGateway ──calls──→ VMCommanding
-
-Script Editor / osascript ──Apple Events──→ VMScriptingGateway ──calls──→ VMCommanding
-
-VMCommandCore ──reads/writes──→ VMLibrary
-              ──delegates────→ VMLifecycleCoordinator ──→ Services
-              ──emits────────→ AsyncStream<[VMLibraryEvent]>, one element per pass
-```
-
-### Utilities
-
-- `ObservationLoop` — `observeRecurring(track:apply:)`, the standard observation seam. Returns a
-  cancel token the caller stores; the loop stops when it deallocates.
-- `PathValidation` — the shared resolve-symlinks → exists → type → permissions check for
-  user-supplied paths.
-- `NSWindowExtensions.withStableContentSize(_:styleMask:contentViewController:)` — the one place a
-  window is built with an exact initial content size.
-- `SecurityScopedBookmark` / `ScopedAccess` — capture and RAII resolution of app-scoped bookmarks
-  (rules in [AGENTS.md](../AGENTS.md#app-sandbox-rules)).
-- `AppPreferences` — the `UserDefaults`-backed preference store, injected (defaulting to `.shared`)
-  so tests can substitute an ephemeral suite.
-- `SheetPresenter`, `PopoverPresenter`, `DetailAlertsPresenter` — the presentation seams the view
-  model and the detail container present through.
-
-### Shared package (KernovaKit)
-
-`KernovaKit` is the local SwiftPM package shared between the host app and the guest agent — the
-vsock wire protocol, the clipboard domain model and file staging/archive, and cross-cutting
-helpers. **New host/guest-identical code belongs here**, not copied into both targets.
-
-It also carries the VM command vocabulary — `VMSelector`, `VMVerb`, the result and refusal types,
-and the `VMCommandRequest`/`VMCommandResponse` envelope — so an out-of-process client links the same
-declarations the app throws and returns, rather than a mirror of them.
-
-It also vends `KernovaCLICore` — the `kernova` tool's parsing, rendering, exit-code mapping and
-socket client — and `KernovaAppRegistry`, a **static** product reading Launch Services' registry and
-waiting for it to release an app. `KernovaLogging`, also **static**, carries `KernovaLogger` and the
-`#log` macro and is linked directly by every executable target.
-
-The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
-and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
-a shipping target** — nothing enforces that.
-
-## Key Design Decisions
-
-### Pure AppKit
-
-`NSSplitViewController`, `NSToolbar`, `NSOutlineView`, `NSWindow`; the app target imports no
-SwiftUI. The chrome this app depends on — toolbar item
-validation, sidebar collapsibility, popover and sheet anchoring, split-view behavior — is
-controlled directly through AppKit or not at all.
-
-### The VM bundle owns everything a VM needs
-
-Each VM is a `.kernova` package directory holding `config.json`, the disk image, auxiliary storage,
-save files, and serial logs, with every in-bundle path derived by `VMBundleLayout`. **Nothing a VM
-needs may live outside its bundle**: move, copy, delete, and drag-and-drop import all treat it as
-one atomic Finder item, and a relocated VM has no other way to carry its state. User-picked
-external attachments are the deliberate exception, and they carry bookmarks (below).
-
-### ASIF disk images from bundled templates
-
-Disk images use Apple Sparse Image Format. `DiskTemplates/` holds pre-built lzfse-compressed
-templates that `DiskImageService` decompresses in-process at VM creation. macOS 26
-exposes no in-process ASIF-creation API and a sandboxed app cannot reach `hdiutil` or `diskutil`,
-so every disk shape ships as a bundled template.
-
-### Apple Silicon only
-
-`ARCHS = arm64` project-wide. Virtualization.framework gates the macOS-guest APIs (`VZMacOSInstaller`, `VZMacOSRestoreImage`, `VZMacAuxiliaryStorage`, recovery boot) and `saveMachineStateTo`/`restoreMachineStateFrom` to Apple Silicon.
-
-### App Sandbox with per-path security bookmarks
-
-Every user-picked external path carries an optional `bookmark: Data?` beside its raw path in
-`config.json`. `VMConfiguration.externalFileReferences` projects them into
-`ExternalFileReference`s — the one walk of those fields, which every consumer filters by
-`ExternalFileReference.Kind` — and `healExternalReference` writes a resolved path and re-minted
-bookmark back. `VMInstance.openRuntimeFileAccess()` walks the projection per boot attempt,
-healing stale bookmarks and moved paths back into the config.
-
-**Scopes stay open for the whole VM runtime, not just across the config-build call.** VZ opens its
-fds at config-build time with no published retention guarantee, and an unbalanced release leaks
-kernel resources until relaunch — hence one owner (`RuntimeFileAccess`, held by the session
-context) and one release point (`VMSessionContext.tearDown`).
-
-## Helper Targets
-
-- **KernovaRelaunchHelper** — a watchdog embedded in `Contents/MacOS/`, spawned by
-  `AppTerminationController` during a quit that followed a TCC revocation. It watches the app's PID
-  and relaunches through `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
-
-- **KernovaCLI** — the `kernova` tool, embedded at `Contents/Helpers/kernova`
-  (`Config/Targets/KernovaCLI.xcconfig` says why not `Contents/MacOS`) and installed from
-  Settings → Advanced by two services:
-  `CommandLineToolInstaller` writes the symlink to the binary, and `ShellCompletionInstaller` writes
-  a per-shell file that loads the tool's completions from the tool itself. It is sandboxed with
-  `app-sandbox` plus the app group and nothing
-  else — deliberately not `inherit`, which is for a child the app spawns, where this is started by
-  the user's shell. Everything the tool does lives in `KernovaCLICore`.
-
-- **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
-  macOS guests, holding four long-lived vsock connections to the host (control, log forwarding,
-  clipboard, drop) and dialing one more per transfer through `VsockGuestDataDialer`, which reuses
-  `VsockGuestClient`'s per-OS connect paths. Its clipboard and drop agents each drive a
-  `ClipboardEndpoint`, the same KernovaKit type the host services do. It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
-  `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
-  signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
-  ([RELEASING.md](RELEASING.md)); version bumps are in [AGENTS.md](../AGENTS.md) "Build & Test".
-
-  That DMG reaches a guest on one of two buses, and `GuestAgentDiskDelivery` owns the choice:
-  the host's `toggleGuestAgentDisk` menu item hot-plugs it as USB mass storage, while a guest too
-  old to bind a driver to one ([VERSION-FLOORS.md](VERSION-FLOORS.md)) instead gets it on
-  `vzConfig.storageDevices` at every boot, appended by `ConfigurationBuilder` and never persisted
-  into `config.storageDisks`. Either way the guest user runs its `install.command`, which stages
-  the bundle into `~/Applications` and registers a user LaunchAgent; the host auto-ejects the USB
-  attachment once the agent handshakes a current version (`VMInstance.onAgentBecameCurrent`). The agent runs `NSApplication.run()`, **not** `dispatchMain()`
-  — pasteboard promise callbacks (`provideDataForType`) are delivered by CFRunLoop and never fire
-  under a GCD-only main queue. Its executable and Swift module stay `KernovaMacOSAgent` while the
-  product is `Kernova Guest Agent`, because the LaunchAgent's `ProgramArguments` path and
-  `install.command` need a space-free leaf.
-
-- **KernovaMacOSAgentTests** — a standalone bundle with no `TEST_HOST`/`BUNDLE_LOADER`. Because
-  `KernovaMacOSAgent` is an application target its symbols are not linkable, so this bundle compiles
-  the agent's sources directly (all but `AgentAppDelegate.swift`, the `@main` entry) — which is also
-  what makes `internal` members reachable without `@testable import`. It is non-parallelizable: the
-  compiled-in sources carry global state (`VsockLogBridge.connection`).
-
-## Dependencies
-
-| Framework | Role |
-|---|---|
-| **Virtualization** | VM lifecycle |
-| **AppKit** | All UI |
-| **Observation** | `@Observable` models and view models |
-| **ServiceManagement** | `SMAppService.mainApp` — the login-item registration behind Open at Login |
-| **AppleArchive** | In-process LZ4 archiving for every file and folder transfer, encoded onto the wire |
-| **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |
-| **AVFoundation** | Microphone permission status |
-| **ImageIO** | Thumbnail-only decoding for clipboard previews |
-| **CryptoKit** | SHA-256 → the synthesized main disk's stable UUID |
-| **os** | `os.Logger`, reached through the `#log` macro |
-| **SwiftProtobuf** | Wire-protocol codegen and runtime; `KernovaKit` only |
-| **swift-syntax** | The `#log` macro's expansion; `KernovaLoggingMacros` only |
-| **ArgumentParser** | The `kernova` tool's command line; `KernovaCLICore` only |
-| **Security** | Reading this process's own entitlements and a socket peer's code identity |
-
+The map for a structural change — a new service, protocol or seam, a changed
+data flow, a changed actor isolation: which type owns a behavior, and which
+protocol joins it to its neighbors. Each type's contract is on its own `///`;
+nothing here restates one.
+
+## Composition
+
+`AppDelegate.init` (`Kernova/App/`) is the composition root and the one branch
+on process mode. It builds `VMLibraryViewModel`, then `AppWindowRegistry`
+(holding `VMDisplayPlacementController`), one `AppResidencyHosting` —
+`AppResidencyController`, or `TestHostResidencyController` under XCTest —
+`MainMenuController` and `AppTerminationController`.
+
+`VMLibraryViewModel.init` (`Kernova/ViewModels/`) builds everything beneath the
+UI: `VMLifecycleCoordinator` over the services, `VMLibrary`,
+`VMSleepWakeCoordinator`, `USBAccessoryCoordinator` and `VMCommandCore`.
+
+The seams between the App-layer owners are protocols: `AppLaunchHosting`,
+`WindowResidencyHosting`, `SoftQuitHosting`, `MainMenuHosting`,
+`VMDisplayPlacementHosting`, `DisplayBootGeometryProviding`.
+
+## Front doors
+
+Every verb is a `VMCommanding` method, implemented once by `VMCommandCore`
+(`Kernova/Commands/`); `VMCapabilityCatalog` decides what a VM admits and
+`VMConfigurationKeyRegistry` names every configuration key. Five surfaces call
+the facade and present its refusals in their own idiom:
+
+- `VMLibraryViewModel` — AppKit, through `VMLibraryPresenting`.
+- `VMCommandSocketListener` → `VMCommandEnvelopeRouter` — the `kernova` tool,
+  over the app-group `AF_UNIX` socket.
+- `VMIntentGateway` (`Kernova/Intents/`) — Shortcuts and Spotlight.
+- `VMURLGateway` (`Kernova/URLs/`) — `kernova:` links, from
+  `application(_:open:)`.
+- `VMScriptingGateway` (`Kernova/Scripting/`) — Apple events, through the
+  delegate's `virtualMachines` element.
+
+## Models (`Kernova/Models/`)
+
+`VMConfiguration` is what persists (`config.json`); `VMInstance` is the
+`@MainActor` runtime owner of one, holding at most one `VMSessionContext`, whose
+`VMSession` actor alone touches the `VZVirtualMachine`. `VMBundleLayout`
+derives every in-bundle path.
+
+## Services (`Kernova/Services/`)
+
+- VZ-facing: `ConfigurationBuilder` (the one `VZVirtualMachineConfiguration`
+  translation), `VirtualizationService`, `MacOSInstallService`,
+  `RemovableMediaDeviceService`, and `USBAccessoryService` (macOS 27; optional
+  on `VMLifecycleCoordinator` — `nil` is the capability's absence).
+- Network: `VmnetNetworkService` (process-wide), `NetworkAttachmentCoordinator`
+  (one per session, held by `VMSessionContext`), and `VMNetworkSlotRegistry`,
+  sequenced by `VMLibrary`.
+- Vsock, macOS guests: `KernovaVsockPort` and `VsockListenerHost`; per VM, a
+  `VsockAdmissionGate` and two `VsockDataConnectionSink`s held by `VMInstance`;
+  per session, `VsockFeatureCoordinator` (held by `VMSessionContext`) over
+  `VsockFeatureDescriptor.all` — `VsockControlService`, `VsockGuestLogService`,
+  `VsockClipboardService`, `VsockDropService`.
+- Clipboard: `ClipboardServicing` unifies `VsockClipboardService` and
+  `SpiceClipboardService` (Linux) behind `VMInstance.clipboardService`;
+  `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host
+  pasteboard; the engine both host services and both guest agents drive is
+  KernovaKit's `ClipboardEndpoint`.
+- Sockets: `UnixSocketListener` under `SerialSocketRelay` and
+  `VMCommandSocketListener`.
+
+## Views (`Kernova/Views/`)
+
+`MainWindowController` (`Kernova/App/`) hosts `SidebarViewController` and
+`DetailContainerViewController`; the detail side routes through
+`VMDetailRouterViewController` on `DetailRoute`, and a live display is
+`VMDisplayBackingView`, fed only through `VMDisplayHandle`.
+
+## Shared package and helper targets
+
+`KernovaKit/Package.swift` names every product and why each is shaped as it is.
+`KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
+(`Kernova Guest Agent.app`) and `KernovaMacOSAgentTests` each explain
+themselves in `Config/Targets/<Target>.xcconfig` and their entitlements file.
