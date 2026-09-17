@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Which piece of work a ``SetupStep`` stands for.
 enum SetupStepID: String, Sendable, Equatable {
@@ -44,7 +44,7 @@ enum SetupStepState: Sendable, Equatable {
 /// Never persisted: an interrupted setup resumes from the VM's install context,
 /// which is what survives a relaunch.
 struct GuestSetupState: Sendable, Equatable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "GuestSetupState")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "GuestSetupState")
 
     /// Every step this run will take, fixed for its duration so the indicator
     /// can be built once when the view mounts.
@@ -84,7 +84,8 @@ struct GuestSetupState: Sendable, Equatable {
             // autoclosure, which cannot capture a mutating `self`.
             let index = currentStepIndex
             let count = steps.count
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Advanced past the last setup step (index \(index, privacy: .public) of \(count, privacy: .public))"
             )
             assertionFailure("Advanced past the last setup step: \(index) of \(count)")

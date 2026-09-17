@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// The one write path for the two clipboard flags, shared by every surface that
 /// offers either toggle.
@@ -15,7 +15,7 @@ import os
 /// ``refresh`` across the sheet, so that closure captures its owner weakly.
 @MainActor
 struct ClipboardPassthroughSetting {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardPassthroughSetting")
 
     /// Which switch was flipped, and to what.
@@ -50,7 +50,7 @@ struct ClipboardPassthroughSetting {
             return
         }
         guard let window else {
-            Self.logger.warning("No window to confirm clipboard passthrough in; leaving it off")
+            #log(Self.logger, .warning, "No window to confirm clipboard passthrough in; leaving it off")
             refresh()
             return
         }

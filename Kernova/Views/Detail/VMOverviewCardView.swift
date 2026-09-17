@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// One overview card: a header row naming the category and offering the
 /// drill-in, the category's current facts as key-value rows, any live switches
@@ -10,7 +10,7 @@ import os
 /// and a flipped switch is reported to the owner rather than written here.
 @MainActor
 final class VMOverviewCardView: NSView {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMOverviewCardView")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMOverviewCardView")
 
     /// Fires when the header row or its Edit button is activated.
     var onShow: (() -> Void)?
@@ -235,7 +235,7 @@ final class VMOverviewCardView: NSView {
     @objc private func toggleFlipped(_ sender: NSSwitch) {
         guard let raw = sender.identifier?.rawValue, let toggle = VMOverviewToggle(rawValue: raw)
         else {
-            Self.logger.fault("Overview switch carries no toggle identity")
+            #log(Self.logger, .fault, "Overview switch carries no toggle identity")
             assertionFailure("Overview switch carries no toggle identity")
             return
         }
@@ -245,7 +245,7 @@ final class VMOverviewCardView: NSView {
     @objc private func actionTapped(_ sender: NSButton) {
         guard let raw = sender.identifier?.rawValue, let action = VMOverviewAction(rawValue: raw)
         else {
-            Self.logger.fault("Overview action button carries no action identity")
+            #log(Self.logger, .fault, "Overview action button carries no action identity")
             assertionFailure("Overview action button carries no action identity")
             return
         }
@@ -254,7 +254,7 @@ final class VMOverviewCardView: NSView {
 
     @objc private func copyTapped(_ sender: NSButton) {
         guard let button = sender as? CopyValueButton else {
-            Self.logger.fault("Overview copy button carries no value")
+            #log(Self.logger, .fault, "Overview copy button carries no value")
             assertionFailure("Overview copy button carries no value")
             return
         }

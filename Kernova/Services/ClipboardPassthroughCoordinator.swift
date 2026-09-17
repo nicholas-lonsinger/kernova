@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Drives automatic clipboard passthrough for one VM: with no window open, it
 /// polls the host pasteboard and forwards changes to the guest, and writes
@@ -126,7 +126,7 @@ final class ClipboardPassthroughCoordinator {
     var onForwardResolvedForTesting: (@MainActor (_ generation: Int) -> Void)?
     #endif
 
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardPassthroughCoordinator")
 
     init(
@@ -154,7 +154,8 @@ final class ClipboardPassthroughCoordinator {
         lastInboundOfferSeq = instance?.clipboardService?.inboundOfferSeq ?? 0
         startPolling()
         observeInbound()
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Clipboard passthrough started for '\(self.instance?.name ?? "?", privacy: .public)'")
     }
 
@@ -171,7 +172,8 @@ final class ClipboardPassthroughCoordinator {
         inboundObservation = nil
         inboundPublishTask?.cancel()
         inboundPublishTask = nil
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Clipboard passthrough stopped for '\(self.instance?.name ?? "?", privacy: .public)'")
     }
 
@@ -281,7 +283,7 @@ final class ClipboardPassthroughCoordinator {
                 self.report(rejection: message, unreadable: unreadable)
             case .pendingFiles:
                 self.lastPasteboardChangeCount = changeCount
-                Self.logger.fault("Resolving copied files yielded another pending-files intake")
+                #log(Self.logger, .fault, "Resolving copied files yielded another pending-files intake")
                 assertionFailure("Resolving copied files yielded another pending-files intake")
             }
         }
@@ -323,7 +325,8 @@ final class ClipboardPassthroughCoordinator {
     /// has no gesture to answer, so the report is the only surface they get.
     private func reportUnforwarded(_ note: String) {
         let name = instance?.name ?? "?"
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Clipboard passthrough could not forward every copied item for '\(name, privacy: .public)': \(note, privacy: .public)"
         )
         reporter.finish(
@@ -402,7 +405,8 @@ final class ClipboardPassthroughCoordinator {
             instance.effectiveClipboardMaxPasteBytes > refused.ceiling,
             pasteboard.changeCount == refused.pasteboardChangeCount
         else { return }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Paste ceiling raised — republishing the offer it refused for '\(instance.name, privacy: .public)'"
         )
         publishInbound(from: service, seq: refused.seq)

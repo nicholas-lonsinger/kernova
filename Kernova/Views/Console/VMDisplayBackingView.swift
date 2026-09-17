@@ -1,6 +1,6 @@
 import Cocoa
+import KernovaLogging
 import Virtualization
-import os
 
 /// The `VZVirtualMachineView` properties Kernova drives from a VM's settings,
 /// carried together so both display hosts write the same set.
@@ -69,7 +69,7 @@ final class VMDisplayBackingView: NSView {
     /// across every way a drag can leave or end.
     private var rejectCursorShowing = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayBackingView")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayBackingView")
 
     /// The reading options a concrete file URL takes — a Finder drag's own form.
     private static let fileURLReadingOptions: [NSPasteboard.ReadingOptionKey: Any] = [
@@ -214,7 +214,8 @@ final class VMDisplayBackingView: NSView {
             // first if it registered types of its own. It does not today, and
             // this is the line that says so if that ever changes.
             if !machineView.registeredDraggedTypes.isEmpty {
-                Self.logger.fault(
+                #log(
+                    Self.logger, .fault,
                     "VZVirtualMachineView registers dragged types — display drops will not reach Kernova"
                 )
                 assertionFailure("VZVirtualMachineView registers dragged types")
@@ -369,13 +370,14 @@ final class VMDisplayBackingView: NSView {
             guard onDropFiles(files, directory) else {
                 // The VM stopped taking drops while the source was still
                 // writing; the service that would report it is already gone.
-                Self.logger.warning("A promise drag's files landed after the VM stopped taking them")
+                #log(Self.logger, .warning, "A promise drag's files landed after the VM stopped taking them")
                 DropPromiseStaging.release(directory)
                 return
             }
             collection.stagingWasTakenOver()
         case .failed(let error):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
             if collection.canReleaseStaging { DropPromiseStaging.release(directory) }

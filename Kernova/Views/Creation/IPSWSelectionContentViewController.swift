@@ -1,6 +1,6 @@
 import AppKit
+import KernovaLogging
 import UniformTypeIdentifiers
-import os
 
 /// Step 2 of the creation wizard for macOS guests: choose where the IPSW restore
 /// image comes from, show which image that is and where it lands, and surface
@@ -11,7 +11,7 @@ import os
 /// shell observes the model separately to keep its Next button in sync.
 @MainActor
 final class IPSWSelectionContentViewController: NSViewController {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "IPSWSelectionContentViewController")
 
     private let creationVM: VMCreationViewModel
@@ -301,7 +301,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             case .unusable(let error):
                 addLocalFilePathBadge(path: image.path)
                 guard let message = error.errorDescription else {
-                    Self.logger.fault("LocalRestoreImageError has no errorDescription")
+                    #log(Self.logger, .fault, "LocalRestoreImageError has no errorDescription")
                     assertionFailure("LocalRestoreImageError must always have an errorDescription")
                     break
                 }
@@ -517,7 +517,7 @@ final class IPSWSelectionContentViewController: NSViewController {
     @objc private func useExistingAnywayTapped() {
         guard case .mismatch(_, let found) = existingFileNotice, let path = existingFileNoticePath
         else {
-            Self.logger.fault("Use It Anyway tapped with no mismatch notice")
+            #log(Self.logger, .fault, "Use It Anyway tapped with no mismatch notice")
             assertionFailure("A mismatch banner is showing, so its notice must be set")
             return
         }

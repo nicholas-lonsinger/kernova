@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// The USB accessory verbs: what a guest is holding, what macOS has assigned to
 /// Kernova that nothing holds, and the two edits that move one between them.
@@ -69,7 +70,8 @@ extension VMCommandCore {
                     "That accessory was forgotten for now, but the change could not be written to the virtual machine's bundle."
             )
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(key, privacy: .public) back automatically"
         )
     }
@@ -102,7 +104,8 @@ extension VMCommandCore {
             // drive in with nothing running, and attaches it from the menu,
             // re-placing it every time.
             onUserAttachedAccessory?(instance, attached.accessory)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
             )
         } catch {
@@ -130,7 +133,8 @@ extension VMCommandCore {
             // settings, and it is the only way the returning device stays with
             // the Mac.
             onUserReleasedAccessory?(instance, held.accessory)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
             )
         } catch {

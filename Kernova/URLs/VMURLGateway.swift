@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The `kernova:` link front door: everything a clicked link asks of Kernova
 /// passes through here and reaches ``VMCommanding``.
@@ -19,7 +19,7 @@ import os
 /// in is one the person only meets later, stale, when they next open Kernova.
 @MainActor
 final class VMURLGateway {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMURLGateway")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMURLGateway")
 
     private let commands: any VMCommanding
     /// The app's first library read, shared with every other front door.
@@ -55,14 +55,15 @@ final class VMURLGateway {
     func handle(_ url: URL) async {
         switch VMURLRoute.delivery(of: url) {
         case .notALink:
-            Self.logger.fault("A URL carrying no Kernova link reached the link front door")
+            #log(Self.logger, .fault, "A URL carrying no Kernova link reached the link front door")
             assertionFailure("A URL carrying no Kernova link reached the link front door: \(url)")
         case .refused(let refusal):
-            Self.logger.notice("Refused a Kernova link: \(refusal.message, privacy: .public)")
+            #log(Self.logger, .notice, "Refused a Kernova link: \(refusal.message, privacy: .public)")
             activate()
             surface(.invalidArgument(refusal.message))
         case .route(let route):
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Kernova link asks \(route.verb.rawValue, privacy: .public) of '\(route.selector.displayText, privacy: .private)'"
             )
             await readiness.ready()

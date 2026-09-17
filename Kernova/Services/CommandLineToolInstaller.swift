@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Putting the bundled `kernova` tool somewhere a shell will find it.
 ///
@@ -58,12 +58,13 @@ enum CommandLineToolInstaller {
         do {
             try manager.createSymbolicLink(at: destination, withDestinationURL: bundledToolURL)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Could not install the command line tool at \(path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw InstallFailure.unwritable(error.localizedDescription)
         }
-        Self.logger.notice("Installed the command line tool at \(path, privacy: .public)")
+        #log(Self.logger, .notice, "Installed the command line tool at \(path, privacy: .public)")
     }
 
     /// What is already at a destination.
@@ -106,6 +107,6 @@ enum CommandLineToolInstaller {
         "ln -s \"\(bundledToolURL.path(percentEncoded: false))\" \"\(destination.path(percentEncoded: false))\""
     }
 
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "CommandLineToolInstaller")
 }

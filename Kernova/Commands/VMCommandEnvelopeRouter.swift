@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Turns a serialized ``VMCommandRequest`` into a facade call and the answer
 /// back into a ``VMCommandResponse``.
@@ -12,7 +12,7 @@ import os
 /// end to end against a test double.
 @MainActor
 struct VMCommandEnvelopeRouter {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMCommandEnvelopeRouter")
 
     let commands: any VMCommanding
@@ -51,7 +51,8 @@ struct VMCommandEnvelopeRouter {
         } catch {
             // Every payload is a `Codable` value this module owns, so nothing
             // here has an encodable shape that can fail at runtime.
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "A response could not be encoded: \(error.localizedDescription, privacy: .public)")
             assertionFailure("A response could not be encoded: \(error)")
             let fallback = VMCommandResponse(
@@ -101,7 +102,8 @@ struct VMCommandEnvelopeRouter {
         } catch let error as CommandError {
             return VMCommandResponse(result: .failure(error.dto))
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "\(String(describing: request.verb), privacy: .public) failed outside the command vocabulary: \(error.localizedDescription, privacy: .public)"
             )
             return VMCommandResponse(

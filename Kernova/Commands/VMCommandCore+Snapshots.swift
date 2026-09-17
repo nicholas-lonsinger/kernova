@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// Where a revert leaves its failure for the caller that awaited it.
 ///
@@ -72,7 +73,8 @@ extension VMCommandCore {
         // Stamped at confirm time, not when the caller decided: the VM can
         // start, stop, or suspend in between.
         guard let mode = instance.snapshotCaptureMode else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
             )
             throw invalidState(instance)
@@ -85,7 +87,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.takeSnapshot(instance, snapshot: snapshot, store: snapshotStore)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .takeSnapshot, on: instance)
@@ -239,7 +242,8 @@ extension VMCommandCore {
 
     private func performRevert(_ instance: VMInstance, to snapshot: VMSnapshot) async throws {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
             )
             throw CommandError.operationFailed(
@@ -259,7 +263,8 @@ extension VMCommandCore {
             try await lifecycle.revertToSnapshot(
                 instance, snapshot: snapshot, store: snapshotStore)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let mapped = failure(error, verb: .revertToSnapshot, on: instance)
@@ -299,7 +304,8 @@ extension VMCommandCore {
     private func revertToEphemeralBaseline(
         _ instance: VMInstance, _ baseline: VMSnapshot, outcome: RevertOutcome? = nil
     ) -> Task<Void, Never> {
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
         )
         return startRevert(instance, to: baseline, outcome: outcome)
@@ -332,7 +338,8 @@ extension VMCommandCore {
         // is what every power-off of this VM needs back, and the mode can be
         // switched on while a confirmation is up.
         guard !instance.isEphemeralBaseline(snapshot) else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
             )
             throw CommandError.unsupported(capability: "deleting a VM's Ephemeral Mode baseline")
@@ -345,7 +352,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.discardSnapshot(instance, snapshotID: id, store: snapshotStore)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .deleteSnapshot, on: instance)
@@ -353,7 +361,8 @@ extension VMCommandCore {
         var manifest = instance.snapshotManifest
         manifest.remove(id: id)
         try writeSnapshotManifest(manifest, for: instance, verb: .deleteSnapshot)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
     }
@@ -429,7 +438,8 @@ extension VMCommandCore {
             try snapshotStore.saveManifest(manifest, bundleURL: instance.bundleURL)
             instance.snapshotManifest = manifest
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: verb, message: error.localizedDescription)

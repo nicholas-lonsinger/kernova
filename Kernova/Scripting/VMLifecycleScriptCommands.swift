@@ -1,7 +1,7 @@
 import Cocoa
 import CoreServices
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The dictionary's `VM stop method` enumeration, in Swift.
 ///
@@ -70,7 +70,7 @@ enum VMScriptStopMethod: CaseIterable {
 /// suspend the event and hand the rest to the main actor.
 @MainActor
 class VMScriptCommand: NSScriptCommand {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMScriptCommand")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptCommand")
 
     /// Takes the event over from Cocoa's own dispatch.
     ///
@@ -140,7 +140,8 @@ class VMScriptCommand: NSScriptCommand {
     ///
     /// Every command overrides this; reaching the base is a programming error.
     func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        Self.logger.fault(
+        #log(
+            Self.logger, .fault,
             "The \(self.commandDescription.commandName, privacy: .public) command runs no verb")
         assertionFailure("The \(commandDescription.commandName) command runs no verb")
         throw CommandError.unsupported(capability: "the \(commandDescription.commandName) command")

@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// Observes system sleep/wake notifications and invokes callbacks.
 ///
@@ -8,7 +8,7 @@ import os
 /// machine to sleep.
 @MainActor
 final class SystemSleepWatcher {
-    private static let logger = Logger(subsystem: "app.kernova", category: "SystemSleepWatcher")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SystemSleepWatcher")
 
     /// Observer tokens aren't `Sendable` and `deinit` is nonisolated — this is
     /// safe only because they are written in `start()` and read nowhere but
@@ -46,7 +46,7 @@ final class SystemSleepWatcher {
         ) { [weak self] _ in
             guard let self else { return }
             MainActor.assumeIsolated {
-                Self.logger.notice("System will sleep — invoking sleep handler")
+                #log(Self.logger, .notice, "System will sleep — invoking sleep handler")
                 let onSleep = self.onSleep
                 Task { @MainActor in
                     await onSleep()
@@ -61,7 +61,7 @@ final class SystemSleepWatcher {
         ) { [weak self] _ in
             guard let self else { return }
             MainActor.assumeIsolated {
-                Self.logger.notice("System did wake — invoking wake handler")
+                #log(Self.logger, .notice, "System did wake — invoking wake handler")
                 let onWake = self.onWake
                 Task { @MainActor in
                     await onWake()
@@ -69,6 +69,6 @@ final class SystemSleepWatcher {
             }
         }
 
-        Self.logger.info("Started system sleep/wake watcher")
+        #log(Self.logger, .info, "Started system sleep/wake watcher")
     }
 }

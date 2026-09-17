@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Shared path validation for user-supplied file and directory paths.
 enum PathValidation {
@@ -12,9 +12,10 @@ enum PathValidation {
         var wasSymlink: Bool { resolvedPath != originalPath }
 
         /// Logs an info message when the path was a symlink, using the given context label.
-        func logResolution(logger: Logger, context: String) {
+        func logResolution(logger: KernovaLogger, context: String) {
             guard wasSymlink else { return }
-            logger.info(
+            #log(
+                logger, .info,
                 "\(context, privacy: .public) path '\(originalPath, privacy: .public)' resolved to '\(resolvedPath, privacy: .public)'"
             )
         }

@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// Selects which "more below" cues a ``ScrollMoreIndicator`` shows.
 ///
@@ -27,7 +27,7 @@ struct ScrollMoreCues: OptionSet, Sendable {
 /// - Precondition: a top-anchored `FlippedClipView` with `documentView` set.
 @MainActor
 final class ScrollMoreIndicator {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ScrollMoreIndicator")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ScrollMoreIndicator")
 
     /// Fractional-point tolerance so layout rounding doesn't leave the cue stuck a
     /// sub-pixel short of "at the bottom".
@@ -179,7 +179,7 @@ final class ScrollMoreIndicator {
 
         if moreBelow != hasMoreBelow {
             hasMoreBelow = moreBelow
-            Self.logger.debug("More below: \(moreBelow, privacy: .public)")
+            #log(Self.logger, .debug, "More below: \(moreBelow, privacy: .public)")
             setOverlaysVisible(moreBelow, animated: true)
         }
 
@@ -192,7 +192,7 @@ final class ScrollMoreIndicator {
             #if DEBUG
             flashCountForTesting += 1
             #endif
-            Self.logger.debug("Flashing scroller")
+            #log(Self.logger, .debug, "Flashing scroller")
             Task { @MainActor [weak self] in
                 guard let scrollView = self?.scrollView else { return }
                 self?.unveilScroller()

@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 import Virtualization
 
 /// The VM display's current hosting location.
@@ -112,7 +112,8 @@ final class VMInstance {
             // reads: the bundle still names an account whose window this boot
             // spent, so a later start asks for one macOS will no longer create.
             // The write reported its own failure to the user.
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "The guest account for '\(self.name, privacy: .public)' stays in its bundle — the retraction did not reach disk, so a later start asks for an account whose boot window is spent"
             )
         }
@@ -360,7 +361,7 @@ final class VMInstance {
         }
     }
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMInstance")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
 
     nonisolated var id: UUID { instanceID }
     var name: String { configuration.name }
@@ -603,7 +604,8 @@ final class VMInstance {
     ) -> VMSessionContext? {
         guard let sessionContext, liveSessionID == sessionID else {
             let device = deviceID.map { " device \($0)" } ?? ""
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Dropping \(what, privacy: .public) for '\(self.name, privacy: .public)'\(device, privacy: .public): session \(sessionID, privacy: .public) is no longer live"
             )
             return nil
@@ -894,10 +896,11 @@ final class VMInstance {
         switch event {
         case .guestDidStop:
             resetToStopped()
-            Self.logger.notice("Guest stopped for VM '\(self.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
             tearDownSession(restingAt: .failed(message: error.localizedDescription))
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
             )
         case .networkAttachmentDisconnected(let error):
@@ -910,7 +913,8 @@ final class VMInstance {
                 let gone = context.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
             else { break }
             context.liveUSBAccessories.removeAll { $0.deviceID == deviceID }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "USB accessory \(gone.accessory.displayName, privacy: .public) disconnected from VM '\(self.name, privacy: .public)'"
             )
         }
@@ -1004,7 +1008,8 @@ final class VMInstance {
     /// produced into the open session context.
     func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
         guard let sessionContext else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "No session context to adopt a build result for '\(self.name, privacy: .public)'")
             assertionFailure("adoptBuildResult without beginSessionContext for '\(name)'")
             return
@@ -1044,7 +1049,8 @@ final class VMInstance {
     /// (``VMLifecyclePhase/starting(sessionID:)`` with `nil`, say).
     func tearDownSession(restingAt phase: VMLifecyclePhase) {
         if let strandedSessionID = phase.sessionID {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Teardown of '\(self.name, privacy: .public)' asked to rest at a phase naming session \(strandedSessionID, privacy: .public)"
             )
             assertionFailure("tearDownSession(restingAt:) given a phase naming a session")
@@ -1089,13 +1095,15 @@ final class VMInstance {
         nonisolated(unsafe) let vzConfig = vzConfig
         let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
         guard let sessionContext else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "No session context to attach a session to for '\(self.name, privacy: .public)'")
             assertionFailure("attachSession without beginSessionContext for '\(name)'")
             return nil
         }
         guard let promoted = phase.naming(session.id) else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Session attached to '\(self.name, privacy: .public)' while at \(self.status.rawValue, privacy: .public), which names no session"
             )
             assertionFailure("attachSession from a phase that admits no session identity")
@@ -1151,7 +1159,8 @@ final class VMInstance {
         {
             // File already absent — expected in some flows
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to remove save file for '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -1184,7 +1193,7 @@ final class VMInstance {
             relay?.forwardOutput(data)
         }
 
-        Self.logger.info("Serial reading started for '\(self.name, privacy: .public)'")
+        #log(Self.logger, .info, "Serial reading started for '\(self.name, privacy: .public)'")
     }
 
     /// Creates the per-session serial relay and, when enabled, starts it.
@@ -1230,7 +1239,8 @@ final class VMInstance {
         case .linux:
             startSpiceClipboardService()
         case .macOS:
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
         }
     }
@@ -1262,13 +1272,13 @@ final class VMInstance {
             let inputPipe = context.clipboardInputPipe,
             let outputPipe = context.clipboardOutputPipe
         else {
-            Self.logger.error("SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
+            #log(Self.logger, .error, "SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
             return
         }
         let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
         service.start()
         context.clipboardService = service
-        Self.logger.info("SPICE clipboard service started for '\(self.name, privacy: .public)'")
+        #log(Self.logger, .info, "SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
     // MARK: - Vsock Service Lifecycle
@@ -1292,7 +1302,7 @@ final class VMInstance {
         // the teardown already walked — and there is no start to announce.
         guard self.session === session else { return }
 
-        Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
+        #log(Self.logger, .info, "Vsock services started for '\(self.name, privacy: .public)'")
     }
 
     // MARK: - Agent Policy
@@ -1398,7 +1408,8 @@ final class VMInstance {
 
         context.agentPostStartGeneration &+= 1
         let generation = context.agentPostStartGeneration
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Agent arrival watchdog armed for '\(self.name, privacy: .public)' (grace=\(grace, privacy: .public))"
         )
         // The context is captured weakly: a strong hold would keep this
@@ -1421,7 +1432,8 @@ final class VMInstance {
                 armed.agentPostStartGeneration == generation
             else { return }
             if armed.vsock.control?.agentVersion == nil {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
                 armed.agentExpectedButMissing = true
@@ -1552,7 +1564,8 @@ final class VMInstance {
         } else {
             sessionContext?.serialSocketRelay?.stop()
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
         )
     }

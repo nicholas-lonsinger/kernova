@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Putting a file where a shell loads the `kernova` tool's completions from.
 ///
@@ -155,12 +155,14 @@ enum ShellCompletionInstaller {
         do {
             try Data(shell.loaderScript.utf8).write(to: destination)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Could not install \(shell.rawValue, privacy: .public) completions at \(path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw InstallFailure.unwritable(error.localizedDescription)
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Installed \(shell.rawValue, privacy: .public) completions at \(path, privacy: .public)"
         )
     }
@@ -190,6 +192,6 @@ enum ShellCompletionInstaller {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ShellCompletionInstaller")
 }

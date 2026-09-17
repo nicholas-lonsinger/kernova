@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 import Virtualization
 
 /// A listener owner's verdict on one accepted connection.
@@ -53,7 +53,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
     /// is built and `onConnect` never fires. `nil` admits every connection.
     typealias ShouldAdmit = @Sendable () -> VsockAdmission
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VsockListenerHost")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockListenerHost")
 
     let port: UInt32
     private let shouldAdmit: ShouldAdmit?
@@ -89,7 +89,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
     /// Installs this listener on the supplied socket device.
     func attach(to socketDevice: VZVirtioSocketDevice) {
         socketDevice.setSocketListener(listener, forPort: port)
-        Self.logger.info("Listening on vsock port \(self.port, privacy: .public)")
+        #log(Self.logger, .info, "Listening on vsock port \(self.port, privacy: .public)")
     }
 
     /// Removes this listener from the supplied socket device.
@@ -98,7 +98,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
     /// so this removes whatever occupies this host's port.
     func detach(from socketDevice: VZVirtioSocketDevice) {
         socketDevice.removeSocketListener(forPort: port)
-        Self.logger.info("Stopped listening on vsock port \(self.port, privacy: .public)")
+        #log(Self.logger, .info, "Stopped listening on vsock port \(self.port, privacy: .public)")
     }
 
     // MARK: - VZVirtioSocketListenerDelegate
@@ -128,7 +128,8 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
         // description: the framework can release its own copy without affecting
         // ours, and `VsockChannel`/`FileHandle` owns and closes the duplicate.
         guard fd >= 0 else {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "dup() failed for accepted vsock connection on port \(self.port, privacy: .public): errno=\(dupErrno, privacy: .public)"
             )
             return false
@@ -142,13 +143,15 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
         case .admit:
             break
         case .notReady(let reason):
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Refusing vsock connection on port \(self.port, privacy: .public) — \(reason, privacy: .public)"
             )
             close(fd)
             return false
         case .denied(let reason):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Refusing vsock connection on port \(self.port, privacy: .public) — \(reason, privacy: .public)"
             )
             close(fd)
@@ -160,7 +163,8 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
             configureAcceptedSocket(fd)
             let channel = VsockChannel(fileDescriptor: fd)
             channel.start()
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Accepted vsock connection on port \(self.port, privacy: .public)")
             // Only the hand-off hops: the channel is already draining, and the
             // async bridge keeps FIFO order with the reporter emissions queued
@@ -170,7 +174,8 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
             // No `configureAcceptedSocket` here: a data connection's options are
             // the endpoint's, applied where the first read on the descriptor
             // happens rather than in two places that must stay in step.
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Accepted vsock data connection on port \(self.port, privacy: .public)")
             onAcceptFd(fd)
         }
@@ -197,7 +202,8 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
         let rc = setsockopt(
             fd, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size))
         if rc != 0 {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "setsockopt(SO_SNDBUF) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — host→guest throughput stays at the 8 KiB-default transport ceiling"
             )
             return
@@ -206,11 +212,13 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
         var len = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &applied, &len) == 0 else { return }
         if applied < Int32(Self.sendBufferBytes) {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "SO_SNDBUF on vsock port \(self.port, privacy: .public) clamped to \(applied, privacy: .public) bytes (requested \(Self.sendBufferBytes, privacy: .public)) — host→guest throughput may stay below the unlocked ceiling"
             )
         } else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "SO_SNDBUF on vsock port \(self.port, privacy: .public) set to \(applied, privacy: .public) bytes"
             )
         }
@@ -228,7 +236,8 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
         let rc = setsockopt(
             fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         if rc != 0 {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "setsockopt(SO_SNDTIMEO) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — a write to a stalled guest is bounded only by the channel's own teardown"
             )
         }

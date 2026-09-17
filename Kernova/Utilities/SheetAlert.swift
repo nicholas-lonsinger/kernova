@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Semantic role for an ``AlertButton``.
 ///
@@ -43,7 +43,7 @@ struct AlertButton {
 /// rather than assembled here; the free-form array is for the alerts that
 /// confirm nothing — an acknowledgement, or a question the core never modelled.
 struct AlertConfiguration {
-    private static let logger = Logger(subsystem: "app.kernova", category: "AlertConfiguration")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AlertConfiguration")
 
     let title: String
     let message: String
@@ -85,7 +85,8 @@ struct AlertConfiguration {
         dismiss: @escaping () -> Void = {}
     ) {
         if !prompt.alternatives.isEmpty, alternative == nil {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Confirmation '\(prompt.kind.rawValue, privacy: .public)' offers alternatives with no handler"
             )
             assertionFailure(

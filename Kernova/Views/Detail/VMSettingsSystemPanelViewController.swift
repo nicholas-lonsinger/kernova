@@ -1,12 +1,12 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The System category: the VM's resources, display, audio, input devices and
 /// serial console — everything about the machine the guest runs on.
 @MainActor
 final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPanel {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMSettingsSystemPanel")
 
     let context: VMSettingsPanelContext
@@ -556,7 +556,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     ) where Mode.RawValue == String {
         guard let index = popUp.itemArray.firstIndex(where: { ($0.representedObject as? Mode) == mode })
         else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "No popup item for \(what, privacy: .public) mode '\(mode.rawValue, privacy: .public)'")
             assertionFailure("No popup item for \(what) mode: \(mode.rawValue)")
             return
@@ -699,7 +700,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         guard
             let mode = inputDevicesPopUp.selectedItem?.representedObject as? VMInputDeviceMode
         else {
-            Self.logger.fault("Input devices popup selection carries no mode")
+            #log(Self.logger, .fault, "Input devices popup selection carries no mode")
             assertionFailure("Input devices popup selection carries no mode")
             return
         }
@@ -710,7 +711,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         guard
             let mode = systemKeysPopUp.selectedItem?.representedObject as? VMSystemKeyForwarding
         else {
-            Self.logger.fault("System keys popup selection carries no mode")
+            #log(Self.logger, .fault, "System keys popup selection carries no mode")
             assertionFailure("System keys popup selection carries no mode")
             return
         }

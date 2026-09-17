@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// A ``GuestAccountPasswordRequest`` whose answer fires at most once, whichever
 /// of the prompt's endings arrives first — a button, a re-ask that never gets
@@ -39,7 +39,7 @@ private final class OneShotGuestAccountAnswer {
 /// order.
 @MainActor
 final class DetailAlertsPresenter: NSObject {
-    private static let logger = Logger(subsystem: "app.kernova", category: "DetailAlertsPresenter")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DetailAlertsPresenter")
 
     private let viewModel: VMLibraryViewModel
     private weak var window: NSWindow?
@@ -232,7 +232,8 @@ final class DetailAlertsPresenter: NSObject {
         // would overwrite `pendingDelete`, which the shown sheet's close then
         // clears without it ever being shown — silently dropping the delete.
         guard shownDelete == nil else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
             return
         }
@@ -242,7 +243,8 @@ final class DetailAlertsPresenter: NSObject {
         let wasIdle = pendingDelete == nil
         pendingDelete = PendingDelete(instance: instance, permanently: permanently)
         guard wasIdle else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Delete sheet already in flight; coalescing repeat request for '\(instance.name, privacy: .public)'")
             return
         }
@@ -283,7 +285,8 @@ final class DetailAlertsPresenter: NSObject {
         // only unset once the queue drains, so two gestures made while another
         // alert holds the presenter would otherwise both enqueue.
         guard shownSnapshotInstance == nil, !isSnapshotSheetQueued else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Take Snapshot sheet already requested; ignoring request for '\(instance.name, privacy: .public)'"
             )
             return
@@ -356,7 +359,8 @@ final class DetailAlertsPresenter: NSObject {
         // cleans up the settled copy — so the words must not depend on state
         // that has moved on by the time the alert is drawn.
         guard let state = instance.preparingState else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Cancel requested for '\(instance.name, privacy: .public)', which is not preparing")
             assertionFailure("Cancel requested for a VM that is not preparing: \(instance.name)")
             return
@@ -385,7 +389,8 @@ final class DetailAlertsPresenter: NSObject {
         guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
             !snapshotSheetPresenter.isShown, pending.isEmpty
         else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Holding a USB accessory for the host: there is nowhere on screen to ask which virtual machine should take it"
             )
             request.answer(nil)
@@ -421,7 +426,8 @@ final class DetailAlertsPresenter: NSObject {
         {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Already asking for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; raising that question"
             )
             request.answer(.cancelled)
@@ -430,7 +436,8 @@ final class DetailAlertsPresenter: NSObject {
         guard window != nil, !isShowingAlert, !deleteSheetPresenter.isShown,
             !snapshotSheetPresenter.isShown, pending.isEmpty
         else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Nowhere to ask for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; not starting it"
             )
             request.answer(.cancelled)
@@ -596,7 +603,8 @@ final class DetailAlertsPresenter: NSObject {
     private static func reportUnhandledAlternative(
         _ alternative: ConfirmationAlternative, on verb: String
     ) {
-        logger.fault(
+        #log(
+            logger, .fault,
             "No \(verb, privacy: .public) route for alternative '\(alternative.title, privacy: .public)'"
         )
         assertionFailure("No \(verb) route for alternative '\(alternative.title)'")

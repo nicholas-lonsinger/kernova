@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Pauses every running VM before the system sleeps and resumes exactly those
 /// again on wake.
@@ -12,7 +12,7 @@ import os
 /// Headless: anything a user has to be told about leaves through ``onFailure``.
 @MainActor
 final class VMSleepWakeCoordinator {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMSleepWakeCoordinator")
 
     private let lifecycle: VMLifecycleCoordinator
@@ -40,22 +40,26 @@ final class VMSleepWakeCoordinator {
     func pauseAllForSleep() async {
         let runningInstances = instances.filter { $0.status == .running }
         guard !runningInstances.isEmpty else {
-            Self.logger.debug("pauseAllForSleep: no running VMs, nothing to pause")
+            #log(Self.logger, .debug, "pauseAllForSleep: no running VMs, nothing to pause")
             return
         }
 
-        Self.logger.notice("System going to sleep — pausing \(runningInstances.count, privacy: .public) running VM(s)")
+        #log(
+            Self.logger, .notice,
+            "System going to sleep — pausing \(runningInstances.count, privacy: .public) running VM(s)")
 
         var failedNames: [String] = []
         for instance in runningInstances {
             do {
                 try await lifecycle.pause(instance)
                 sleepPausedInstanceIDs.insert(instance.id)
-                Self.logger.debug(
+                #log(
+                    Self.logger, .debug,
                     "Paused '\(instance.name, privacy: .public)' for sleep (status: \(instance.status.displayName, privacy: .public))"
                 )
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to pause '\(instance.name, privacy: .public)' for sleep: \(error.localizedDescription, privacy: .public)"
                 )
                 failedNames.append(instance.name)
@@ -71,24 +75,28 @@ final class VMSleepWakeCoordinator {
         let idsToResume = sleepPausedInstanceIDs
         sleepPausedInstanceIDs.removeAll()
         guard !idsToResume.isEmpty else {
-            Self.logger.debug("resumeAllAfterWake: no sleep-paused VMs to resume")
+            #log(Self.logger, .debug, "resumeAllAfterWake: no sleep-paused VMs to resume")
             return
         }
 
         let instancesToResume = instances.filter { idsToResume.contains($0.id) && $0.status == .paused }
         guard !instancesToResume.isEmpty else { return }
 
-        Self.logger.notice("System woke up — resuming \(instancesToResume.count, privacy: .public) sleep-paused VM(s)")
+        #log(
+            Self.logger, .notice,
+            "System woke up — resuming \(instancesToResume.count, privacy: .public) sleep-paused VM(s)")
 
         var failedNames: [String] = []
         for instance in instancesToResume {
             do {
                 try await lifecycle.resume(instance)
-                Self.logger.debug(
+                #log(
+                    Self.logger, .debug,
                     "Resumed '\(instance.name, privacy: .public)' after wake (status: \(instance.status.displayName, privacy: .public))"
                 )
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to resume '\(instance.name, privacy: .public)' after wake: \(error.localizedDescription, privacy: .public)"
                 )
                 failedNames.append(instance.name)

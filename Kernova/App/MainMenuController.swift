@@ -1,6 +1,6 @@
 import Cocoa
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The application-level seam a ``MainMenuController`` needs but cannot own:
 /// which VM a command acts on.
@@ -21,7 +21,7 @@ protocol MainMenuHosting: AnyObject {
 /// not part of. It reaches the app through ``MainMenuHosting``.
 @MainActor
 final class MainMenuController: NSObject, NSMenuDelegate {
-    private static let logger = Logger(subsystem: "app.kernova", category: "MainMenu")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MainMenu")
 
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, read for the clone alternate's title.
@@ -275,7 +275,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
         let sectionStartIndex = appMenu.index(of: sectionStart)
         guard sectionStartIndex >= 0 else {
-            Self.logger.fault("App menu quit-section separator is not in the app menu")
+            #log(Self.logger, .fault, "App menu quit-section separator is not in the app menu")
             assertionFailure("App menu quit-section separator is not in the app menu")
             return
         }

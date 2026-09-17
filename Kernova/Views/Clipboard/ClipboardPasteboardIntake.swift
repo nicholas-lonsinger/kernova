@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Result of reading a pasteboard into the clipboard buffer.
 enum ClipboardIntakeResult: Equatable, Sendable {
@@ -33,7 +33,7 @@ enum ClipboardIntakeResult: Equatable, Sendable {
 /// agent and the drop service; this layer only says what the window shows.
 @MainActor
 enum ClipboardPasteboardIntake {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardPasteboardIntake")
 
     nonisolated static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
@@ -81,7 +81,8 @@ enum ClipboardPasteboardIntake {
                 message: Self.unreadableItemsMessage(count: intake.skipped), unreadable: true)
         }
         if intake.skipped > 0 {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Skipped \(intake.skipped, privacy: .public) unreadable copied item(s)")
         }
         return .content(

@@ -1,7 +1,7 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
-import os
 
 /// Reads a restore image already on disk through Virtualization.
 ///
@@ -9,7 +9,7 @@ import os
 /// version shown on the Review step is the image's own rather than the one the
 /// user happened to have selected when the file was found.
 struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "LocalRestoreImageInspector")
 
     func inspect(_ url: URL) async throws -> InspectedRestoreImage {
@@ -20,7 +20,8 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
         do {
             image = try await VZMacOSRestoreImage.image(from: resolved)
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not read restore image at '\(resolved.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw LocalRestoreImageError.unreadable
@@ -36,7 +37,8 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
             isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil,
             sizeBytes: sizeBytes
         )
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Inspected local restore image: \(inspected.summary, privacy: .public), supported=\(inspected.isSupportedOnThisHost, privacy: .public)"
         )
         return inspected

@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import os
+import KernovaLogging
 
 /// Host-side AF_UNIX relay that exposes a running VM's serial port to an
 /// external terminal client (e.g. `socat -,raw,echo=0 UNIX-CONNECT:<path>`).
@@ -32,7 +32,7 @@ final class SerialSocketRelay: @unchecked Sendable {
     private var clientFd: Int32 = -1
     private var clientSource: DispatchSourceRead?
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "SerialSocketRelay")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SerialSocketRelay")
 
     init(path: String, guestInputWriteHandle: FileHandle, label: String) {
         let queue = DispatchQueue(label: "app.kernova.serial-relay")
@@ -62,17 +62,20 @@ final class SerialSocketRelay: @unchecked Sendable {
         } catch .address(let failure) {
             // A path the app derived itself, so one that does not fit is a bug
             // in how it was derived rather than a condition to recover from.
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Serial relay socket path unusable for '\(self.label, privacy: .public)' — \(String(describing: failure), privacy: .public): \(self.path, privacy: .public)"
             )
             return
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Serial relay could not bind for '\(self.label, privacy: .public)' — \(String(describing: error), privacy: .public): \(self.path, privacy: .public)"
             )
             return
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Serial relay listening for '\(self.label, privacy: .public)' at \(self.path, privacy: .public)")
     }
 
@@ -85,7 +88,7 @@ final class SerialSocketRelay: @unchecked Sendable {
         lock.unlock()
 
         listener.stop()
-        Self.logger.notice("Serial relay stopped for '\(self.label, privacy: .public)'")
+        #log(Self.logger, .notice, "Serial relay stopped for '\(self.label, privacy: .public)'")
     }
 
     // MARK: - Output tee (guest → client)
@@ -144,7 +147,7 @@ final class SerialSocketRelay: @unchecked Sendable {
         clientSource = source
         source.resume()
 
-        Self.logger.info("Serial relay client connected for '\(self.label, privacy: .public)'")
+        #log(Self.logger, .info, "Serial relay client connected for '\(self.label, privacy: .public)'")
     }
 
     private func readFromClient() {
@@ -168,7 +171,7 @@ final class SerialSocketRelay: @unchecked Sendable {
             }
             lock.unlock()
             if wasEOF {
-                Self.logger.info("Serial relay client disconnected for '\(self.label, privacy: .public)'")
+                #log(Self.logger, .info, "Serial relay client disconnected for '\(self.label, privacy: .public)'")
             }
             return
         }
@@ -182,7 +185,8 @@ final class SerialSocketRelay: @unchecked Sendable {
         do {
             try guestInput.write(contentsOf: data)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Serial relay failed to write client input to guest for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

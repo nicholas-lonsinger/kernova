@@ -1,9 +1,9 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Reads and writes the pairings a VM bundle holds.
 struct USBAccessoryPairingStore: USBAccessoryPairingStoring {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "USBAccessoryPairingStore")
 
     func load(bundleURL: URL) -> USBAccessoryPairingSet {
@@ -15,7 +15,8 @@ struct USBAccessoryPairingStore: USBAccessoryPairingStoring {
         } catch {
             // An unreadable file leaves the VM taking nothing back, which is
             // the state a user recovers from by attaching the device once.
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to read the USB accessory pairings in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return USBAccessoryPairingSet()

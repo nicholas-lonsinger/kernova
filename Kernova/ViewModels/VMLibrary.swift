@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The set of VMs the app knows about, and the bookkeeping that keeps it in
 /// step with the bundles on disk: membership and sidebar ordering, the library
@@ -21,7 +21,7 @@ import os
 @MainActor
 @Observable
 final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
-    nonisolated private static let logger = Logger(subsystem: "app.kernova", category: "VMLibrary")
+    nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
 
@@ -274,7 +274,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                         bundleURL: bundleURL,
                         phase: initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL))))
             } catch {
-                logger.error(
+                #log(
+                    logger, .error,
                     "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
                 )
                 scan.failedBundleNames.append(bundleURL.deletingPathExtension().lastPathComponent)
@@ -304,7 +305,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             }.value
             apply(scan, keepingInstancesAddedSince: knownBeforeRead)
         } catch {
-            Self.logger.error("Failed to load VM library: \(error.localizedDescription, privacy: .public)")
+            #log(Self.logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -339,9 +340,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
         if let savedOrder = preferences.vmOrder {
             customOrder = savedOrder
-            Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
+            #log(Self.logger, .debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
         } else {
-            Self.logger.debug("No custom VM order found — using default createdAt sort")
+            #log(Self.logger, .debug, "No custom VM order found — using default createdAt sort")
         }
         sortInstances()
         customOrder = instances.map(\.id)
@@ -351,13 +352,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 instances.contains(where: { $0.id == savedID })
             {
                 selectedID = savedID
-                Self.logger.debug("Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
+                #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
             } else {
                 selectedID = instances.first?.id
             }
         }
         networkSlots.pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
-        Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
+        #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
     }
 
     // MARK: - Revert Registry
@@ -476,12 +477,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                     } else {
                         do {
                             try storage.publishBundle(from: staged, to: finalURL)
-                            Self.logger.warning(
+                            #log(
+                                Self.logger, .warning,
                                 "\(operation.displayNoun, privacy: .public) completed but the library was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
                             )
                         } catch {
                             Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
-                            Self.logger.error(
+                            #log(
+                                Self.logger, .error,
                                 "\(operation.displayNoun, privacy: .public) completed but the library was deallocated and the bundle could not be published — trashed the staged bundle for '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                             )
                         }
@@ -510,7 +513,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                     if let written {
                         Self.trashPartialBundle(at: written, fileSystem: fileSystem)
                     }
-                    Self.logger.error(
+                    #log(
+                        Self.logger, .error,
                         "\(operation.displayNoun, privacy: .public) failed and the library was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                     return
@@ -521,7 +525,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                     self.dropPhantomRow(phantom)
                 }
                 if !Task.isCancelled {
-                    Self.logger.error(
+                    #log(
+                        Self.logger, .error,
                         "\(operation.displayNoun, privacy: .public) failed for VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
                     onFailure(error)
@@ -597,7 +602,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     func cancelAndCleanupPreparing() {
         for phantom in instances where phantom.isPreparing {
             guard let state = phantom.preparingState else { continue }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Terminating: cancelling \(state.operation.displayNoun, privacy: .public) for '\(phantom.name, privacy: .public)'"
             )
             state.task.cancel()
@@ -605,7 +611,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 do {
                     try fileSystem.trashItem(at: written)
                 } catch {
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Failed to clean up the partial bundle for '\(phantom.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                     )
                 }
@@ -637,7 +644,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         instances.move(fromOffsets: source, toOffset: destination)
         persistOrder()
-        Self.logger.notice("Reordered VMs in sidebar")
+        #log(Self.logger, .notice, "Reordered VMs in sidebar")
     }
 
     /// Sorts instances by custom order, falling back to `createdAt` for unordered VMs.
@@ -674,7 +681,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
             return true
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to save configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
@@ -814,7 +822,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         } catch {
             // Not surfaced: nothing the user did is refused by it — the guest
             // still gets the accessory, and only the *remembering* is lost.
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to save the USB accessory pairings for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return false
@@ -846,7 +855,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         do {
             vmsDir = try storageService.vmsDirectory
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not resolve VMs directory for file system watcher: \(error.localizedDescription, privacy: .public)"
             )
             return
@@ -862,10 +872,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
     func reconcileWithDisk() {
         guard !hasPreparing else {
-            Self.logger.debug("reconcileWithDisk: skipped — preparing operation in progress")
+            #log(Self.logger, .debug, "reconcileWithDisk: skipped — preparing operation in progress")
             return
         }
-        Self.logger.debug("reconcileWithDisk: starting")
+        #log(Self.logger, .debug, "reconcileWithDisk: starting")
         do {
             let diskBundles = try storageService.listVMBundles()
 
@@ -881,7 +891,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                     diskConfigs.append((config, bundleURL))
                     reportedFailedBundles.remove(bundleName)
                 } catch {
-                    Self.logger.error(
+                    #log(
+                        Self.logger, .error,
                         "Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
                     )
                     failedBundles.append(bundleName)
@@ -902,7 +913,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 )
                 wirePersistence(for: instance)
                 instances.append(instance)
-                Self.logger.info("Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
+                #log(Self.logger, .info, "Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
                 didChange = true
             }
 
@@ -919,7 +930,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 // mutating an orphan instance the library no longer knows about.
                 instance.setupTask?.cancel()
                 evict(instance, bundleIsGone: !failedBundleURLs.contains(instance.bundleURL))
-                Self.logger.info("VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
+                #log(
+                    Self.logger, .info,
+                    "VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
 
@@ -932,7 +945,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
             let suppressedCount = failedBundles.count - newFailures.count
             if suppressedCount > 0 {
-                Self.logger.debug(
+                #log(
+                    Self.logger, .debug,
                     "reconcileWithDisk: suppressed \(suppressedCount, privacy: .public) already-reported bundle failure(s)"
                 )
             }
@@ -946,10 +960,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             let currentDiskNames = Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
             reportedFailedBundles.formIntersection(currentDiskNames)
 
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
         } catch {
-            Self.logger.error("Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
+            #log(
+                Self.logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -966,7 +982,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             do {
                 try fileSystem.trashItem(at: url)
             } catch {
-                log.error(
+                #log(
+                    log, .error,
                     "Failed to clean up partial bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
                 )
             }

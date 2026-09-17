@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Streams files dropped on the VM display to the guest agent, which writes them
 /// into the guest's Downloads folder.
@@ -64,7 +64,7 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
 
     // `nonisolated` so a log line can be written from any thread; `Logger` is
     // Sendable.
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VsockDropService")
 
     // MARK: - Settle contract
@@ -120,7 +120,8 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
         guard !isConnected, !hasStopped else { return }
         isConnected = true
         endpoint.start()
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Vsock drop service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }
@@ -154,7 +155,8 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
         endpoint.stop()
         guard isConnected else { return }
         isConnected = false
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Vsock drop service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
         // Last, so the owner observes fully-settled state from inside the
@@ -270,7 +272,8 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
         }
         if let stagingDirectory { stagedDirectories[generation] = stagingDirectory }
         guard skipped > 0 else { return }
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Skipped \(skipped, privacy: .public) unreadable dropped item(s) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }

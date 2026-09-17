@@ -1,6 +1,6 @@
 import Foundation
+import KernovaLogging
 import Security
-import os
 
 /// Reads entitlement values from a process's code signature, abstracted so
 /// tests can inject a fake in place of the Security framework.
@@ -12,11 +12,12 @@ protocol EntitlementReading: Sendable {
 /// The real reader, answering from this process's own signature via
 /// `SecTaskCopyValueForEntitlement`.
 struct ProcessEntitlementReader: EntitlementReading {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ProcessEntitlementReader")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ProcessEntitlementReader")
 
     func hasEntitlement(_ key: String) -> Bool {
         guard let task = SecTaskCreateFromSelf(nil) else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "SecTaskCreateFromSelf returned nil — treating entitlement '\(key, privacy: .public)' as absent"
             )
             assertionFailure("SecTaskCreateFromSelf returned nil")
@@ -25,7 +26,8 @@ struct ProcessEntitlementReader: EntitlementReading {
         var error: Unmanaged<CFError>?
         let value = SecTaskCopyValueForEntitlement(task, key as CFString, &error)
         if let error = error?.takeRetainedValue() {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Entitlement query for '\(key, privacy: .public)' failed — treating as absent: \(String(describing: error), privacy: .public)"
             )
         }

@@ -1,7 +1,7 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
-import os
 
 /// Wizard steps for creating a new VM.
 ///
@@ -84,7 +84,7 @@ enum LinuxImageSelection: Sendable, Equatable {
 @MainActor
 @Observable
 final class VMCreationViewModel {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMCreationViewModel")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCreationViewModel")
 
     /// Backs the "Choose a Version…" picker.
     ///
@@ -530,7 +530,7 @@ final class VMCreationViewModel {
                 for: .downloadsDirectory, in: .userDomainMask
             ).first
         else {
-            logger.fault("No Downloads directory in userDomainMask")
+            #log(logger, .fault, "No Downloads directory in userDomainMask")
             assertionFailure("FileManager returned no Downloads directory")
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Downloads")
@@ -614,7 +614,8 @@ final class VMCreationViewModel {
                 inspection = inspected.isSupportedOnThisHost ? .usable(inspected) : .unusable(.unsupported)
             } catch {
                 if Task.isCancelled { return }
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Could not inspect local restore image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 inspection = .unusable((error as? LocalRestoreImageError) ?? .unreadable)
@@ -680,7 +681,8 @@ final class VMCreationViewModel {
             do {
                 image = try await ipswService.fetchLatestRestoreImage()
             } catch {
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Could not look up the latest restore image: \(error.localizedDescription, privacy: .public)"
                 )
                 return

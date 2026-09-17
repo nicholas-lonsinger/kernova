@@ -1,8 +1,8 @@
 import AVFoundation
 import AppKit
+import KernovaLogging
 import UniformTypeIdentifiers
 import Virtualization
-import os
 
 /// Pure-AppKit settings pane for editing a stopped VM's configuration, or
 /// viewing a running VM's configuration in read-only mode.
@@ -18,7 +18,7 @@ import os
 /// state and the dynamic lists of the open panel, or the cards.
 @MainActor
 final class VMSettingsViewController: NSViewController {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMSettingsViewController")
 
     private(set) var instance: VMInstance
@@ -395,7 +395,7 @@ extension VMSettingsViewController {
     /// nothing for the current VM.
     private func installPanel(_ category: VMSettingsCategory) {
         guard let controller = panelControllers[category] else {
-            Self.logger.fault("No panel for category '\(category.rawValue, privacy: .public)'")
+            #log(Self.logger, .fault, "No panel for category '\(category.rawValue, privacy: .public)'")
             assertionFailure("No panel for category: \(category.rawValue)")
             return
         }

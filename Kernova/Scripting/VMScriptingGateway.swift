@@ -1,6 +1,6 @@
 import Cocoa
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The Apple event front door: everything Script Editor, Automator, and
 /// `osascript` ask of Kernova passes through here and reaches ``VMCommanding``.
@@ -24,7 +24,7 @@ import os
 /// carries back to whoever ran it.
 @MainActor
 final class VMScriptingGateway {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMScriptingGateway")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptingGateway")
 
     private let commands: any VMCommanding
     /// The app's first library read, shared with every other front door.
@@ -98,7 +98,8 @@ final class VMScriptingGateway {
         do {
             return VMScriptObject(try commands.info(.id(id)))
         } catch {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
             )
             assertionFailure("Listed VM \(id.uuidString) has no info read: \(error)")
@@ -139,7 +140,8 @@ final class VMScriptingGateway {
         // One evaluation can read the element more than once.
         if coldReads.contains(where: { $0 === command }) { return true }
         coldReads.append(command)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "A \(command.commandDescription.commandName, privacy: .public) arrived before the library read landed; suspended until it does"
         )
         command.suspendExecution()
@@ -152,7 +154,8 @@ final class VMScriptingGateway {
         await readiness.ready()
         let result = reissue(command)
         coldReads.removeAll { $0 === command }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "The library read landed; answering the \(command.commandDescription.commandName, privacy: .public) that waited on it"
         )
         command.resumeExecution(withResult: result)
@@ -304,7 +307,8 @@ final class VMScriptingGateway {
             do {
                 try await body(selector)
             } catch let failure as CommandError {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message, privacy: .public)"
                 )
                 throw failure

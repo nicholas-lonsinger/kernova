@@ -1,12 +1,12 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Checks a user-supplied restore image URL before anything is downloaded.
 ///
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
 /// same reason `DownloadService` is one.
 final class RestoreImageProbeService: RestoreImageProbing {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RestoreImageProbeService")
 
     /// How much of the file's tail to read looking for the zip end-of-directory record.
@@ -60,7 +60,8 @@ final class RestoreImageProbeService: RestoreImageProbing {
         }
 
         let parsed = ProbedRestoreImage.parseFilename(url.lastPathComponent)
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Probed restore image at \(url.host() ?? "?", privacy: .public): \(sizeBytes, privacy: .public) bytes, VM-capable"
         )
         return ProbedRestoreImage(

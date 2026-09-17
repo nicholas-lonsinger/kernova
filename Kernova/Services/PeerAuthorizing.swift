@@ -1,6 +1,6 @@
 import Foundation
+import KernovaLogging
 import Security
-import os
 
 /// Why a connecting peer was turned away.
 ///
@@ -69,7 +69,7 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
     /// The team this build was signed by, and the only one it answers.
     private let ownTeam: String
 
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "SameTeamPeerAuthorizer")
 
     /// Reads this build's own team, or fails when it has none.
@@ -78,7 +78,8 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         // hardcoded team would admit the wrong peers in any build signed with
         // another one.
         guard let team = Self.ownTeamIdentifier() else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "This build's signature names no team — no peer can be authorized, so the command socket stays closed"
             )
             return nil
@@ -92,7 +93,8 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         var peer: SecCode?
         let lookup = SecCodeCopyGuestWithAttributes(nil, attributes, [], &peer)
         guard lookup == errSecSuccess, let peer else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "A connecting peer could not be resolved to a code identity: OSStatus \(lookup, privacy: .public)"
             )
             return .refused(.unidentified)
@@ -102,7 +104,8 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         let built = SecRequirementCreateWithString(
             Self.anchorRequirement as CFString, [], &requirement)
         guard built == errSecSuccess, let requirement else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Could not build the anchor requirement: OSStatus \(built, privacy: .public)")
             assertionFailure("Could not build the anchor requirement: OSStatus \(built)")
             // No check ran, so the signature and the team are both unread: the
@@ -111,14 +114,15 @@ struct SameTeamPeerAuthorizer: PeerAuthorizing {
         }
         let validity = SecCodeCheckValidity(peer, [], requirement)
         guard validity == errSecSuccess else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Refused a connecting peer that does not chain to an Apple root: OSStatus \(validity, privacy: .public)"
             )
             return .refused(.notValidlySigned)
         }
 
         guard Self.isSameTeam(peer: Self.teamIdentifier(of: peer), own: ownTeam) else {
-            Self.logger.notice("Refused a connecting peer signed by a different team")
+            #log(Self.logger, .notice, "Refused a connecting peer signed by a different team")
             return .refused(.differentTeam)
         }
         return .authorized

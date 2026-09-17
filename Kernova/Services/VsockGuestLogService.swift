@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import os
 
 /// Republishes a guest agent's emitted log records into the host's logging
@@ -10,7 +11,7 @@ import os
 /// idempotent and terminal, so a reconnect is served by a fresh instance.
 @MainActor
 final class VsockGuestLogService: VsockFeatureService {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VsockGuestLogService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockGuestLogService")
 
     private let channel: VsockChannel
     private let emitter: any GuestLogEmitter
@@ -57,7 +58,7 @@ final class VsockGuestLogService: VsockFeatureService {
             // or it spoke on the wrong port and the loop closed it.
             self?.settle(reason: .channelLost)
         }
-        Self.logger.info("Guest log service started for '\(self.label, privacy: .public)'")
+        #log(Self.logger, .info, "Guest log service started for '\(self.label, privacy: .public)'")
     }
 
     /// Tears the service down at the owner's request.
@@ -103,9 +104,10 @@ final class VsockGuestLogService: VsockFeatureService {
                     break
                 }
             }
-            logger.info("Guest log channel closed for '\(label, privacy: .public)'")
+            #log(logger, .info, "Guest log channel closed for '\(label, privacy: .public)'")
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Guest log channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -119,7 +121,8 @@ final class VsockGuestLogService: VsockFeatureService {
         label: String
     ) -> Bool {
         guard frame.protocolVersion == 1 else {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(label, privacy: .public)'"
             )
             return true
@@ -129,7 +132,8 @@ final class VsockGuestLogService: VsockFeatureService {
             emitter.emit(record)
             return true
         case .error(let error):
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
             return true
@@ -139,12 +143,13 @@ final class VsockGuestLogService: VsockFeatureService {
             // Hello, Heartbeat, and PolicyUpdate belong on the control channel;
             // clipboard payloads belong on the clipboard channel, drop payloads
             // on the drop channel.
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port; closing the channel"
             )
             return false
         case .none:
-            logger.debug("Frame with no payload for '\(label, privacy: .public)'")
+            #log(logger, .debug, "Frame with no payload for '\(label, privacy: .public)'")
             return true
         }
     }

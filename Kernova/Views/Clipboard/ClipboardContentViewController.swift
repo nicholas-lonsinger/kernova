@@ -1,6 +1,6 @@
 import Cocoa
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Pure AppKit view controller for the clipboard sharing window content.
 ///
@@ -13,7 +13,7 @@ import os
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate,
     NSUserInterfaceValidations
 {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardContentViewController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardContentViewController")
 
     private let instance: VMInstance
     private weak var viewModel: VMLibraryViewModel?
@@ -298,7 +298,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
         guard instance.clipboardService != nil else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
             return
         }
@@ -687,7 +688,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // clearBuffer (not `clipboardContent = .empty`) also resets the send
         // dedup, so re-copying the just-cleared content still reaches the guest.
         service.clearBuffer()
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Cleared clipboard buffer for VM '\(self.instance.name, privacy: .public)'")
     }
 
@@ -778,16 +780,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if let note {
                 statusMessage.showTransientMessage(note, style: .warning)
             }
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
             return true
         case .rejected(let message, _):
             statusMessage.showTransientMessage(message, style: .warning)
-            Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
+            #log(Self.logger, .info, "Pasteboard intake rejected: \(message, privacy: .public)")
             return false
         case .pendingFiles:
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "apply(intake:) received .pendingFiles — resolve it via read(filesAt:) first")
             assertionFailure("apply(intake:) received .pendingFiles")
             return false
@@ -807,7 +811,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService else { return false }
         let pasteboard = draggingInfo.draggingPasteboard
 
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Clipboard drop types: \(pasteboard.pasteboardItems?.first?.types.map(\.rawValue).joined(separator: ", ") ?? "none", privacy: .public)"
         )
 
@@ -855,7 +860,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         guard let destination = service.reserveDropDestination() else {
             statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
-            Self.logger.error("Failed to reserve a directory for the dropped file promise")
+            #log(Self.logger, .error, "Failed to reserve a directory for the dropped file promise")
             return
         }
 
@@ -875,7 +880,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 guard let self else { return }
                 if let error {
                     self.statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
-                    Self.logger.error(
+                    #log(
+                        Self.logger, .error,
                         "File promise receipt failed: \(error.localizedDescription, privacy: .public)"
                     )
                     return

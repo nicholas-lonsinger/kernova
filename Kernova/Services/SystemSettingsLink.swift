@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// Opens the System Settings panes Kernova sends users to.
 ///
@@ -12,7 +12,7 @@ struct SystemSettingsLink {
     /// Microphone sub-pane, not just the Privacy & Security root.
     static let microphonePrivacyURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "SystemSettingsLink")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SystemSettingsLink")
 
     private let open: @MainActor (URL) -> Bool
 
@@ -33,13 +33,14 @@ struct SystemSettingsLink {
     @discardableResult
     func openMicrophonePrivacy() -> Bool {
         guard let url = URL(string: Self.microphonePrivacyURL) else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Malformed System Settings URL '\(Self.microphonePrivacyURL, privacy: .public)'")
             assertionFailure("Malformed System Settings URL: \(Self.microphonePrivacyURL)")
             return false
         }
         guard open(url) else {
-            Self.logger.warning("System Settings did not open for microphone permission")
+            #log(Self.logger, .warning, "System Settings did not open for microphone permission")
             return false
         }
         return true

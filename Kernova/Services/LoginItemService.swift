@@ -1,6 +1,6 @@
 import Foundation
+import KernovaLogging
 import ServiceManagement
-import os
 
 /// The registration operations `LoginItemService` needs, abstracted so tests can
 /// inject a fake in place of the real `SMAppService`.
@@ -46,7 +46,7 @@ struct LoginItemService {
         self.registration = registration
     }
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "LoginItem")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "LoginItem")
 
     /// The live registration status.
     var status: SMAppService.Status { registration.status }
@@ -64,12 +64,14 @@ struct LoginItemService {
         do {
             if enabled { try registration.register() } else { try registration.unregister() }
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "\(enabled ? "register" : "unregister", privacy: .public)() threw: \(error.localizedDescription, privacy: .public)"
             )
         }
         let status = registration.status
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Login item \(enabled ? "enable" : "disable", privacy: .public) → status=\(String(describing: status), privacy: .public)"
         )
         return status

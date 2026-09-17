@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Snapshot of the toggle state delivered to the guest agent via `PolicyUpdate` on the control channel.
 struct AgentPolicySnapshot: Equatable, Sendable {
@@ -194,7 +194,7 @@ final class VsockControlService: VsockFeatureService {
     /// owner-requested `stop()`.
     @ObservationIgnored var onChannelLost: (@MainActor () -> Void)?
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockControlService")
 
     // MARK: - Init
 
@@ -251,7 +251,7 @@ final class VsockControlService: VsockFeatureService {
             await self?.checkLiveness()
         }
 
-        Self.logger.info("Vsock control service started for '\(self.label, privacy: .public)'")
+        #log(Self.logger, .info, "Vsock control service started for '\(self.label, privacy: .public)'")
     }
 
     /// Tears the service down at the owner's request and resets the handshake
@@ -288,7 +288,7 @@ final class VsockControlService: VsockFeatureService {
         guestSupportsClipboardStreamingStorage = false
         guestSupportsDropFilesStorage = false
         admissionGate?.clear()
-        Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
+        #log(Self.logger, .info, "Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state — notably a nil
         // `agentVersion` — from inside the callback.
         if case .channelLost = reason {
@@ -308,7 +308,8 @@ final class VsockControlService: VsockFeatureService {
         do {
             try channel.send(hello)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to send control hello for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -322,7 +323,8 @@ final class VsockControlService: VsockFeatureService {
         // An agent that can't stream never gets clipboard turned on.
         let clipboardEnabled = policy.clipboardSharingEnabled && guestSupportsClipboardStreaming
         if policy.clipboardSharingEnabled && !guestSupportsClipboardStreaming {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardTransferV3, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
             )
         }
@@ -333,11 +335,13 @@ final class VsockControlService: VsockFeatureService {
                     clipboardSharingEnabled: clipboardEnabled,
                     clipboardMaxPasteBytes: UInt64(policy.clipboardMaxPasteBytes),
                     dropFilesEnabled: policy.dropFilesEnabled))
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public), maxPasteBytes=\(policy.clipboardMaxPasteBytes, privacy: .public), dropFiles=\(policy.dropFilesEnabled, privacy: .public))"
             )
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to send policy update for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -362,7 +366,8 @@ final class VsockControlService: VsockFeatureService {
             // A failed send usually means the channel just tore down: the
             // consume task sees EOF momentarily and the listener accepts a
             // fresh connection.
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Failed to send heartbeat for '\(self.label, privacy: .public)' (nonce=\(nonce, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -401,17 +406,20 @@ final class VsockControlService: VsockFeatureService {
             // `agentStatus` already reports `.waiting`.
             break
         case .becameUnresponsive(let silentFor):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Control channel for '\(self.label, privacy: .public)' silent for \(Int(silentFor.rounded()), privacy: .public) s — marking unresponsive"
             )
             isUnresponsive = true
         case .recovered:
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Control channel for '\(self.label, privacy: .public)' resumed responding"
             )
             isUnresponsive = false
         case .expired(let silentFor):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Control channel for '\(self.label, privacy: .public)' silent for \(Int(silentFor.rounded()), privacy: .public) s — closing"
             )
             stop(reason: .channelLost)
@@ -429,9 +437,10 @@ final class VsockControlService: VsockFeatureService {
             for try await frame in channel.incoming {
                 dispatch(frame)
             }
-            logger.info("Vsock control channel closed for '\(label, privacy: .public)'")
+            #log(logger, .info, "Vsock control channel closed for '\(label, privacy: .public)'")
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Vsock control channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -446,7 +455,8 @@ final class VsockControlService: VsockFeatureService {
 
         switch inbound {
         case .unsupportedVersion(let version):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Dropping frame with unsupported protocol version \(version, privacy: .public) for '\(self.label, privacy: .public)'"
             )
         case .hello(let hello):
@@ -467,7 +477,8 @@ final class VsockControlService: VsockFeatureService {
             // version by `boundedField`, the capability tags by
             // `logDescription` — so none of them can write arbitrary content
             // into the host log.
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion ?? "?", privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
             // An empty agent version means the agent didn't populate the field
@@ -484,11 +495,13 @@ final class VsockControlService: VsockFeatureService {
             }
         case .heartbeat:
             // The frame itself is the signal, already recorded above.
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Heartbeat from '\(self.label, privacy: .public)'"
             )
         case .error(let error):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
         case .policyUpdate, .wrongPort:
@@ -496,7 +509,8 @@ final class VsockControlService: VsockFeatureService {
             // belong on other channels. Unlike the clipboard and log channels,
             // this one stays up — it is the admission anchor they gate on, so a
             // stray frame may not take it down (`wrongPortPayloadLeavesTheChannelUp`).
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )
         }

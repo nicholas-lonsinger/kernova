@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The "Clipboard" pane of the Settings window.
 ///
@@ -15,7 +15,7 @@ import os
 /// read the preference at each paste and need no push.
 @MainActor
 final class ClipboardSettingsViewController: NSViewController {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardSettingsViewController")
 
     /// The static half of the explanation — what the limit governs.
@@ -116,7 +116,8 @@ final class ClipboardSettingsViewController: NSViewController {
         // `AppPreferences` resolves onto the ladder on read, so a miss here means
         // the two lists have diverged, not that the user stored something odd.
         guard let index = ClipboardPasteLimit.choices.firstIndex(of: stored) else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Stored paste ceiling \(stored, privacy: .public) is not an offered choice")
             assertionFailure("Stored paste ceiling \(stored) is not an offered choice")
             estimateCaption.stringValue = Self.estimateText(for: stored)

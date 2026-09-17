@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// The unit-test host's residency: a plain foreground app that shows the library
 /// at launch and leaves once the last VM a suite started stops.
@@ -37,7 +37,7 @@ final class TestHostResidencyController: AppResidencyHosting {
     /// before the async clear runs.
     private var wasJustActivated = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "TestHostResidency")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "TestHostResidency")
 
     init(viewModel: VMLibraryViewModel, windows: AppWindowRegistry) {
         self.viewModel = viewModel
@@ -92,7 +92,7 @@ final class TestHostResidencyController: AppResidencyHosting {
     // MARK: - Activation and Reopen
 
     func noteWillBecomeActive() {
-        Self.logger.debug("applicationWillBecomeActive: setting wasJustActivated")
+        #log(Self.logger, .debug, "applicationWillBecomeActive: setting wasJustActivated")
         wasJustActivated = true
         // Clear after the current event cycle so the flag doesn't go stale for
         // non-dock activations (Cmd-Tab, clicking a window), where
@@ -114,10 +114,11 @@ final class TestHostResidencyController: AppResidencyHosting {
         if !flag {
             windows.showLibrary(bringToFront: true)
         } else if !justActivated && windows.isLibraryDismissed {
-            Self.logger.debug("applicationShouldHandleReopen: reopening dismissed library window")
+            #log(Self.logger, .debug, "applicationShouldHandleReopen: reopening dismissed library window")
             windows.showLibrary(bringToFront: true)
         } else if justActivated {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "applicationShouldHandleReopen: suppressed (initial activation with visible windows)"
             )
         }
@@ -173,7 +174,7 @@ final class TestHostResidencyController: AppResidencyHosting {
         case .stayResident:
             break
         case .quit:
-            Self.logger.notice("No visible windows and no active VMs — requesting termination")
+            #log(Self.logger, .notice, "No visible windows and no active VMs — requesting termination")
             host?.requestFullQuit()
         }
     }

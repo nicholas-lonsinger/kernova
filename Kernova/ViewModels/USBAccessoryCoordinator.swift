@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// One accessory nobody has placed, and the running guests that could take it.
 ///
@@ -46,7 +46,7 @@ struct USBAccessoryPairingRequest {
 /// key a guest's record carries.
 @MainActor
 final class USBAccessoryCoordinator {
-    private static let logger = Logger(subsystem: "app.kernova", category: "USBAccessoryCoordinator")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "USBAccessoryCoordinator")
 
     private let roster: any VMInstanceRoster
     private let pairings: any USBAccessoryPairingWriting
@@ -117,7 +117,8 @@ final class USBAccessoryCoordinator {
         guard let identity = info.identity else { return }
 
         if releasedByUser.remove(identity) != nil {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: it came back from a detach the user asked for"
             )
             return
@@ -134,7 +135,8 @@ final class USBAccessoryCoordinator {
         // device belongs to is not decidable, and guessing routes hardware into
         // the wrong guest.
         guard claimants.count == 1 else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Holding USB accessory \(info.displayName, privacy: .public): \(claimants.count) virtual machines claim the same accessory (\(identity.key, privacy: .public))"
             )
             return
@@ -143,13 +145,15 @@ final class USBAccessoryCoordinator {
         // second unit of the same model around, the one in the port may be
         // either of them.
         if identity.form == .receptacle, sharesItsModel(info) {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public): it is identified by its port, and more than one accessory of that model is connected"
             )
             return
         }
         guard paired.attachableSessionID != nil else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: '\(paired.name, privacy: .public)' is not running"
             )
             return
@@ -175,7 +179,8 @@ final class USBAccessoryCoordinator {
             for stale in instance.liveUSBAccessories
             where stale.accessory.identity == identity {
                 instance.forgetAttachedAccessory(deviceID: stale.deviceID, for: sessionID)
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Dropped '\(instance.name, privacy: .public)' record of USB accessory \(stale.accessory.displayName, privacy: .public): the host has it again, and VZ did not report the disconnect"
                 )
             }
@@ -226,7 +231,8 @@ final class USBAccessoryCoordinator {
     private func autoAttach(_ registryID: UInt64, to instance: VMInstance) async {
         _ = await lifecycle.awaitSettledOutcome(for: instance.id)
         guard let sessionID = instance.attachableSessionID else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Holding USB accessory \(registryID) for the host: '\(instance.name, privacy: .public)' stopped being able to take one"
             )
             return
@@ -238,11 +244,13 @@ final class USBAccessoryCoordinator {
         }
         do {
             _ = try await lifecycle.attachUSBAccessory(registryID, to: instance, for: sessionID)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Passed USB accessory \(accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': it is paired with that virtual machine"
             )
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not pass USB accessory \(accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -255,7 +263,8 @@ final class USBAccessoryCoordinator {
     func userAttached(_ accessory: USBAccessoryInfo, to instance: VMInstance) {
         guard let pairing = USBAccessoryPairing.make(for: accessory) else { return }
         pairings.pairUSBAccessory(pairing, with: instance)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will take USB accessory \(accessory.displayName, privacy: .public) back automatically"
         )
     }
@@ -271,7 +280,8 @@ final class USBAccessoryCoordinator {
         guard let identity = accessory.identity else { return }
         releasedByUser.insert(identity)
         pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(accessory.displayName, privacy: .public) back automatically"
         )
     }
@@ -281,7 +291,8 @@ final class USBAccessoryCoordinator {
     /// Offers `info` to the running guests, or holds it when there are none.
     private func offerToRunningGuests(_ info: USBAccessoryInfo) {
         guard !runningGuests().isEmpty else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: no virtual machine is running"
             )
             return
@@ -303,7 +314,8 @@ final class USBAccessoryCoordinator {
             guard let info = service.accessories.first(where: { $0.registryID == registryID }),
                 !accessoriesHeldByGuests().contains(where: { $0.registryID == registryID })
             else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Dropped the question about USB accessory \(registryID): it is no longer Kernova's to place"
                 )
                 continue
@@ -313,13 +325,15 @@ final class USBAccessoryCoordinator {
             // started.
             let candidates = runningGuests()
             guard !candidates.isEmpty else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Holding USB accessory \(info.displayName, privacy: .public) for the host: no virtual machine is running"
                 )
                 continue
             }
             guard let onPairingNeeded else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Holding USB accessory \(info.displayName, privacy: .public) for the host: there is nowhere to ask which virtual machine should take it"
                 )
                 continue
@@ -358,7 +372,7 @@ final class USBAccessoryCoordinator {
         guard outstandingPromptID == id else { return }
         outstandingPromptID = nil
         if instance == nil {
-            Self.logger.notice("A USB accessory the user was asked about stays with the host")
+            #log(Self.logger, .notice, "A USB accessory the user was asked about stays with the host")
         }
         raiseNextPrompt()
     }

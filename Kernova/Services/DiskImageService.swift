@@ -1,10 +1,10 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Creates ASIF (Apple Sparse Image Format) disk images for VM storage by
 /// decompressing pre-built templates bundled in `Resources/DiskTemplates/`.
 struct DiskImageService: Sendable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "DiskImageService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DiskImageService")
 
     /// Creates an ASIF sparse disk image at the specified URL by decompressing a bundled template.
     ///
@@ -14,7 +14,8 @@ struct DiskImageService: Sendable {
     ///     one of the sizes in ``VMGuestOS/allDiskSizes``.
     /// - Throws: A ``DiskImageError`` whose case identifies the phase that failed.
     func createDiskImage(at url: URL, sizeInGB: Int) async throws {
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Creating ASIF disk image: \(sizeInGB, privacy: .public) GB at \(url.lastPathComponent, privacy: .public)")
 
         guard
@@ -50,7 +51,7 @@ struct DiskImageService: Sendable {
             }
         }.value
 
-        Self.logger.notice("Successfully created ASIF disk image at \(url.lastPathComponent, privacy: .public)")
+        #log(Self.logger, .notice, "Successfully created ASIF disk image at \(url.lastPathComponent, privacy: .public)")
     }
 }
 

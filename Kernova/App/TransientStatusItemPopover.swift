@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The menu-bar status item's one transient-popover slot: a callout anchored to
 /// the item's button, up for a bounded stretch unless something dismisses it
@@ -12,7 +12,7 @@ import os
 /// click on the status item reaches the menu again immediately.
 @MainActor
 final class TransientStatusItemPopover: NSObject {
-    private static let logger = Logger(subsystem: "app.kernova", category: "TransientStatusItemPopover")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "TransientStatusItemPopover")
 
     private let statusItem: NSStatusItem
     /// The dropdown detached while a popover is up.
@@ -52,7 +52,8 @@ final class TransientStatusItemPopover: NSObject {
         let onScreen = statusItem.isButtonOnScreen
         let dropdownOpen = isDropdownOpen()
         guard let button = statusItem.button, visible, onScreen, !dropdownOpen else {
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "\(description, privacy: .public) skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(dropdownOpen, privacy: .public)"
             )
             return false

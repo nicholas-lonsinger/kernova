@@ -536,7 +536,8 @@ declarations the app throws and returns, rather than a mirror of them.
 
 It also vends `KernovaCLICore` — the `kernova` tool's parsing, rendering, exit-code mapping and
 socket client — and `KernovaAppRegistry`, a **static** product reading Launch Services' registry and
-waiting for it to release an app.
+waiting for it to release an app. `KernovaLogging`, also **static**, carries `KernovaLogger` and the
+`#log` macro and is linked directly by every executable target.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
 and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
@@ -639,8 +640,9 @@ context) and one release point (`VMSessionContext.tearDown`).
 | **AVFoundation** | Microphone permission status |
 | **ImageIO** | Thumbnail-only decoding for clipboard previews |
 | **CryptoKit** | SHA-256 → the synthesized main disk's stable UUID |
-| **os** | `os.Logger` |
+| **os** | `os.Logger`, reached through the `#log` macro |
 | **SwiftProtobuf** | Wire-protocol codegen and runtime; `KernovaKit` only |
+| **swift-syntax** | The `#log` macro's expansion; `KernovaLoggingMacros` only |
 | **ArgumentParser** | The `kernova` tool's command line; `KernovaCLICore` only |
 | **Security** | Reading this process's own entitlements and a socket peer's code identity |
 

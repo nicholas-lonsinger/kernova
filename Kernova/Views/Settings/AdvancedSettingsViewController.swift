@@ -1,6 +1,6 @@
 import AppKit
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The "Advanced" pane of the Settings window.
 ///
@@ -249,7 +249,8 @@ final class AdvancedSettingsViewController: NSViewController {
     /// were gathered.
     @objc private func installShellCompletions(_ sender: NSMenuItem) {
         guard let shell = sender.representedObject as? ShellCompletionInstaller.Shell else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Shell completions item '\(sender.title, privacy: .public)' names no shell")
             assertionFailure("Shell completions item \(sender.title) names no shell")
             return
@@ -321,6 +322,6 @@ final class AdvancedSettingsViewController: NSViewController {
         }
     }
 
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "AdvancedSettingsViewController")
 }

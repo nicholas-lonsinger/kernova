@@ -1,6 +1,6 @@
 import AppKit
 import KernovaAppRegistry
-import os
+import KernovaLogging
 
 // A watchdog that monitors the main Kernova process and relaunches it after
 // termination. Used when macOS TCC forces a restart while VMs are saving state,
@@ -17,7 +17,7 @@ import os
 /// value. Static methods are named through the type and capture nothing.
 @MainActor
 enum Relauncher {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RelaunchHelper")
 
     /// How long the app is given to exit, in seconds.
@@ -42,13 +42,13 @@ enum Relauncher {
 
     /// Reports how the tool is called and exits.
     nonisolated static func refuseUsage() -> Never {
-        logger.error("Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
+        #log(logger, .error, "Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
         exit(1)
     }
 
     /// Reports a bundle that is not where the caller said and exits.
     nonisolated static func refuseMissingBundle(at path: String) -> Never {
-        logger.error("App bundle not found: \(path, privacy: .private)")
+        #log(logger, .error, "App bundle not found: \(path, privacy: .private)")
         exit(1)
     }
 
@@ -56,7 +56,8 @@ enum Relauncher {
     static func watch(pid: pid_t, appURL bundleURL: URL) {
         appURL = bundleURL
         watched = pid
-        logger.notice(
+        #log(
+            logger, .notice,
             "Watching PID \(pid, privacy: .public) for exit, will relaunch \(bundleURL.path, privacy: .private)"
         )
 
@@ -68,7 +69,7 @@ enum Relauncher {
         source = watcher
         watcher.setEventHandler {
             MainActor.assumeIsolated {
-                logger.notice("PID \(pid, privacy: .public) exited, relaunching Kernova")
+                #log(logger, .notice, "PID \(pid, privacy: .public) exited, relaunching Kernova")
                 begin()
             }
         }
@@ -79,7 +80,7 @@ enum Relauncher {
 
         // NOW check if the PID exited before the watcher was attached.
         if !processIsRunning(pid) {
-            logger.notice("PID \(pid, privacy: .public) already exited, relaunching immediately")
+            #log(logger, .notice, "PID \(pid, privacy: .public) already exited, relaunching immediately")
             begin()
             return
         }
@@ -99,7 +100,8 @@ enum Relauncher {
     /// Gives up on an open that never called back, leaving whatever it started
     /// to carry on without a watchdog.
     private static func giveUpOnOpen() {
-        logger.error(
+        #log(
+            logger, .error,
             "Launch Services did not answer the open of Kernova within \(Int(openWatchSeconds), privacy: .public) s; giving up"
         )
         exit(1)
@@ -107,7 +109,8 @@ enum Relauncher {
 
     /// Gives up on an app that never exited, leaving it running.
     private static func giveUpOnExit() {
-        logger.warning(
+        #log(
+            logger, .warning,
             "PID \(watched, privacy: .public) had not exited after \(Int(exitWatchSeconds), privacy: .public) s; not relaunching"
         )
         source?.cancel()
@@ -122,7 +125,8 @@ enum Relauncher {
     private static func relaunch() {
         let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
         if !AppRegistryWait.awaitDeregistration(ofBundleAt: appURL, scope: .all, by: deadline) {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Launch Services still had Kernova registered after \(Int(AppRegistryWait.defaultDeadline), privacy: .public) s; opening anyway"
             )
         }
@@ -148,7 +152,7 @@ enum Relauncher {
         openWatchTimeout?.cancel()
         openWatchTimeout = nil
         guard let failure else {
-            logger.notice("Relaunched Kernova successfully")
+            #log(logger, .notice, "Relaunched Kernova successfully")
             exit(0)
         }
         // RATIONALE: the helper is app-sandbox + inherit
@@ -156,7 +160,7 @@ enum Relauncher {
         // inherits that sandbox and reaches LaunchServices through the same
         // mediated path `NSWorkspace` already took — it adds no capability this
         // open lacks.
-        logger.error("Failed to relaunch Kernova: \(failure, privacy: .public)")
+        #log(logger, .error, "Failed to relaunch Kernova: \(failure, privacy: .public)")
         exit(1)
     }
 }

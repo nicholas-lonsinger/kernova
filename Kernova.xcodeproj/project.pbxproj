@@ -20,6 +20,8 @@
 		A2000012 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000013 /* KernovaAppRegistry */; };
 		A2000014 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000015 /* KernovaLogging */; };
 		A2000016 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000017 /* KernovaLogging */; };
+		A2000018 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000019 /* KernovaLogging */; };
+		A200001A /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A200001B /* KernovaLogging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -182,6 +184,7 @@
 			files = (
 				A2000001 /* KernovaKit in Frameworks */,
 				A2000012 /* KernovaAppRegistry in Frameworks */,
+				A2000018 /* KernovaLogging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -198,6 +201,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000010 /* KernovaAppRegistry in Frameworks */,
+				A200001A /* KernovaLogging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -311,6 +315,7 @@
 			packageProductDependencies = (
 				A2000002 /* KernovaKit */,
 				A2000013 /* KernovaAppRegistry */,
+				A2000019 /* KernovaLogging */,
 			);
 			productName = Kernova;
 			productReference = A1000004 /* Kernova.app */;
@@ -357,6 +362,7 @@
 			name = KernovaRelaunchHelper;
 			packageProductDependencies = (
 				A2000011 /* KernovaAppRegistry */,
+				A200001B /* KernovaLogging */,
 			);
 			productName = KernovaRelaunchHelper;
 			productReference = A1000100 /* KernovaRelaunchHelper */;
@@ -874,6 +880,14 @@
 			productName = KernovaLogging;
 		};
 		A2000017 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
+		};
+		A2000019 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
+		};
+		A200001B /* KernovaLogging */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaLogging;
 		};

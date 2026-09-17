@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// The "Reminders" pane of the Settings window.
 ///
@@ -23,7 +23,7 @@ import os
 /// popover or VM Settings — while this pane is visible.
 @MainActor
 final class RemindersSettingsViewController: NSViewController, SettingsPaneScrollCueing {
-    private static let logger = Logger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
 
     /// Height at which the pane stops growing and starts scrolling — keeps a
     /// long VM list from making the Settings window unreasonably tall.
@@ -362,7 +362,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     @objc private func vmReminderToggled(_ sender: NSSwitch) {
         guard let instance = vmSwitches.first(where: { $0.control === sender })?.instance else {
-            Self.logger.fault("Toggled VM reminder switch not found in the rebuilt set")
+            #log(Self.logger, .fault, "Toggled VM reminder switch not found in the rebuilt set")
             assertionFailure("Toggled VM reminder switch not found in the rebuilt set")
             return
         }
@@ -370,7 +370,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     }
 
     @objc private func resetAllReminders() {
-        Self.logger.notice("User reset all host reminders")
+        #log(Self.logger, .notice, "User reset all host reminders")
         preferences.resetHostReminders()
         viewModel.resetAllAgentInstallNudges()
         refreshSwitches()

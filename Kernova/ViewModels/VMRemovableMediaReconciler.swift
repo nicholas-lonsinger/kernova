@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Drives a running VM's XHCI removable-media list to whatever its
 /// configuration asks for, coalescing rapid edits into one pass per instance
@@ -9,7 +9,7 @@ import os
 /// the persistence funnel stays ``VMLibrary``'s alone.
 @MainActor
 final class VMRemovableMediaReconciler {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMRemovableMediaReconciler")
 
     private let lifecycle: VMLifecycleCoordinator
@@ -64,7 +64,8 @@ final class VMRemovableMediaReconciler {
         guard VMConfiguration.removableMediaChanged(old: old, new: new),
             instance.liveSessionID != nil, instance.attachableSessionID == nil
         else { return false }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Refusing removable-media edit for '\(instance.name, privacy: .public)': session is live but not attachable in \(instance.status.rawValue, privacy: .public)"
         )
         return true
@@ -124,7 +125,8 @@ final class VMRemovableMediaReconciler {
         while let pending = pendingRemovableMediaTarget[id] {
             pendingRemovableMediaTarget.removeValue(forKey: id)
             guard let sessionID = instance.attachableSessionID, pending.sessionID == sessionID else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Dropping queued removable-media target for '\(instance.name, privacy: .public)': session \(pending.sessionID, privacy: .public) is no longer live"
                 )
                 continue
@@ -210,19 +212,22 @@ final class VMRemovableMediaReconciler {
             do {
                 try await lifecycle.detachRemovableMedia(device, from: instance, for: sessionID)
             } catch RemovableMediaDeviceError.noVirtualMachine {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
                 )
                 return
             } catch RemovableMediaDeviceError.deviceNotFound {
                 // The coordinator's `forgetAttachedMedia` is skipped when the
                 // framework call throws, so clear stale tracking explicitly here.
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
                 instance.forgetAttachedMedia(deviceID: device.id, for: sessionID)
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
@@ -247,16 +252,19 @@ final class VMRemovableMediaReconciler {
                 if let scope {
                     instance.retainMediaScope(scope, deviceID: item.id, for: sessionID)
                 }
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
                 )
             } catch RemovableMediaDeviceError.noVirtualMachine {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' torn down during media attach; abandoning reconcile"
                 )
                 return
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
@@ -276,7 +284,8 @@ final class VMRemovableMediaReconciler {
         error: any Error
     ) {
         guard instance.liveSessionID == sessionID else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Dropping removable-media reconcile failure for '\(instance.name, privacy: .public)': session \(sessionID, privacy: .public) is no longer live"
             )
             return
@@ -300,7 +309,8 @@ final class VMRemovableMediaReconciler {
         guard newConfig != instance.configuration else { return }
         instance.configuration = newConfig
         onSaveConfiguration?(instance)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Rolled removable media config for '\(instance.name, privacy: .public)' back to live state after reconcile error"
         )
     }

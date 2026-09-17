@@ -1,6 +1,6 @@
 import Foundation
+import KernovaLogging
 import Virtualization
-import os
 
 /// The account a macOS guest is asked to create on its first boot after
 /// restore, minus the password.
@@ -104,7 +104,7 @@ struct GatheredAccountFields: OptionSet, Sendable {
 /// it, whether a boot can deliver it, what Virtualization makes of a given
 /// account, and the start options that carry it.
 enum MacOSGuestProvisioning {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "MacOSGuestProvisioning")
 
     /// The guest release that runs Virtualization's provisioning protocol.
@@ -171,7 +171,8 @@ enum MacOSGuestProvisioning {
             // refusal shown to the user deliberately leaves out, and the only
             // record of why a guest came up unprovisioned.
             let nsError = error as NSError
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Starting without the guest account '\(provisioning.username, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
             )
             return nil
@@ -180,7 +181,8 @@ enum MacOSGuestProvisioning {
         // in, so it is the irreversible step `.notice` exists for — and the
         // only positive evidence that an account was ever handed over, when a
         // guest turns out not to have one.
-        logger.notice(
+        #log(
+            logger, .notice,
             "Starting with the guest account '\(provisioning.username, privacy: .public)'")
         return options
     }

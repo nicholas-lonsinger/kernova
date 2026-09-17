@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// A catalog entry's ISO filename glob, compiled for matching the filenames a
 /// checksum manifest lists.
@@ -10,7 +10,7 @@ import os
 /// `ubuntu-24.04.4-live-server-arm64+largemem.iso` cannot match a pattern
 /// ending `-live-server-arm64.iso`.
 struct ISOFilenameGlob: Sendable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ISOFilenameGlob")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ISOFilenameGlob")
 
     private let regex: NSRegularExpression
 
@@ -27,7 +27,8 @@ struct ISOFilenameGlob: Sendable {
         do {
             regex = try NSRegularExpression(pattern: "\\A\(translated)\\z")
         } catch {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "ISO pattern '\(pattern, privacy: .public)' did not translate to a regex")
             assertionFailure("ISO pattern did not translate to a regex: \(pattern)")
             return nil

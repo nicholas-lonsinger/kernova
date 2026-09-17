@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// The copy one guest-setup flow gives ``GuestSetupProgressViewController``.
 ///
@@ -7,7 +7,7 @@ import os
 /// stays fixed for the whole run, plus the per-step wording the state has no
 /// business carrying.
 struct GuestSetupDescriptor: Sendable, Equatable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "GuestSetupDescriptor")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "GuestSetupDescriptor")
 
     /// The image above the title, which is a template symbol for some flows and
     /// an AppKit system image for others.
@@ -29,7 +29,8 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     /// The copy for `step`.
     func copy(for step: SetupStepID) -> StepCopy {
         guard let copy = stepCopy[step] else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "No setup copy for step '\(step.rawValue, privacy: .public)' under '\(self.title, privacy: .public)'"
             )
             assertionFailure("No setup copy for step '\(step.rawValue)' under '\(title)'")
