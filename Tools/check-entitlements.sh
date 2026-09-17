@@ -13,6 +13,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 full="Kernova/Resources/Kernova.entitlements"
 dev="Kernova/Resources/Kernova.Development.entitlements"
 
@@ -56,6 +60,6 @@ if ! diff_out=$(diff <(keys "$full" | grep -Fxv -f <(restricted_lines)) <(keys "
 fi
 
 if [ "$status" -eq 0 ]; then
-    echo "  ✓ entitlements: variant key parity"
+    pass "entitlements: variant key parity"
 fi
 exit "$status"

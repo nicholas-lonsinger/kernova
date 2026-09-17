@@ -13,6 +13,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 base="Config/Base.xcconfig"
 manifest="KernovaKit/Package.swift"
 agent_xcconfigs=(
@@ -60,6 +64,6 @@ for f in "${agent_xcconfigs[@]}"; do
 done
 
 if [ "$status" -eq 0 ]; then
-    echo "  ✓ deployment floor: agent xcconfigs and KernovaKit manifest agree ($xcconfig_floor)"
+    pass "deployment floor: agent xcconfigs and KernovaKit manifest agree ($xcconfig_floor)"
 fi
 exit "$status"
