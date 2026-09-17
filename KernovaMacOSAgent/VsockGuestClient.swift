@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import Darwin
-import os
 
 /// Outcome of a `VsockSocketProvider` failure: `.transient` retries the
 /// connect loop, `.permanent` halts it for good.
@@ -193,9 +192,6 @@ private let blockingConnectGate = BlockingConnectGate()
 ///
 /// What to do once connected is the `serve` closure passed to `start(serve:)`;
 /// when it returns, the client sleeps for `retryInterval` and reconnects.
-/// Lifecycle logging uses raw `os.Logger`, never `KernovaLogger` — the agent
-/// wires that sink through this very transport, so a write failure would
-/// schedule another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
     private enum LoopOutcome: Equatable {
         case retry
@@ -203,7 +199,7 @@ final class VsockGuestClient: @unchecked Sendable {
         case terminate
     }
 
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "VsockGuestClient")
 
     /// Ceiling on how long a `recv`/`send` on a connected channel may block.

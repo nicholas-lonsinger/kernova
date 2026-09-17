@@ -4,10 +4,60 @@ import Darwin
 import KernovaKit
 import KernovaTestSupport
 
+// Substrings identifying the drain worker's own records; production owns the
+// wording, these pick the line out of a ring or a recorder.
+private let bufferFullMarker = "Log forward buffer full"
+private let sendFailedMarker = "Log channel send failed"
+private let droppedCountMarker = "buffered log record(s) while the host channel was behind"
+
+/// Captures `VsockHostConnection`'s own log records for the length of one test,
+/// and optionally feeds them back through `forwardLog` the way
+/// `AgentAppDelegate` wires the real sink.
+///
+/// `KernovaLogger.forwardingSink` is process-wide, so the sink is narrowed to
+/// the one category under test and the suite runs `.serialized`. `changed`
+/// fires after each record has been forwarded, which is the drain worker's only
+/// signal — it reports its outcome by logging and nothing else.
+private final class AgentLogSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    let changed = AsyncGate()
+
+    private let forwardTarget: VsockHostConnection?
+
+    init(forwardingTo conn: VsockHostConnection? = nil) {
+        self.forwardTarget = conn
+    }
+
+    var messages: [String] { lock.withLock { recorded } }
+
+    func count(matching marker: String) -> Int {
+        messages.filter { $0.contains(marker) }.count
+    }
+
+    func install() {
+        KernovaLogger.forwardingSink = { [self] level, subsystem, category, message in
+            guard category == "VsockHostConnection" else { return }
+            lock.withLock { recorded.append(message) }
+            forwardTarget?.forwardLog(
+                level: level, subsystem: subsystem, category: category, message: message)
+            changed.notify()
+        }
+    }
+
+    func uninstall() {
+        KernovaLogger.forwardingSink = nil
+    }
+}
+
 /// Tests that seed the ring directly call `bufferFrameUnlessDisabled` on a
 /// fresh connection, whose policy is `.undecided` — the state that buffers, so
 /// they run through the in-lock policy re-check on its appending branch.
-@Suite("VsockHostConnection log buffer", .admissionGated)
+///
+/// Serialized because `KernovaLogger.forwardingSink` is process-wide: a second
+/// `VsockHostConnection` running concurrently would emit into whichever ring
+/// the installed sink points at.
+@Suite("VsockHostConnection log buffer", .serialized, .admissionGated)
 struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
 
@@ -21,6 +71,73 @@ struct VsockHostConnectionTests {
                 guard case .logRecord(let record) = frame.payload else { return nil }
                 return record.message
             }
+        }
+    }
+
+    // MARK: - Dialled-connection fixture
+
+    /// A connection whose client dials socketpairs the test owns the far ends
+    /// of, one per connect attempt.
+    private struct DialledConnection {
+        let conn: VsockHostConnection
+        let client: VsockGuestClient
+        /// Host ends, in attempt order — raw, so a test can starve one by never
+        /// reading it or wrap it in a `VsockChannel` to receive.
+        let hostFds: [Int32]
+        /// Connect attempts the client has made.
+        let dialled: AtomicInt
+    }
+
+    /// Builds a connection dialling `attempts` socketpairs.
+    ///
+    /// The retry interval is far past `testWaitBackstop`, so a second connect
+    /// can only land inside a test because a policy update woke the loop.
+    /// `socketBufferBytes` shrinks both ends' buffers, which is what lets a
+    /// handful of frames fill the socket and park the drain worker in
+    /// `write(2)`.
+    private func makeDialledConnection(
+        label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil
+    ) throws -> DialledConnection {
+        var pairs: [(agent: Int32, host: Int32)] = []
+        for _ in 0..<attempts {
+            let (agentFd, hostFd) = try makeRawSocketPair()
+            if var size = socketBufferBytes {
+                let optionSize = socklen_t(MemoryLayout<Int32>.size)
+                setsockopt(agentFd, SOL_SOCKET, SO_SNDBUF, &size, optionSize)
+                setsockopt(hostFd, SOL_SOCKET, SO_RCVBUF, &size, optionSize)
+            }
+            pairs.append((agent: agentFd, host: hostFd))
+        }
+        let agentFds = pairs.map(\.agent)
+
+        let dialled = AtomicInt()
+        let client = VsockGuestClient(
+            port: KernovaVsockPort.log,
+            label: label,
+            clock: MonotonicEngineClock(),
+            retryInterval: 600
+        ) { _, _ in
+            let n = dialled.increment()
+            guard n <= agentFds.count else { return .failure(.transient("test: no fd for attempt \(n)")) }
+            return .success(agentFds[n - 1])
+        }
+        return DialledConnection(
+            conn: VsockHostConnection(client: client), client: client,
+            hostFds: pairs.map(\.host), dialled: dialled)
+    }
+
+    /// Reads one byte off a host end nothing else reads: it returns as soon as
+    /// the agent writes, proving the connect landed and the worker is in the
+    /// socket rather than in `forwardLog`.
+    ///
+    /// The socket's own receive timeout is the backstop, so a channel that
+    /// never comes up fails the read instead of hanging the case.
+    private func firstByteWritten(to fd: Int32) async -> Int {
+        var timeout = timeval(tv_sec: Int(testWaitBackstop), tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        return await offCooperativePool {
+            var byte: UInt8 = 0
+            return read(fd, &byte, 1)
         }
     }
 
@@ -79,202 +196,204 @@ struct VsockHostConnectionTests {
         #expect(pendingLogCount(conn) == cap)
     }
 
-    // MARK: - flushPendingLogs: healthy channel
+    // MARK: - Drain: healthy channel
 
-    @Test("flushPendingLogs drains all frames in order on a healthy channel")
-    func flushDrainsInOrderOnHealthyChannel() async throws {
-        let conn = VsockHostConnection()
-        let frameCount = 10
-
-        for i in 0..<frameCount {
-            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "flush\(i)"))
-        }
-
-        let (sender, receiver) = try makeStartedChannelPair()
-        defer { sender.close(); receiver.close() }
-
-        conn.flushPendingLogs(on: sender)
-
-        var received: [Frame] = []
-        for _ in 0..<frameCount {
-            received.append(try await nextFrame(from: receiver))
-        }
-
-        #expect(pendingLogCount(conn) == 0)
-        let messages = received.compactMap { frame -> String? in
-            guard case .logRecord(let record) = frame.payload else { return nil }
-            return record.message
-        }
-        #expect(messages == (0..<frameCount).map { "flush\($0)" })
-    }
-
-    @Test("flushPendingLogs leaves buffer empty after full drain")
-    func flushLeavesBufferEmptyAfterFullDrain() async throws {
-        let conn = VsockHostConnection()
-
-        for i in 0..<5 {
-            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "m\(i)"))
-        }
-
-        let (sender, receiver) = try makeStartedChannelPair()
-        defer { sender.close(); receiver.close() }
-
-        conn.flushPendingLogs(on: sender)
-        for _ in 0..<5 { _ = try await nextFrame(from: receiver) }
-        #expect(pendingLogCount(conn) == 0)
-    }
-
-    // MARK: - flushPendingLogs: partial failure re-enqueue (Critical #1)
-
-    /// Verifies the interesting bug-prone path: some frames are successfully
-    /// sent, then send fails mid-flush.
-    ///
-    /// The unflushed remainder must be re-enqueued in order at the front of the buffer.
-    ///
-    /// Technique: set a tiny SO_SNDBUF on the sender fd so the kernel buffer
-    /// fills after a few frames, causing the N-th write to fail. Then close
-    /// the receiver to ensure subsequent writes return EPIPE. The test verifies
-    /// that at least one frame is re-enqueued and all re-enqueued frames appear
-    /// in their original order.
-    @Test("flushPendingLogs re-enqueues unflushed remainder after partial send failure")
-    func flushReenqueuesOnPartialSendFailure() throws {
-        let conn = VsockHostConnection()
-        let frameCount = 20
-
-        // Named frames r00..r19 (zero-padded for sortable string comparison).
-        for i in 0..<frameCount {
-            let name = String(format: "r%02d", i)
-            conn.bufferFrameUnlessDisabled(makeLogFrame(message: name + String(repeating: "x", count: 4096)))
-        }
-
-        let (senderFd, receiverFd) = try makeRawSocketPair()
-
-        // SO_NOSIGPIPE so writing to a peer-closed socket surfaces as an
-        // error rather than killing the test process with SIGPIPE.
-        var noSigpipe: Int32 = 1
-        _ = setsockopt(senderFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
-
-        // Constrain the send buffer to ~8 KB so the kernel queue fills quickly.
-        var sndbuf: Int32 = 8192
-        setsockopt(senderFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, socklen_t(MemoryLayout<Int32>.size))
-
-        // Close the receiver — subsequent writes on the sender return EPIPE.
-        Darwin.close(receiverFd)
-
-        let sender = VsockChannel(fileDescriptor: senderFd)
-        sender.start()
-        defer { sender.close() }
-
-        conn.flushPendingLogs(on: sender)
-
-        let remaining = pendingMessages(conn)
-        // At least one frame must be re-enqueued.
-        #expect(!remaining.isEmpty, "Expected some frames to be re-enqueued after partial failure")
-        // Re-enqueued frames must appear in their original relative order (zero-padded prefixes sort correctly).
-        let prefixes = remaining.map { String($0.prefix(3)) }  // "r00" .. "r19"
-        let isSorted = zip(prefixes, prefixes.dropFirst()).allSatisfy { $0 < $1 }
-        #expect(isSorted, "Re-enqueued frames are out of order: \(prefixes)")
-    }
-
-    // MARK: - Re-enqueue respects cap (Critical #3)
-
-    /// Verifies that re-enqueued frames plus new arrivals respect the cap
-    /// AND that the specific surviving/evicted frames are correct.
-    @Test("re-enqueued frames plus new arrivals respect cap and evict oldest correctly")
-    func reenqueueRespectsBufferCap() throws {
-        let conn = VsockHostConnection()
-        let cap = VsockHostConnection.logBufferLimit  // 256
-        let postCount = 10
-
-        // Preload exactly cap frames: pre0 .. pre255
-        for i in 0..<cap {
-            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "pre\(i)"))
-        }
-
-        // Close both ends before flush so every send throws .closed —
-        // all 256 frames re-enqueue at the front of the buffer.
-        let (sender, receiver) = try makeStartedChannelPair()
-        sender.close()
-        receiver.close()
-        conn.flushPendingLogs(on: sender)
-
-        // Now push 10 more frames: post0 .. post9
-        // The cap enforcer must drop the 10 oldest (pre0..pre9).
-        for i in 0..<postCount {
-            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "post\(i)"))
-        }
-
-        let messages = pendingMessages(conn)
-        #expect(messages.count == cap)
-        // Oldest 10 (pre0..pre9) must have been evicted
-        #expect(messages.first == "pre\(postCount)")
-        // Last frame is the most-recently enqueued post frame
-        #expect(messages.last == "post\(postCount - 1)")
-        // All pre* frames precede all post* frames in chronological order
-        let preBoundary = messages.firstIndex(where: { $0.hasPrefix("post") }) ?? cap
-        let allPreBeforePost = messages[0..<preBoundary].allSatisfy { $0.hasPrefix("pre") }
-        #expect(allPreBeforePost)
-    }
-
-    // MARK: - forwardLog live-channel paths (Important #17)
-
-    @Test("forwardLog returns true and does not buffer when live channel send succeeds")
-    func forwardLogLiveChannelSendSucceeds() async throws {
-        let conn = VsockHostConnection()
-        conn.start()
+    @Test("Records forwarded on a live channel reach the host in order")
+    func liveChannelDeliversInOrder() async throws {
+        let dialled = try makeDialledConnection(label: "log-in-order-test")
+        let conn = dialled.conn
         defer { conn.stop() }
+        let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
+        host.start()
+        defer { host.close() }
 
-        let (sender, receiver) = try makeStartedChannelPair()
-        defer { receiver.close() }
-
-        // Manually wire a live channel by flushing zero frames — the channel
-        // is now live from the send path's perspective. We drive forwardLog
-        // directly by setting the client's live channel via a round-trip test:
-        // since internal access to the client isn't available, we verify the
-        // observable side-effects (buffer count and return value) using a
-        // helper that pre-populates the buffer and checks post-flush state.
-        //
-        // The simplest direct test: after a successful flush, buffer is empty;
-        // a subsequent forwardLog that succeeds on the live channel returns true
-        // and leaves buffer empty. Drive this by flushing onto a working channel.
-        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "pre"))
-        conn.flushPendingLogs(on: sender)
-        _ = try await nextFrame(from: receiver)
-        #expect(pendingLogCount(conn) == 0)
-
-        // Now call flushPendingLogs with an empty buffer — verifies no crash.
-        conn.flushPendingLogs(on: sender)
-        #expect(pendingLogCount(conn) == 0)
-        sender.close()
-    }
-
-    @Test("forwardLog buffers frame when live channel send throws")
-    func forwardLogLiveChannelSendFails() throws {
-        let conn = VsockHostConnection()
-
-        // Put one frame in buffer, then flush onto a dead channel.
-        // The send fails and the frame is re-enqueued.
-        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "initial"))
-
-        let (sender, receiver) = try makeStartedChannelPair()
-        sender.close()
-        receiver.close()
-
-        conn.flushPendingLogs(on: sender)
-
-        // The frame was not consumed; it's back in the buffer.
-        #expect(pendingLogCount(conn) == 1)
-        #expect(pendingMessages(conn) == ["initial"])
-    }
-
-    @Test("forwardLog buffers frame when no live channel is present")
-    func forwardLogNoChannelBuffers() {
-        let conn = VsockHostConnection()
+        conn.start()
         conn.setEnabled(true)
 
-        let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "x")
-        #expect(result == false)
-        #expect(pendingLogCount(conn) == 1)
+        let frameCount = 10
+        for i in 0..<frameCount {
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "drain\(i)")
+        }
+
+        var received: [String] = []
+        for _ in 0..<frameCount { received.append(try await message(from: host)) }
+
+        #expect(received == (0..<frameCount).map { "drain\($0)" })
+        // The worker takes each frame out of the ring before sending it, so the
+        // last arrival means the ring is already empty.
+        #expect(pendingLogCount(conn) == 0)
+    }
+
+    // MARK: - Drain: a stalled host never reaches the caller
+
+    @Test("forwardLog returns while the host has stopped reading the log channel")
+    func forwardLogReturnsWhileHostStalls() async throws {
+        let dialled = try makeDialledConnection(label: "log-stalled-host-test", socketBufferBytes: 8192)
+        let conn = dialled.conn
+        defer { conn.stop() }
+        // The host end is never wrapped in a channel and never read, so the
+        // socket fills and the worker parks in `write(2)` for good.
+        let hostFd = dialled.hostFds[0]
+
+        let sink = AgentLogSink()
+        sink.install()
+        defer { sink.uninstall() }
+
+        conn.start()
+        conn.setEnabled(true)
+
+        let cap = VsockHostConnection.logBufferLimit
+        let payload = String(repeating: "x", count: 4096)
+        for i in 0..<(cap + 50) {
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "stall\(i)-\(payload)")
+        }
+        #expect(await firstByteWritten(to: hostFd) == 1)
+        #expect(pendingLogCount(conn) == cap)
+
+        // The call under test: with the worker parked in the socket, forwarding
+        // is still nothing but an append.
+        let returned = AtomicInt()
+        Task {
+            await offCooperativePool {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "unblocked")
+            }
+            returned.increment()
+        }
+        try await returned.changed.wait { returned.value == 1 }
+
+        // Closing the host end wakes the parked write with EPIPE, putting the
+        // frame it was carrying back into a ring already at the cap.
+        Darwin.close(hostFd)
+        try await sink.changed.wait { sink.count(matching: sendFailedMarker) == 1 }
+        #expect(pendingLogCount(conn) == cap)
+    }
+
+    // MARK: - Overflow accounting
+
+    @Test("A full buffer announces dropping once, and reports the count once it drains")
+    func overflowAnnouncesOnceAndReportsCount() async throws {
+        let dialled = try makeDialledConnection(label: "log-overflow-test")
+        let conn = dialled.conn
+        defer { conn.stop() }
+        let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
+        host.start()
+        defer { host.close() }
+
+        // Enabled before the sink is installed, so its policy notice is not one
+        // of the records under count.
+        conn.setEnabled(true)
+        let sink = AgentLogSink(forwardingTo: conn)
+        sink.install()
+        defer { sink.uninstall() }
+
+        let cap = VsockHostConnection.logBufferLimit
+        let extra = 10
+        for i in 0..<(cap + extra) {
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "f\(i)")
+        }
+
+        // The announcement is itself a forwarded record, so it takes a slot of
+        // its own and one more frame is evicted to make room for it.
+        let evicted = extra + 1
+        let buffered = pendingMessages(conn)
+        #expect(buffered.count == cap)
+        #expect(buffered.first == "f\(evicted)")
+        #expect(buffered.last == "f\(cap + extra - 1)")
+        #expect(buffered.filter { $0.contains(bufferFullMarker) }.count == 1)
+
+        // Connecting drains the ring, and the count lands behind everything
+        // that survived.
+        conn.start()
+        var received: [String] = []
+        for _ in 0..<(cap + 1) { received.append(try await message(from: host)) }
+
+        #expect(received.first == "f\(evicted)")
+        #expect(received.filter { $0.contains(bufferFullMarker) }.count == 1)
+        #expect(received.last?.contains("\(evicted) \(droppedCountMarker)") == true)
+        #expect(pendingLogCount(conn) == 0)
+    }
+
+    // MARK: - Re-entrancy through the process-wide sink
+
+    /// The conversion of this class to `KernovaLogger` turns its own warnings
+    /// into `forwardLog` calls that re-enter it, so the drain has to log with
+    /// its lock released and without scheduling itself again.
+    @Test("A drain's send-failure warning re-enters forwardLog exactly once")
+    func sendFailureWarningReentersForwardLogOnce() async throws {
+        let dialled = try makeDialledConnection(label: "log-reentrancy-test", socketBufferBytes: 8192)
+        let conn = dialled.conn
+        defer { conn.stop() }
+        let hostFd = dialled.hostFds[0]
+
+        conn.start()
+        conn.setEnabled(true)
+
+        // Mirrors `AgentAppDelegate`: every record this class emits is forwarded
+        // straight back into the connection emitting it.
+        let sink = AgentLogSink(forwardingTo: conn)
+        sink.install()
+        defer { sink.uninstall() }
+
+        let payload = String(repeating: "x", count: 4096)
+        for i in 0..<40 {
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "re\(i)-\(payload)")
+        }
+        #expect(await firstByteWritten(to: hostFd) == 1)
+
+        Darwin.close(hostFd)
+
+        try await sink.changed.wait { sink.count(matching: sendFailedMarker) >= 1 }
+        // One warning for the outage, whatever else the agent logs into the
+        // broken channel afterwards — and it reached the ring, so the forward
+        // ran to completion rather than deadlocking on the drain's own lock.
+        #expect(sink.count(matching: sendFailedMarker) == 1)
+        #expect(pendingMessages(conn).filter { $0.contains(sendFailedMarker) }.count == 1)
+        #expect(pendingLogCount(conn) <= VsockHostConnection.logBufferLimit)
+    }
+
+    // MARK: - Chronological order across a failed send
+
+    @Test("Chronological order survives a mid-drain send failure and the next connection")
+    func orderSurvivesSendFailureAndReconnect() async throws {
+        let dialled = try makeDialledConnection(
+            label: "log-order-across-reconnect-test", attempts: 2, socketBufferBytes: 8192)
+        let conn = dialled.conn
+        defer { conn.stop() }
+
+        conn.start()
+        conn.setEnabled(true)
+
+        let total = 40
+        let payload = String(repeating: "x", count: 4096)
+        for i in 0..<total {
+            conn.forwardLog(
+                level: .info, subsystem: "t", category: "t",
+                message: String(format: "o%02d-", i) + payload)
+        }
+        #expect(await firstByteWritten(to: dialled.hostFds[0]) == 1)
+
+        // Fails the in-flight send: the frame it was carrying goes back to the
+        // head of the ring, ahead of everything still queued behind it.
+        Darwin.close(dialled.hostFds[0])
+
+        let host = VsockChannel(fileDescriptor: dialled.hostFds[1])
+        host.start()
+        defer { host.close() }
+        // The restated enable is the only wake the parked loop gets.
+        conn.setEnabled(true)
+
+        var received: [String] = []
+        while received.last != String(format: "o%02d", total - 1) {
+            received.append(String(try await message(from: host).prefix(3)))
+        }
+
+        #expect(dialled.dialled.value == 2)
+        // Only what the stalled socket had already swallowed is missing: what
+        // arrives is the unbroken tail of the sequence, in order.
+        let indices = received.compactMap { Int($0.dropFirst()) }
+        #expect(indices.count == received.count)
+        #expect(indices == Array(indices[0]..<total))
+        #expect(indices.count >= 10)
     }
 
     // MARK: - Policy enforcement
@@ -284,8 +403,7 @@ struct VsockHostConnectionTests {
         let conn = VsockHostConnection()
         conn.setEnabled(false)  // explicit host "off" — drop, don't buffer
 
-        let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
-        #expect(result == false)
+        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
         #expect(pendingLogCount(conn) == 0)
         #expect(conn.isLogForwardingEnabled == false)
     }
@@ -308,36 +426,31 @@ struct VsockHostConnectionTests {
         // No setEnabled — policy is undecided until the host's first PolicyUpdate.
         #expect(conn.isLogForwardingEnabled == false)
 
-        let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot")
-        #expect(result == false)  // buffered, not live-sent
+        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot")
         #expect(pendingLogCount(conn) == 1)
     }
 
     @Test("Undecided-era frames are delivered once forwarding is enabled and the channel connects")
     func undecidedFramesFlushedOnEnableAndConnect() async throws {
-        let conn = VsockHostConnection()
+        let dialled = try makeDialledConnection(label: "log-undecided-test")
+        let conn = dialled.conn
+        defer { conn.stop() }
+        let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
+        host.start()
+        defer { host.close() }
 
         for i in 0..<3 {
-            let result = conn.forwardLog(
-                level: .info, subsystem: "t", category: "t", message: "boot\(i)")
-            #expect(result == false)
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot\(i)")
         }
         #expect(pendingMessages(conn) == ["boot0", "boot1", "boot2"])
 
-        // The host's first PolicyUpdate enables forwarding; a connect then flushes
-        // the records buffered during the undecided window (enabling doesn't clear
-        // the buffer).
+        // The host's first PolicyUpdate enables forwarding; the connect that
+        // follows delivers what the undecided window buffered.
+        conn.start()
         conn.setEnabled(true)
-        let (sender, receiver) = try makeStartedChannelPair()
-        defer { sender.close(); receiver.close() }
-        conn.flushPendingLogs(on: sender)
 
         var received: [String] = []
-        for _ in 0..<3 {
-            let frame = try await nextFrame(from: receiver)
-            guard case .logRecord(let record) = frame.payload else { continue }
-            received.append(record.message)
-        }
+        for _ in 0..<3 { received.append(try await message(from: host)) }
         #expect(received == ["boot0", "boot1", "boot2"])
         #expect(pendingLogCount(conn) == 0)
     }
@@ -414,30 +527,14 @@ struct VsockHostConnectionTests {
     /// already applied.
     @Test("A policy update restating 'enabled' reconnects and flushes what was buffered")
     func restatedEnablePolicyReconnects() async throws {
-        let (agentFd0, remoteFd0) = try makeRawSocketPair()
-        let (agentFd1, remoteFd1) = try makeRawSocketPair()
-        let host0 = VsockChannel(fileDescriptor: remoteFd0)
-        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        let dialled = try makeDialledConnection(label: "log-restated-policy-test", attempts: 2)
+        let conn = dialled.conn
+        defer { conn.stop() }
+        let host0 = VsockChannel(fileDescriptor: dialled.hostFds[0])
+        let host1 = VsockChannel(fileDescriptor: dialled.hostFds[1])
         host0.start()
         host1.start()
         defer { host0.close(); host1.close() }
-
-        let fds = [agentFd0, agentFd1]
-        let provideCount = AtomicInt()
-        // A retry interval far past `testWaitBackstop`, so the second connect can
-        // only land inside the test because the policy update woke the loop.
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.log,
-            label: "log-restated-policy-test",
-            clock: MonotonicEngineClock(),
-            retryInterval: 600
-        ) { _, _ in
-            let n = provideCount.increment()
-            guard n <= fds.count else { return .failure(.transient("test: no fd for attempt \(n)")) }
-            return .success(fds[n - 1])
-        }
-        let conn = VsockHostConnection(client: client)
-        defer { conn.stop() }
 
         conn.start()
         conn.setEnabled(true)
@@ -451,13 +548,13 @@ struct VsockHostConnectionTests {
         // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
         // tests") — `liveChannel` is lock-protected client state with no signal
         // to await.
-        try await waitUntil { client.liveChannel == nil }
+        try await waitUntil { dialled.client.liveChannel == nil }
         conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "buffered")
 
         // Same policy, second delivery — the enable the agent already applied.
         conn.setEnabled(true)
         #expect(try await message(from: host1) == "buffered")
-        #expect(provideCount.value == 2)
+        #expect(dialled.dialled.value == 2)
     }
 
     /// The message of the next `LogRecord` frame on `channel`.
