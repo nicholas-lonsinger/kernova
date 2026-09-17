@@ -7,7 +7,7 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Making structural changes — the authoritative component map, data flow, and design decisions, plus the helper targets and dependencies |
 | [DESIGN.md](DESIGN.md) | Writing UI or making product decisions — design philosophy and GUI guidelines (layout, typography, spacing, colors, controls); the general engineering/product principles are in AGENTS.md |
 | [CLIPBOARD.md](CLIPBOARD.md) | Touching host↔guest copy/paste — the clipboard subsystem's principles and trade-off rules; authoritative for any clipboard work |
-| [NETWORKING.md](NETWORKING.md) | Picking up a networking issue, or changing how a guest attaches to or is reached from a network — exposure, forwarding, naming, IP-display, and disclosure principles; authoritative for networking work |
+| [NETWORKING.md](NETWORKING.md) | Changing how a guest attaches to a network or is reached from one — exposure, entry-time refusal, IP-display, MAC-uniqueness, and network-membership principles; authoritative for networking work |
 | [TOOLBAR.md](TOOLBAR.md) | Adding or changing a toolbar item — the macOS 26 glass-platter model (capsule clustering, the 36×36 metric), the constraints on view-backed items, and the sidebar section's collapse rules |
 | [SANDBOX.md](SANDBOX.md) | Touching entitlements, or auditing what a build is permitted to do — the Mac App Store readiness story and launch model behind the sandbox rules in AGENTS.md |
 | [VERSION-FLOORS.md](VERSION-FLOORS.md) | Choosing how to deliver something to a guest, or explaining why a feature works on one guest and not another — the guest-side capability floors and what Virtualization allows a live VM |

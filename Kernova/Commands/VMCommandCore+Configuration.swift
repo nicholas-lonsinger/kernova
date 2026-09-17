@@ -194,7 +194,8 @@ extension VMCommandCore {
     ///
     /// A VM whose configuration names a file where a share should be refuses to
     /// start at all, so the entry is refused where it is entered
-    /// (docs/NETWORKING.md §3) rather than left to fail at the next boot.
+    /// (docs/NETWORKING.md, refuse at entry what cannot take effect) rather
+    /// than left to fail at the next boot.
     private static func requireDirectory(_ url: URL) throws {
         var isDirectory: ObjCBool = false
         let path = url.path(percentEncoded: false)

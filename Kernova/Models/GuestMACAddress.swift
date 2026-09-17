@@ -18,8 +18,7 @@ enum GuestMACAddress {
     /// addresses, none of which a station can send from: a guest configured
     /// with one gets no link, and the app would key its reservation and
     /// forwarding rules on an address no frame can source
-    /// (docs/NETWORKING.md principle 3 — refuse at entry what cannot take
-    /// effect).
+    /// (docs/NETWORKING.md, refuse at entry what cannot take effect).
     static func normalized(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let address = VZMACAddress(string: trimmed), address.isUnicastAddress,
