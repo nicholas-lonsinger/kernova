@@ -31,6 +31,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 # One "<framework>:<macOS version it was introduced in>" per line. A framework
 # is only required to be weak while the deployment target is below its own
 # floor; at or above it, a hard link is correct.
@@ -147,6 +151,6 @@ $weak_frameworks
 EOF
 
 if [ "$status" -eq 0 ]; then
-    echo "  ✓ weak links: frameworks above the deployment target load weakly"
+    pass "weak links: frameworks above the deployment target load weakly"
 fi
 exit "$status"

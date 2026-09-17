@@ -18,6 +18,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 pbxproj="Kernova.xcodeproj/project.pbxproj"
 
 if [ ! -f "$pbxproj" ]; then
@@ -42,4 +46,4 @@ if [ -n "$violations" ]; then
     exit 1
 fi
 
-echo "  ✓ package reference: KernovaKit is a top-level peer, not a package dependency"
+pass "package reference: KernovaKit is a top-level peer, not a package dependency"

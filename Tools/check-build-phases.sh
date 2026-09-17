@@ -12,6 +12,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 pbxproj="Kernova.xcodeproj/project.pbxproj"
 
 if [ ! -f "$pbxproj" ]; then
@@ -121,4 +125,4 @@ if [ -n "$violations" ]; then
     exit 1
 fi
 
-echo "  ✓ build phases: every shell phase is a one-line call into Tools/"
+pass "build phases: every shell phase is a one-line call into Tools/"

@@ -18,6 +18,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 pbxproj="Kernova.xcodeproj/project.pbxproj"
 
 if [ ! -f "$pbxproj" ]; then
@@ -129,5 +133,5 @@ fi
 
 [ "$failed" -eq 0 ] || exit 1
 
-echo "  ✓ build settings: every configuration is xcconfig-backed with an empty inline block"
-echo "  ✓ signing: the app and test xcconfigs name no identity, team, profile, or entitlement path"
+pass "build settings: every configuration is xcconfig-backed with an empty inline block"
+pass "signing: the app and test xcconfigs name no identity, team, profile, or entitlement path"

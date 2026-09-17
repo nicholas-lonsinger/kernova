@@ -45,6 +45,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 findings=$(git ls-files '*.swift' \
     | grep -vE '(^|/)[^/]*(Tests|TestSupport)/' \
     | tr '\n' '\0' \
@@ -170,4 +174,4 @@ if [ -n "$findings" ]; then
     exit 1
 fi
 
-echo "  ✓ test seams: every ForTesting declaration is inside #if DEBUG"
+pass "test seams: every ForTesting declaration is inside #if DEBUG"

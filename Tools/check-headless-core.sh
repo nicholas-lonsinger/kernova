@@ -12,6 +12,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 core_dir="Kernova/Commands"
 router="$core_dir/VMCommandEnvelopeRouter.swift"
 
@@ -55,4 +59,7 @@ if grep -q 'VMCommandCore' "$router"; then
     status=1
 fi
 
+if [ "$status" -eq 0 ]; then
+    pass "headless core: Kernova/Commands imports no UI framework and the router names only the facade"
+fi
 exit "$status"

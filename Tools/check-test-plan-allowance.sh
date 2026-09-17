@@ -12,6 +12,10 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+. "$lib_dir/lib/output.sh"
+
 plan="Kernova.xcodeproj/xcshareddata/xctestplans/Kernova.xctestplan"
 waits="KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift"
 
@@ -64,6 +68,6 @@ exceeds_backstop defaultTestExecutionTimeAllowance || status=1
 exceeds_backstop maximumTestExecutionTimeAllowance || status=1
 
 if [ "$status" -eq 0 ]; then
-    echo "  ✓ test plan: per-test allowance exceeds testWaitBackstop (${backstop} s)"
+    pass "test plan: per-test allowance exceeds testWaitBackstop (${backstop} s)"
 fi
 exit "$status"
