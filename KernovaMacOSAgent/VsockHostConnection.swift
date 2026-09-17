@@ -100,9 +100,15 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Stops the loop, tears down any active channel, and discards the
     /// buffered log records.
-    func stop() {
-        client.stop()
+    ///
+    /// - Returns: the client's cancelled loop task, still winding down — see
+    ///   `VsockGuestClient.stop()`. Only this call has it: the client's own
+    ///   `stop` is one-shot.
+    @discardableResult
+    func stop() -> Task<Void, Never>? {
+        let loop = client.stop()
         lock.withLock { discardPendingLocked() }
+        return loop
     }
 
     /// Applies a host policy update for log forwarding.

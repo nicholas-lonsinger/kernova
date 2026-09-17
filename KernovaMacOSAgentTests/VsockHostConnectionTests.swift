@@ -127,6 +127,28 @@ struct VsockHostConnectionTests {
             hostFds: pairs.map(\.host), dialled: dialled)
     }
 
+    /// Runs `body` against a connection dialling `attempts` socketpairs, and
+    /// returns only once that connection's loop task has exited, whatever
+    /// `body` did. The channel-end record is logged from that task, and one
+    /// landing after the return reaches the next test's sink instead: counted
+    /// there, or forwarded into that test's ring as one more frame.
+    private func withDialledConnection(
+        label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil,
+        _ body: (DialledConnection) async throws -> Void
+    ) async throws {
+        let dialled = try makeDialledConnection(
+            label: label, attempts: attempts, socketBufferBytes: socketBufferBytes)
+        var failure: (any Error)?
+        do {
+            try await body(dialled)
+        } catch {
+            failure = error
+        }
+        let loop = dialled.conn.stop()
+        await loop?.value
+        if let failure { throw failure }
+    }
+
     /// Reads one byte off a host end nothing else reads: it returns as soon as
     /// the agent writes, proving the connect landed and the worker is in the
     /// socket rather than in `forwardLog`.
@@ -201,117 +223,128 @@ struct VsockHostConnectionTests {
 
     @Test("Records forwarded on a live channel reach the host in order")
     func liveChannelDeliversInOrder() async throws {
-        let dialled = try makeDialledConnection(label: "log-in-order-test")
-        let conn = dialled.conn
-        defer { conn.stop() }
-        let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
-        host.start()
-        defer { host.close() }
+        try await withDialledConnection(label: "log-in-order-test") { dialled in
+            let conn = dialled.conn
+            let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
+            host.start()
+            defer { host.close() }
 
-        conn.start()
-        conn.setEnabled(true)
+            conn.start()
+            conn.setEnabled(true)
 
-        let frameCount = 10
-        for i in 0..<frameCount {
-            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "drain\(i)")
+            let frameCount = 10
+            for i in 0..<frameCount {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "drain\(i)")
+            }
+
+            var received: [String] = []
+            for _ in 0..<frameCount { received.append(try await message(from: host)) }
+
+            #expect(received == (0..<frameCount).map { "drain\($0)" })
+            // The worker takes each frame out of the ring before sending it, so
+            // the last arrival means the ring is already empty.
+            #expect(pendingLogCount(conn) == 0)
         }
-
-        var received: [String] = []
-        for _ in 0..<frameCount { received.append(try await message(from: host)) }
-
-        #expect(received == (0..<frameCount).map { "drain\($0)" })
-        // The worker takes each frame out of the ring before sending it, so the
-        // last arrival means the ring is already empty.
-        #expect(pendingLogCount(conn) == 0)
     }
 
     // MARK: - Drain: a stalled host never reaches the caller
 
     @Test("forwardLog returns while the host has stopped reading the log channel")
     func forwardLogReturnsWhileHostStalls() async throws {
-        let dialled = try makeDialledConnection(label: "log-stalled-host-test", socketBufferBytes: 8192)
-        let conn = dialled.conn
-        defer { conn.stop() }
-        // The host end is never wrapped in a channel and never read, so the
-        // socket fills and the worker parks in `write(2)` for good.
-        let hostFd = dialled.hostFds[0]
+        try await withDialledConnection(label: "log-stalled-host-test", socketBufferBytes: 8192) { dialled in
+            let conn = dialled.conn
+            // The host end is never wrapped in a channel and never read, so the
+            // socket fills and the worker parks in `write(2)` for good.
+            let hostFd = dialled.hostFds[0]
 
-        let sink = AgentLogSink()
-        sink.install()
-        defer { sink.uninstall() }
+            let sink = AgentLogSink()
+            sink.install()
+            defer { sink.uninstall() }
 
-        conn.start()
-        conn.setEnabled(true)
+            conn.start()
+            conn.setEnabled(true)
 
-        let cap = VsockHostConnection.logBufferLimit
-        let payload = String(repeating: "x", count: 4096)
-        for i in 0..<(cap + 50) {
-            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "stall\(i)-\(payload)")
-        }
-        #expect(await firstByteWritten(to: hostFd) == 1)
-        #expect(pendingLogCount(conn) == cap)
+            // One record larger than the socket can hold: its write cannot
+            // finish, so the first byte to arrive proves the worker is parked in
+            // `write(2)` carrying it, and nothing else leaves the ring while it
+            // is.
+            let payload = String(repeating: "x", count: 64 * 1024)
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "stall-\(payload)")
+            #expect(await firstByteWritten(to: hostFd) == 1)
+            #expect(pendingLogCount(conn) == 0)
 
-        // The call under test: with the worker parked in the socket, forwarding
-        // is still nothing but an append.
-        let returned = AtomicInt()
-        Task {
-            await offCooperativePool {
-                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "unblocked")
+            let cap = VsockHostConnection.logBufferLimit
+            for i in 0..<(cap + 50) {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "queued\(i)")
             }
-            returned.increment()
-        }
-        try await returned.changed.wait { returned.value == 1 }
+            #expect(pendingLogCount(conn) == cap)
 
-        // Closing the host end wakes the parked write with EPIPE, putting the
-        // frame it was carrying back into a ring already at the cap.
-        Darwin.close(hostFd)
-        try await sink.changed.wait { sink.count(matching: sendFailedMarker) == 1 }
-        #expect(pendingLogCount(conn) == cap)
+            // The call under test: with the worker parked in the socket,
+            // forwarding is still nothing but an append.
+            let returned = AtomicInt()
+            Task {
+                await offCooperativePool {
+                    conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "unblocked")
+                }
+                returned.increment()
+            }
+            try await returned.changed.wait { returned.value == 1 }
+            #expect(pendingLogCount(conn) == cap)
+
+            // Closing the host end wakes the parked write with EPIPE, putting
+            // the frame it was carrying back into a ring already at the cap.
+            // The count the warning carries is the ring as the worker saw it
+            // under the lock that re-inserted the frame; from then on the ring
+            // is the drain's again.
+            Darwin.close(hostFd)
+            try await sink.changed.wait { sink.count(matching: sendFailedMarker) == 1 }
+            #expect(sink.count(matching: "holding \(cap) record(s)") == 1)
+        }
     }
 
     // MARK: - Overflow accounting
 
     @Test("A full buffer announces dropping once, and reports the count once it drains")
     func overflowAnnouncesOnceAndReportsCount() async throws {
-        let dialled = try makeDialledConnection(label: "log-overflow-test")
-        let conn = dialled.conn
-        defer { conn.stop() }
-        let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
-        host.start()
-        defer { host.close() }
+        try await withDialledConnection(label: "log-overflow-test") { dialled in
+            let conn = dialled.conn
+            let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
+            host.start()
+            defer { host.close() }
 
-        // Enabled before the sink is installed, so its policy notice is not one
-        // of the records under count.
-        conn.setEnabled(true)
-        let sink = AgentLogSink(forwardingTo: conn)
-        sink.install()
-        defer { sink.uninstall() }
+            // Enabled before the sink is installed, so its policy notice is not
+            // one of the records under count.
+            conn.setEnabled(true)
+            let sink = AgentLogSink(forwardingTo: conn)
+            sink.install()
+            defer { sink.uninstall() }
 
-        let cap = VsockHostConnection.logBufferLimit
-        let extra = 10
-        for i in 0..<(cap + extra) {
-            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "f\(i)")
+            let cap = VsockHostConnection.logBufferLimit
+            let extra = 10
+            for i in 0..<(cap + extra) {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "f\(i)")
+            }
+
+            // The announcement is itself a forwarded record, so it takes a slot
+            // of its own and one more frame is evicted to make room for it.
+            let evicted = extra + 1
+            let buffered = pendingMessages(conn)
+            #expect(buffered.count == cap)
+            #expect(buffered.first == "f\(evicted)")
+            #expect(buffered.last == "f\(cap + extra - 1)")
+            #expect(buffered.filter { $0.contains(bufferFullMarker) }.count == 1)
+
+            // Connecting drains the ring, and the count lands behind everything
+            // that survived.
+            conn.start()
+            var received: [String] = []
+            for _ in 0..<(cap + 1) { received.append(try await message(from: host)) }
+
+            #expect(received.first == "f\(evicted)")
+            #expect(received.filter { $0.contains(bufferFullMarker) }.count == 1)
+            #expect(received.last?.contains("\(evicted) \(droppedCountMarker)") == true)
+            #expect(pendingLogCount(conn) == 0)
         }
-
-        // The announcement is itself a forwarded record, so it takes a slot of
-        // its own and one more frame is evicted to make room for it.
-        let evicted = extra + 1
-        let buffered = pendingMessages(conn)
-        #expect(buffered.count == cap)
-        #expect(buffered.first == "f\(evicted)")
-        #expect(buffered.last == "f\(cap + extra - 1)")
-        #expect(buffered.filter { $0.contains(bufferFullMarker) }.count == 1)
-
-        // Connecting drains the ring, and the count lands behind everything
-        // that survived.
-        conn.start()
-        var received: [String] = []
-        for _ in 0..<(cap + 1) { received.append(try await message(from: host)) }
-
-        #expect(received.first == "f\(evicted)")
-        #expect(received.filter { $0.contains(bufferFullMarker) }.count == 1)
-        #expect(received.last?.contains("\(evicted) \(droppedCountMarker)") == true)
-        #expect(pendingLogCount(conn) == 0)
     }
 
     // MARK: - Re-entrancy through the process-wide sink
@@ -321,80 +354,87 @@ struct VsockHostConnectionTests {
     /// its lock released and without scheduling itself again.
     @Test("A drain's send-failure warning re-enters forwardLog exactly once")
     func sendFailureWarningReentersForwardLogOnce() async throws {
-        let dialled = try makeDialledConnection(label: "log-reentrancy-test", socketBufferBytes: 8192)
-        let conn = dialled.conn
-        defer { conn.stop() }
-        let hostFd = dialled.hostFds[0]
+        try await withDialledConnection(label: "log-reentrancy-test", socketBufferBytes: 8192) { dialled in
+            let conn = dialled.conn
+            let hostFd = dialled.hostFds[0]
 
-        conn.start()
-        conn.setEnabled(true)
+            conn.start()
+            conn.setEnabled(true)
 
-        // Mirrors `AgentAppDelegate`: every record this class emits is forwarded
-        // straight back into the connection emitting it.
-        let sink = AgentLogSink(forwardingTo: conn)
-        sink.install()
-        defer { sink.uninstall() }
+            // Mirrors `AgentAppDelegate`: every record this class emits is
+            // forwarded straight back into the connection emitting it.
+            let sink = AgentLogSink(forwardingTo: conn)
+            sink.install()
+            defer { sink.uninstall() }
 
-        let payload = String(repeating: "x", count: 4096)
-        for i in 0..<40 {
-            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "re\(i)-\(payload)")
+            let payload = String(repeating: "x", count: 4096)
+            for i in 0..<40 {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "re\(i)-\(payload)")
+            }
+            #expect(await firstByteWritten(to: hostFd) == 1)
+
+            Darwin.close(hostFd)
+
+            // The sink records the warning and only then forwards it, so the
+            // ring — the state the assertions below read — is what this waits
+            // on; the sink's own tally is true one step earlier.
+            try await sink.changed.wait {
+                pendingMessages(conn).contains { $0.contains(sendFailedMarker) }
+            }
+            // One warning for the outage, whatever else the agent logs into the
+            // broken channel afterwards — and it reached the ring, so the
+            // forward ran to completion rather than deadlocking on the drain's
+            // own lock.
+            #expect(sink.count(matching: sendFailedMarker) == 1)
+            #expect(pendingMessages(conn).filter { $0.contains(sendFailedMarker) }.count == 1)
+            #expect(pendingLogCount(conn) <= VsockHostConnection.logBufferLimit)
         }
-        #expect(await firstByteWritten(to: hostFd) == 1)
-
-        Darwin.close(hostFd)
-
-        try await sink.changed.wait { sink.count(matching: sendFailedMarker) >= 1 }
-        // One warning for the outage, whatever else the agent logs into the
-        // broken channel afterwards — and it reached the ring, so the forward
-        // ran to completion rather than deadlocking on the drain's own lock.
-        #expect(sink.count(matching: sendFailedMarker) == 1)
-        #expect(pendingMessages(conn).filter { $0.contains(sendFailedMarker) }.count == 1)
-        #expect(pendingLogCount(conn) <= VsockHostConnection.logBufferLimit)
     }
 
     // MARK: - Chronological order across a failed send
 
     @Test("Chronological order survives a mid-drain send failure and the next connection")
     func orderSurvivesSendFailureAndReconnect() async throws {
-        let dialled = try makeDialledConnection(
-            label: "log-order-across-reconnect-test", attempts: 2, socketBufferBytes: 8192)
-        let conn = dialled.conn
-        defer { conn.stop() }
+        try await withDialledConnection(
+            label: "log-order-across-reconnect-test", attempts: 2, socketBufferBytes: 8192
+        ) { dialled in
+            let conn = dialled.conn
 
-        conn.start()
-        conn.setEnabled(true)
+            conn.start()
+            conn.setEnabled(true)
 
-        let total = 40
-        let payload = String(repeating: "x", count: 4096)
-        for i in 0..<total {
-            conn.forwardLog(
-                level: .info, subsystem: "t", category: "t",
-                message: String(format: "o%02d-", i) + payload)
+            let total = 40
+            let payload = String(repeating: "x", count: 4096)
+            for i in 0..<total {
+                conn.forwardLog(
+                    level: .info, subsystem: "t", category: "t",
+                    message: String(format: "o%02d-", i) + payload)
+            }
+            #expect(await firstByteWritten(to: dialled.hostFds[0]) == 1)
+
+            // Fails the in-flight send: the frame it was carrying goes back to
+            // the head of the ring, ahead of everything still queued behind it.
+            Darwin.close(dialled.hostFds[0])
+
+            let host = VsockChannel(fileDescriptor: dialled.hostFds[1])
+            host.start()
+            defer { host.close() }
+            // The restated enable is the only wake the parked loop gets.
+            conn.setEnabled(true)
+
+            var received: [String] = []
+            while received.last != String(format: "o%02d", total - 1) {
+                received.append(String(try await message(from: host).prefix(3)))
+            }
+
+            #expect(dialled.dialled.value == 2)
+            // Only what the stalled socket had already swallowed is missing:
+            // what arrives is the unbroken tail of the sequence, in order.
+            let indices = received.compactMap { Int($0.dropFirst()) }
+            #expect(indices.count == received.count)
+            #expect(indices == Array(indices[0]..<total))
+            #expect(indices.count >= 10)
         }
-        #expect(await firstByteWritten(to: dialled.hostFds[0]) == 1)
-
-        // Fails the in-flight send: the frame it was carrying goes back to the
-        // head of the ring, ahead of everything still queued behind it.
-        Darwin.close(dialled.hostFds[0])
-
-        let host = VsockChannel(fileDescriptor: dialled.hostFds[1])
-        host.start()
-        defer { host.close() }
-        // The restated enable is the only wake the parked loop gets.
-        conn.setEnabled(true)
-
-        var received: [String] = []
-        while received.last != String(format: "o%02d", total - 1) {
-            received.append(String(try await message(from: host).prefix(3)))
-        }
-
-        #expect(dialled.dialled.value == 2)
-        // Only what the stalled socket had already swallowed is missing: what
-        // arrives is the unbroken tail of the sequence, in order.
-        let indices = received.compactMap { Int($0.dropFirst()) }
-        #expect(indices.count == received.count)
-        #expect(indices == Array(indices[0]..<total))
-        #expect(indices.count >= 10)
     }
 
     // MARK: - Policy enforcement
@@ -433,27 +473,27 @@ struct VsockHostConnectionTests {
 
     @Test("Undecided-era frames are delivered once forwarding is enabled and the channel connects")
     func undecidedFramesFlushedOnEnableAndConnect() async throws {
-        let dialled = try makeDialledConnection(label: "log-undecided-test")
-        let conn = dialled.conn
-        defer { conn.stop() }
-        let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
-        host.start()
-        defer { host.close() }
+        try await withDialledConnection(label: "log-undecided-test") { dialled in
+            let conn = dialled.conn
+            let host = VsockChannel(fileDescriptor: dialled.hostFds[0])
+            host.start()
+            defer { host.close() }
 
-        for i in 0..<3 {
-            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot\(i)")
+            for i in 0..<3 {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot\(i)")
+            }
+            #expect(pendingMessages(conn) == ["boot0", "boot1", "boot2"])
+
+            // The host's first PolicyUpdate enables forwarding; the connect that
+            // follows delivers what the undecided window buffered.
+            conn.start()
+            conn.setEnabled(true)
+
+            var received: [String] = []
+            for _ in 0..<3 { received.append(try await message(from: host)) }
+            #expect(received == ["boot0", "boot1", "boot2"])
+            #expect(pendingLogCount(conn) == 0)
         }
-        #expect(pendingMessages(conn) == ["boot0", "boot1", "boot2"])
-
-        // The host's first PolicyUpdate enables forwarding; the connect that
-        // follows delivers what the undecided window buffered.
-        conn.start()
-        conn.setEnabled(true)
-
-        var received: [String] = []
-        for _ in 0..<3 { received.append(try await message(from: host)) }
-        #expect(received == ["boot0", "boot1", "boot2"])
-        #expect(pendingLogCount(conn) == 0)
     }
 
     @Test("A first setEnabled(false) discards undecided-era frames; a later enable does not deliver them")
@@ -528,33 +568,34 @@ struct VsockHostConnectionTests {
     /// already applied.
     @Test("A policy update restating 'enabled' reconnects and flushes what was buffered")
     func restatedEnablePolicyReconnects() async throws {
-        let dialled = try makeDialledConnection(label: "log-restated-policy-test", attempts: 2)
-        let conn = dialled.conn
-        defer { conn.stop() }
-        let host0 = VsockChannel(fileDescriptor: dialled.hostFds[0])
-        let host1 = VsockChannel(fileDescriptor: dialled.hostFds[1])
-        host0.start()
-        host1.start()
-        defer { host0.close(); host1.close() }
+        try await withDialledConnection(label: "log-restated-policy-test", attempts: 2) { dialled in
+            let conn = dialled.conn
+            let host0 = VsockChannel(fileDescriptor: dialled.hostFds[0])
+            let host1 = VsockChannel(fileDescriptor: dialled.hostFds[1])
+            host0.start()
+            host1.start()
+            defer { host0.close(); host1.close() }
 
-        conn.start()
-        conn.setEnabled(true)
-        // The record's arrival is the signal that the first channel is up.
-        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "first")
-        #expect(try await message(from: host0) == "first")
+            conn.start()
+            conn.setEnabled(true)
+            // The record's arrival is the signal that the first channel is up.
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "first")
+            #expect(try await message(from: host0) == "first")
 
-        // The host hangs up, as a refused feature channel does; the record
-        // written while the loop is parked has nowhere to go but the buffer.
-        host0.close()
-        // No-signal poll — `liveChannel` is lock-protected client state with
-        // no signal to await.
-        try await waitUntil { dialled.client.liveChannel == nil }
-        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "buffered")
+            // The host hangs up, as a refused feature channel does; the record
+            // written while the loop is parked has nowhere to go but the buffer.
+            host0.close()
+            // No-signal poll — `liveChannel` is lock-protected client state with
+            // no signal to await.
+            try await waitUntil { dialled.client.liveChannel == nil }
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "buffered")
 
-        // Same policy, second delivery — the enable the agent already applied.
-        conn.setEnabled(true)
-        #expect(try await message(from: host1) == "buffered")
-        #expect(dialled.dialled.value == 2)
+            // Same policy, second delivery — the enable the agent already
+            // applied.
+            conn.setEnabled(true)
+            #expect(try await message(from: host1) == "buffered")
+            #expect(dialled.dialled.value == 2)
+        }
     }
 
     /// The message of the next `LogRecord` frame on `channel`.
