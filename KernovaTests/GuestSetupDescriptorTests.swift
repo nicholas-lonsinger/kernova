@@ -39,21 +39,13 @@ struct GuestSetupDescriptorTests {
 
     @Test("The descriptor follows whichever setup the VM has pending")
     func descriptorFollowsTheContext() {
-        let linux = VMInstance(
-            configuration: {
-                var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
-                config.linuxInstallContext = LinuxInstallContext(
-                    source: .catalogEntry(makeLinuxCatalogEntry(distribution: "Debian", version: "13")))
-                return config
-            }(),
-            bundleURL: FileManager.default.temporaryDirectory.appendingPathComponent("linux"))
-        let macOS = VMInstance(
-            configuration: {
-                var config = VMConfiguration(name: "Sequoia", guestOS: .macOS, bootMode: .macOS)
-                config.installContext = MacOSInstallContext(source: .downloadLatest)
-                return config
-            }(),
-            bundleURL: FileManager.default.temporaryDirectory.appendingPathComponent("macos"))
+        let linux = VMInstanceFixture.make(name: "Debian") {
+            $0.linuxInstallContext = LinuxInstallContext(
+                source: .catalogEntry(makeLinuxCatalogEntry(distribution: "Debian", version: "13")))
+        }
+        let macOS = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS) {
+            $0.installContext = MacOSInstallContext(source: .downloadLatest)
+        }
 
         #expect(GuestSetupDescriptor.forSetup(of: linux).title == "Downloading Debian 13")
         #expect(GuestSetupDescriptor.forSetup(of: macOS).title == "Installing macOS")
@@ -61,17 +53,13 @@ struct GuestSetupDescriptorTests {
 
     @Test("A URL pick's setup is titled with the file it is fetching")
     func descriptorNamesAPastedImage() {
-        let instance = VMInstance(
-            configuration: {
-                var config = VMConfiguration(name: "Alpine", guestOS: .linux, bootMode: .efi)
-                config.linuxInstallContext = LinuxInstallContext(
-                    source: .customURL(
-                        CustomLinuxImage(
-                            url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
-                            sha256: nil)))
-                return config
-            }(),
-            bundleURL: FileManager.default.temporaryDirectory.appendingPathComponent("alpine"))
+        let instance = VMInstanceFixture.make(name: "Alpine") {
+            $0.linuxInstallContext = LinuxInstallContext(
+                source: .customURL(
+                    CustomLinuxImage(
+                        url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
+                        sha256: nil)))
+        }
 
         #expect(
             GuestSetupDescriptor.forSetup(of: instance).title

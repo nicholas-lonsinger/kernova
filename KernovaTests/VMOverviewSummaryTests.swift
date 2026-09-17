@@ -9,13 +9,11 @@ struct VMOverviewSummaryTests {
     private func makeInstance(
         guestOS: VMGuestOS = .macOS, mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        var config = VMConfiguration(
-            name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            cpuCount: 4, memorySizeInGB: 8)
-        mutate(&config)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(guestOS: guestOS) {
+            $0.cpuCount = 4
+            $0.memorySizeInGB = 8
+            mutate(&$0)
+        }
     }
 
     private func rows(

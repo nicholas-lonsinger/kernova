@@ -76,12 +76,9 @@ struct VMSettingsSharingPanelTests {
         VMSettingsViewController, VMInstance
     ) {
         let viewModel = makeViewModel()
-        let config = VMConfiguration(
-            name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            clipboardSharingEnabled: sharingEnabled)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(guestOS: guestOS) {
+            $0.clipboardSharingEnabled = sharingEnabled
+        }
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

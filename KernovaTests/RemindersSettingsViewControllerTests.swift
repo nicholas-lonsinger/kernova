@@ -33,10 +33,7 @@ struct RemindersSettingsViewControllerTests {
     }
 
     private func makeInstance(name: String) -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .macOS, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(name: name, guestOS: .macOS)
     }
 
     /// Builds the pane with `vmCount` VMs and runs the appear-time layout the

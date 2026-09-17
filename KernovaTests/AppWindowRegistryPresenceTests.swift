@@ -40,12 +40,9 @@ struct AppWindowRegistryPresenceTests {
     /// A VM the clipboard window opens for: sharing on, and a live session, which
     /// is what `accepts(.showClipboard, on:)` asks for.
     private func makeClipboardEligibleInstance() -> VMInstance {
-        var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
-        config.clipboardSharingEnabled = true
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
+        VMInstanceFixture.make(name: "Clipboard VM", phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
     }
 
     @Test("A registry that has shown nothing tracks no on-screen window")
@@ -138,11 +135,7 @@ struct AppWindowRegistryPresenceTests {
     func clipboardRefusedForIneligibleVM() {
         let registry = makeRegistry()
         defer { registry.closeAll() }
-        let config = VMConfiguration(name: "Stopped VM", guestOS: .linux, bootMode: .efi)
-        let instance = VMInstance(
-            configuration: config,
-            bundleURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent(config.id.uuidString, isDirectory: true))
+        let instance = VMInstanceFixture.make(name: "Stopped VM")
 
         registry.showClipboard(for: instance)
 

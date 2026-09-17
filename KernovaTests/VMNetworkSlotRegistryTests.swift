@@ -26,13 +26,6 @@ struct VMNetworkSlotRegistryTests {
         return (registry, vmnetNetworks)
     }
 
-    private func makeInstance(name: String = "Test VM") -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     /// A shared-network configuration on `mac`, the shape that takes a slot.
     private func shared(_ base: VMConfiguration, mac: String?) -> VMConfiguration {
         var config = base
@@ -47,7 +40,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("A configuration change syncs the VM's DHCP reservation slot for its mode's network")
     func moveSlotsSyncsAddressReservation() {
         let (registry, vmnet) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let old = instance.configuration
         let new = shared(old, mac: "AA:BB:CC:DD:EE:0F")
 
@@ -60,7 +53,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("A bridged or MAC-less configuration takes no reservation slot")
     func bridgedConfigurationTakesNoReservationSlot() {
         let (registry, vmnet) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let base = instance.configuration
         var bridged = base
         bridged.networkEnabled = true
@@ -77,7 +70,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("An unentitled build takes no slot at all")
     func unentitledBuildTakesNoSlot() {
         let (registry, vmnet) = makeRegistry(isVMNetworkingEntitled: false)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let new = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:0f")
 
         registry.moveSlots(from: instance.configuration, to: new)
@@ -92,7 +85,7 @@ struct VMNetworkSlotRegistryTests {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.3"]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
-        let base = makeInstance().configuration
+        let base = VMInstanceFixture.make().configuration
 
         #expect(registry.reservedAddress(for: shared(base, mac: "aa:bb:cc:dd:ee:01")) == .reserved("192.168.64.3"))
         #expect(registry.reservedAddress(for: shared(base, mac: "aa:bb:cc:dd:ee:02")) == .pending)
@@ -112,7 +105,7 @@ struct VMNetworkSlotRegistryTests {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.3"]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
-        let base = makeInstance().configuration
+        let base = VMInstanceFixture.make().configuration
 
         #expect(registry.reservedAddress(for: shared(base, mac: "aa:bb:cc:dd:ee:01")) == .unavailable)
 
@@ -128,17 +121,17 @@ struct VMNetworkSlotRegistryTests {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.knownAddressingKinds = []
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
-        let config = shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01")
+        let config = shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:01")
 
         registry.claimSlots(for: config)
         // A second claim while the first is in flight rides the same learn.
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:02"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:02"))
         await registry.addressingLearnTaskForTesting(.shared)?.value
 
         #expect(vmnet.materializeRequestedKinds == [.shared])
 
         // And once it has landed, nothing asks again — the addressing is known.
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:03"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:03"))
         #expect(registry.addressingLearnTaskForTesting(.shared) == nil)
         #expect(vmnet.materializeCount == 1)
     }
@@ -148,7 +141,7 @@ struct VMNetworkSlotRegistryTests {
         let vmnet = MockVmnetNetworkProvider()
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
 
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:01"))
 
         #expect(vmnet.materializeCount == 0)
         #expect(registry.addressingLearnTaskForTesting(.shared) == nil)
@@ -161,12 +154,12 @@ struct VMNetworkSlotRegistryTests {
         vmnet.materializeFails = true
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
 
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:01"))
         await registry.addressingLearnTaskForTesting(.shared)?.value
         #expect(vmnet.materializeCount == 1)
 
         vmnet.materializeFails = false
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:02"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:02"))
         await registry.addressingLearnTaskForTesting(.shared)?.value
 
         #expect(vmnet.materializeCount == 2)
@@ -179,7 +172,7 @@ struct VMNetworkSlotRegistryTests {
         vmnet.knownAddressingKinds = []
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
 
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:01"))
 
         #expect(registry.addressingLearnTaskForTesting(.shared) == nil)
         #expect(vmnet.materializeCount == 0)
@@ -195,7 +188,7 @@ struct VMNetworkSlotRegistryTests {
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         roster.instances = []
 
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:01"))
         #expect(vmnet.invalidatedKinds.isEmpty)
         await registry.addressingLearnTaskForTesting(.shared)?.value
 
@@ -210,7 +203,7 @@ struct VMNetworkSlotRegistryTests {
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         roster.instances = []
 
-        registry.claimSlots(for: shared(makeInstance().configuration, mac: "aa:bb:cc:dd:ee:01"))
+        registry.claimSlots(for: shared(VMInstanceFixture.make().configuration, mac: "aa:bb:cc:dd:ee:01"))
         let beforeLearn = registry.addressingGeneration
         await registry.addressingLearnTaskForTesting(.shared)?.value
         #expect(registry.addressingGeneration > beforeLearn)
@@ -229,7 +222,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("An edited MAC releases the retired slot before reserving the new one")
     func moveSlotsReleasesBeforeReserving() {
         let (registry, vmnet) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
         instance.configuration = old
         roster.instances = [instance]
@@ -250,7 +243,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("A mode switch moves the slot to the new mode's network")
     func moveSlotsFollowsAModeSwitch() {
         let (registry, vmnet) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
         instance.configuration = old
         roster.instances = [instance]
@@ -269,7 +262,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("Turning networking off frees the slot and withdraws the rules")
     func moveSlotsReleasesWhenNetworkingGoesOff() {
         let (registry, vmnet) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
         instance.configuration = old
         roster.instances = [instance]
@@ -291,7 +284,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("A retired MAC stops claiming the VM's host ports")
     func moveSlotsWithdrawsTheRetiredMACsRules() {
         let (registry, vmnet) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         var old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
         old.portForwardingRules = [
             PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
@@ -320,9 +313,9 @@ struct VMNetworkSlotRegistryTests {
     @Test("An edit onto an address another VM holds is refused")
     func refuseSlotConflictRefusesADuplicateAddress() {
         let (registry, _) = makeRegistry()
-        let holder = makeInstance(name: "Twin")
+        let holder = VMInstanceFixture.make(name: "Twin")
         holder.configuration = shared(holder.configuration, mac: "aa:bb:cc:dd:ee:01")
-        let instance = makeInstance(name: "Mine")
+        let instance = VMInstanceFixture.make(name: "Mine")
         roster.instances = [holder, instance]
 
         let old = instance.configuration
@@ -339,7 +332,7 @@ struct VMNetworkSlotRegistryTests {
     @Test("An edit onto an address nobody else holds is admitted")
     func refuseSlotConflictAdmitsAUniqueAddress() {
         let (registry, _) = makeRegistry()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         roster.instances = [instance]
 
         let old = instance.configuration
@@ -352,13 +345,13 @@ struct VMNetworkSlotRegistryTests {
     @Test("A live mode switch onto a network an active twin holds is refused")
     func refuseSlotConflictRefusesALiveModeSwitch() {
         let (registry, _) = makeRegistry()
-        let twin = makeInstance(name: "Twin")
+        let twin = VMInstanceFixture.make(name: "Twin")
         var twinConfig = shared(twin.configuration, mac: "aa:bb:cc:dd:ee:01")
         twinConfig.networkMode = .hostOnly
         twin.configuration = twinConfig
         twin.enter(.running(sessionID: UUID()))
 
-        let instance = makeInstance(name: "Mine")
+        let instance = VMInstanceFixture.make(name: "Mine")
         let old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
         instance.configuration = old
         instance.enter(.running(sessionID: UUID()))
@@ -375,11 +368,11 @@ struct VMNetworkSlotRegistryTests {
     @Test("A VM already in a live conflict stays editable")
     func refuseSlotConflictLeavesAnExistingConflictEditable() {
         let (registry, _) = makeRegistry()
-        let twin = makeInstance(name: "Twin")
+        let twin = VMInstanceFixture.make(name: "Twin")
         twin.configuration = shared(twin.configuration, mac: "aa:bb:cc:dd:ee:01")
         twin.enter(.running(sessionID: UUID()))
 
-        let instance = makeInstance(name: "Mine")
+        let instance = VMInstanceFixture.make(name: "Mine")
         // Already sharing the address on the same network — reached by some
         // other route, and the user has to be able to edit their way out.
         let old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
@@ -397,13 +390,13 @@ struct VMNetworkSlotRegistryTests {
     @Test("A stopped VM's mode switch onto an active twin's network is admitted")
     func refuseSlotConflictOnlyGuardsALiveVM() {
         let (registry, _) = makeRegistry()
-        let twin = makeInstance(name: "Twin")
+        let twin = VMInstanceFixture.make(name: "Twin")
         var twinConfig = shared(twin.configuration, mac: "aa:bb:cc:dd:ee:01")
         twinConfig.networkMode = .hostOnly
         twin.configuration = twinConfig
         twin.enter(.running(sessionID: UUID()))
 
-        let instance = makeInstance(name: "Mine")
+        let instance = VMInstanceFixture.make(name: "Mine")
         let old = shared(instance.configuration, mac: "aa:bb:cc:dd:ee:01")
         instance.configuration = old
         instance.enter(.stopped)
@@ -422,7 +415,7 @@ struct VMNetworkSlotRegistryTests {
     /// A running VM whose coordinator mirrors a live attachment on `kind` —
     /// what ``VMInstance/mayHoldAttachment(on:)`` reads as a holder.
     private func makeHolder(named name: String, on kind: VmnetNetworkKind) -> VMInstance {
-        let instance = makeInstance(name: name)
+        let instance = VMInstanceFixture.make(name: name)
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = kind == .hostOnly ? .hostOnly : .shared
         instance.enter(.running(sessionID: UUID()))
@@ -441,7 +434,7 @@ struct VMNetworkSlotRegistryTests {
     private func makeHostOnlyReporter(
         named name: String, vmnet: MockVmnetNetworkProvider
     ) -> (VMInstance, MockNetworkDeviceControl, NetworkAttachmentCoordinator) {
-        let instance = makeInstance(name: name)
+        let instance = VMInstanceFixture.make(name: name)
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .hostOnly
         instance.enter(.running(sessionID: UUID()))
@@ -537,7 +530,7 @@ struct VMNetworkSlotRegistryTests {
     func anIdleNetworkWithNoReasonIsLeftAlone() {
         let vmnet = MockVmnetNetworkProvider()
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
-        roster.instances = [makeInstance(name: "Stopped")]
+        roster.instances = [VMInstanceFixture.make(name: "Stopped")]
 
         registry.rebuildNetworksIfIdle()
 

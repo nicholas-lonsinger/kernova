@@ -12,10 +12,7 @@ struct SnapshotRevertMenuTests {
     }
 
     private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
-        let config = VMConfiguration(name: "Revert VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        VMInstanceFixture.make(name: "Revert VM", phase: phase)
     }
 
     private func makeSnapshot(_ name: String, offsetSeconds: TimeInterval = 0) -> VMSnapshot {

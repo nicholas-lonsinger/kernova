@@ -7,11 +7,7 @@ import Testing
 @MainActor
 struct VMIdentityHeaderViewTests {
     private func makeInstance(name: String = "Test VM", cpuCount: Int = 4) -> VMInstance {
-        let config = VMConfiguration(
-            name: name, guestOS: .macOS, bootMode: .macOS, cpuCount: cpuCount)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(name: name, guestOS: .macOS) { $0.cpuCount = cpuCount }
     }
 
     // MARK: - Facts line

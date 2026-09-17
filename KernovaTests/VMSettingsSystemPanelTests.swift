@@ -18,10 +18,6 @@ struct VMSettingsSystemPanelTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
-        makeSettingsInstance(guestOS: guestOS)
-    }
-
     // MARK: - Display section
 
     /// Builds a controller over a config with explicit display settings.
@@ -39,14 +35,13 @@ struct VMSettingsSystemPanelTests {
         hiDPI: Bool? = nil
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let config = VMConfiguration(
-            name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            displayWidth: width, displayHeight: height, displayPPI: ppi,
-            displaySizesToWindow: sizesToWindow,
-            displayHiDPI: hiDPI ?? DisplayBootSizing.isHiDPI(ppi: ppi))
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(guestOS: guestOS) {
+            $0.displayWidth = width
+            $0.displayHeight = height
+            $0.displayPPI = ppi
+            $0.displaySizesToWindow = sizesToWindow
+            $0.displayHiDPI = hiDPI ?? DisplayBootSizing.isHiDPI(ppi: ppi)
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -406,7 +401,7 @@ struct VMSettingsSystemPanelTests {
         _ status: AVAuthorizationStatus,
         systemSettings: SystemSettingsLink = SystemSettingsLink()
     ) -> VMSettingsViewController {
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux)
         instance.configuration.audioInputEnabled = true
         let vc = makeSettingsPane(
             instance: instance, viewModel: makeViewModel(), isReadOnly: false,
@@ -459,13 +454,11 @@ struct VMSettingsSystemPanelTests {
 
     @Test("The reveal button comes back after a disappearance cancels its probe")
     func serialLogProbeReRunsAfterTheProbeIsCancelled() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-settings-serial-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let instance = VMInstanceFixture.make()
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let viewModel = makeViewModel()
-        let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
-        let instance = VMInstance(configuration: config, bundleURL: directory)
         FileManager.default.createFile(
             atPath: instance.serialLogURL.path(percentEncoded: false), contents: Data([0]))
         let vc = makeSettingsPane(

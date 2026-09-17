@@ -22,15 +22,11 @@ struct VMInstanceDisplayDropTests {
             clipboardSharingEnabled: Bool = true, dropFilesEnabled: Bool = true,
             phase: VMLifecyclePhase = .running(sessionID: UUID())
         ) {
-            var config = VMConfiguration(
-                name: "Drop VM", guestOS: guestOS,
-                bootMode: guestOS == .macOS ? .macOS : .efi)
-            config.lastSeenAgentVersion = lastSeenAgentVersion
-            config.clipboardSharingEnabled = clipboardSharingEnabled
-            config.dropFilesEnabled = dropFilesEnabled
-            let bundleURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(config.id.uuidString, isDirectory: true)
-            instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+            instance = VMInstanceFixture.make(name: "Drop VM", guestOS: guestOS, phase: phase) {
+                $0.lastSeenAgentVersion = lastSeenAgentVersion
+                $0.clipboardSharingEnabled = clipboardSharingEnabled
+                $0.dropFilesEnabled = dropFilesEnabled
+            }
             // The services below are session state, so they need a session to
             // live in — the boot paths open one before any listener is wired.
             instance.beginSessionContext()

@@ -16,12 +16,7 @@ struct VMSettingsOverviewTests {
     }
 
     private func makeInstance(guestOS: VMGuestOS, macAddress: String? = nil) -> VMInstance {
-        let config = VMConfiguration(
-            name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            macAddress: macAddress)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(guestOS: guestOS) { $0.macAddress = macAddress }
     }
 
     private func makeController(guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false) -> (

@@ -44,10 +44,7 @@ struct USBAccessoryCoordinatorTests {
 
     /// A VM with no session, for the tests that drive the edge onto one.
     private func makeStoppedInstance(named name: String = "USB VM") -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(name: name)
     }
 
     /// Records `accessory` against `instance`, the way an attach the user asked

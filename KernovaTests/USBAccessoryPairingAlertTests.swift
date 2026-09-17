@@ -9,13 +9,6 @@ import Testing
 @Suite("USB Accessory Pairing Alert Tests", .admissionGated)
 @MainActor
 struct USBAccessoryPairingAlertTests {
-    private func makeInstance(named name: String) -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     private final class Answer {
         var answered: [VMInstance?] = []
     }
@@ -41,7 +34,7 @@ struct USBAccessoryPairingAlertTests {
     @Test("One running guest is named in the question, with nothing to choose")
     func oneCandidateNamesTheVM() {
         let answer = Answer()
-        let request = makeRequest(candidates: [makeInstance(named: "Work")], answer: answer)
+        let request = makeRequest(candidates: [VMInstanceFixture.make(name: "Work")], answer: answer)
 
         let configuration = USBAccessoryPairingAlert.configuration(for: request)
 
@@ -57,7 +50,7 @@ struct USBAccessoryPairingAlertTests {
     func severalCandidatesOfferAChooser() throws {
         let answer = Answer()
         let request = makeRequest(
-            candidates: [makeInstance(named: "Work"), makeInstance(named: "Play")], answer: answer)
+            candidates: [VMInstanceFixture.make(name: "Work"), VMInstanceFixture.make(name: "Play")], answer: answer)
 
         let configuration = USBAccessoryPairingAlert.configuration(for: request)
 
@@ -70,7 +63,7 @@ struct USBAccessoryPairingAlertTests {
     func buttonsAreTheSameInBothShapes() {
         let answer = Answer()
         for count in 1...2 {
-            let candidates = (0..<count).map { makeInstance(named: "VM \($0)") }
+            let candidates = (0..<count).map { VMInstanceFixture.make(name: "VM \($0)") }
             let configuration = USBAccessoryPairingAlert.configuration(
                 for: makeRequest(candidates: candidates, answer: answer))
 
@@ -86,7 +79,7 @@ struct USBAccessoryPairingAlertTests {
     func keepOnMacAnswersWithNothing() throws {
         let answer = Answer()
         let configuration = USBAccessoryPairingAlert.configuration(
-            for: makeRequest(candidates: [makeInstance(named: "Work")], answer: answer))
+            for: makeRequest(candidates: [VMInstanceFixture.make(name: "Work")], answer: answer))
 
         try #require(configuration.buttons.last).action()
 
@@ -97,7 +90,7 @@ struct USBAccessoryPairingAlertTests {
     @Test("Pass Through answers with the one candidate when there is only one")
     func passThroughAnswersWithTheLoneCandidate() throws {
         let answer = Answer()
-        let work = makeInstance(named: "Work")
+        let work = VMInstanceFixture.make(name: "Work")
         let configuration = USBAccessoryPairingAlert.configuration(
             for: makeRequest(candidates: [work], answer: answer))
 
@@ -109,8 +102,8 @@ struct USBAccessoryPairingAlertTests {
     @Test("Two guests sharing a name are still told apart")
     func candidatesSharingANameStayDistinct() throws {
         let answer = Answer()
-        let first = makeInstance(named: "Work")
-        let second = makeInstance(named: "Work")
+        let first = VMInstanceFixture.make(name: "Work")
+        let second = VMInstanceFixture.make(name: "Work")
         let configuration = USBAccessoryPairingAlert.configuration(
             for: makeRequest(candidates: [first, second], answer: answer))
         let popUp = try #require(chooser(in: configuration))
@@ -128,8 +121,8 @@ struct USBAccessoryPairingAlertTests {
     @Test("Pass Through answers with whichever guest the popup is showing")
     func passThroughReadsTheChooser() throws {
         let answer = Answer()
-        let work = makeInstance(named: "Work")
-        let play = makeInstance(named: "Play")
+        let work = VMInstanceFixture.make(name: "Work")
+        let play = VMInstanceFixture.make(name: "Play")
         let configuration = USBAccessoryPairingAlert.configuration(
             for: makeRequest(candidates: [work, play], answer: answer))
         let popUp = try #require(chooser(in: configuration))

@@ -140,11 +140,7 @@ struct EphemeralModeInstanceTests {
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.ephemeral.instance")
 
     private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
-        let config = VMConfiguration(name: "Throwaway", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        return VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
+        VMInstanceFixture.make(name: "Throwaway", phase: phase, preferences: preferences)
     }
 
     @Test("A VM with the mode off has no baseline")

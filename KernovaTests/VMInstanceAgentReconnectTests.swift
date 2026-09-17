@@ -24,11 +24,9 @@ struct VMInstanceAgentReconnectTests {
     private func makeInstance(
         agentVersion: String, phase: VMLifecyclePhase = .running(sessionID: UUID())
     ) -> VMInstance {
-        var config = VMConfiguration(name: "Reconnect VM", guestOS: .macOS, bootMode: .macOS)
-        config.lastSeenAgentVersion = agentVersion
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        let instance = VMInstanceFixture.make(
+            name: "Reconnect VM", guestOS: .macOS, phase: phase,
+            mutate: { $0.lastSeenAgentVersion = agentVersion })
         // `agentStatus` synthesis keys off a live `VZVirtualMachine`, which no
         // CI host can create — the phase's session identity stands in for one,
         // not for the session context the control service lives in.

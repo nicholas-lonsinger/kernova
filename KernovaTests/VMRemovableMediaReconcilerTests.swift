@@ -55,13 +55,6 @@ struct VMRemovableMediaReconcilerTests {
         return (reconciler, lifecycle, virtualization)
     }
 
-    private func makeInstance(name: String = "Test VM") -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     /// Helper: build a config with a single removable media item.
     private func configWithRemovable(
         _ base: VMConfiguration,
@@ -86,7 +79,7 @@ struct VMRemovableMediaReconcilerTests {
         ]
 
         for phase in unattachable + admitting {
-            let instance = makeInstance()
+            let instance = VMInstanceFixture.make()
             instance.enter(phase)
             let old = instance.configuration
             let mediaChange = configWithRemovable(old, path: "/tmp/A.iso")
@@ -107,7 +100,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableAddAttaches() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -133,7 +126,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableRemoveDetaches() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -160,7 +153,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableSwapDetachesThenAttaches() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -190,7 +183,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableReadOnlyFlipReattaches() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -217,7 +210,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableNoopWhenOnlyStorageDisksChange() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -238,7 +231,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableNoopWhenStopped() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.stopped)
 
         let old = instance.configuration
@@ -256,7 +249,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableNoopWhenColdPaused() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
 
         let old = instance.configuration
@@ -276,7 +269,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/missing.iso")
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -301,7 +294,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = RemovableMediaDeviceError.deviceNotFound
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -331,7 +324,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -360,7 +353,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = RemovableMediaDeviceError.noVirtualMachine
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -387,7 +380,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         mock.attachError = RemovableMediaDeviceError.noVirtualMachine
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -407,7 +400,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableReconcileBailsOutOnVMStop() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -433,7 +426,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableOvertakenPassLeavesTheSuccessorAlone() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -464,7 +457,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableOvertakenPassFailureIsDropped() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -495,7 +488,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableQueuedTargetIsNotDrainedOntoTheSuccessor() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -541,7 +534,7 @@ struct VMRemovableMediaReconcilerTests {
     func liveRemovableRapidFireCoalescesToLatest() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -576,7 +569,7 @@ struct VMRemovableMediaReconcilerTests {
     func applyMarksTheDebtUntilTheQueueDrains() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         #expect(!instance.hasRemovableMediaReconcileOwed)
@@ -604,7 +597,7 @@ struct VMRemovableMediaReconcilerTests {
         // later serialized operation on a wait nothing can end.
         let mock = SuspendingMockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -634,7 +627,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let (reconciler, lifecycle, virtualization) = makeReconcilerWithLifecycle(
             removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -661,7 +654,7 @@ struct VMRemovableMediaReconcilerTests {
     func entryForATornDownSessionIsDroppedBeforeTheDrain() async throws {
         let mock = MockRemovableMediaDeviceService()
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
 
@@ -697,7 +690,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/new.iso")
         let reconciler = makeReconciler(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()

@@ -96,15 +96,9 @@ struct VMCommandEnvelopeRouterTests {
     private func makeInstance(
         in harness: Harness, name: String = "Wired", phase: VMLifecyclePhase = .stopped
     ) -> VMInstance {
-        var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        config.networkEnabled = false
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
-        harness.library.instances.append(instance)
-        harness.storage.bundles[bundleURL] = config
-        return instance
+        RegisteredVMInstanceFixture.register(
+            name: name, phase: phase, guestOS: .linux, library: harness.library,
+            storage: harness.storage, preferences: preferences)
     }
 
     // MARK: - Reads
@@ -463,15 +457,14 @@ struct VMCommandEnvelopeRouterTests {
     func repeatedCancelGuestSetupRefusesOnceDrained() async throws {
         let installService = SuspendingMockMacOSInstallService()
         let harness = makeHarness(installService: installService)
-        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
-        config.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: .initialBoot,
-            preferences: preferences)
+        let instance = VMInstanceFixture.make(
+            name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
         harness.library.instances.append(instance)
-        harness.storage.bundles[bundleURL] = config
+        harness.storage.bundles[instance.bundleURL] = instance.configuration
 
         let started = try await harness.transport.send(
             .start(.id(instance.id), recovery: false))
@@ -530,15 +523,14 @@ struct VMCommandEnvelopeRouterTests {
             fileSystem: fileSystem, preferences: preferences)
         let transport = makeTransport(over: core)
 
-        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
-        config.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: .initialBoot,
-            preferences: preferences)
+        let instance = VMInstanceFixture.make(
+            name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
         library.instances.append(instance)
-        storage.bundles[bundleURL] = config
+        storage.bundles[instance.bundleURL] = instance.configuration
 
         let started = try await transport.send(.start(.id(instance.id), recovery: false))
         #expect(started.result == .ok)

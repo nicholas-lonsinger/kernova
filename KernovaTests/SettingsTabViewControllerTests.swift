@@ -29,10 +29,8 @@ struct SettingsTabViewControllerTests {
             preferences: preferences
         )
         for index in 1...vmCount {
-            let config = VMConfiguration(name: "VM \(index)", guestOS: .macOS, bootMode: .efi)
-            let bundleURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(config.id.uuidString, isDirectory: true)
-            viewModel.instances.append(VMInstance(configuration: config, bundleURL: bundleURL))
+            viewModel.instances.append(
+                VMInstanceFixture.make(name: "VM \(index)", guestOS: .macOS))
         }
         return viewModel
     }

@@ -60,17 +60,6 @@ struct VMLibraryTests {
         instance.preparingState = VMInstance.PreparingState(operation: operation, task: Task {})
     }
 
-    private func makeInstance(name: String = "Test VM", guestOS: VMGuestOS = .linux) -> VMInstance {
-        let config = VMConfiguration(
-            name: name,
-            guestOS: guestOS,
-            bootMode: guestOS == .macOS ? .macOS : .efi
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     // MARK: - Load
 
     @Test("init reads nothing — the library is loaded after launch, not during construction")
@@ -142,7 +131,7 @@ struct VMLibraryTests {
 
         // Stands in for an import phantom or a wizard-created VM: registered
         // after the scan started, so the scan cannot know about it.
-        let arrival = makeInstance(name: "Arrived Mid-Read")
+        let arrival = VMInstanceFixture.make(name: "Arrived Mid-Read")
         library.instances.append(arrival)
 
         await load.value
@@ -200,7 +189,7 @@ struct VMLibraryTests {
     @Test("selectedID persists to UserDefaults on change")
     func selectedIDPersistsToUserDefaults() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         library.instances.append(instance)
 
         library.selectedID = instance.id
@@ -211,7 +200,7 @@ struct VMLibraryTests {
     @Test("selectedID clears UserDefaults when set to nil")
     func selectedIDClearsUserDefaults() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         library.instances.append(instance)
         library.selectedID = instance.id
 
@@ -289,7 +278,7 @@ struct VMLibraryTests {
     @Test("saveConfiguration persists via storage service")
     func saveConfigurationPersists() {
         let (library, storage, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         library.saveConfiguration(for: instance)
 
@@ -299,7 +288,7 @@ struct VMLibraryTests {
     @Test("saveConfiguration presents error on failure")
     func saveConfigurationPresentsError() {
         let (library, storage, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
         library.saveConfiguration(for: instance)
@@ -313,7 +302,7 @@ struct VMLibraryTests {
     @Test("selectedInstance returns the instance matching selectedID")
     func selectedInstance() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         library.instances.append(instance)
         library.selectedID = instance.id
 
@@ -351,7 +340,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
     func reconcileRemovesStoppedVMs() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance(name: "Gone VM")
+        let instance = VMInstanceFixture.make(name: "Gone VM")
         instance.enter(.stopped)
         library.instances.append(instance)
 
@@ -364,7 +353,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
     func reconcilePreservesRunningVMs() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance(name: "Running VM")
+        let instance = VMInstanceFixture.make(name: "Running VM")
         instance.enter(.running(sessionID: UUID()))
         library.instances.append(instance)
 
@@ -377,7 +366,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk preserves paused VMs even if bundle is missing")
     func reconcilePreservesPausedVMs() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance(name: "Paused VM")
+        let instance = VMInstanceFixture.make(name: "Paused VM")
         instance.enter(.suspended)
         library.instances.append(instance)
 
@@ -390,8 +379,8 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
     func reconcileUpdatesSelection() {
         let (library, storage, _, _) = makeLibrary()
-        let remaining = makeInstance(name: "Remaining")
-        let removed = makeInstance(name: "Removed")
+        let remaining = VMInstanceFixture.make(name: "Remaining")
+        let removed = VMInstanceFixture.make(name: "Removed")
         removed.enter(.stopped)
         library.instances = [remaining, removed]
         library.selectedID = removed.id
@@ -600,13 +589,12 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk removes .initialBoot VMs whose bundles vanish")
     func reconcileRemovesInitialBootVMs() {
         let (library, storage, _, _) = makeLibrary()
-        var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
-        config.installContext = MacOSInstallContext(
-            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .initialBoot)
+        let instance = VMInstanceFixture.make(
+            name: "Pending VM", guestOS: .macOS, phase: .initialBoot
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
         library.instances.append(instance)
         // Bundle is NOT in storage.bundles — simulating an on-disk deletion.
 
@@ -620,13 +608,12 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk cancels setupTask before evicting an orphaned VM")
     func reconcileCancelsSetupTaskBeforeEviction() async {
         let (library, _, _, _) = makeLibrary()
-        var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
-        config.installContext = MacOSInstallContext(
-            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: .initialBoot)
+        let instance = VMInstanceFixture.make(
+            name: "Pending VM", guestOS: .macOS, phase: .initialBoot
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
 
         // Spawn a long-running install task we can observe getting cancelled.
         let cancelStream = AsyncStream<Void>.makeStream()
@@ -652,7 +639,7 @@ struct VMLibraryTests {
     @Test("hasPreparing returns true when an instance is preparing")
     func hasPreparingTrue() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         markPreparing(instance)
         library.instances.append(instance)
 
@@ -662,7 +649,7 @@ struct VMLibraryTests {
     @Test("hasPreparing returns false when no instances are preparing")
     func hasPreparingFalse() {
         let (library, _, _, _) = makeLibrary()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         library.instances.append(instance)
 
         #expect(library.hasPreparing == false)
@@ -682,7 +669,7 @@ struct VMLibraryTests {
         library.instances.removeAll()
 
         // Add a preparing instance
-        let preparing = makeInstance(name: "Preparing")
+        let preparing = VMInstanceFixture.make(name: "Preparing")
         markPreparing(preparing)
         library.instances.append(preparing)
 
@@ -696,7 +683,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk preserves preparing instances from removal")
     func reconcilePreservesPreparingInstances() {
         let (library, _, _, _) = makeLibrary()
-        let preparing = makeInstance(name: "Preparing VM")
+        let preparing = VMInstanceFixture.make(name: "Preparing VM")
         markPreparing(preparing)
         preparing.enter(.stopped)
         library.instances.append(preparing)
@@ -747,7 +734,7 @@ struct VMLibraryTests {
     @Test("wirePersistence mirrors the pairings the bundle holds")
     func wirePersistenceLoadsPairings() {
         let (library, store) = makePairingLibrary()
-        let instance = makeInstance(name: "Paired VM")
+        let instance = VMInstanceFixture.make(name: "Paired VM")
         store.setPairings(
             USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: instance.bundleURL)
 
@@ -759,7 +746,7 @@ struct VMLibraryTests {
     @Test("A bundle with no pairings mirrors an empty set")
     func wirePersistenceLoadsNothingForAFreshBundle() {
         let (library, _) = makePairingLibrary()
-        let instance = makeInstance(name: "Fresh VM")
+        let instance = VMInstanceFixture.make(name: "Fresh VM")
 
         library.wirePersistence(for: instance)
 
@@ -772,7 +759,7 @@ struct VMLibraryTests {
     @Test("updateUSBPairings writes the bundle, and writes nothing when nothing changed")
     func updateUSBPairingsPersistsAndNoOps() {
         let (library, store) = makePairingLibrary()
-        let instance = makeInstance(name: "Paired VM")
+        let instance = VMInstanceFixture.make(name: "Paired VM")
         library.wirePersistence(for: instance)
 
         #expect(library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) })
@@ -787,7 +774,7 @@ struct VMLibraryTests {
     @Test("A failed write leaves the new set in memory and reports the failure")
     func updateUSBPairingsReportsAFailedWrite() {
         let (library, store) = makePairingLibrary()
-        let instance = makeInstance(name: "Paired VM")
+        let instance = VMInstanceFixture.make(name: "Paired VM")
         library.wirePersistence(for: instance)
         store.saveError = VMStorageError.bundleNotFound(instance.bundleURL)
 
@@ -803,8 +790,8 @@ struct VMLibraryTests {
     @Test("Pairing an accessory takes its key off every other virtual machine")
     func pairUSBAccessoryIsLibraryWide() {
         let (library, _) = makePairingLibrary()
-        let first = makeInstance(name: "First")
-        let second = makeInstance(name: "Second")
+        let first = VMInstanceFixture.make(name: "First")
+        let second = VMInstanceFixture.make(name: "Second")
         for instance in [first, second] {
             library.wirePersistence(for: instance)
             library.instances.append(instance)

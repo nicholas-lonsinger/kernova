@@ -30,11 +30,7 @@ struct VMDisplayPlacementReadyDisplayTests {
     }
 
     private func makeInstance(preference: VMDisplayPreference) -> VMInstance {
-        var config = VMConfiguration(name: "Readied VM", guestOS: .linux, bootMode: .efi)
-        config.displayPreference = preference
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(name: "Readied VM") { $0.displayPreference = preference }
     }
 
     private func makeController(posture: GUIPosture)

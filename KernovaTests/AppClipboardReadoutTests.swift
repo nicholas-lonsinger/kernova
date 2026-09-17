@@ -16,10 +16,7 @@ import Testing
 @MainActor
 struct AppClipboardReadoutTests {
     private func makeInstance(name: String) -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()))
+        VMInstanceFixture.make(name: name, phase: .running(sessionID: UUID()))
     }
 
     /// Stands a running, cancellable readout on `instance`, returning the

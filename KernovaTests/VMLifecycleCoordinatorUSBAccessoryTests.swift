@@ -28,11 +28,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     }
 
     private func makeInstance(sessionID: UUID) -> VMInstance {
-        let config = VMConfiguration(name: "USB VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: .running(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(
+            name: "USB VM", phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
         return instance
     }

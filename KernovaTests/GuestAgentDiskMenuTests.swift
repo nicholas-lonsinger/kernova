@@ -87,21 +87,13 @@ struct GuestAgentDiskMenuTests {
 @Suite("VMInstance.canManageGuestAgentDisk", .admissionGated)
 @MainActor
 struct GuestAgentDiskEligibilityTests {
-    private func makeInstance(guestOS: VMGuestOS, phase: VMLifecyclePhase) -> VMInstance {
-        let config = VMConfiguration(
-            name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
-    }
-
     @Test(
         "A live macOS guest can manage the disk",
         arguments: [
             VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
         ])
     func liveMacOSIsEligible(phase: VMLifecyclePhase) {
-        #expect(makeInstance(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
+        #expect(VMInstanceFixture.make(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
     }
 
     @Test(
@@ -110,12 +102,12 @@ struct GuestAgentDiskEligibilityTests {
             VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
         ])
     func liveLinuxIsNotEligible(phase: VMLifecyclePhase) {
-        #expect(!makeInstance(guestOS: .linux, phase: phase).canManageGuestAgentDisk)
+        #expect(!VMInstanceFixture.make(guestOS: .linux, phase: phase).canManageGuestAgentDisk)
     }
 
     @Test("A macOS guest suspended to disk cannot — USB hot-plug needs a live VM")
     func macOSWithoutLiveVMIsNotEligible() {
-        #expect(!makeInstance(guestOS: .macOS, phase: .suspended).canManageGuestAgentDisk)
+        #expect(!VMInstanceFixture.make(guestOS: .macOS, phase: .suspended).canManageGuestAgentDisk)
     }
 
     @Test(
@@ -125,6 +117,6 @@ struct GuestAgentDiskEligibilityTests {
             .failed(message: "Boot failed."),
         ])
     func stoppedMacOSIsNotEligible(phase: VMLifecyclePhase) {
-        #expect(!makeInstance(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
+        #expect(!VMInstanceFixture.make(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
     }
 }

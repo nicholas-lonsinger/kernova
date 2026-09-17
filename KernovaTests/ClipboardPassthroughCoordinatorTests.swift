@@ -132,11 +132,8 @@ struct ClipboardPassthroughCoordinatorTests {
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
             writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
-        let config = VMConfiguration(name: "Passthrough VM", guestOS: .macOS, bootMode: .macOS)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL,
+        let instance = VMInstanceFixture.make(
+            name: "Passthrough VM", guestOS: .macOS,
             preferences: preferences
                 ?? makeEphemeralPreferences(suiteName: "test.kernova.passthrough-instance"))
         let service = FakePassthroughService()
@@ -813,10 +810,7 @@ struct ClipboardPassthroughCoordinatorTests {
         defer { pasteboard.releaseGlobally() }
         let publisher = HostClipboardPublisher(
             writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
-        let config = VMConfiguration(name: "Promised VM", guestOS: .macOS, bootMode: .macOS)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(name: "Promised VM", guestOS: .macOS)
         let service = PromisedPassthroughService()
         instance.beginSessionContext().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(

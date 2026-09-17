@@ -12,14 +12,6 @@ struct VMOverviewResolverTests {
 
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
 
-    private func makeInstance(_ mutate: (inout VMConfiguration) -> Void = { _ in }) -> VMInstance {
-        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
-        mutate(&config)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     /// `inLibrary` lists the VM the resolver is bound to, which is what lets the
     /// reads it issues — each addressing its VM by id — answer at all.
     ///
@@ -93,7 +85,7 @@ struct VMOverviewResolverTests {
     @Test("The mode title is named once per mode, not once per pass")
     func modeTitleIsNamedOncePerMode() {
         let interfaces = CountingBridgedInterfaceProvider(available: [Self.wiFi])
-        let instance = makeInstance {
+        let instance = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.networkMode = .bridged
             $0.bridgedInterfaceIdentifier = "en0"
@@ -112,7 +104,7 @@ struct VMOverviewResolverTests {
     @Test("A mode that names no interface never enumerates the host's")
     func nonBridgedModesNeverEnumerate() {
         let interfaces = CountingBridgedInterfaceProvider(available: [Self.wiFi])
-        let instance = makeInstance {
+        let instance = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -131,7 +123,7 @@ struct VMOverviewResolverTests {
     func addressComesFromTheRegistryWithoutClaimingASlot() {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        let instance = makeInstance {
+        let instance = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -150,7 +142,7 @@ struct VMOverviewResolverTests {
     @Test("A slot on a network with no addressing yet reads as pending, and states nothing")
     func addressPendsUntilTheNetworkHasAddressing() {
         let vmnet = MockVmnetNetworkProvider()
-        let instance = makeInstance {
+        let instance = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -165,7 +157,7 @@ struct VMOverviewResolverTests {
 
     @Test("Bridged hands addressing to the network; an unentitled build has none to state")
     func addressAbsentWhereNothingAssignsOne() {
-        let bridged = makeInstance {
+        let bridged = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.networkMode = .bridged
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -175,7 +167,7 @@ struct VMOverviewResolverTests {
         #expect(bridgedResolver.resolved.ipAddress == .externallyAssigned)
         #expect(bridgedResolver.resolved.ipAddress.displayText == "Assigned by your network")
 
-        let unentitled = makeInstance {
+        let unentitled = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -184,7 +176,7 @@ struct VMOverviewResolverTests {
         unentitledResolver.refresh()
         #expect(unentitledResolver.resolved.ipAddress == .unavailable)
 
-        let off = makeInstance { $0.networkEnabled = false }
+        let off = VMInstanceFixture.make { $0.networkEnabled = false }
         let offResolver = makeResolver(instance: off)
         offResolver.refresh()
         #expect(offResolver.resolved.ipAddress == .unavailable)
@@ -196,7 +188,7 @@ struct VMOverviewResolverTests {
     func forwardingCountAppliesWhereForwardingDoes() {
         let rules = [PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)]
         func count(entitled: Bool, mode: VMNetworkMode, mac: String?) -> Int? {
-            let instance = makeInstance {
+            let instance = VMInstanceFixture.make {
                 $0.networkEnabled = true
                 $0.networkMode = mode
                 $0.macAddress = mac
@@ -218,11 +210,11 @@ struct VMOverviewResolverTests {
     @Test("A duplicate MAC names the other VMs holding it")
     func duplicateMACWarningNamesTheOtherVMs() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = makeInstance {
+        let instance = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
-        let twin = makeInstance {
+        let twin = VMInstanceFixture.make {
             $0.name = "Twin"
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
@@ -239,7 +231,7 @@ struct VMOverviewResolverTests {
 
     @Test("A VM alone on its address raises no Network warning")
     func soleHolderOfAMACRaisesNothing() {
-        let instance = makeInstance {
+        let instance = VMInstanceFixture.make {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
@@ -250,13 +242,13 @@ struct VMOverviewResolverTests {
 
     @Test("A refused microphone raises the System warning only while input is on")
     func micWarningFollowsPermissionAndInput() {
-        let silent = makeInstance { $0.audioInputEnabled = false }
+        let silent = VMInstanceFixture.make { $0.audioInputEnabled = false }
         let silentResolver = makeResolver(instance: silent, micPermission: .denied)
         silentResolver.refresh()
         #expect(silentResolver.resolved.micWarning == MicWarningState.none)
         #expect(silentResolver.resolved.warnings[.system] == nil)
 
-        let listening = makeInstance { $0.audioInputEnabled = true }
+        let listening = VMInstanceFixture.make { $0.audioInputEnabled = true }
         let deniedResolver = makeResolver(instance: listening, micPermission: .denied)
         deniedResolver.refresh()
         #expect(deniedResolver.resolved.micWarning == .denied)
@@ -275,7 +267,7 @@ struct VMOverviewResolverTests {
 
     @Test("The snapshots' footprint lands from an off-main read, keyed to its set")
     func snapshotFootprintFollowsItsSet() async throws {
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let snapshot = VMSnapshot(name: "Base")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
@@ -294,7 +286,7 @@ struct VMOverviewResolverTests {
 
     @Test("A size already read survives the re-read the next snapshot triggers")
     func measuredSizesOutliveARereadOfTheSameVM() async throws {
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let first = VMSnapshot(name: "First")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [first], currentID: first.id)
         let resolver = makeResolver(instance: instance, inLibrary: true)
@@ -321,7 +313,7 @@ struct VMOverviewResolverTests {
 
     @Test("Deleting a snapshot drops its size and leaves the rest measured")
     func deletingASnapshotDropsOnlyItsOwnSize() async throws {
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let first = VMSnapshot(name: "First")
         let second = VMSnapshot(name: "Second")
         instance.snapshotManifest = VMSnapshotManifest(
@@ -344,7 +336,7 @@ struct VMOverviewResolverTests {
     @Test("Binding to another VM drops what described the outgoing one")
     func rebindingClearsTheOutgoingVMsValues() async {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let snapshot = VMSnapshot(name: "Base")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
@@ -354,7 +346,7 @@ struct VMOverviewResolverTests {
         await resolver.bootDiskTaskForTesting?.value
         #expect(resolver.resolved.snapshotTotalBytes != nil)
 
-        resolver.bind(instance: makeInstance(), viewModel: viewModel)
+        resolver.bind(instance: VMInstanceFixture.make(), viewModel: viewModel)
 
         // Nothing of the previous VM's survives to be stated beside the new
         // one's count.
@@ -366,7 +358,7 @@ struct VMOverviewResolverTests {
 
     @Test("A resolved read reports the category whose card it moved")
     func resolvedReadsReportTheirCategory() async {
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let snapshot = VMSnapshot(name: "Base")
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)

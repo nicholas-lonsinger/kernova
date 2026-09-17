@@ -29,14 +29,10 @@ struct VMSessionContextTests {
     private func makeInstance(
         guestOS: VMGuestOS = .macOS, phase: VMLifecyclePhase = .running(sessionID: UUID())
     ) -> VMInstance {
-        var config = VMConfiguration(
-            name: "Session Context VM", guestOS: guestOS,
-            bootMode: guestOS == .macOS ? .macOS : .efi)
-        config.dropFilesEnabled = true
-        config.lastSeenAgentVersion = "0.9.2"
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        VMInstanceFixture.make(name: "Session Context VM", guestOS: guestOS, phase: phase) {
+            $0.dropFilesEnabled = true
+            $0.lastSeenAgentVersion = "0.9.2"
+        }
     }
 
     /// Whether mutating through `mutate` wakes an observer that reads `track`.

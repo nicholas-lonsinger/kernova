@@ -30,13 +30,11 @@ struct GuestProvisioningLifecycleTests {
     private func makeInstance(
         intent: GuestAccountIntent? = nil
     ) -> VMInstance {
-        var config = VMConfiguration(name: "Unattended VM", guestOS: .macOS, bootMode: .macOS)
-        config.installContext = MacOSInstallContext(
-            source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        config.pendingGuestAccount = intent
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(name: "Unattended VM", guestOS: .macOS) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+            $0.pendingGuestAccount = intent
+        }
         // Wired as the library wires it, so a retraction reaches the
         // configuration the way it does in the app.
         instance.onUpdateConfiguration = { mutate in

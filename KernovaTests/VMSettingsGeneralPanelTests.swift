@@ -18,10 +18,6 @@ struct VMSettingsGeneralPanelTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
-        makeSettingsInstance(guestOS: guestOS)
-    }
-
     private func makeController(
         guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .general
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
@@ -110,7 +106,7 @@ struct VMSettingsGeneralPanelTests {
         lastSeenGuestOSVersion: String? = nil
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: guestOS)
+        let instance = makeSettingsInstance(guestOS: guestOS)
         instance.configuration.installedImage = installedImage
         instance.configuration.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         let vc = makeSettingsPane(
@@ -262,7 +258,7 @@ struct VMSettingsGeneralPanelTests {
     @Test("The Startup toggle reflects the configuration")
     func autoStartSwitchReflectsConfiguration() {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux)
         instance.configuration.startsAutomaticallyOnLaunch = true
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
@@ -333,7 +329,7 @@ struct VMSettingsGeneralPanelTests {
         snapshots: [VMSnapshot], ephemeral: Bool, isReadOnly: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: snapshots, currentID: snapshots.first?.id)
         if ephemeral, let baseline = snapshots.first {
@@ -560,7 +556,7 @@ struct VMSettingsGeneralPanelTests {
         VMSettingsViewController, VMInstance
     ) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: guestOS)
+        let instance = makeSettingsInstance(guestOS: guestOS)
         var library = [instance]
         var remaining = markedMacOSVMs
         if guestOS == .macOS, remaining > 0 {
@@ -568,7 +564,7 @@ struct VMSettingsGeneralPanelTests {
             remaining -= 1
         }
         for index in 0..<remaining {
-            let other = makeInstance(guestOS: .macOS)
+            let other = makeSettingsInstance(guestOS: .macOS)
             other.configuration.name = "Marked \(index)"
             other.configuration.startsAutomaticallyOnLaunch = true
             library.append(other)

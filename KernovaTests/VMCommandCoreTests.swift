@@ -895,17 +895,15 @@ struct VMCommandCoreTests {
             snapshotStore: snapshots, diskImageService: MockDiskImageService(),
             fileSystem: fileSystem, preferences: preferences)
 
-        var config = VMConfiguration(name: "Installing", guestOS: .macOS, bootMode: .macOS)
-        config.installContext = MacOSInstallContext(
-            source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: .initialBoot,
-            preferences: preferences)
+        let instance = VMInstanceFixture.make(
+            name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
         library.wirePersistence(for: instance)
         library.instances.append(instance)
-        storage.bundles[bundleURL] = config
+        storage.bundles[instance.bundleURL] = instance.configuration
 
         try await core.start(.id(instance.id), recovery: false, guestAccount: nil)
         for await _ in installService.installStartedStream { break }
