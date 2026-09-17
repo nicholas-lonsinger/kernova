@@ -197,22 +197,13 @@ extension VMCommandResponse {
     /// A verb's refusal, plus what a terminal can do about it that an alert's
     /// buttons would have offered.
     ///
-    /// The guest-account refusal names both flags and the shell idiom that
-    /// keeps the password off the terminal and out of the argument list: this
-    /// tool raises no prompt of its own (``GuestAccountEntry``), so the command
-    /// line is the whole of what it can offer. The core's own message already
-    /// names Kernova's sheet as the other route.
+    /// A guest-account refusal gets no flag hint: the wire's `start` carries no
+    /// way to answer for the account, so the core's own message — naming
+    /// Kernova's sheet as the route — is the whole of what this tool can offer.
     private static func message(for error: CommandErrorDTO) -> String {
         switch error {
         case .confirmationRequired:
             error.message + "\n\nPass --yes to do it anyway."
-        case .guestAccountPasswordRequired:
-            error.message
-                + "\n\nPass --admin-password-stdin to supply the password on standard input, "
-                + "or --without-account to start without the account. At a terminal, keep the "
-                + "password out of your history by reading it into a variable first "
-                + "(no prompt appears; type it and press Return): read -rs PASSWORD; "
-                + "printf '%s' \"$PASSWORD\" | kernova start \u{2026} --admin-password-stdin"
         default:
             error.message
         }
