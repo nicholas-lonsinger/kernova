@@ -235,18 +235,17 @@ else
 fi
 
 # KERNOVA_APP_ENTITLEMENTS selects the app's entitlement set; unset means the
-# Development variant without the restricted com.apple.vm.networking key.
-# Surfaced here because archives inherit it silently — RELEASING.md's Archive
-# step gates which distribution lane may carry the key.
+# Development variant, without the restricted keys check-entitlements.sh names.
+# Surfaced here because archives inherit it silently.
 resolved_entitlements=$(sed -n 's/^[[:space:]]*KERNOVA_APP_ENTITLEMENTS[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
 if [ "$resolved_entitlements" = "Kernova/Resources/Kernova.entitlements" ]; then
     pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
-    detail 'archives cut on this machine carry the restricted com.apple.vm.networking key — see docs/RELEASING.md "Archive"'
+    detail 'archives cut on this machine carry the restricted com.apple.vm.networking and com.apple.developer.accessory-access.usb keys — the embedded profile has to authorize both'
 elif [ -n "$resolved_entitlements" ]; then
     pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
-    detail 'not the full Kernova.entitlements set — archives will NOT carry the restricted com.apple.vm.networking key'
+    detail 'not the full Kernova.entitlements set — archives will NOT carry the restricted keys'
 else
-    pass 'App entitlements: Development variant (default — no restricted key; archives need the full set for VM networking)'
+    pass 'App entitlements: Development variant (default — no restricted keys; archives need the full set for VM networking and USB accessory access)'
 fi
 
 # `security find-identity` lists every codesigning-capable identity in the

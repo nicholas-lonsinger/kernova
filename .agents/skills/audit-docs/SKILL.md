@@ -161,6 +161,14 @@ Delete, unless the clause carries an external fact with evidence (AGENTS.md's
 routing test 0), in which case reclassify as a declaration. A why-clause stays
 only when the why changes what the reader does.
 
+### Runbooks
+
+A runbook describes the procedure the maintainer actually runs, verified
+against what is installed and what has shipped — profiles, release history,
+the distribution channels in use. A lane the maintainer has not run, or a
+step nothing has yet reached, is a plan and is not written; it is written
+when it happens.
+
 ### The file as a whole
 
 A doc whose sections each mirror one code-layer header — a script's, an
