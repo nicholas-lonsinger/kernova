@@ -1744,15 +1744,20 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let reports = ClipboardTransferReports()
+        let stagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            stagingTempRoot: stagingRoot)
         // The write-only seam rather than a real `NSPasteboard`: the pasteboard
         // server is a shared system service, so a real write can fail for
         // reasons this test does not control — and `.written` is a
         // precondition of everything below it, not the subject.
         let pasteboard = FakeWritePasteboard()
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
+            stagingTempRoot: stagingRoot)
         service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
         service.start()
         defer { service.stop() }
@@ -1811,14 +1816,19 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let reports = ClipboardTransferReports()
+        let stagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            stagingTempRoot: stagingRoot)
         // The write-only seam, as `retractionRespectsPasteboardOwnership` uses:
         // a real pasteboard write can fail for reasons outside this test, and
         // `.written` is a precondition of everything below it.
         let pasteboard = FakeWritePasteboard()
         let publisher = HostClipboardPublisher(
-            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
+            stagingTempRoot: stagingRoot)
         service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
         service.start()
         defer { service.stop() }

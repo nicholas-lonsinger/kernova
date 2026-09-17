@@ -28,7 +28,7 @@ final class HostClipboardPublisher {
     ///
     /// Recent generations are retained so a just-copied URL on the pasteboard
     /// stays valid across a couple more copies.
-    private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
+    private let staging: ClipboardFileStaging
 
     /// Monotonic generation for the launch-swept staging root, bumped per publish
     /// so each supersedes older staged artifacts within the recency window.
@@ -50,12 +50,17 @@ final class HostClipboardPublisher {
     var beforePasteboardWriteForTesting: (@MainActor () async -> Void)?
     #endif
 
+    /// Tests pass `stagingTempRoot` to isolate the staging directory between
+    /// parallel runs.
     init(
         writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
-        providerRegistry: LazyClipboardProviderRegistry = .shared
+        providerRegistry: LazyClipboardProviderRegistry = .shared,
+        stagingTempRoot: URL = FileManager.default.temporaryDirectory
     ) {
         self.publisher = ClipboardPasteboardPublisher(
             pasteboard: writePasteboard, providerRegistry: providerRegistry)
+        self.staging = ClipboardFileStaging(
+            label: HostClipboardPublisher.stagingLabel, tempRoot: stagingTempRoot)
     }
 
     /// Builds the service's "Copy to Mac" items and writes them to the host

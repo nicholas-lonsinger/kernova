@@ -45,6 +45,7 @@ struct HostClipboardPublisherCancellationTests {
         let pasteboard: NSPasteboard
         let registry: LazyClipboardProviderRegistry
         let service: CountingService
+        let stagingRoot: URL
     }
 
     /// What the user already has on their Mac clipboard — a cancelled publish
@@ -58,17 +59,22 @@ struct HostClipboardPublisherCancellationTests {
         item.setString(Self.hostContent, forType: .string)
         pasteboard.writeObjects([item])
         let registry = LazyClipboardProviderRegistry()
+        let stagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         return Fixture(
             publisher: HostClipboardPublisher(
-                writePasteboard: pasteboard, providerRegistry: registry),
+                writePasteboard: pasteboard, providerRegistry: registry,
+                stagingTempRoot: stagingRoot),
             pasteboard: pasteboard, registry: registry,
-            service: CountingService(content: ClipboardContent(text: text)))
+            service: CountingService(content: ClipboardContent(text: text)),
+            stagingRoot: stagingRoot)
     }
 
     @Test("A publish cancelled before it begins asks the service for nothing")
     func cancelBeforeStartSkipsMaterialize() async {
         let f = makeFixture()
         defer { f.pasteboard.releaseGlobally() }
+        defer { try? FileManager.default.removeItem(at: f.stagingRoot) }
         let baseline = f.pasteboard.changeCount
 
         // Nothing suspends between the launch and the cancel, so the body
@@ -88,6 +94,7 @@ struct HostClipboardPublisherCancellationTests {
         let f = makeFixture()
         defer { f.pasteboard.releaseGlobally() }
         defer { f.registry.releaseAllForTesting() }
+        defer { try? FileManager.default.removeItem(at: f.stagingRoot) }
         let baseline = f.pasteboard.changeCount
 
         let atWrite = AsyncGate()
@@ -123,6 +130,7 @@ struct HostClipboardPublisherCancellationTests {
         let f = makeFixture(text: "lazy bytes")
         defer { f.pasteboard.releaseGlobally() }
         defer { f.registry.releaseAllForTesting() }
+        defer { try? FileManager.default.removeItem(at: f.stagingRoot) }
         let baseline = f.pasteboard.changeCount
 
         let outcome = try await f.publisher.publish(from: f.service)
