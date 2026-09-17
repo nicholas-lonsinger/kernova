@@ -22,7 +22,7 @@ A harness that creates worktrees with git hooks disabled gets a one-line adapter
 
 Every build setting lives in `Config/`: `Base.xcconfig` on both project configurations, `Config/Targets/<Target>.xcconfig` on both of that target's. Each file covers Debug and Release together, with a `[config=Debug]` / `[config=Release]` condition on the settings that genuinely differ. Every `buildSettings` block in `project.pbxproj` is empty, and `Tools/check-build-settings-layering.sh` fails lint if one isn't — the Signing & Capabilities editor writes toggles inline, where they silently outrank the xcconfig.
 
-Precedence runs target xcconfig above project xcconfig, so **no signing identity, team, or entitlement path may be assigned in the app or test-target xcconfigs**: it would shadow `Config/Local.xcconfig` and revert a developer to ad-hoc signing. The settings those files do carry — `CODE_SIGN_STYLE`, `ENABLE_HARDENED_RUNTIME`, an empty `PROVISIONING_PROFILE_SPECIFIER`, and a `$(KERNOVA_APP_ENTITLEMENTS)` reference — name no identity and shadow nothing that file sets.
+Precedence runs target xcconfig above project xcconfig, so **no signing identity, team, or entitlement path may be assigned in `Config/Targets/Kernova.xcconfig`, `KernovaTests.xcconfig`, or `KernovaMacOSAgentTests.xcconfig`** — the three targets `Config/Local.xcconfig` must reach. Assigning one there would shadow that file and revert a developer to ad-hoc signing. The settings those files do carry — `CODE_SIGN_STYLE`, `ENABLE_HARDENED_RUNTIME`, an empty `PROVISIONING_PROFILE_SPECIFIER`, and a `$(KERNOVA_APP_ENTITLEMENTS)` reference — name no identity and shadow nothing that file sets.
 
 `KernovaKit/Package.swift` is outside all of this: SwiftPM never reads a project xcconfig, so it restates the warnings-as-errors gate and the agent deployment floor. `Tools/check-agent-deployment-floor.sh` holds its `.macOS(…)` to `Base.xcconfig`'s `KERNOVA_AGENT_DEPLOYMENT_TARGET`.
 
@@ -111,7 +111,7 @@ A feature branch therefore reads its post-merge number and holds it steady acros
 
 ## Guest agent versioning
 
-The guest agent has its **own** `MARKETING_VERSION`, independent of the app's. Bump it whenever a change means a running guest needs the agent reinstalled: the version mismatch is what surfaces the "update the guest agent" affordance on the host, so an unbumped behavioral change ships silently to nobody.
+The guest agent has its **own** `MARKETING_VERSION`, independent of the app's.
 
 Bump it in the same PR as the behavior change, even mid-PR. The first behavioral change on a branch bumps the **minor**; later revisions on that branch bump the **patch**.
 

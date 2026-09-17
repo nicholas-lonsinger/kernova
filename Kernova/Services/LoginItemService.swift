@@ -21,7 +21,7 @@ protocol LoginItemRegistration {
 /// Registering the *main app* rather than a LaunchAgent is also what keeps the
 /// toggle away from this process's own lifecycle: `SMAppService.h` scopes both
 /// the kill-on-unregister behavior and the re-register-after-update requirement to
-/// LaunchItems, LaunchAgents, and LaunchDaemons (#801).
+/// LaunchItems, LaunchAgents, and LaunchDaemons.
 struct MainAppRegistration: LoginItemRegistration {
     private var service: SMAppService { .mainApp }
 

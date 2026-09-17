@@ -98,7 +98,7 @@ public struct StreamFrameDecoder: Sendable {
         let payloadStart = buffer.startIndex + readOffset + StreamFrame.lengthPrefixSize
         let payloadEnd = buffer.startIndex + readOffset + totalFrameSize
         // RATIONALE: return a slice aliasing `buffer` rather than copying the
-        // payload out, removing the per-frame copy on the common path (#377); on
+        // payload out, removing the per-frame copy on the common path; on
         // the rare frames where `compactIfNeeded` shifts, the live slice turns that
         // shift into a copy-on-write. A caller MUST consume or copy the slice
         // before the next `feed`/`nextFrame`; `Data`'s copy-on-write keeps that a
@@ -140,7 +140,7 @@ public struct StreamFrameDecoder: Sendable {
         // threshold. A chunk frame is ~65.5 KiB — already past
         // `compactionThreshold` on its own — so a bare threshold guard would
         // memmove the whole unread tail after *every* frame, moving far more than
-        // it reclaims (#377). The price is a buffer growing to ~2× the live bytes
+        // it reclaims. The price is a buffer growing to ~2× the live bytes
         // between compactions.
         let unread = buffer.count - readOffset
         if readOffset >= max(StreamFrameDecoder.compactionThreshold, unread) {
