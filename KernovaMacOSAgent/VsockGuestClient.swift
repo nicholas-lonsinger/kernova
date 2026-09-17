@@ -348,11 +348,12 @@ final class VsockGuestClient: @unchecked Sendable {
         return task
     }
 
-    /// Currently-attached channel, for callers making synchronous best-effort
-    /// sends without owning the loop.
-    var liveChannel: VsockChannel? {
+    #if DEBUG
+    /// Test seam.
+    var liveChannelForTesting: VsockChannel? {
         lock.withLock { currentChannel }
     }
+    #endif
 
     // MARK: - Internal
 

@@ -39,15 +39,15 @@ final class VsockHostConnection: @unchecked Sendable {
     /// `lock` — one run at a time, however many records arrive.
     private var drainScheduled = false
 
-    /// A `scheduleDrain()` the running drain has not yet accounted for, guarded
-    /// by `lock`.
+    /// The channel the drain sends on, guarded by `lock`: installed by
+    /// `serveLogChannel` for as long as it serves, and cleared by whichever side
+    /// learns the channel is dead first — the serve loop at its end, or the
+    /// drain on a failed send.
     ///
-    /// A connect wakes the drain without appending a frame, so a wake landing
-    /// between the drain's channel read and its finishing lock hold would
-    /// otherwise be swallowed by `drainScheduled` and leave the ring parked
-    /// until the next record. The drain finishes only once it has seen a step
-    /// with no wake outstanding.
-    private var wakePending = false
+    /// The serve loop clears it before logging the channel's end, so the drain
+    /// run that record wakes finds no channel rather than one more refusing
+    /// send: the end notice is the whole report for an outage holding nothing.
+    private var channel: VsockChannel?
 
     /// Records the ring has evicted since the drain last emptied it, guarded by
     /// `lock`.
@@ -235,9 +235,12 @@ final class VsockHostConnection: @unchecked Sendable {
     // MARK: - Drain
 
     /// Enqueues one `drainPending()` run unless one is already pending.
+    ///
+    /// A run reads the ring and `channel` in the same lock hold that decides
+    /// its end, so a record or channel installed after that hold finds
+    /// `drainScheduled` clear here and gets a run of its own.
     private func scheduleDrain() {
         let alreadyScheduled: Bool = lock.withLock {
-            wakePending = true
             let scheduled = drainScheduled
             drainScheduled = true
             return scheduled
@@ -246,27 +249,26 @@ final class VsockHostConnection: @unchecked Sendable {
         drainQueue.async { [weak self] in self?.drainPending() }
     }
 
-    /// What a drain does next, decided under `lock` so a record arriving
-    /// alongside the drain either joins this run or schedules the next.
+    /// What a drain does next, decided under `lock` so a record or a channel
+    /// arriving alongside the drain either joins this run or schedules the next.
     private enum DrainStep {
         case send(Frame, on: VsockChannel)
         case reportDrops(Int)
-        /// No channel, but a wake arrived since the last step: read the channel
-        /// again rather than finish on a stale `nil`.
-        case retry
         case finished
     }
 
+    /// `held` is the channel the run is already sending on, kept until a send
+    /// on it fails: the loop retires a channel the moment its inbound side
+    /// ends, and a run that re-read `channel` between two sends would end
+    /// quietly with the ring full and the outage unreported.
+    ///
     /// Without a channel to carry a frame the run ends, leaving the ring and
     /// the overflow tally as they are: nothing is handed out only to be put
     /// back, so what is buffered is what a reader sees at every instant, and the
     /// tally still reaches the host alongside the records it describes.
-    private func nextDrainStep(channel: VsockChannel?) -> DrainStep {
+    private func nextDrainStep(holding held: VsockChannel?) -> DrainStep {
         lock.withLock {
-            let woken = wakePending
-            wakePending = false
-            guard let channel else {
-                if woken { return .retry }
+            guard let channel = held ?? self.channel else {
                 drainScheduled = false
                 return .finished
             }
@@ -276,25 +278,21 @@ final class VsockHostConnection: @unchecked Sendable {
                 droppedCount = 0
                 return .reportDrops(dropped)
             }
-            // A wake from an append is already visible as a frame above, and one
-            // from a connect changes nothing with the ring empty.
             drainScheduled = false
             return .finished
         }
     }
 
-    /// Sends the ring to the host until it empties, the channel goes away, or a
-    /// send fails.
+    /// Sends the ring to the host until it empties or the channel goes away.
     ///
     /// The one place a log frame reaches the wire, so records arrive in ring
     /// order and the frame a failed send was carrying goes back to the head.
     private func drainPending() {
+        var held: VsockChannel?
         while true {
-            switch nextDrainStep(channel: client.liveChannel) {
+            switch nextDrainStep(holding: held) {
             case .finished:
                 return
-            case .retry:
-                continue
             case .reportDrops(let dropped):
                 // `drainScheduled` still stands here, so this line's own record
                 // rides the run reporting it rather than scheduling another.
@@ -303,32 +301,33 @@ final class VsockHostConnection: @unchecked Sendable {
                     "Dropped \(dropped, privacy: .public) buffered log record(s) while the host channel was behind"
                 )
             case .send(let frame, let channel):
+                held = channel
                 do {
                     try channel.send(frame)
                     lock.withLock { sendFailureAnnounced = false }
                 } catch {
-                    if parkDrain(holding: frame, failure: error) { continue }
-                    return
+                    holdForNextConnection(frame, failedOn: channel, failure: error)
+                    held = nil
                 }
             }
         }
     }
 
-    /// Parks the drain with `frame` back at the head of the ring, where the next
-    /// connect picks it up — head re-insertion is what keeps the host's view
-    /// chronological across a failed send.
-    ///
-    /// - Returns: `true` when a wake arrived meanwhile and the drain has to go
-    ///   round again: the channel may already be a new one, and the flag stays
-    ///   set so the wake is not lost. The warning below is itself such a wake,
-    ///   so an outage costs one more send on the refusing channel, which fails
-    ///   without announcing and parks for good.
-    private func parkDrain(holding frame: Frame, failure: any Error) -> Bool {
+    /// Puts `frame` back at the head of the ring, where the next connection
+    /// picks it up — head re-insertion is what keeps the host's view
+    /// chronological across a failed send — and retires `channel` if it is
+    /// still the installed one, so this run's next step and every run a record
+    /// schedules before the loop notices find nothing to send on rather than
+    /// the same refusing channel.
+    private func holdForNextConnection(
+        _ frame: Frame, failedOn channel: VsockChannel, failure: any Error
+    ) {
         let (startedDropping, held, announce): (Bool, Int, Bool) = lock.withLock {
             pendingLogs.insert(frame, at: 0)
             let trimmed = trimToLimitLocked()
             let firstOfTheOutage = !sendFailureAnnounced
             if firstOfTheOutage { sendFailureAnnounced = true }
+            if self.channel === channel { self.channel = nil }
             return (trimmed, pendingLogs.count, firstOfTheOutage)
         }
         if announce {
@@ -338,22 +337,18 @@ final class VsockHostConnection: @unchecked Sendable {
             )
         }
         if startedDropping { reportDroppingStarted() }
-        return lock.withLock {
-            let woken = wakePending
-            wakePending = false
-            if !woken { drainScheduled = false }
-            return woken
-        }
     }
 
     // MARK: - Per-connection serve
 
     private func serveLogChannel(_ channel: VsockChannel) async {
+        lock.withLock { self.channel = channel }
         // Wakes the worker rather than sending here: a host that accepts the
         // connection and then stops reading parks the drain, not this loop.
         scheduleDrain()
 
         // The log channel is one-way; draining is how EOF and errors are seen.
+        var failure: (any Error)?
         do {
             for try await frame in channel.incoming {
                 guard frame.protocolVersion == 1 else {
@@ -367,11 +362,17 @@ final class VsockHostConnection: @unchecked Sendable {
                     Self.logger, .debug,
                     "Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
-            #log(Self.logger, .notice, "Vsock channel closed by host")
         } catch {
+            failure = error
+        }
+
+        lock.withLock { if self.channel === channel { self.channel = nil } }
+        if let failure {
             #log(
-                Self.logger, .warning, "Vsock channel ended with error: \(error.localizedDescription, privacy: .public)"
-            )
+                Self.logger, .warning,
+                "Vsock channel ended with error: \(failure.localizedDescription, privacy: .public)")
+        } else {
+            #log(Self.logger, .notice, "Vsock channel closed by host")
         }
     }
 }

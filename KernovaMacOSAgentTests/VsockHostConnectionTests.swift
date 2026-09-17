@@ -587,7 +587,7 @@ struct VsockHostConnectionTests {
             host0.close()
             // No-signal poll — `liveChannel` is lock-protected client state with
             // no signal to await.
-            try await waitUntil { dialled.client.liveChannel == nil }
+            try await waitUntil { dialled.client.liveChannelForTesting == nil }
             conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "buffered")
 
             // Same policy, second delivery — the enable the agent already

@@ -64,12 +64,12 @@ struct VsockGuestClientTests {
 
         // No-signal poll — `liveChannel` is lock-protected SUT state, not
         // @Observable or a test-owned double, so there is no signal to await.
-        try await waitUntil { client.liveChannel != nil }
-        #expect(client.liveChannel != nil)
+        try await waitUntil { client.liveChannelForTesting != nil }
+        #expect(client.liveChannelForTesting != nil)
 
         remote.close()
-        try await waitUntil { client.liveChannel == nil }
-        #expect(client.liveChannel == nil)
+        try await waitUntil { client.liveChannelForTesting == nil }
+        #expect(client.liveChannelForTesting == nil)
     }
 
     /// Exercises the `connectAndServe` pre-serve abort path: the reconnect
@@ -125,7 +125,7 @@ struct VsockGuestClientTests {
         try await Task.sleep(nanoseconds: 300_000_000)
 
         #expect(serveCallCount.value == 0)
-        #expect(client.liveChannel == nil)
+        #expect(client.liveChannelForTesting == nil)
     }
 
     @Test("stop mid-serve tears down the channel and does not re-invoke serve")
@@ -158,7 +158,7 @@ struct VsockGuestClientTests {
 
         try await Task.sleep(nanoseconds: 150_000_000)
         #expect(await callCounter.value == 1)
-        #expect(client.liveChannel == nil)
+        #expect(client.liveChannelForTesting == nil)
     }
 
     @Test("stop before start is a no-op; subsequent start is also a no-op")
@@ -181,7 +181,7 @@ struct VsockGuestClientTests {
 
         try await Task.sleep(nanoseconds: 100_000_000)
         #expect(provideCounter.value == 0)
-        #expect(client.liveChannel == nil)
+        #expect(client.liveChannelForTesting == nil)
     }
 
     @Test("start is idempotent — second call before stop is a no-op")
@@ -254,7 +254,7 @@ struct VsockGuestClientTests {
         _ = try await awaitFirst(servedStream)
 
         #expect(attemptCounter.value >= targetAttempt)
-        #expect(client.liveChannel != nil)
+        #expect(client.liveChannelForTesting != nil)
     }
 
     @Test("permanent socket-provider failure halts the reconnect loop")
@@ -279,7 +279,7 @@ struct VsockGuestClientTests {
         try await Task.sleep(nanoseconds: 300_000_000)
 
         #expect(provideCounter.value == 1)
-        #expect(client.liveChannel == nil)
+        #expect(client.liveChannelForTesting == nil)
     }
 
     /// Pins the docstring contract: once permanently terminated, subsequent
@@ -313,7 +313,7 @@ struct VsockGuestClientTests {
         // Wait another retry window; provider count must remain 1.
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(provideCounter.value == 1)
-        #expect(client.liveChannel == nil)
+        #expect(client.liveChannelForTesting == nil)
     }
 }
 
