@@ -2,19 +2,11 @@ import Cocoa
 
 /// The clipboard toolbar item's view: a standard `.toolbar`-bezel button with a
 /// transfer-progress bar overlaid as a subview across the bottom of the platter
-/// circle.
-///
-/// The button is pinned to the glass toolbar platter's 36×36 metric; at exactly
-/// that size the bezel's rollover is the platter's circular hover highlight (see
-/// docs/TOOLBAR.md for the platter metrics).
+/// circle, on the construction of Safari's downloads button.
 final class ClipboardToolbarButton: NSButton {
-    /// The button's glyph, shared with the toolbar item's menu form
-    /// representation so the overflow menu shows the same symbol.
-    static let symbolName = "doc.on.clipboard"
-
-    /// The glass toolbar platter's circle diameter (docs/TOOLBAR.md).
-    ///
-    /// The bezel's hover circle matches the platter only at exactly this size.
+    /// The glass toolbar's lone-item platter is a 36-pt circle, and the bezel's
+    /// rollover matches its hover highlight only at exactly this size (measured
+    /// on macOS 27.0 26A428).
     private static let platterDiameter: CGFloat = 36
 
     private let bar = TransferBarView()
@@ -30,7 +22,7 @@ final class ClipboardToolbarButton: NSButton {
 
     init() {
         super.init(frame: .zero)
-        image = .systemSymbol(Self.symbolName, accessibilityDescription: "Clipboard")
+        image = .systemSymbol("doc.on.clipboard", accessibilityDescription: "Clipboard")
         bezelStyle = .toolbar
         isBordered = true
         translatesAutoresizingMaskIntoConstraints = false

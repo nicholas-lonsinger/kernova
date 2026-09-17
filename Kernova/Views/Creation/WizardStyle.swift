@@ -7,8 +7,11 @@ import AppKit
 /// wizard-scoped on purpose and do **not** reach for `CalloutStyle`, which is
 /// tuned for narrow 340pt popovers.
 enum WizardStyle {
+    /// The sheet's fixed width: a step fits the sheet, and a new step never
+    /// grows it.
     static let width: CGFloat = 720
 
+    /// The sheet's fixed height; see ``width``.
     static let height: CGFloat = 540
 
     /// Symmetric inset from a step's view to its content, applied on both sides.

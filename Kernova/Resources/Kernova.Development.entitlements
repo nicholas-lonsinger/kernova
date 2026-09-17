@@ -10,8 +10,9 @@
 	     is what lets a profile-less checkout build and run. Selected through
 	     KERNOVA_APP_ENTITLEMENTS in Config/Base.xcconfig; a machine holding
 	     the capability-enabled profile opts into the full set via
-	     Config/Local.xcconfig. Keep every key here identical to
-	     Kernova.entitlements — per-key rationale lives there. -->
+	     Config/Local.xcconfig. Tools/check-entitlements.sh holds every other
+	     key identical to Kernova.entitlements, where the per-key rationale
+	     lives. -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<key>com.apple.security.network.client</key>

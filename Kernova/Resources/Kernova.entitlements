@@ -2,28 +2,30 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App Sandbox, adopted for Mac App Store eligibility (#89). Host vsock is
+	<!-- App Sandbox, adopted for Mac App Store eligibility. Host vsock is
 	     fully framework-mediated — VZVirtioSocketListener/-Connection hand the
 	     app already-connected fds and it never calls socket()/bind()/listen()
 	     itself — so the sandbox does not constrain it (network entitlements gate
 	     socket-acquisition syscalls, not I/O on granted fds). The serial-console
-	     relay's AF_UNIX listener binds inside the app's own temp directory,
-	     which file rules allow; network.server is deliberately absent (it gates
-	     network-family listeners only). -->
+	     relay's AF_UNIX listener binds inside the app's own temp directory: the
+	     profile allows network-bind by path — the container and each app-group
+	     container, /System/Library/Sandbox/Profiles/application.sb — so no
+	     network entitlement is involved; network.server is deliberately absent
+	     (it grants network-inbound on IP sockets only). -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<!-- Sole network use: fetching guest installer images and their metadata —
 	     macOS restore images from Apple's CDN, Linux installer images from the
-	     distributions' mirrors. The services that reach the network are
-	     catalogued in docs/SANDBOX.md. -->
+	     distributions' mirrors. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<!-- Powerbox grants from NSOpenPanel/NSSavePanel (external disk images,
 	     ISOs, shared folders, Linux kernel/initrd, local IPSW files). -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
-	<!-- The default IPSW download destination (~/Downloads/RestoreImage.ipsw)
-	     and its sibling .kernovadownload resume sidecar. -->
+	<!-- The fixed download destination, ~/Downloads, for macOS restore images
+	     and Linux installer ISOs, and their sibling .kernovadownload resume
+	     bundles. -->
 	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
 	<!-- Panel grants persist across relaunches as app-scoped security
@@ -37,8 +39,9 @@
 	     without it. A managed capability on the App ID — eligible provisioning
 	     profiles carry it automatically. It is restricted: signing must be
 	     authorized by such a profile, so the default build signs with
-	     Kernova.Development.entitlements instead (this file minus this key —
-	     keep the two in sync); see Config/Base.xcconfig. -->
+	     Kernova.Development.entitlements instead; see Config/Base.xcconfig.
+	     The sandbox profile needs nothing further: application.sb grants the
+	     com.apple.NetworkSharing mach-lookup exactly when this key is present. -->
 	<key>com.apple.vm.networking</key>
 	<true/>
 	<key>com.apple.security.device.audio-input</key>

@@ -49,8 +49,9 @@ enum AppLaunch {
     /// `hides` is the whole of what a sandboxed launcher can say, and it says
     /// enough: a command typed in a terminal is not a request for a window, and
     /// a hidden launch is the one the app answers by staying headless
-    /// (docs/SANDBOX.md). Measured 2026-09-05 (#1143) on macOS 27, the App
-    /// Sandbox drops `arguments`, `environment` and a custom `appleEvent` from
+    /// (`AppResidencyController.launchPosture(for:keepInMenuBar:)`). Measured
+    /// 2026-09-05 (#1143) on macOS 27, the App Sandbox drops `arguments`,
+    /// `environment` and a custom `appleEvent` from
     /// `NSWorkspace.OpenConfiguration` before they reach the app; `hides`
     /// arrives.
     ///

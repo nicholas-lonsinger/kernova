@@ -57,7 +57,7 @@ Assign exactly one kind before judging it:
 - **Declaration** — a claim about the repo, the platform, or a vendor.
 - **Rule** — tells the reader to do or not do something.
 - **Principle** — steers a judgment call when no rule applies (AGENTS.md
-  "Principles", DESIGN.md).
+  "Principles", the surviving subsystem docs).
 - **Pointer** — a link or "read X when Y".
 - **Filler** — none of the above (onboarding prose, motivation, restating
   another layer).
@@ -169,7 +169,19 @@ the distribution channels in use. A lane the maintainer has not run, or a
 step nothing has yet reached, is a plan and is not written; it is written
 when it happens.
 
+### Declarations about other products
+
+Evidence about another product — what a competitor ships, which
+entitlements its store build carries — is never a code comment. It is a
+claim about that product's state as of a date, so it is a dated research
+note when it decided something, and otherwise nowhere.
+
 ### The file as a whole
+
+An inventory doc is a mirror by construction when the code holds the
+inventory — a plist, an enum, an xcconfig, a script's array — and each
+entry's reason sits beside it as a comment. Such a doc is deleted; what it
+holds that the code does not moves beside the entry it explains.
 
 A doc whose sections each mirror one code-layer header — a script's, an
 xcconfig's, a hook's, a Makefile comment — is deleted, not trimmed: mirrored

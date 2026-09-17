@@ -333,8 +333,9 @@ struct VMToolbarManagerTests {
         button.transferFraction = 0.5
         container.layoutSubtreeIfNeeded()
 
-        // Bar metrics (docs/TOOLBAR.md): 22×6 capsule, horizontally centered,
-        // bottom edge 3 pt above the circle's rim — so (18, 6) is over the bar.
+        // Bar metrics (`ClipboardToolbarButton`'s constraints): 22×6 capsule,
+        // horizontally centered, bottom edge 3 pt above the circle's rim — so
+        // (18, 6) is over the bar.
         // The button frame fills the container, making container coordinates and
         // the button's bounds coincide.
         #expect(button.hitTest(NSPoint(x: 18, y: 6)) === button)

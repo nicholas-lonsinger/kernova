@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Checks the two documentation rules that a machine can decide: a prose line
-# caps at 80 words — this check is where that cap is stated — and every
-# relative Markdown link resolves, the file it names and the heading its
-# `#fragment` names.
+# Checks the three documentation rules that a machine can decide: a prose line
+# caps at 80 words — this check is where that cap is stated — every relative
+# Markdown link resolves, the file it names and the heading its `#fragment`
+# names, and every doc a non-Markdown file cites in a comment still exists.
 #
-# These two are here and the rest of the documentation convention is not,
+# These three are here and the rest of the documentation convention is not,
 # because they are the only rules whose violation can be fixed without deleting
-# anything. An over-long line is fixed by breaking it; a dead link by
-# repointing it. Every other rule — is this derivable, is this an external
+# anything. An over-long line is fixed by breaking it; a dead link or citation
+# by repointing it. Every other rule — is this derivable, is this an external
 # fact, is this the deepest layer — can only be satisfied by removing a
 # sentence, and a checker that is sometimes wrong about those would delete
 # facts on a false positive. Those stay with the reader.
@@ -107,9 +107,26 @@ while IFS= read -r doc; do
     done < <(grep -oE '\]\([^)]+\)' "$doc" | sed -E 's/^\]\(//; s/\)$//')
 done < <(git ls-files '*.md')
 
+# A doc cited from a Swift `///`, a shell header, an xcconfig or an
+# entitlements comment is a link no Markdown checker sees, so it outlives the
+# file it names. Same rule as above, applied to every tracked non-Markdown
+# file: the doc a citation names has to exist. A `.log` is recorded output
+# rather than prose — a path in one is data, not a pointer — and the list is
+# narrowed to regular files so a tracked symlink to a directory is skipped.
+while IFS=: read -r src target; do
+    [ -e "$target" ] || fail "$src — dead citation: $target"
+done < <(
+    git ls-files -z -- ':!:*.md' ':!:*.log' \
+        | while IFS= read -r -d '' file; do
+            [ -f "$file" ] && printf '%s\0' "$file"
+        done \
+        | xargs -0 grep -oIHE 'docs/[A-Za-z0-9_./-]+\.md' \
+        | sort -u
+)
+
 if [ "$failures" -gt 0 ]; then
     printf '\n%s documentation violation(s)\n' "$failures" >&2
     exit 1
 fi
 
-pass "docs: line cap and links"
+pass "docs: line cap, links, and citations"
