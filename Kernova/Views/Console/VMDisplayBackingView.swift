@@ -48,6 +48,13 @@ final class VMDisplayBackingView: NSView {
     /// written onto a pasteboard from the receiving side.
     var promiseSource = DisplayDropPromiseSource.pasteboard
 
+    /// Where a promise drag's files are written for the guest to pull from.
+    ///
+    /// Injected so a test stages under a root of its own: every test-host
+    /// process shares the app container, and the app reclaims that root whole at
+    /// launch.
+    var staging = DropPromiseStaging()
+
     /// Shows or hides the "not allowed" cursor over a drag this display refuses.
     ///
     /// Injected so a test can see the pushes and pops pair up without a live
@@ -320,7 +327,7 @@ final class VMDisplayBackingView: NSView {
     private func receivePromises(
         _ receivers: [any DisplayDropPromiseReceiving], alongside urls: [URL]
     ) {
-        guard let directory = DropPromiseStaging.makeDropDirectory() else {
+        guard let directory = staging.makeDropDirectory() else {
             // Nothing will ever be written, so the drag the display just took has
             // to answer for itself here.
             onDropUnreadable()
