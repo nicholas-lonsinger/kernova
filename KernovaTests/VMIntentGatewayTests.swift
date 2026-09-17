@@ -1,7 +1,6 @@
 import AppIntents
 import Foundation
 import KernovaKit
-import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -26,28 +25,12 @@ struct VMIntentGatewayTests {
     /// A gateway whose library read has already landed, over a seeded mock.
     private func makeGateway(
         _ commands: MockVMCommanding,
-        defaults: UserDefaults,
+        record: MockVMIndexRecord = MockVMIndexRecord(),
         index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: index,
-            defaults: defaults)
-    }
-
-    /// An isolated defaults store named for one test.
-    ///
-    /// The gateway records there which VMs it has written to the index, and
-    /// prunes the index against what it reads back, so two tests sharing one
-    /// store would prune against each other's VMs.
-    private func makeStore(_ test: String) -> UserDefaults {
-        makeEphemeralDefaults(suiteName: "test.kernova.intentgateway.\(test)")
-    }
-
-    /// The VMs `defaults` records as written to the index.
-    private func indexedIDs(in defaults: UserDefaults) -> Set<UUID> {
-        Set(
-            (defaults.stringArray(forKey: VMIntentGateway.indexedVMIDsKey) ?? [])
-                .compactMap(UUID.init(uuidString:)))
+            record: record)
     }
 
     // MARK: - Entity
@@ -118,7 +101,7 @@ struct VMIntentGatewayTests {
         let second = makeSummary(name: "Second")
         commands.library = [first, second]
 
-        let gateway = makeGateway(commands, defaults: makeStore("lookup-ids"))
+        let gateway = makeGateway(commands)
         let resolved = await gateway.vms(withIDs: [second.id])
 
         #expect(resolved.map(\.name) == ["Second"])
@@ -131,7 +114,7 @@ struct VMIntentGatewayTests {
             makeSummary(name: "Sonoma"), makeSummary(name: "Sonoma"), makeSummary(name: "Ubuntu"),
         ]
 
-        let gateway = makeGateway(commands, defaults: makeStore("lookup-names"))
+        let gateway = makeGateway(commands)
 
         let twins = await gateway.vms(matching: "sonoma")
         let byPrefix = await gateway.vms(matching: "UBUN")
@@ -147,7 +130,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         commands.library = [makeSummary(name: "First"), makeSummary(name: "Second")]
 
-        let all = await makeGateway(commands, defaults: makeStore("lookup-all")).vms()
+        let all = await makeGateway(commands).vms()
 
         #expect(all.map(\.name) == ["First", "Second"])
     }
@@ -219,7 +202,8 @@ struct VMIntentGatewayTests {
     @Test("No read reaches the core until the app's first library read has landed")
     func readsWaitForTheLibraryRead() async throws {
         let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "Late")]
+        let late = makeSummary(name: "Late")
+        commands.library = [late]
         let entered = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         let index = MockVMEntityIndex()
@@ -229,7 +213,7 @@ struct VMIntentGatewayTests {
                 entered.continuation.yield(())
                 for await _ in release.stream { break }
             }),
-            index: index, defaults: makeStore("readiness-wait"))
+            index: index, record: MockVMIndexRecord())
 
         let read = Task { await gateway.vms() }
         for await _ in entered.stream { break }
@@ -239,8 +223,9 @@ struct VMIntentGatewayTests {
         release.continuation.finish()
 
         #expect(await read.value.map(\.name) == ["Late"])
+        try await index.awaitOperations(Self.syncedOperations)
+        #expect(index.operations == [.index([late.id])])
         // Two: this read, and the whole-library read the readiness sync makes.
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
         #expect(commands.listCallCount == 2)
     }
 
@@ -250,7 +235,7 @@ struct VMIntentGatewayTests {
         let awaits = Counter()
         let gateway = VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: { await awaits.increment() }),
-            index: MockVMEntityIndex(), defaults: makeStore("readiness-memoized"))
+            index: MockVMEntityIndex(), record: MockVMIndexRecord())
 
         _ = await gateway.vms()
         _ = await gateway.vms()
@@ -266,7 +251,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         let id = Self.stoppedID
         commands.library = [makeSummary(name: "Twin", id: id)]
-        let gateway = makeGateway(commands, defaults: makeStore("verbs"))
+        let gateway = makeGateway(commands)
 
         try await gateway.start(id, recovery: true)
         try await gateway.stop(id, disposition: .force, confirmed: true)
@@ -303,7 +288,7 @@ struct VMIntentGatewayTests {
     @Test("The quit verb reaches the facade, addressing no VM")
     func quitReachesTheFacade() async {
         let commands = MockVMCommanding()
-        let gateway = makeGateway(commands, defaults: makeStore("quit"))
+        let gateway = makeGateway(commands)
 
         await gateway.quit()
 
@@ -315,12 +300,11 @@ struct VMIntentGatewayTests {
     /// A gateway that records every request for the library window, for the
     /// search that has no VM to reveal.
     private func makeSearchGateway(
-        _ commands: MockVMCommanding, defaults: UserDefaults,
-        surfaced: @escaping @MainActor () -> Void
+        _ commands: MockVMCommanding, surfaced: @escaping @MainActor () -> Void
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: MockVMEntityIndex(),
-            defaults: defaults, surfaceLibrary: surfaced)
+            record: MockVMIndexRecord(), surfaceLibrary: surfaced)
     }
 
     @Test("A search term reveals the first VM whose name carries it")
@@ -330,8 +314,7 @@ struct VMIntentGatewayTests {
         let sonoma = makeSummary(name: "Sonoma Test")
         commands.library = [ubuntu, sonoma]
         var libraryRequests = 0
-        let gateway = makeSearchGateway(
-            commands, defaults: makeStore("searchmatch"), surfaced: { libraryRequests += 1 })
+        let gateway = makeSearchGateway(commands, surfaced: { libraryRequests += 1 })
 
         // Typed the way a person types it: neither the case nor the whole name.
         try await gateway.revealSearchResult(matching: "sonoma")
@@ -347,8 +330,7 @@ struct VMIntentGatewayTests {
         let exact = makeSummary(name: "ubuntu")
         let older = makeSummary(name: "Old Ubuntu")
         commands.library = [older, server, exact]
-        let gateway = makeSearchGateway(
-            commands, defaults: makeStore("searchrank"), surfaced: {})
+        let gateway = makeSearchGateway(commands, surfaced: {})
 
         try await gateway.revealSearchResult(matching: "Ubuntu")
         try await gateway.revealSearchResult(matching: "Ubuntu S")
@@ -362,8 +344,7 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         commands.library = [makeSummary(name: "Ubuntu")]
         var libraryRequests = 0
-        let gateway = makeSearchGateway(
-            commands, defaults: makeStore("searchmiss"), surfaced: { libraryRequests += 1 })
+        let gateway = makeSearchGateway(commands, surfaced: { libraryRequests += 1 })
 
         try await gateway.revealSearchResult(matching: "Sequoia")
 
@@ -384,7 +365,7 @@ struct VMIntentGatewayTests {
     func refusalsPassThrough() async throws {
         let commands = MockVMCommanding()
         commands.startError = CommandError.busy(vm: makeSummary(), operation: "starting")
-        let gateway = makeGateway(commands, defaults: makeStore("refusals"))
+        let gateway = makeGateway(commands)
 
         await #expect(throws: CommandError.self) {
             try await gateway.start(UUID(), recovery: false)
@@ -403,7 +384,7 @@ struct VMIntentGatewayTests {
             message: "Unsaved guest state is lost.",
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel")
-        let gateway = makeGateway(commands, defaults: makeStore("consent-retry"))
+        let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
@@ -429,7 +410,7 @@ struct VMIntentGatewayTests {
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel",
             alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
-        let gateway = makeGateway(commands, defaults: makeStore("consent-force-stop"))
+        let gateway = makeGateway(commands)
         var asked = 0
 
         try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
@@ -460,7 +441,7 @@ struct VMIntentGatewayTests {
             confirmTitle: "Resume and Shut Down",
             dismissTitle: "Cancel",
             alternatives: [ConfirmationAlternative(title: "Force Stop", disposition: .force)])
-        let gateway = makeGateway(commands, defaults: makeStore("consent-alternatives"))
+        let gateway = makeGateway(commands)
         var asked = 0
 
         await #expect(throws: CommandError.self) {
@@ -477,7 +458,7 @@ struct VMIntentGatewayTests {
     func consentLeavesOtherFailuresAlone() async throws {
         let commands = MockVMCommanding()
         commands.stopError = CommandError.busy(vm: makeSummary(), operation: "suspending")
-        let gateway = makeGateway(commands, defaults: makeStore("consent-other-failures"))
+        let gateway = makeGateway(commands)
         var asked = 0
 
         await #expect(throws: CommandError.self) {
@@ -519,13 +500,13 @@ struct VMIntentGatewayTests {
         let second = makeSummary(name: "Second")
         commands.library = [first, second]
         let index = MockVMEntityIndex()
-        let defaults = makeStore("readiness-sync")
-        let gateway = makeGateway(commands, defaults: defaults, index: index)
+        let record = MockVMIndexRecord()
+        let gateway = makeGateway(commands, record: record, index: index)
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        try await index.awaitOperations(Self.syncedOperations)
 
         #expect(index.operations == [.index([first.id, second.id])])
-        #expect(indexedIDs(in: defaults) == [first.id, second.id])
+        #expect(record.indexedVMIDs == [first.id, second.id])
         withExtendedLifetime(gateway) {}
     }
 
@@ -535,18 +516,16 @@ struct VMIntentGatewayTests {
         let kept = makeSummary(name: "Kept")
         commands.library = [kept]
         let gone = UUID()
-        let defaults = makeStore("readiness-prune")
-        defaults.set(
-            [gone.uuidString, kept.id.uuidString], forKey: VMIntentGateway.indexedVMIDsKey)
+        let record = MockVMIndexRecord([gone, kept.id])
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, defaults: defaults, index: index)
+        let gateway = makeGateway(commands, record: record, index: index)
 
         // The write lands before the prune, so a process ending between them
         // leaves the library findable rather than nothing at all.
-        try await index.gate.wait { index.operations.count == 2 }
+        try await index.awaitOperations(2)
 
         #expect(index.operations == [.index([kept.id]), .remove([gone])])
-        #expect(indexedIDs(in: defaults) == [kept.id])
+        #expect(record.indexedVMIDs == [kept.id])
         withExtendedLifetime(gateway) {}
     }
 
@@ -556,24 +535,23 @@ struct VMIntentGatewayTests {
         let vm = makeSummary(name: "Wired")
         commands.library = [vm]
         let stale = UUID()
-        let defaults = makeStore("sync-retry")
-        defaults.set([stale.uuidString], forKey: VMIntentGateway.indexedVMIDsKey)
+        let record = MockVMIndexRecord([stale])
         let index = MockVMEntityIndex()
         index.indexError = CocoaError(.fileWriteUnknown)
-        let gateway = makeGateway(commands, defaults: defaults, index: index)
+        let gateway = makeGateway(commands, record: record, index: index)
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        try await index.awaitOperations(Self.syncedOperations)
         #expect(index.operations == [.index([vm.id])])
-        #expect(indexedIDs(in: defaults) == [stale])
+        #expect(record.indexedVMIDs == [stale])
 
         index.indexError = nil
         // A status change shows neither surface anything new, and is still the
         // moment the refused write is re-attempted.
         commands.emit([.statusChanged(id: vm.id, name: "Wired", from: "stopped", to: "running")])
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
+        try await index.awaitOperations(Self.syncedOperations + 1)
         #expect(index.operations == [.index([vm.id]), .index([vm.id])])
-        #expect(indexedIDs(in: defaults) == [stale, vm.id])
+        #expect(record.indexedVMIDs == [stale, vm.id])
         withExtendedLifetime(gateway) {}
     }
 
@@ -583,27 +561,31 @@ struct VMIntentGatewayTests {
         let kept = makeSummary(name: "Kept")
         let gone = makeSummary(name: "Gone")
         commands.library = [kept, gone]
-        let defaults = makeStore("remove-retry")
+        let record = MockVMIndexRecord()
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, defaults: defaults, index: index)
+        let gateway = makeGateway(commands, record: record, index: index)
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
-        #expect(indexedIDs(in: defaults) == [kept.id, gone.id])
+        try await index.awaitOperations(Self.syncedOperations)
+        #expect(index.operations == [.index([kept.id, gone.id])])
+        #expect(record.indexedVMIDs == [kept.id, gone.id])
 
         index.removeError = CocoaError(.fileWriteUnknown)
         commands.library = [kept]
         commands.emit([.removed(id: gone.id, name: "Gone")])
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
-        #expect(index.operations.last == .remove([gone.id]))
-        #expect(indexedIDs(in: defaults) == [kept.id, gone.id])
+        try await index.awaitOperations(Self.syncedOperations + 1)
+        #expect(index.operations == [.index([kept.id, gone.id]), .remove([gone.id])])
+        #expect(record.indexedVMIDs == [kept.id, gone.id])
 
         index.removeError = nil
         commands.emit([.statusChanged(id: kept.id, name: "Kept", from: "stopped", to: "running")])
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
-        #expect(index.operations.last == .remove([gone.id]))
-        #expect(indexedIDs(in: defaults) == [kept.id])
+        try await index.awaitOperations(Self.syncedOperations + 2)
+        #expect(
+            index.operations == [
+                .index([kept.id, gone.id]), .remove([gone.id]), .remove([gone.id]),
+            ])
+        #expect(record.indexedVMIDs == [kept.id])
         withExtendedLifetime(gateway) {}
     }
 
@@ -612,16 +594,16 @@ struct VMIntentGatewayTests {
         let commands = MockVMCommanding()
         let arriving = (1...6).map { makeSummary(name: "VM \($0)") }
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, defaults: makeStore("batch-additions"), index: index)
+        let gateway = makeGateway(commands, index: index)
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        try await index.awaitOperations(Self.syncedOperations)
 
         // The launch case: one pass over the library reports every VM it holds.
         commands.library = arriving
         commands.emit(arriving.map { .added($0) })
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
-        #expect(index.operations.last == .index(arriving.map(\.id)))
+        try await index.awaitOperations(Self.syncedOperations + 1)
+        #expect(index.operations == [.index([]), .index(arriving.map(\.id))])
         withExtendedLifetime(gateway) {}
     }
 
@@ -632,9 +614,9 @@ struct VMIntentGatewayTests {
         commands.library = [kept]
         let gone = UUID()
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, defaults: makeStore("index-follows"), index: index)
+        let gateway = makeGateway(commands, index: index)
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        try await index.awaitOperations(Self.syncedOperations)
 
         // Ordered through one stream: the status-only batch is drained before
         // the batch whose writes are awaited, so the count proves it wrote
@@ -645,7 +627,7 @@ struct VMIntentGatewayTests {
             .renamed(id: kept.id, from: "Was", to: "Kept"),
         ])
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
+        try await index.awaitOperations(Self.syncedOperations + 2)
         #expect(
             index.operations == [.index([kept.id]), .remove([gone]), .index([kept.id])])
         withExtendedLifetime(gateway) {}
@@ -658,18 +640,18 @@ struct VMIntentGatewayTests {
         commands.library = [vm]
         let index = MockVMEntityIndex()
         index.indexError = CocoaError(.fileWriteUnknown)
-        let defaults = makeStore("index-refusals")
-        let gateway = makeGateway(commands, defaults: defaults, index: index)
+        let gateway = makeGateway(commands, index: index)
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations }
+        try await index.awaitOperations(Self.syncedOperations)
         commands.emit([.renamed(id: vm.id, from: "Was", to: "Wired")])
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 1 }
+        try await index.awaitOperations(Self.syncedOperations + 1)
 
         index.indexError = nil
         commands.emit([.added(vm)])
 
-        try await index.gate.wait { index.operations.count == Self.syncedOperations + 2 }
-        #expect(Array(index.operations.suffix(2)) == [.index([vm.id]), .index([vm.id])])
+        try await index.awaitOperations(Self.syncedOperations + 2)
+        #expect(
+            index.operations == [.index([vm.id]), .index([vm.id]), .index([vm.id])])
         withExtendedLifetime(gateway) {}
     }
 }
