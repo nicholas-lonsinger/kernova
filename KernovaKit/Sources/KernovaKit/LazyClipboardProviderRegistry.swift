@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaLogging
 
 /// Owner of the live clipboard pasteboard data providers, holding each alive
 /// until its pasteboard promise is finished.
@@ -33,7 +34,8 @@ public final class LazyClipboardProviderRegistry: @unchecked Sendable {
             live.formUnion(providers)
             return live.count
         }
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Retained \(providers.count, privacy: .public) clipboard provider(s) (live: \(count, privacy: .public))"
         )
         #if DEBUG
@@ -48,7 +50,8 @@ public final class LazyClipboardProviderRegistry: @unchecked Sendable {
             live.remove(provider)
             return live.count
         }
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Released a finished clipboard provider (live: \(count, privacy: .public))")
         #if DEBUG
         onChangeForTesting?()

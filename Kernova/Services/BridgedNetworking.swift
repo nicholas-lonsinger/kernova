@@ -1,7 +1,7 @@
 import Foundation
+import KernovaLogging
 import SystemConfiguration
 import Virtualization
-import os
 
 /// A host interface that supports bridged networking, decoupled from VZ for testability.
 struct BridgedInterface: Equatable, Sendable {
@@ -19,7 +19,7 @@ protocol BridgedInterfaceProviding: Sendable {
 /// Answers from the live host: `VZBridgedNetworkInterface` for the bridgeable
 /// list, the SystemConfiguration dynamic store for the default route.
 struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "HostBridgedInterfaceProvider")
 
     func interfaces() -> [BridgedInterface] {
@@ -32,7 +32,7 @@ struct HostBridgedInterfaceProvider: BridgedInterfaceProviding {
 
     func primaryInterfaceIdentifier() -> String? {
         guard let store = SCDynamicStoreCreate(nil, "Kernova" as CFString, nil, nil) else {
-            Self.logger.fault("SCDynamicStoreCreate returned nil — reporting no primary interface")
+            #log(Self.logger, .fault, "SCDynamicStoreCreate returned nil — reporting no primary interface")
             assertionFailure("SCDynamicStoreCreate returned nil")
             return nil
         }

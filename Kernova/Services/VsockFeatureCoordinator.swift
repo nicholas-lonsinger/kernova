@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// One vsock feature channel, described once: the ports it binds, what gates
 /// them, which slot on the coordinator holds its service, and what a channel
@@ -271,7 +271,7 @@ extension VsockFeatureDescriptor {
 @MainActor
 @Observable
 final class VsockFeatureCoordinator {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VsockFeatureCoordinator")
 
     /// The VM this session belongs to, whose configuration the descriptors read
@@ -486,7 +486,8 @@ final class VsockFeatureCoordinator {
             }
 
             guard let live = self, live.isLive(session) else { return }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
             )
         }

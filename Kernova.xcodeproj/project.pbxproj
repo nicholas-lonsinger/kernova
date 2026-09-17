@@ -18,6 +18,10 @@
 		A200000E /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000F /* KernovaTestSupport */; };
 		A2000010 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000011 /* KernovaAppRegistry */; };
 		A2000012 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000013 /* KernovaAppRegistry */; };
+		A2000014 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000015 /* KernovaLogging */; };
+		A2000016 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000017 /* KernovaLogging */; };
+		A2000018 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000019 /* KernovaLogging */; };
+		A200001A /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A200001B /* KernovaLogging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -180,6 +184,7 @@
 			files = (
 				A2000001 /* KernovaKit in Frameworks */,
 				A2000012 /* KernovaAppRegistry in Frameworks */,
+				A2000018 /* KernovaLogging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -196,6 +201,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000010 /* KernovaAppRegistry in Frameworks */,
+				A200001A /* KernovaLogging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +210,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000004 /* KernovaKit in Frameworks */,
+				A2000014 /* KernovaLogging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -212,6 +219,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000006 /* KernovaKit in Frameworks */,
+				A2000016 /* KernovaLogging in Frameworks */,
 				A200000E /* KernovaTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -307,6 +315,7 @@
 			packageProductDependencies = (
 				A2000002 /* KernovaKit */,
 				A2000013 /* KernovaAppRegistry */,
+				A2000019 /* KernovaLogging */,
 			);
 			productName = Kernova;
 			productReference = A1000004 /* Kernova.app */;
@@ -353,6 +362,7 @@
 			name = KernovaRelaunchHelper;
 			packageProductDependencies = (
 				A2000011 /* KernovaAppRegistry */,
+				A200001B /* KernovaLogging */,
 			);
 			productName = KernovaRelaunchHelper;
 			productReference = A1000100 /* KernovaRelaunchHelper */;
@@ -377,6 +387,7 @@
 			name = KernovaMacOSAgent;
 			packageProductDependencies = (
 				A2000005 /* KernovaKit */,
+				A2000015 /* KernovaLogging */,
 			);
 			productName = KernovaMacOSAgent;
 			productReference = A1000200 /* Kernova Guest Agent.app */;
@@ -402,6 +413,7 @@
 			name = KernovaMacOSAgentTests;
 			packageProductDependencies = (
 				A2000007 /* KernovaKit */,
+				A2000017 /* KernovaLogging */,
 				A200000F /* KernovaTestSupport */,
 			);
 			productName = KernovaMacOSAgentTests;
@@ -862,6 +874,22 @@
 		A2000013 /* KernovaAppRegistry */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaAppRegistry;
+		};
+		A2000015 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
+		};
+		A2000017 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
+		};
+		A2000019 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
+		};
+		A200001B /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

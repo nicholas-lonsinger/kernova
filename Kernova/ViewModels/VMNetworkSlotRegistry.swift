@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The slots a VM holds on the app-managed networks: its DHCP address
 /// reservation, its port-forwarding rules, and the uniqueness of the MAC
@@ -16,7 +16,7 @@ import os
 @MainActor
 @Observable
 final class VMNetworkSlotRegistry {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMNetworkSlotRegistry")
 
     @ObservationIgnored
@@ -50,7 +50,7 @@ final class VMNetworkSlotRegistry {
 
     private var instances: [VMInstance] {
         guard let roster else {
-            Self.logger.fault("VMNetworkSlotRegistry has no roster — answering as an empty library")
+            #log(Self.logger, .fault, "VMNetworkSlotRegistry has no roster — answering as an empty library")
             assertionFailure("VMNetworkSlotRegistry.roster was never assigned")
             return []
         }
@@ -86,7 +86,8 @@ final class VMNetworkSlotRegistry {
             return false
         }
         let failure = commandFailure(conflict, on: instance)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Refused a configuration change to '\(instance.name, privacy: .public)': \(failure.message, privacy: .public)"
         )
         onFailure?(failure.title, failure.message)
@@ -394,7 +395,8 @@ final class VMNetworkSlotRegistry {
         let holders = Dictionary(grouping: instances) { $0.configuration.macAddress?.lowercased() }
         for (mac, vms) in holders where mac != nil && vms.count > 1 {
             let names = vms.map { "'\($0.name)'" }.joined(separator: ", ")
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "MAC address \(mac ?? "", privacy: .public) is held by \(names, privacy: .public)")
         }
     }
@@ -456,7 +458,8 @@ final class VMNetworkSlotRegistry {
         }
         // The single precondition for dropping shared state: nobody is on it.
         guard !others.contains(where: { $0.mayHoldAttachment(on: kind) }) else { return }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Recreating the \(kind.rawValue, privacy: .public) network \(reason, privacy: .public)")
         vmnetNetworks.invalidateNetwork(for: kind)
         // The network that contradicted a slot taken after its creation is

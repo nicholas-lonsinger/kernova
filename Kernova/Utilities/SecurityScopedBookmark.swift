@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Creation and resolution of app-scoped security bookmarks — the sandbox's
 /// mechanism for persisting a user's open/save-panel grant across launches.
@@ -14,7 +14,7 @@ import os
 /// the raw path, which the sandbox denies for out-of-container files — surfacing
 /// the missing-file UX, from which re-picking mints a fresh bookmark.
 enum SecurityScopedBookmark {
-    fileprivate static let logger = Logger(
+    fileprivate static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "SecurityScopedBookmark")
 
     /// A resolved bookmark: the live URL plus whether the system asked for
@@ -41,7 +41,8 @@ enum SecurityScopedBookmark {
                 relativeTo: nil
             )
         } catch {
-            logger.error(
+            #log(
+                logger, .error,
                 "Failed to create security-scoped bookmark for \(url.path(percentEncoded: false), privacy: .private): \(error.localizedDescription, privacy: .public)"
             )
             return nil
@@ -118,7 +119,8 @@ enum SecurityScopedBookmark {
             )
             return Resolution(url: url, isStale: isStale)
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Failed to resolve security-scoped bookmark: \(error.localizedDescription, privacy: .public)"
             )
             return nil

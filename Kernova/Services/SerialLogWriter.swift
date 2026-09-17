@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Appending writer for a VM's on-disk `serial.log` that bounds its size with
 /// single-generation rotation: when the file reaches `maxFileSize` it is
@@ -30,7 +30,7 @@ final class SerialLogWriter: @unchecked Sendable {
     /// Set after a failed rotation so the failure logs once, not per chunk.
     private var rotationDisabled = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "SerialLogWriter")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SerialLogWriter")
 
     init(
         logURL: URL, rotatedURL: URL, label: String,
@@ -54,7 +54,8 @@ final class SerialLogWriter: @unchecked Sendable {
                 try handle?.truncate(atOffset: 0)
                 fileSize = 0
             } catch {
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Could not clear oversized serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -76,7 +77,8 @@ final class SerialLogWriter: @unchecked Sendable {
             try handle.write(contentsOf: data)
             fileSize += data.count
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to write to serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return
@@ -106,14 +108,16 @@ final class SerialLogWriter: @unchecked Sendable {
             do {
                 fileSize = Int(try newHandle.seekToEnd())
             } catch {
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Could not seek to end of serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 fileSize = 0
             }
             handle = newHandle
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not open serial log for writing for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             handle = nil
@@ -125,7 +129,8 @@ final class SerialLogWriter: @unchecked Sendable {
         do {
             try handle?.close()
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to close serial log file for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -147,7 +152,8 @@ final class SerialLogWriter: @unchecked Sendable {
             try fileManager.moveItem(at: logURL, to: rotatedURL)
         } catch {
             rotationDisabled = true
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Serial log rotation failed for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 // MARK: - TestAdmissionGate
 
@@ -131,10 +132,10 @@ public enum TestAdmission {
             let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let value = Int(text), value >= 0 else { continue }
             let summary = "\(value > 0 ? "gating" : "pass-through") width \(value) from \(source)"
-            logger.notice("Test admission \(summary, privacy: .public)")
+            #log(logger, .notice, "Test admission \(summary, privacy: .public)")
             return value
         }
-        logger.notice("Test admission pass-through: no width source")
+        #log(logger, .notice, "Test admission pass-through: no width source")
         return 0
     }
 

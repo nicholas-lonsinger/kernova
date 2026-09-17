@@ -43,7 +43,7 @@ The app is sandboxed in every build configuration, and three things work until t
 
 ### Logging
 
-`KernovaKit` and the guest agent log through `KernovaLogger`, which forwards each record to the host; the host app uses `os.Logger`.
+Every type logs through `#log(Self.logger, .level, "…")` on its own `private static let logger = KernovaLogger(subsystem:category:)`; the macro emits the native `os.Logger` record and, where a forwarding sink is installed (the guest agent), the same record to the host. Never `os.Logger` directly, `print()`, or `NSLog()`.
 
 Capture with `subsystem BEGINSWITH "app.kernova"` — an exact `==` match drops the agent's own records while the capture still looks complete.
 

@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Where files dragged onto a VM display as *promises* — a Photos image, a Mail
 /// attachment, a picture dragged out of a browser — are written before they are
@@ -13,7 +13,7 @@ import os
 /// queued drop from a stale one. ``reclaimAll`` at launch is the crash backstop,
 /// the way `ClipboardFileStaging` bounds a paste's.
 enum DropPromiseStaging {
-    private static let logger = Logger(subsystem: "app.kernova", category: "DropPromiseStaging")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DropPromiseStaging")
 
     /// The root every drop's directory sits under, inside the app container.
     ///
@@ -34,7 +34,8 @@ enum DropPromiseStaging {
         } catch CocoaError.fileNoSuchFile {
             // Nothing was staged last run.
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Could not reclaim staged drop files: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -51,7 +52,8 @@ enum DropPromiseStaging {
         } catch CocoaError.fileNoSuchFile {
             // Already released.
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Could not release a settled drop's staged files: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -68,7 +70,8 @@ enum DropPromiseStaging {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
         } catch {
-            logger.error(
+            #log(
+                logger, .error,
                 "Could not stage a dropped file promise: \(error.localizedDescription, privacy: .public)"
             )
             return nil

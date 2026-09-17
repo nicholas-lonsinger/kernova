@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import Darwin
+import KernovaLogging
 
 /// Outcome of a `VsockSocketProvider` failure: `.transient` retries the
 /// connect loop, `.permanent` halts it for good.
@@ -222,11 +223,13 @@ final class VsockGuestClient: @unchecked Sendable {
     static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
         switch err {
         case EAFNOSUPPORT, EPROTONOSUPPORT:
-            logger.error(
+            #log(
+                logger, .error,
                 "socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .permanent("socket(AF_VSOCK) unsupported for '\(label)': errno=\(err)")
         default:
-            logger.warning(
+            #log(
+                logger, .warning,
                 "socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .transient("socket(AF_VSOCK) failed for '\(label)': errno=\(err)")
         }
@@ -414,12 +417,15 @@ final class VsockGuestClient: @unchecked Sendable {
             // Already logged with errno context by the provider.
             return .retry
         case .failure(.permanent):
-            Self.logger.error("Halting reconnect loop for '\(self.label, privacy: .public)' after permanent failure.")
+            #log(
+                Self.logger, .error,
+                "Halting reconnect loop for '\(self.label, privacy: .public)' after permanent failure.")
             return .terminate
         }
 
         guard fd >= 0 else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "socketProvider returned invalid fd \(fd, privacy: .public) for '\(self.label, privacy: .public)'"
             )
             assertionFailure("socketProvider returned invalid fd \(fd) for '\(self.label)'")
@@ -442,7 +448,8 @@ final class VsockGuestClient: @unchecked Sendable {
             return .retry
         }
 
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Connected '\(self.label, privacy: .public)' to host vsock port \(self.port, privacy: .public)")
 
         await serve(channel)
@@ -497,7 +504,8 @@ final class VsockGuestClient: @unchecked Sendable {
                 break
             case .failed(let err):
                 close(fd)
-                logger.warning(
+                #log(
+                    logger, .warning,
                     "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)"
                 )
                 return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(err)"))
@@ -507,7 +515,8 @@ final class VsockGuestClient: @unchecked Sendable {
                     .transient("connect() to '\(label)' port \(port) outran \(connectTimeoutSeconds)s"))
             case .busy:
                 close(fd)
-                logger.warning(
+                #log(
+                    logger, .warning,
                     "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) held back: earlier attempts are parked with none completing since; the gate admits the next one after its backoff"
                 )
                 return .failure(
@@ -592,7 +601,8 @@ final class VsockGuestClient: @unchecked Sendable {
         }
         gate.markParked(label)
         if handoff.abandon() {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) still blocked after \(deadline, privacy: .public)s — abandoning it"
             )
             return .abandoned
@@ -602,7 +612,8 @@ final class VsockGuestClient: @unchecked Sendable {
         // worker saw the waiter present and skipped its close, so the caller
         // owns `fd` on every arm below — the fallback must never say otherwise.
         guard let err = handoff.outcome else {
-            logger.fault(
+            #log(
+                logger, .fault,
                 "connect() handoff for '\(label, privacy: .public)' settled with no outcome recorded")
             assertionFailure("connect() handoff for '\(label)' settled with no outcome recorded")
             return .failed(errno: EINVAL)
@@ -625,12 +636,15 @@ final class VsockGuestClient: @unchecked Sendable {
         let originalFlags = fcntl(fd, F_GETFL, 0)
         guard originalFlags >= 0 else {
             let err = errno
-            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            #log(
+                logger, .error, "fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)"
+            )
             return false
         }
         guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
             let err = errno
-            logger.error(
+            #log(
+                logger, .error,
                 "fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return false
         }
@@ -645,7 +659,8 @@ final class VsockGuestClient: @unchecked Sendable {
         if rc != 0 {
             let connectErr = errno
             guard connectErr == EINPROGRESS else {
-                logger.warning(
+                #log(
+                    logger, .warning,
                     "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)"
                 )
                 return false
@@ -657,7 +672,8 @@ final class VsockGuestClient: @unchecked Sendable {
 
         guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
             let err = errno
-            logger.error(
+            #log(
+                logger, .error,
                 "fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return false
         }
@@ -683,14 +699,16 @@ final class VsockGuestClient: @unchecked Sendable {
             pollRc = withUnsafeMutablePointer(to: &pfd) { poll($0, 1, remainingMs) }
             let err = errno
             if pollRc < 0 && err != EINTR {
-                logger.warning(
+                #log(
+                    logger, .warning,
                     "poll() while connecting '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
                 return false
             }
         } while pollRc < 0
 
         if pollRc == 0 {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) timed out after \(connectTimeoutSeconds, privacy: .public)s"
             )
             return false
@@ -715,7 +733,8 @@ final class VsockGuestClient: @unchecked Sendable {
             } else {
                 errStr = "revents=\(pfd.revents)"
             }
-            logger.warning(
+            #log(
+                logger, .warning,
                 "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: \(errStr, privacy: .public)"
             )
             return false
@@ -725,12 +744,14 @@ final class VsockGuestClient: @unchecked Sendable {
         var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 else {
             let err = errno
-            logger.warning(
+            #log(
+                logger, .warning,
                 "getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
             return false
         }
         guard soError == 0 else {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed (deferred): errno=\(soError, privacy: .public)"
             )
             return false
@@ -745,11 +766,13 @@ final class VsockGuestClient: @unchecked Sendable {
         let optionSize = socklen_t(MemoryLayout<timeval>.size)
 
         if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
         if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
     }

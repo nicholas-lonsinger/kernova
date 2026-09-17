@@ -1,6 +1,6 @@
 import Cocoa
 import KernovaKit
-import os
+import KernovaLogging
 
 /// One VM as the scripting dictionary's `virtual machine`, one property per
 /// ``VMInfo`` field.
@@ -10,7 +10,7 @@ import os
 /// nothing here has to be kept current.
 @objc(VMScriptObject)
 final class VMScriptObject: NSObject {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMScriptObject")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptObject")
 
     /// The read every property answers from.
     private let info: VMInfo
@@ -35,7 +35,8 @@ final class VMScriptObject: NSObject {
     /// is a programming error rather than a state a script can provoke.
     @objc var state: NSNumber? {
         guard let state = VMScriptState(wireName: info.status) else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "VM status '\(self.info.status, privacy: .public)' has no scripting term")
             assertionFailure("VM status '\(info.status)' has no scripting term")
             return nil
@@ -75,7 +76,7 @@ final class VMScriptObject: NSObject {
     /// application, which is the one form no rename or reorder invalidates.
     override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
-            Self.logger.fault("NSApplication has no scripting class description")
+            #log(Self.logger, .fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")
             return nil
         }
@@ -174,7 +175,7 @@ enum VMScriptState: CaseIterable {
 // MARK: - Apple event codes
 
 extension FourCharCode {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ScriptingCode")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ScriptingCode")
 
     /// The Apple event code four ASCII characters spell.
     ///
@@ -183,7 +184,8 @@ extension FourCharCode {
     init(scriptingCode text: String) {
         let bytes = Array(text.utf8)
         guard bytes.count == 4 else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Apple event code '\(text, privacy: .public)' is not four ASCII characters")
             assertionFailure("Apple event code '\(text)' is not four ASCII characters")
             self = 0

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// A file the user picked, carrying the app-scoped bookmark minted at the pick.
 ///
@@ -85,7 +86,8 @@ extension VMCommandCore {
             if case DiskImageError.writeFailed = error {
                 cleanUpPartialDiskImage(at: diskURL)
             }
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(
@@ -109,7 +111,8 @@ extension VMCommandCore {
                     isInternal: true, kind: .virtio))
             config.setStorageDisks(disks)
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Created in-bundle storage disk '\(createdLabel, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
         )
     }
@@ -168,7 +171,8 @@ extension VMCommandCore {
 
         guard trashFile else { return }
         guard shared.isEmpty else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
             )
             return
@@ -183,7 +187,8 @@ extension VMCommandCore {
 
     private func refuseSoleStorageDiskRemoval(of disk: StorageDisk, on instance: VMInstance) throws {
         guard instance.isSoleStorageDisk(disk) else { return }
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Refusing to remove the only disk of '\(instance.name, privacy: .public)'")
         throw CommandError.operationFailed(
             verb: .editStorageDisk,
@@ -293,7 +298,8 @@ extension VMCommandCore {
             if case DiskImageError.writeFailed = error {
                 cleanUpPartialDiskImage(at: destinationURL)
             }
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(
@@ -306,7 +312,8 @@ extension VMCommandCore {
             config.removableMedia = (config.removableMedia ?? []) + [item]
         }
         guard accepted else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
             )
             throw CommandError.operationFailed(
@@ -315,7 +322,8 @@ extension VMCommandCore {
                     "The disk image was created at \(destinationURL.path(percentEncoded: false)), but \(instance.name) is \(instance.status.rawValue) and could not take it. Attach the file once the VM is running."
             )
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
         )
     }
@@ -365,13 +373,15 @@ extension VMCommandCore {
         // detaches the entry — trashing it would corrupt the app bundle for
         // every VM.
         guard !isAgentInstaller else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Kept Guest Agent installer '\(item.label, privacy: .public)' — app-owned; removed entry only"
             )
             return
         }
         guard shared.isEmpty else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Kept shared media '\(item.label, privacy: .public)' — still used by another VM; removed entry only"
             )
             return
@@ -391,7 +401,8 @@ extension VMCommandCore {
         guard let item = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Ejecting removable media '\(item.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
         )
         try detachRemovableMedia(id, from: instance)
@@ -502,7 +513,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.toggleGuestAgentDisk, on: instance)
         guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else {
-            Self.logger.fault("Guest agent installer DMG missing from app bundle")
+            #log(Self.logger, .fault, "Guest agent installer DMG missing from app bundle")
             assertionFailure(
                 "KernovaMacOSAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs"
             )
@@ -512,17 +523,20 @@ extension VMCommandCore {
         }
         let delivery = GuestAgentDiskDelivery.mode(for: instance.configuration)
         guard delivery == .usb else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Guest agent disk reaches '\(instance.name, privacy: .public)' over virtio; nothing to attach"
             )
             return .alreadyPresent(delivery)
         }
         guard !instance.hasGuestAgentInstallerMounted else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
             return .alreadyPresent(delivery)
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
         try writeConfiguration(of: instance, verb: .guestAgentDisk) { config in
             config.removableMedia =
@@ -555,14 +569,16 @@ extension VMCommandCore {
             instance.hasGuestAgentInstallerMounted
         else { return }
         let path = url.path(percentEncoded: false)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
         let accepted = library.updateConfiguration(of: instance) { config in
             let pruned = (config.removableMedia ?? []).filter { $0.path != path }
             config.removableMedia = pruned.isEmpty ? nil : pruned
         }
         if !accepted {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
             )
         }
@@ -587,7 +603,8 @@ extension VMCommandCore {
         guestAccount: GuestAccountAnswer?
     ) async throws {
         guard let instance = try? resolve(selector) else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Ignoring start-failed removal for already-removed VM '\(selector.displayText, privacy: .public)'"
             )
             return
@@ -606,12 +623,14 @@ extension VMCommandCore {
                     .id(instance.id), item: failure.id, trashFile: false, confirmed: true)
             }
         } catch {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Failed attachment '\(failure.label, privacy: .public)' was not removed from '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public); not retrying start"
             )
             return
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'; retrying start"
         )
         // A save file restores only into the exact device set it was saved
@@ -619,7 +638,8 @@ extension VMCommandCore {
         // discard before the user confirmed.
         if instance.hasSaveFile {
             instance.removeSaveFile()
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
             )
             if instance.isColdPaused { instance.enter(.stopped) }
@@ -721,15 +741,18 @@ extension VMCommandCore {
         }.value
         switch outcome {
         case .none:
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Removed the file behind '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
             )
         case .some(let message) where message.isEmpty:
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "File already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)'; skipping"
             )
         case .some(let message):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to remove the file behind '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
             )
             // Deliberately instance-less: the VM delete that shares this helper
@@ -744,7 +767,8 @@ extension VMCommandCore {
         do {
             try fileSystem.trashItem(at: url)
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to clean up partial disk image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -771,7 +795,8 @@ extension VMCommandCore {
     /// disk the first already removed: silent on the surface that raced itself,
     /// and answered on the wire.
     private func staleAttachment(_ id: UUID, on instance: VMInstance, verb: VMVerb) -> CommandError {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "\(verb.displayName, privacy: .public) named \(id.uuidString, privacy: .public), which is no longer attached to '\(instance.name, privacy: .public)'"
         )
         return .operationFailed(

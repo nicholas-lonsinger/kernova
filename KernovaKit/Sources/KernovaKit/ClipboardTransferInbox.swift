@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// The transfers this side is waiting for, one data connection each.
 ///
@@ -91,7 +92,8 @@ final class ClipboardTransferInbox: @unchecked Sendable {
             return prior != nil
         }
         guard displaced else { return }
-        Self.logger.fault(
+        #log(
+            Self.logger, .fault,
             "Clipboard transfer \(transferID, privacy: .public) was awaited twice — the earlier awaiter is dropped"
         )
         assertionFailure("Clipboard transfer \(transferID) was awaited twice")
@@ -135,7 +137,8 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     /// sees for both.
     func adopt(fd: Int32, reply: Kernova_V1_ClipboardTransferReply) {
         guard let awaiter = lock.withLock({ awaiters[reply.transferID] }) else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Closing a data connection for clipboard transfer \(reply.transferID, privacy: .public) — nothing is awaiting it"
             )
             ClipboardDataConnection.end(fd: fd)

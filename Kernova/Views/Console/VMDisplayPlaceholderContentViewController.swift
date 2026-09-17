@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// AppKit content view controller for the detail-pane "console" placeholder.
 ///
@@ -13,7 +13,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
     private let emptyState = DisplayPlaceholderEmptyStateView()
     private var observation: ObservationLoop?
 
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMDisplayPlaceholderVC"
     )
 
@@ -63,7 +63,8 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
     /// the controller stops tracking the previous instance's properties.
     func reconfigure(instance newInstance: VMInstance) {
         guard newInstance !== instance else { return }
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Reconfigured to instance '\(newInstance.name, privacy: .public)'"
         )
         instance = newInstance

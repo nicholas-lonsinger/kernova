@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaLogging
 
 /// Serves a clipboard offer's representations to a pasteboard lazily.
 ///
@@ -57,7 +58,8 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
     ) {
         lock.withLock { fireDepth += 1 }
         let data = provide(type)
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Provided \(data?.count ?? 0, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
         )
         if let data { item.setData(data, forType: type) }

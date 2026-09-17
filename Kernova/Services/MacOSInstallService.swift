@@ -1,12 +1,12 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
-import os
 
 /// Manages macOS guest installation using `VZMacOSInstaller`.
 @MainActor
 final class MacOSInstallService {
-    private static let logger = Logger(subsystem: "app.kernova", category: "MacOSInstallService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MacOSInstallService")
 
     private let configBuilder = ConfigurationBuilder()
     private let storageService = VMStorageService()
@@ -28,7 +28,7 @@ final class MacOSInstallService {
     ) async throws -> InstalledImage {
         instance.beginGuestSetup()
 
-        Self.logger.info("Starting macOS installation for '\(instance.name, privacy: .public)'")
+        #log(Self.logger, .info, "Starting macOS installation for '\(instance.name, privacy: .public)'")
 
         // Both VZ hand-offs below take the resolved URL — see `resolveRestoreImage`.
         let imageURL = try Self.resolveRestoreImage(at: restoreImageURL)
@@ -78,7 +78,7 @@ final class MacOSInstallService {
 
         try Task.checkCancellation()
 
-        Self.logger.info("Running macOS installer...")
+        #log(Self.logger, .info, "Running macOS installer...")
         try await session.installMacOS(from: imageURL) { fraction in
             Task { @MainActor in
                 progressHandler(fraction)
@@ -106,7 +106,7 @@ final class MacOSInstallService {
 
         instance.setupState?.progress = .fraction(1.0)
 
-        Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
+        #log(Self.logger, .info, "macOS installation completed for '\(instance.name, privacy: .public)'")
 
         return .macOSRestoreImage(
             version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
@@ -144,7 +144,7 @@ final class MacOSInstallService {
             options: [.allowOverwrite]
         )
 
-        Self.logger.info("Created platform files for '\(instance.name, privacy: .public)'")
+        #log(Self.logger, .info, "Created platform files for '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Helpers
@@ -179,16 +179,16 @@ final class MacOSInstallService {
                 .path(percentEncoded: false)
             switch error {
             case .notFound:
-                logger.error("Restore image not found at '\(reportedPath, privacy: .private)'")
+                #log(logger, .error, "Restore image not found at '\(reportedPath, privacy: .private)'")
                 throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
             case .unexpectedType:
-                logger.error("Restore image path is a directory: '\(reportedPath, privacy: .private)'")
+                #log(logger, .error, "Restore image path is a directory: '\(reportedPath, privacy: .private)'")
                 throw MacOSInstallError.restoreImageNotAFile(path: reportedPath)
             case .notReadable, .notWritable:
                 // `resolveFile` only throws these when `requireWritable` is set,
                 // which we don't — VZ opening the file is the authoritative
                 // readability test.
-                logger.fault("Unexpected \(String(describing: error), privacy: .public) for restore image")
+                #log(logger, .fault, "Unexpected \(String(describing: error), privacy: .public) for restore image")
                 assertionFailure("Unexpected PathValidation failure for restore image: \(error)")
                 throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
             }

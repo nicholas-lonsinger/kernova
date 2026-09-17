@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// Numeric rendering and reading of an operating-system version, shared by the
 /// host and the guest agent so the restore-image UI and the
@@ -43,7 +44,7 @@ public enum KernovaOSVersion {
     ///   contains no digits.
     public static func numericVersion(in reported: String) -> String? {
         guard let regex = Self.dottedDecimalRegex else {
-            logger.fault("Dotted-decimal version pattern failed to compile")
+            #log(logger, .fault, "Dotted-decimal version pattern failed to compile")
             assertionFailure("Dotted-decimal version pattern failed to compile")
             return nil
         }

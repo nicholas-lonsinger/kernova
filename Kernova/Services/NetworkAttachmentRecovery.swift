@@ -1,8 +1,8 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import SystemConfiguration
 import Virtualization
-import os
 import vmnet
 
 /// A realizable network attachment for a live VM, decoupled from VZ for testability.
@@ -204,7 +204,7 @@ protocol NetworkLinkObserving: AnyObject {
 /// the IPv4/IPv6 global (default-route) state plus every interface's link key.
 @MainActor
 final class HostNetworkLinkObserver: NetworkLinkObserving {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "HostNetworkLinkObserver")
 
     private var store: SCDynamicStore?
@@ -230,7 +230,7 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
                 hostLinkObserverCallout,
                 &context)
         else {
-            Self.logger.fault("SCDynamicStoreCreate returned nil — link changes go unobserved")
+            #log(Self.logger, .fault, "SCDynamicStoreCreate returned nil — link changes go unobserved")
             assertionFailure("SCDynamicStoreCreate returned nil")
             return
         }
@@ -291,7 +291,7 @@ private nonisolated func hostLinkObserverCallout(
 /// runtime attachment swaps themselves carry no VZ state precondition.
 @MainActor
 final class NetworkAttachmentCoordinator {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "NetworkAttachmentCoordinator")
 
     /// Reattempt cadence, in seconds, after a failed attach; escalated while
@@ -447,7 +447,8 @@ final class NetworkAttachmentCoordinator {
     /// reset, and guest reboot — so it is never surfaced as a VM error; the
     /// answer is always to reattach.
     func attachmentWasDisconnected(error: any Error) {
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Network attachment for '\(self.vmName, privacy: .public)' disconnected: \(error.localizedDescription, privacy: .public)"
         )
         // Ahead of the guards: the framework already nil'd the attachment, and
@@ -491,7 +492,8 @@ final class NetworkAttachmentCoordinator {
         guard let choice = choice() else {
             // The picker disables None while the VM runs — a session losing its
             // network device mid-flight has no supported path here.
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Network reconcile for '\(self.vmName, privacy: .public)' found no network choice — leaving the attachment alone"
             )
             setPending(false)
@@ -504,11 +506,13 @@ final class NetworkAttachmentCoordinator {
             if device.currentPlan != desired {
                 lastAttachAttemptAt = clock.now
                 if device.apply(desired) {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Attached network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public), on \(trigger, privacy: .public))"
                     )
                 } else {
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Could not attach network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public) refused, on \(trigger, privacy: .public))"
                     )
                 }
@@ -659,7 +663,8 @@ final class NetworkAttachmentCoordinator {
         else { return }
         didReportNetworkDefect = true
         reportedDefectiveVmnetKind = kind
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(kind.rawValue, privacy: .public) network — reporting it as suspect"
         )
         // Keep driving materialization: the arbiter may refuse the recreate
@@ -709,7 +714,8 @@ final class NetworkAttachmentCoordinator {
             // even if the arbiter never got to act on it.
             reportedDefectiveVmnetKind = nil
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Network attachment for '\(self.vmName, privacy: .public)' is \(pending ? "pending reattach" : "attached", privacy: .public)"
         )
         onPendingChange(pending)

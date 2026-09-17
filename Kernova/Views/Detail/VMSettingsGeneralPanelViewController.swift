@@ -1,12 +1,12 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// The General category: the VM's identity rows and its startup behavior.
 @MainActor
 final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPanel,
     NSMenuItemValidation
 {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMSettingsGeneralPanel")
 
     let context: VMSettingsPanelContext
@@ -394,7 +394,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     @objc private func ephemeralBaselineChanged() {
         guard let id = ephemeralBaselinePopUp.selectedItem?.representedObject as? UUID else {
-            Self.logger.fault("Ephemeral baseline popup selection carries no snapshot")
+            #log(Self.logger, .fault, "Ephemeral baseline popup selection carries no snapshot")
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }

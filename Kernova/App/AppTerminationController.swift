@@ -1,7 +1,7 @@
 import Cocoa
 import Darwin
 import KernovaAppRegistry
-import os
+import KernovaLogging
 
 /// The GUI close a downgraded quit needs, which the residency cluster owns.
 @MainActor
@@ -68,7 +68,7 @@ final class AppTerminationController: NSObject {
     /// fails toward saving state rather than vetoing a possible power-off.
     private var externalQuitRequiresTermination = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "AppTermination")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppTermination")
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -240,16 +240,19 @@ final class AppTerminationController: NSObject {
 
         if let attributablePID {
             if let bundleID {
-                Self.logger.debug(
+                #log(
+                    Self.logger, .debug,
                     "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID, privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
                 )
             } else {
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Quit Apple Event: sender PID \(attributablePID, privacy: .public) is alive but could not be resolved to an application with a bundle identifier — classified as \(String(describing: classification), privacy: .public)"
                 )
             }
         } else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Quit Apple Event sender could not be attributed (PID \(senderPID.map(String.init) ?? "none", privacy: .public)) — failing safe to \(String(describing: classification), privacy: .public)"
             )
         }
@@ -329,7 +332,7 @@ final class AppTerminationController: NSObject {
             hasInstancesToSave: viewModel.instances.contains(where: \.hasLiveSession)
         ) {
         case .closeGUI:
-            Self.logger.notice("GUI-origin quit — closing the GUI; app stays resident")
+            #log(Self.logger, .notice, "GUI-origin quit — closing the GUI; app stays resident")
             // Defer so the close runs after this termination request is fully
             // cancelled. `.closeGUI` is unreachable with no `residency`, which is
             // what makes `shouldTerminateOnQuit` unconditionally true there, so
@@ -349,7 +352,7 @@ final class AppTerminationController: NSObject {
                 relaunchAfterTermination = true
             }
             owesDeferredTerminationReply = true
-            Self.logger.notice("Quit requested while the termination save pass is running — deferring to it")
+            #log(Self.logger, .notice, "Quit requested while the termination save pass is running — deferring to it")
             return .terminateLater
 
         case .terminateNow:
@@ -403,10 +406,10 @@ final class AppTerminationController: NSObject {
     func requestFullQuit() {
         userRequestedAgentQuit = true
         guard !isRunningTerminationSavePass else {
-            Self.logger.notice("Full quit requested again — joining the save pass already running")
+            #log(Self.logger, .notice, "Full quit requested again — joining the save pass already running")
             return
         }
-        Self.logger.notice("User-requested full quit — saving live guests, then terminating")
+        #log(Self.logger, .notice, "User-requested full quit — saving live guests, then terminating")
         isRunningTerminationSavePass = true
         // Before the save pass, so it never has to chase a guest the launch
         // pass brings up behind it.
@@ -534,11 +537,12 @@ final class AppTerminationController: NSObject {
             // mid-write.
             while viewModel.hasSaveInFlight || viewModel.hasRevertInFlight {
                 if viewModel.hasSaveInFlight {
-                    Self.logger.notice("Termination waiting on an in-flight save to settle")
+                    #log(Self.logger, .notice, "Termination waiting on an in-flight save to settle")
                     await waitForObservedChange { [viewModel] in !viewModel.hasSaveInFlight }
                 }
                 if viewModel.hasRevertInFlight {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Termination waiting on an in-flight snapshot revert to settle")
                     await viewModel.waitForRevertsToSettle()
                 }
@@ -551,7 +555,8 @@ final class AppTerminationController: NSObject {
             handled.insert(instance.id)
 
             if step(for: instance) == .waitForOperation {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Termination waiting on a lifecycle operation for '\(instance.name, privacy: .public)' to settle"
                 )
                 // The liveness escape ends the wait when the operation leaves the
@@ -574,20 +579,23 @@ final class AppTerminationController: NSObject {
                     failedCount += 1
                 }
             case .skip:
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Termination skipping '\(instance.name, privacy: .public)': it is no longer a live session this pass can save"
                 )
                 skippedCount += 1
             case .waitForOperation:
                 // A second operation took the lock while the first was being
                 // waited out. One attempt per VM, so this one is not re-waited.
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Termination skipping '\(instance.name, privacy: .public)': another lifecycle operation took it"
                 )
                 skippedCount += 1
             }
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
         )
     }
@@ -617,18 +625,21 @@ final class AppTerminationController: NSObject {
             viewModel.saveConfiguration(for: instance)
             return true
         } catch let error as CommandError where error.isBusy {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Skipped saving '\(instance.name, privacy: .public)' during termination: another lifecycle operation holds it"
             )
             return false
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -648,7 +659,7 @@ final class AppTerminationController: NSObject {
                 forAuxiliaryExecutable: "KernovaRelaunchHelper"
             )
         else {
-            Self.logger.fault("Relaunch helper not found in app bundle")
+            #log(Self.logger, .fault, "Relaunch helper not found in app bundle")
             assertionFailure("Relaunch helper not found in app bundle")
             return
         }
@@ -661,9 +672,11 @@ final class AppTerminationController: NSObject {
             process.executableURL = helperURL
             process.arguments = [String(pid), bundlePath]
             try process.run()
-            Self.logger.notice("Launched relaunch helper (watching PID \(pid, privacy: .public))")
+            #log(Self.logger, .notice, "Launched relaunch helper (watching PID \(pid, privacy: .public))")
         } catch {
-            Self.logger.error("Failed to launch relaunch helper: \(error.localizedDescription, privacy: .public)")
+            #log(
+                Self.logger, .error, "Failed to launch relaunch helper: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }

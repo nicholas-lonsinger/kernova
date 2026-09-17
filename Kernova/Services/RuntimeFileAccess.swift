@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Owns the security-scoped access grants a live VM session holds.
 ///
@@ -11,7 +11,7 @@ import os
 /// own grant and a re-attach replaces it cleanly.
 @MainActor
 final class RuntimeFileAccess {
-    private static let logger = Logger(subsystem: "app.kernova", category: "RuntimeFileAccess")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RuntimeFileAccess")
 
     private var configScopes: [ScopedAccess] = []
     private var hotAttachScopes: [UUID: ScopedAccess] = [:]
@@ -21,7 +21,7 @@ final class RuntimeFileAccess {
     func adoptConfigScopes(_ scopes: [ScopedAccess]) {
         configScopes.forEach { $0.release() }
         configScopes = scopes
-        Self.logger.debug("Adopted \(scopes.count, privacy: .public) config scope(s)")
+        #log(Self.logger, .debug, "Adopted \(scopes.count, privacy: .public) config scope(s)")
     }
 
     /// Registers the scope backing an attached USB device — cold-boot or
@@ -43,7 +43,7 @@ final class RuntimeFileAccess {
     func releaseAll() {
         let count = configScopes.count + hotAttachScopes.count
         if count > 0 {
-            Self.logger.debug("Releasing all \(count, privacy: .public) scope(s)")
+            #log(Self.logger, .debug, "Releasing all \(count, privacy: .public) scope(s)")
         }
         configScopes.forEach { $0.release() }
         configScopes.removeAll()

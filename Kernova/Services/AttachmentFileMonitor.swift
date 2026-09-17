@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import os
+import KernovaLogging
 
 /// Reactive existence tracker for the user-supplied file paths a VM points at
 /// (external storage disks, removable media, shared directories).
@@ -21,7 +21,7 @@ import os
 @MainActor
 @Observable
 final class AttachmentFileMonitor {
-    private static let logger = Logger(subsystem: "app.kernova", category: "AttachmentFileMonitor")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AttachmentFileMonitor")
 
     /// Latest known existence flag for each watched path.
     private(set) var existsByPath: [String: Bool] = [:]
@@ -269,7 +269,8 @@ final class AttachmentFileMonitor {
             // Parent unreachable (e.g. unmounted volume, or a sandbox denial on an
             // out-of-container parent). Tracked existence stays as probed; the
             // next `revalidate()` retries.
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Could not open parent for monitoring (errno=\(openErrno, privacy: .public)): \(parent, privacy: .public)"
             )
             return
@@ -291,7 +292,8 @@ final class AttachmentFileMonitor {
     /// and traps in debug builds.
     private func installWatcher(fd: Int32, parent: String) {
         if let existing = parentSources[parent] {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "installWatcher called with an existing source for parent \(parent, privacy: .public)"
             )
             assertionFailure("installWatcher: parent already watched: \(parent)")
@@ -316,7 +318,7 @@ final class AttachmentFileMonitor {
         source.resume()
         parentSources[parent] = source
 
-        Self.logger.debug("Started attachment watcher on \(parent, privacy: .public)")
+        #log(Self.logger, .debug, "Started attachment watcher on \(parent, privacy: .public)")
     }
 
     /// Parent directory of `path` as a string.
@@ -369,7 +371,8 @@ final class AttachmentFileMonitor {
         guard let currentPaths = pathsByParent[parent] else { return }
         for (path, exists) in existence where currentPaths.contains(path) {
             if existsByPath[path] != exists {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Attachment existence changed: \(path, privacy: .public) -> \(exists, privacy: .public)"
                 )
                 existsByPath[path] = exists

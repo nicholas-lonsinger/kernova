@@ -1,7 +1,7 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
-import os
 
 /// Manages VM lifecycle operations: start, stop, pause, resume, save, and restore.
 ///
@@ -10,7 +10,7 @@ import os
 /// own isolation domain on its private queue.
 @MainActor
 final class VirtualizationService {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VirtualizationService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VirtualizationService")
 
     private let configBuilder = ConfigurationBuilder()
 
@@ -39,7 +39,8 @@ final class VirtualizationService {
         _ instance: VMInstance, bootIntoRecovery: Bool = false,
         provisioning: GuestProvisioningCredentials? = nil
     ) async throws {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public), bootIntoRecovery=\(bootIntoRecovery, privacy: .public)"
         )
         guard instance.canStart else {
@@ -68,7 +69,8 @@ final class VirtualizationService {
                 // force stop, or a revert. Whatever released it rested the VM,
                 // and reported the failure if there was one, so the start is
                 // over rather than failed.
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' lost its session before the start settled — leaving it \(instance.status.displayName, privacy: .public)"
                 )
                 return
@@ -83,15 +85,16 @@ final class VirtualizationService {
             // boots, which never run the agent.
             instance.startAgentPostStartWatchdog()
             if bootIntoRecovery {
-                Self.logger.notice("Started VM '\(instance.name, privacy: .public)' in recovery mode")
+                #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)' in recovery mode")
             } else {
-                Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
+                #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)'")
             }
         } catch {
             // A restore failure already logged itself with the full error chain.
             if !Self.isRestoreFailure(error) {
                 let nsError = error as NSError
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
                 )
             }
@@ -100,7 +103,8 @@ final class VirtualizationService {
                 restingAt: Self.restingPhaseAfterLifecycleFailure(
                     error, on: instance, transientRestingPhase: .stopped))
             {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Start of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
                 )
             }
@@ -141,13 +145,15 @@ final class VirtualizationService {
                 // boot a second machine behind it. Rethrowing hands the outer
                 // catch the same non-ownership answer.
                 guard Self.attemptStillOwnsThePhase(instance, actingFor: attemptSessionID) else {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention after it was overtaken — not retrying"
                     )
                     throw startError
                 }
                 attempt += 1
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
                 // Back to the sessionless form of the phase the retry stays in:
@@ -232,14 +238,15 @@ final class VirtualizationService {
 
     /// Requests a graceful ACPI shutdown of the virtual machine.
     func stop(_ instance: VMInstance) async throws {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "stop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)"
         )
         // Cold-paused: no live VM, just discard the save file
         if instance.isColdPaused {
             instance.removeSaveFile()
             instance.enter(.stopped)
-            Self.logger.notice("Discarded saved state for VM '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
 
@@ -248,18 +255,19 @@ final class VirtualizationService {
         }
 
         try await session.requestStop()
-        Self.logger.notice("Requested stop for VM '\(instance.name, privacy: .public)'")
+        #log(Self.logger, .notice, "Requested stop for VM '\(instance.name, privacy: .public)'")
     }
 
     func forceStop(_ instance: VMInstance) async throws {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "forceStop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)"
         )
         // Cold-paused: no live VM, just discard the save file
         if instance.isColdPaused {
             instance.removeSaveFile()
             instance.enter(.stopped)
-            Self.logger.notice("Discarded saved state for VM '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
 
@@ -269,13 +277,13 @@ final class VirtualizationService {
 
         try await session.stop()
         instance.resetToStopped()
-        Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
+        #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Pause / Resume
 
     func pause(_ instance: VMInstance) async throws {
-        Self.logger.debug("pause: status=\(instance.status.displayName, privacy: .public)")
+        #log(Self.logger, .debug, "pause: status=\(instance.status.displayName, privacy: .public)")
         guard instance.canPause, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "pause")
         }
@@ -284,7 +292,8 @@ final class VirtualizationService {
         do {
             try await session.pause()
             guard instance.settle(.livePaused(sessionID: sessionID), for: sessionID) else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' lost its session before the pause settled — leaving it \(instance.status.displayName, privacy: .public)"
                 )
                 return
@@ -293,7 +302,7 @@ final class VirtualizationService {
             // — a frozen guest cannot say Hello, so letting it run would blame
             // the agent for the pause.
             instance.cancelAgentPostStartWatchdog()
-            Self.logger.notice("Paused VM '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Paused VM '\(instance.name, privacy: .public)'")
         } catch {
             // The phase is deliberately untouched: the pause did not take, so
             // the VM is where it was, still holding the session — and the guest
@@ -306,7 +315,8 @@ final class VirtualizationService {
             //
             // The failure reaches the user as the thrown error, which is what
             // every caller of this already surfaces.
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to pause VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
@@ -318,7 +328,8 @@ final class VirtualizationService {
     /// Hot resume when the VM is still in memory; cold resume rebuilds it and
     /// restores from the save file.
     func resume(_ instance: VMInstance) async throws {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
         )
         guard instance.canResume else {
@@ -353,7 +364,8 @@ final class VirtualizationService {
             }
 
             guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' lost its session before the resume settled — leaving it \(instance.status.displayName, privacy: .public)"
                 )
                 return
@@ -370,11 +382,12 @@ final class VirtualizationService {
                 instance.startAgentPostStartWatchdog()
             }
 
-            Self.logger.notice("Resumed VM '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Resumed VM '\(instance.name, privacy: .public)'")
         } catch {
             // A restore failure already logged itself with the full error chain.
             if !Self.isRestoreFailure(error) {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -383,7 +396,8 @@ final class VirtualizationService {
                 restingAt: Self.restingPhaseAfterLifecycleFailure(
                     error, on: instance, transientRestingPhase: nil))
             {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Resume of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
                 )
             }
@@ -395,7 +409,7 @@ final class VirtualizationService {
 
     /// Saves the current VM state to disk (pause + snapshot).
     func save(_ instance: VMInstance) async throws {
-        Self.logger.debug("save: status=\(instance.status.displayName, privacy: .public)")
+        #log(Self.logger, .debug, "save: status=\(instance.status.displayName, privacy: .public)")
         guard instance.canSave, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "save")
         }
@@ -415,14 +429,16 @@ final class VirtualizationService {
                 // The guest went away mid-write, so the slot on disk is however
                 // far VZ got. Resting suspended would offer it as resumable;
                 // the VM stays where the teardown put it instead.
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' lost its session mid-suspend — leaving it \(instance.status.displayName, privacy: .public)"
                 )
                 return
             }
-            Self.logger.notice("Saved state for VM '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Saved state for VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             // A force stop is the interrupt this operation is most likely to
@@ -432,7 +448,8 @@ final class VirtualizationService {
                 instance, actingFor: sessionID,
                 restingAt: .failed(message: error.localizedDescription))
             {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Suspend of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
                 )
             }
@@ -456,7 +473,8 @@ final class VirtualizationService {
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "takeSnapshot: kind=\(snapshot.kind.rawValue, privacy: .public), status=\(instance.status.displayName, privacy: .public)"
         )
         // Re-validates rather than trusting the kind the caller stamped: the VM
@@ -531,7 +549,8 @@ final class VirtualizationService {
                 wasRunning ? .running(sessionID: sessionID) : .livePaused(sessionID: sessionID),
                 for: sessionID)
             if settled {
-                logger.notice(
+                #log(
+                    logger, .notice,
                     "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
                 )
             } else {
@@ -540,7 +559,8 @@ final class VirtualizationService {
                 // so the snapshot is complete and the caller records it — the
                 // VM stays where the teardown left it rather than being handed
                 // back to a session nothing holds.
-                logger.notice(
+                #log(
+                    logger, .notice,
                     "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)', which lost its session mid-capture — leaving it \(instance.status.displayName, privacy: .public)"
                 )
             }
@@ -548,7 +568,8 @@ final class VirtualizationService {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
             }.value
-            logger.error(
+            #log(
+                logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let resting = await restingPhaseAfterFailedWarmCapture(
@@ -588,14 +609,16 @@ final class VirtualizationService {
             }.value
 
             instance.enter(.stopped)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
             }.value
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             instance.enter(.stopped)
@@ -639,14 +662,16 @@ final class VirtualizationService {
             }.value
 
             instance.enter(.suspended)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
             }.value
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             instance.enter(.suspended)
@@ -687,11 +712,13 @@ final class VirtualizationService {
                 // A .notice because it is an irreversible action on the user's
                 // own hardware: the device resets and the host takes it back,
                 // and nothing else in the log says a save did that.
-                logger.notice(
+                #log(
+                    logger, .notice,
                     "Took USB accessory \(item.accessory.displayName, privacy: .public) off '\(instance.name, privacy: .public)' before writing its state"
                 )
             } catch VMSessionError.usbDeviceNotFound {
-                logger.notice(
+                #log(
+                    logger, .notice,
                     "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"
                 )
             }
@@ -740,7 +767,8 @@ final class VirtualizationService {
             try await session.resumeIfPaused()
             return .running(sessionID: sessionID)
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Could not resume '\(instance.name, privacy: .public)' after a failed snapshot: \(error.localizedDescription, privacy: .public)"
             )
             return .livePaused(sessionID: sessionID)
@@ -762,7 +790,8 @@ final class VirtualizationService {
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "revertToSnapshot: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public)"
         )
         guard instance.canRevertToSnapshot else {
@@ -791,7 +820,8 @@ final class VirtualizationService {
             do {
                 try await session.stop()
             } catch {
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Terminating '\(instance.name, privacy: .public)' before a revert failed: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -804,7 +834,8 @@ final class VirtualizationService {
                 try store.restore(bundleURL: bundleURL, snapshotID: snapshotID, plan: written)
             }.value
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             instance.enter(Self.restingPhaseAfterRestoreFailure(on: instance))
@@ -824,7 +855,8 @@ final class VirtualizationService {
         // itself be. The session went with the teardown above, so there is
         // nothing left here to release.
         instance.enter(plan.kind == .warm ? .suspended : .stopped)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Reverted VM '\(instance.name, privacy: .public)' to snapshot '\(snapshot.name, privacy: .public)'"
         )
 
@@ -1050,13 +1082,15 @@ final class VirtualizationService {
                 // boot a second machine behind it. Rethrowing hands the outer
                 // catch the same non-ownership answer.
                 guard Self.attemptStillOwnsThePhase(instance, actingFor: attemptSessionID) else {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Restore of '\(instance.name, privacy: .public)' hit file-lock contention after it was overtaken — not retrying"
                     )
                     throw attemptError
                 }
                 attempt += 1
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Restore of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
                 instance.tearDownSession(restingAt: .restoringSavedState(sessionID: nil))
@@ -1098,7 +1132,7 @@ final class VirtualizationService {
         }
         attemptSessionID = session.id
 
-        Self.logger.debug("restoreFromSaveFile: attempting restore from save file")
+        #log(Self.logger, .debug, "restoreFromSaveFile: attempting restore from save file")
         do {
             try await session.restoreMachineState(from: instance.saveFileURL)
             try await session.resume()
@@ -1106,7 +1140,8 @@ final class VirtualizationService {
             return session.id
         } catch {
             let nsError = error as NSError
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
             )
             throw VirtualizationError.restoreFailed(underlying: error)

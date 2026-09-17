@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// One connection's control channel and the two transfer tables riding beside
 /// it, for either end of either clipboard channel.
@@ -114,7 +115,8 @@ public final class ClipboardControlSession {
         self.dataLink = dataLink
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
         if Self.receives(role: role, kind: kind), staging == nil {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Clipboard control session for '\(label, privacy: .public)' receives but was given no staging"
             )
             assertionFailure("Receiving session for '\(label)' was given no staging")
@@ -123,7 +125,8 @@ public final class ClipboardControlSession {
         // connections in that role would leave every transfer waiting for one
         // that can never arrive.
         if role == .guest, case .accepts = dataLink {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Guest clipboard control session for '\(label, privacy: .public)' was given no data dialler"
             )
             assertionFailure("Guest session for '\(label)' was given no data dialler")
@@ -200,7 +203,8 @@ public final class ClipboardControlSession {
                 // The only measured throughput number for what this side sends,
                 // so it logs at `.notice` (persisted) rather than `.debug`.
                 onTransferTimed: { metrics in
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "\(sent, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) sent: \(metrics.logSummary, privacy: .public)"
                     )
                 })
@@ -209,7 +213,8 @@ public final class ClipboardControlSession {
             inboxHolder.value = ClipboardTransferInbox(
                 staging: staging,
                 onTransferTimed: { metrics in
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "\(received, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"
                     )
                 })
@@ -284,11 +289,13 @@ public final class ClipboardControlSession {
             }
             // A guest disconnect has to survive in the log after the fact, so this
             // persists rather than logging at `.debug`/`.info`.
-            logger.notice(
+            #log(
+                logger, .notice,
                 "Vsock \(subject, privacy: .public) channel closed for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public))"
             )
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "Vsock \(subject, privacy: .public) channel ended with error for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }

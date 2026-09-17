@@ -1,5 +1,6 @@
 import AppKit
 import KernovaKit
+import KernovaLogging
 
 /// Owns the agent's menu-bar `NSStatusItem` and its dropdown.
 ///
@@ -102,7 +103,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             let image = NSImage(
                 systemSymbolName: name, accessibilityDescription: "Kernova Guest Agent")
         else {
-            Self.logger.fault("Missing SF Symbol '\(name, privacy: .public)' for status item")
+            #log(Self.logger, .fault, "Missing SF Symbol '\(name, privacy: .public)' for status item")
             assertionFailure("Missing SF Symbol '\(name)'")
             statusItem.button?.image = nil
             statusItem.button?.title = "K"

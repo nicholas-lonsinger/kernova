@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// Guest-side control-channel agent that talks to the host's
 /// `VsockControlService` on `KernovaVsockPort.control`.
@@ -122,13 +123,13 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
-        Self.logger.notice("Vsock control agent started")
+        #log(Self.logger, .notice, "Vsock control agent started")
     }
 
     /// Stops the loop and tears down any active channel.
     func stop() {
         client.stop()
-        Self.logger.notice("Vsock control agent stopped")
+        #log(Self.logger, .notice, "Vsock control agent stopped")
     }
 
     // MARK: - Per-connection serve
@@ -168,9 +169,10 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             for try await frame in channel.incoming {
                 handle(frame: frame)
             }
-            Self.logger.notice("Vsock control channel closed by host")
+            #log(Self.logger, .notice, "Vsock control channel closed by host")
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Vsock control channel ended with error: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -188,7 +190,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         switch inbound {
         case .unsupportedVersion(let version):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Dropping frame with unsupported protocol version \(version, privacy: .public)"
             )
         case .hello(let hello):
@@ -202,14 +205,16 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             onHostCapabilitiesChanged?()
             // `logDescription` bounds the peer-supplied capability strings; these
             // records can be forwarded into the host's log store.
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Host control service ready (service=\(hello.serviceVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
         case .heartbeat:
             // The frame itself is the signal; the liveness clock is refreshed above.
             break
         case .error(let error):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Host control error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
         case .policyUpdate(let policy):
@@ -219,16 +224,18 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             var effective = policy
             effective.clipboardSharingEnabled = policy.clipboardSharingEnabled && hostStreams
             if policy.clipboardSharingEnabled && !hostStreams {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Host enabled clipboard but didn't advertise \(KernovaCapability.clipboardTransferV3, privacy: .public) — keeping clipboard disabled"
                 )
             }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "PolicyUpdate received (logForwarding=\(effective.logForwardingEnabled, privacy: .public), clipboard=\(effective.clipboardSharingEnabled, privacy: .public))"
             )
             onPolicy?(effective)
         case .wrongPort:
-            Self.logger.warning("Unexpected payload on control channel — wrong port")
+            #log(Self.logger, .warning, "Unexpected payload on control channel — wrong port")
         }
     }
 
@@ -241,7 +248,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         do {
             try channel.send(hello)
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to send control Hello: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -257,7 +265,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         } catch {
             // A failed send usually means the channel just tore down; the serve
             // loop sees EOF and `VsockGuestClient` reconnects.
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Failed to send heartbeat (nonce=\(nonce, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -273,12 +282,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             // frame that does is what `handle(frame:)` reconnects on.
             break
         case .becameUnresponsive(let silentFor):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — host appears unresponsive"
             )
             updateConnectionState(.unresponsive)
         case .expired(let silentFor):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Host control channel silent for \(Int(silentFor.rounded()), privacy: .public) s — closing"
             )
             channel.close()

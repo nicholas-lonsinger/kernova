@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Everything scoped to the lifetime of one `VZVirtualMachine`, so a session's
 /// state is created and released as a unit rather than as loose fields a
@@ -14,7 +14,7 @@ import os
 @MainActor
 @Observable
 final class VMSessionContext {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMSessionContext")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSessionContext")
 
     /// The VM name, for log records.
     @ObservationIgnored private let label: String
@@ -208,28 +208,32 @@ final class VMSessionContext {
         do {
             try clipboardInputPipe?.fileHandleForReading.close()
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to close clipboard input read handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         do {
             try clipboardInputPipe?.fileHandleForWriting.close()
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to close clipboard input write handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         do {
             try clipboardOutputPipe?.fileHandleForReading.close()
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to close clipboard output read handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
         do {
             try clipboardOutputPipe?.fileHandleForWriting.close()
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to close clipboard output write handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

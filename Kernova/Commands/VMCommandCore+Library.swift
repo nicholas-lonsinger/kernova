@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
 
 /// The library verbs — create, clone, rename, delete, import, and the cancel
@@ -43,7 +44,8 @@ extension VMCommandCore {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
         try require(.rename, on: instance)
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
         guard library.updateConfiguration(of: instance, mutate: { $0.name = trimmed }) else {
             // The new name is in memory but not on disk, so the next library
@@ -68,7 +70,8 @@ extension VMCommandCore {
         do {
             bundleURL = try storageService.bundleURL(for: configuration)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to derive bundle URL for new VM '\(configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: .create, message: error.localizedDescription)
@@ -98,11 +101,12 @@ extension VMCommandCore {
                     at: VMBundleLayout(bundleURL: staged).diskImageURL, sizeInGB: diskSizeInGB)
             },
             onSuccess: { [weak self] in
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Created VM '\(name, privacy: .public)' (status: \(phantom.status.displayName, privacy: .public))"
                 )
                 guard startAfterCreate, let self else { return }
-                Self.logger.notice("Auto-starting new VM '\(name, privacy: .public)'")
+                #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
                 Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -159,7 +163,8 @@ extension VMCommandCore {
             // clone through `filesToCopy` below, untouched here.
             if clonedConfig.guestOS == .macOS, instance.effectiveMachineIdentifierData == nil {
                 clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Clone of '\(instance.name, privacy: .public)' had no machine identifier to keep — generated a new one"
                 )
             }
@@ -168,7 +173,8 @@ extension VMCommandCore {
             {
                 clonedConfig.genericMachineIdentifierData =
                     VZGenericMachineIdentifier().dataRepresentation
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Clone of '\(instance.name, privacy: .public)' had no generic machine identifier to keep — generated a new one"
                 )
             }
@@ -210,7 +216,8 @@ extension VMCommandCore {
         do {
             bundleURL = try storageService.bundleURL(for: clonedConfig)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to derive bundle URL for clone of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: .clone, message: error.localizedDescription)
@@ -257,7 +264,8 @@ extension VMCommandCore {
                             if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
                                 try fm.copyItem(at: sourceFile, to: destFile)
                             } else {
-                                log.warning(
+                                #log(
+                                    log, .warning,
                                     "Internal disk '\(mapping.clonedDisk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — removing from clone"
                                 )
                                 skipped.insert(mapping.clonedDisk.id)
@@ -305,7 +313,8 @@ extension VMCommandCore {
                 }
             },
             onSuccess: {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Cloned VM '\(sourceName, privacy: .public)' as '\(config.name, privacy: .public)'"
                 )
             },
@@ -356,7 +365,8 @@ extension VMCommandCore {
             // directory) — select it rather than re-importing.
             if let existing = library.instances.first(where: { $0.id == config.id }) {
                 library.selectedID = existing.id
-                Self.logger.info(
+                #log(
+                    Self.logger, .info,
                     "VM '\(config.name, privacy: .public)' already in library — selected existing instance"
                 )
                 return summary(existing)
@@ -389,7 +399,8 @@ extension VMCommandCore {
                     // The phantom was wired before its bundle existed, so any
                     // snapshots that arrived with the copy are read now.
                     self?.reloadSnapshots(for: phantom)
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
                     )
                 },
@@ -398,7 +409,8 @@ extension VMCommandCore {
                 })
             return summary(phantom)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: .importVM, message: error.localizedDescription)
@@ -435,7 +447,8 @@ extension VMCommandCore {
                 throw CommandError.busy(
                     vm: summary(instance), operation: instance.status.displayName.lowercased())
             }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Cancel confirmed after the copy settled for '\(instance.name, privacy: .public)' — removing the row and trashing the bundle"
             )
             library.cleanupPhantomInstance(instance)
@@ -450,7 +463,8 @@ extension VMCommandCore {
         state.isCancelling = true
         instance.preparingState = state
 
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Cancelling \(state.operation.displayNoun, privacy: .public) for '\(instance.name, privacy: .public)'"
         )
     }
@@ -551,7 +565,8 @@ extension VMCommandCore {
                 try storageService.deleteVMBundle(at: instance.bundleURL)
             }
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: .delete, message: error.localizedDescription)
@@ -568,9 +583,9 @@ extension VMCommandCore {
         library.evict(instance)
         library.persistOrder()
         if permanently {
-            Self.logger.notice("Permanently deleted VM '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .notice, "Permanently deleted VM '\(instance.name, privacy: .public)'")
         } else {
-            Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
+            #log(Self.logger, .notice, "Moved VM '\(instance.name, privacy: .public)' to Trash")
         }
         // Externals go *after* the bundle, so the VM disappears from the
         // library even if one of these fails.
@@ -654,7 +669,8 @@ extension VMCommandCore {
         } else {
             return
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
     }

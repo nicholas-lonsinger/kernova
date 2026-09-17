@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// Shared toolbar logic for VM window controllers.
 ///
@@ -72,7 +72,7 @@ final class VMToolbarManager: NSObject {
     private let capabilities: VMCapabilityCatalog
     private let instanceProvider: () -> VMInstance?
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMToolbarManager")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMToolbarManager")
 
     // MARK: - Clipboard transfer-progress state
 
@@ -263,7 +263,7 @@ final class VMToolbarManager: NSObject {
     func updateToolbarItems(in toolbar: NSToolbar) {
         let instance = instanceProvider()
         if instance == nil {
-            Self.logger.debug("updateToolbarItems: no instance available")
+            #log(Self.logger, .debug, "updateToolbarItems: no instance available")
         }
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateItem(
@@ -333,7 +333,7 @@ final class VMToolbarManager: NSObject {
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
         else { return }
         guard let group = item as? NSToolbarItemGroup, group.subitems.count == 3 else {
-            Self.logger.warning("updateLifecycleGroup: lifecycle group malformed — wrong type or subitem count")
+            #log(Self.logger, .warning, "updateLifecycleGroup: lifecycle group malformed — wrong type or subitem count")
             return
         }
 
@@ -506,7 +506,9 @@ final class VMToolbarManager: NSObject {
 
     @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
         guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("lifecycleAction: unexpected selectedIndex \(group.selectedIndex, privacy: .public)")
+            #log(
+                Self.logger, .warning,
+                "lifecycleAction: unexpected selectedIndex \(group.selectedIndex, privacy: .public)")
             return
         }
         switch segment {

@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Manages the `Snapshots/` directory inside a VM bundle: the manifest, one
 /// directory per snapshot holding its VZ saved state, the configuration it was
@@ -8,7 +8,7 @@ import os
 ///
 /// `VMBundleLayout` owns the names; this owns the file operations.
 struct VMSnapshotStore: VMSnapshotStoring {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMSnapshotStore")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSnapshotStore")
 
     /// The one operation a test must not run for real: trashing moves the
     /// directory into the user's own Trash. Every other file operation here
@@ -59,7 +59,8 @@ struct VMSnapshotStore: VMSnapshotStoring {
         do {
             return try VMConfiguration.makeJSONDecoder().decode(VMSnapshotManifest.self, from: data)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to read the snapshot manifest in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return VMSnapshotManifest()
@@ -268,11 +269,13 @@ struct VMSnapshotStore: VMSnapshotStoring {
         guard manager.fileExists(atPath: staging.path(percentEncoded: false)) else { return }
         do {
             try manager.removeItem(at: staging)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Reclaimed a revert staging directory left in '\(bundleURL.lastPathComponent, privacy: .public)'"
             )
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to remove the revert staging directory in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -297,7 +300,8 @@ struct VMSnapshotStore: VMSnapshotStoring {
         {
             // Nothing was written before the failure.
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to clean up the partial snapshot directory '\(snapshotID.uuidString, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// The configuration verbs — the dotted keyspace `get` and `set` address, the
 /// two list edits a caller names by path rather than by id, and the reads that
@@ -81,7 +82,8 @@ extension VMCommandCore {
         // `current` and this write awaits — a suspension there would clobber
         // whatever a concurrent writer landed in between.
         try writeConfiguration(of: instance, verb: .setConfiguration) { $0 = candidate }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Changed \(resolved.map(\.key.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
         )
         let written = instance.configuration

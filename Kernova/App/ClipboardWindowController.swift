@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// Manages a clipboard sharing window for a single VM instance.
 ///
@@ -8,7 +8,7 @@ import os
 /// error state.
 @MainActor
 final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardWindowController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardWindowController")
 
     let instance: VMInstance
     /// Reports the close, while the window is still dispatching it.
@@ -55,7 +55,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         if statusObservation == nil { observeStatus() }
-        Self.logger.debug("Clipboard window shown for VM '\(self.instance.name, privacy: .public)'")
+        #log(Self.logger, .debug, "Clipboard window shown for VM '\(self.instance.name, privacy: .public)'")
     }
 
     // MARK: - NSWindowDelegate
@@ -67,7 +67,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         }
         statusObservation?.cancel()
         statusObservation = nil
-        Self.logger.debug("Clipboard window closing for VM '\(self.instance.name, privacy: .public)'")
+        #log(Self.logger, .debug, "Clipboard window closing for VM '\(self.instance.name, privacy: .public)'")
         onWillClose?()
     }
 
@@ -92,14 +92,16 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
                 self.updateWindowTitle()
                 let status = self.instance.status
                 if status == .stopped || status == .error {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))"
                     )
                     self.window?.close()
                     return
                 }
                 if !self.instance.configuration.clipboardSharingEnabled {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (clipboard sharing disabled by user)"
                     )
                     self.window?.close()

@@ -1,7 +1,7 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
-import os
 import vmnet
 
 /// An app-managed vmnet network, keyed by role. Each case is one logical
@@ -174,7 +174,7 @@ struct VmnetOperationError: Error, LocalizedError {
 
 /// The real `VmnetNetworkOperating`, over the macOS 26 vmnet network APIs.
 struct HostVmnetNetworkOperator: VmnetNetworkOperating {
-    private static let logger = Logger(subsystem: "app.kernova", category: "HostVmnetNetworkOperator")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HostVmnetNetworkOperator")
 
     func createNetwork(
         _ kind: VmnetNetworkKind,
@@ -197,7 +197,8 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
         }
 
         let reserved = Self.reservedAddressing(of: network)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Created \(kind.rawValue, privacy: .public) network (\(addressing == nil ? "fresh" : "pinned", privacy: .public), \(reservations.count, privacy: .public) reservations, \(forwardingRules.count, privacy: .public) forwarding rules): \(reserved.ipv4Subnet, privacy: .public) mask \(reserved.ipv4Mask, privacy: .public), \(reserved.ipv6Prefix, privacy: .public)/\(reserved.ipv6PrefixLength, privacy: .public)"
         )
         return (VmnetNetworkHandle(network: network), reserved)
@@ -406,7 +407,7 @@ protocol VmnetNetworkRecreating: Sendable {
 /// `VZVirtualMachine`, and `ConfigurationBuilder` consumes it during off-main
 /// config assembly while the live-switch path consumes it on the main actor.
 final class VmnetNetworkService: @unchecked Sendable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VmnetNetworkService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetNetworkService")
 
     /// The process-wide instance over the real vmnet calls and store location.
     static let shared = VmnetNetworkService()
@@ -508,7 +509,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                 stateLock.unlock()
                 // Never published, so nothing else can hold this network.
                 operations.releaseNetwork(materialized.handle)
-                Self.logger.info(
+                #log(
+                    Self.logger, .info,
                     "The \(kind.rawValue, privacy: .public) network's \(changed, privacy: .public) changed while it was being created — recreating it"
                 )
                 continue
@@ -520,7 +522,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             if stale {
                 // Left pending on purpose: the next configuration sync or
                 // session teardown recreates the network at an idle moment.
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Published the \(kind.rawValue, privacy: .public) network without the \(changed, privacy: .public) declared during its creation — they take effect at the next recreate"
                 )
             }
@@ -542,7 +545,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                     kind, addressing: stored, reservations: submitted.reservations,
                     forwardingRules: Self.operatorRules(submitted.forwardingRules))
                 if reserved == stored {
-                    Self.logger.info(
+                    #log(
+                        Self.logger, .info,
                         "Recreated the \(kind.rawValue, privacy: .public) network with its stored addressing"
                     )
                     return MaterializedNetwork(
@@ -556,7 +560,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                 // this network; report none, and let the pending rule set drive
                 // a later recreate.
                 updateRecord(for: kind) { $0.addressing = reserved }
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Pinned \(kind.rawValue, privacy: .public) network addressing was adjusted by the system — persisting the reserved values"
                 )
                 return MaterializedNetwork(
@@ -568,12 +573,14 @@ final class VmnetNetworkService: @unchecked Sendable {
                     // network: a fresh-subnet fallback here would silently
                     // shift every VM's reserved address, so fail and let the
                     // recovery ladder retry once the old refs drain.
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Recreating the invalidated \(kind.rawValue, privacy: .public) network at its stored addressing failed — retrying later rather than drifting the subnet: \(error.localizedDescription, privacy: .public)"
                     )
                     throw error
                 }
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Stored \(kind.rawValue, privacy: .public) network addressing is no longer reservable — creating fresh, guest addressing may change: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -597,7 +604,7 @@ final class VmnetNetworkService: @unchecked Sendable {
         let slotCount = currentRecord(for: kind).reservedMACs.count(where: { $0 != nil })
         guard slotCount > 0 else {
             updateRecord(for: kind) { $0.addressing = discovered }
-            Self.logger.notice("Created and persisted the \(kind.rawValue, privacy: .public) network")
+            #log(Self.logger, .notice, "Created and persisted the \(kind.rawValue, privacy: .public) network")
             return MaterializedNetwork(handle: probe)
         }
 
@@ -608,7 +615,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                 kind, addressing: discovered, reservations: submitted.reservations,
                 forwardingRules: Self.operatorRules(submitted.forwardingRules))
             updateRecord(for: kind) { $0.addressing = reserved }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Created and persisted the \(kind.rawValue, privacy: .public) network with \(slotCount, privacy: .public) reservation slots"
             )
             return MaterializedNetwork(
@@ -619,7 +627,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             // recreate. Fall back to a working network without reservations —
             // the mode beats the IP display — and let the next
             // materialization install them.
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Recreating the \(kind.rawValue, privacy: .public) network with reservations failed — falling back to a fresh network without them: \(error.localizedDescription, privacy: .public)"
             )
             let (handle, addressing) = try operations.createNetwork(
@@ -647,22 +656,26 @@ final class VmnetNetworkService: @unchecked Sendable {
             case .installable, .free:
                 continue
             case .unparseableMAC:
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Skipping unparseable MAC in \(kind.rawValue, privacy: .public) reservation slot \(index, privacy: .public)"
                 )
             case .noAddressLeft:
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "No address left in the \(kind.rawValue, privacy: .public) subnet for reservation slot \(index, privacy: .public)"
                 )
             }
         }
         for duplicate in resolved.duplicateRules {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Dropping a \(kind.rawValue, privacy: .public) forwarding rule: \(duplicate.rule.transport.displayName, privacy: .public) host port \(duplicate.rule.hostPort, privacy: .public) is already forwarded on that network"
             )
         }
         for unreserved in resolved.unreservedRules {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Dropping \(unreserved.count, privacy: .public) \(kind.rawValue, privacy: .public) forwarding rules for a VM holding no address reservation on that network"
             )
         }
@@ -879,7 +892,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             return try VMConfiguration.makeJSONDecoder()
                 .decode([VmnetNetworkKind: VmnetNetworkRecord].self, from: data)
         } catch {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "networks.json is unreadable — treating as empty: \(error.localizedDescription, privacy: .public)"
             )
             return [:]
@@ -897,7 +911,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             } catch {
                 // Non-fatal: networks work for this session; only relaunch
                 // stability of addressing and reservations is lost.
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Could not persist networks.json — addressing may change at next launch: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -929,7 +944,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
             _ = try network(for: kind)
             return true
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Could not materialize the \(kind.rawValue, privacy: .public) network: \(error.localizedDescription, privacy: .public)"
             )
             return false
@@ -950,7 +966,7 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         // it, a fully torn-down network would still block the pinned recreate
         // as a conflict.
         operations.releaseNetwork(dropped)
-        Self.logger.notice("Invalidated the \(kind.rawValue, privacy: .public) network")
+        #log(Self.logger, .notice, "Invalidated the \(kind.rawValue, privacy: .public) network")
     }
 
     func reserveAddressIfNeeded(for mac: String, kind: VmnetNetworkKind) {
@@ -958,7 +974,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         guard VZMACAddress(string: normalized) != nil else {
             // A malformed MAC (hand-edited config) would poison every later
             // materialization of the kind — refuse it a slot instead.
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Refusing a \(kind.rawValue, privacy: .public) reservation slot for an unparseable MAC"
             )
             return
@@ -973,7 +990,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
             } else {
                 record.reservedMACs[slot] = normalized
             }
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Reserved \(kind.rawValue, privacy: .public) address slot \(slot, privacy: .public)"
             )
         }
@@ -985,7 +1003,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
             guard let slot = record.reservedMACs.firstIndex(of: normalized) else { return }
             record.reservedMACs[slot] = nil
             Self.trimFreeTail(&record.reservedMACs)
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Released \(kind.rawValue, privacy: .public) address slot \(slot, privacy: .public)"
             )
         }
@@ -1002,7 +1021,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
             }
             guard freed > 0 else { return }
             Self.trimFreeTail(&record.reservedMACs)
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Released \(freed, privacy: .public) \(kind.rawValue, privacy: .public) address slots no VM claims"
             )
         }
@@ -1046,7 +1066,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         guard VZMACAddress(string: normalized) != nil else {
             // A malformed MAC (hand-edited config) resolves to no reservation,
             // so its rules could never install — refuse them instead.
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Refusing \(kind.rawValue, privacy: .public) port forwarding rules for an unparseable MAC"
             )
             return
@@ -1060,7 +1081,8 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         }
         stateLock.unlock()
         guard previous != rules else { return }
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "A VM now declares \(rules.count, privacy: .public) \(kind.rawValue, privacy: .public) forwarding rules"
         )
     }

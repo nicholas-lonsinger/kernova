@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 import Security
 
 /// The app group the app and its command-line tool share, resolved from the
@@ -70,13 +71,15 @@ public enum KernovaAppGroup {
             let value = SecTaskCopyValueForEntitlement(task, entitlementKey as CFString, nil),
             let groups = value as? [String]
         else {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "This build's signature claims no application group — the app-group container, and everything that lives in it, is unavailable"
             )
             return nil
         }
         guard let identifier = identifier(fromEntitlementGroups: groups) else {
-            logger.warning(
+            #log(
+                logger, .warning,
                 "This build's signature claims no team-prefixed '\(identifierSuffix, privacy: .public)' group (claims \(groups.joined(separator: ", "), privacy: .public)) — the app-group container is unavailable"
             )
             return nil

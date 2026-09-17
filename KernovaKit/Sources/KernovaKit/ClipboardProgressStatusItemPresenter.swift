@@ -1,4 +1,5 @@
 import AppKit
+import KernovaLogging
 
 /// Presents a transfer's progress readout inside a menu-bar status item's
 /// dropdown, and runs the one-shot automatic open that reveals it.
@@ -162,12 +163,13 @@ public final class ClipboardProgressStatusItemPresenter {
             Self.allowsAutomaticOpen(
                 isVisible: visible, isOnScreen: onScreen, menuIsOpen: menuIsOpen)
         else {
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Staged-line reveal skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(self.menuIsOpen, privacy: .public)"
             )
             return
         }
-        Self.logger.info("Opening the dropdown to reveal a staged line")
+        #log(Self.logger, .info, "Opening the dropdown to reveal a staged line")
         openDropdown(while: stillStaged)
     }
 
@@ -244,22 +246,27 @@ public final class ClipboardProgressStatusItemPresenter {
         onScreen: Bool
     ) {
         guard let readout else {
-            Self.logger.info(
+            #log(
+                Self.logger, .info,
                 "Readout cleared — dropdown \(action == .close ? "closed" : "left alone", privacy: .public)"
             )
             return
         }
-        let record: KernovaLogMessage = """
-            Auto-open \(action, privacy: .public) — gesture=\(readout.gesture, privacy: .public), \
+        let level: KernovaLogLevel =
+            switch action {
+            case .none: .debug
+            case .open, .close: .info
+            }
+        #log(
+            Self.logger, level,
+            """
+            Auto-open \(String(describing: action), privacy: .public) — gesture=\(String(describing: readout.gesture), privacy: .public), \
             elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
             \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes, \
-            menuOpen=\(menuIsOpen, privacy: .public), canOpen=\(visible && onScreen, privacy: .public) \
+            menuOpen=\(self.menuIsOpen, privacy: .public), canOpen=\(visible && onScreen, privacy: .public) \
             (visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public))
             """
-        switch action {
-        case .none: Self.logger.debug(record)
-        case .open, .close: Self.logger.info(record)
-        }
+        )
     }
 }

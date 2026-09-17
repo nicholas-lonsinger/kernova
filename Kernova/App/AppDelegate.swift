@@ -1,7 +1,7 @@
 import AppIntents
 import Cocoa
 import KernovaKit
-import os
+import KernovaLogging
 
 @main
 @MainActor
@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// runs it a second time.
     private var hasArmedAutoStartPass = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppDelegate")
 
     /// Returns the VM that menu actions should target: the display or clipboard
     /// window's VM if its window is key, otherwise the sidebar-selected VM.
@@ -188,7 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                         == keyAELaunchedAsLogInItem
             } ?? false
         let isHiddenLaunch = NSApp.isHidden
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(NSApp.isActive, privacy: .public)"
         )
 
@@ -359,7 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // command also works on a fresh install with an empty library.
             NSWorkspace.shared.open(try viewModel.storageService.vmsDirectory)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "openVMsFolder: failed to resolve VMs directory: \(error.localizedDescription, privacy: .public)")
         }
     }

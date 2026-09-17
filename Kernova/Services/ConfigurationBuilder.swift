@@ -1,6 +1,6 @@
 import Foundation
+import KernovaLogging
 import Virtualization
-import os
 
 /// Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`.
 ///
@@ -21,7 +21,7 @@ struct ConfigurationBuilder: Sendable {
         let coldRemovableMedia: [RemovableMediaDeviceInfo]
     }
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "ConfigurationBuilder")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigurationBuilder")
 
     /// The guest-agent installer image to attach to a guest that takes it over
     /// virtio, `nil` when this build carries none.
@@ -51,7 +51,8 @@ struct ConfigurationBuilder: Sendable {
     func assemble(from config: VMConfiguration, bundleURL: URL, validate: Bool) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Building config: cpuCount=\(config.cpuCount, privacy: .public), memoryMB=\(config.memorySizeInBytes / (1024 * 1024), privacy: .public), bootMode=\(config.bootMode.displayName, privacy: .public)"
         )
 
@@ -95,7 +96,8 @@ struct ConfigurationBuilder: Sendable {
                 vzConfig, guestAgentDiskAttached: guestAgentDiskAttached, config: config)
         }
 
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))"
         )
         return BuildResult(
@@ -237,7 +239,7 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.platform = platform
 
         guard let kernelPath = config.kernelPath else {
-            Self.logger.error("Kernel path is required but not set for VM '\(config.name, privacy: .public)'")
+            #log(Self.logger, .error, "Kernel path is required but not set for VM '\(config.name, privacy: .public)'")
             throw ConfigurationBuilderError.missingKernelPath
         }
 
@@ -287,7 +289,8 @@ struct ConfigurationBuilder: Sendable {
             // sibling "Foobar".
             let bundlePrefix = bundlePath.hasSuffix("/") ? bundlePath : bundlePath + "/"
             guard resolvedPath.hasPrefix(bundlePrefix) else {
-                Self.logger.fault(
+                #log(
+                    Self.logger, .fault,
                     "Internal storage disk '\(disk.label, privacy: .public)' resolves outside the bundle: \(resolvedPath, privacy: .public)"
                 )
                 throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
@@ -324,7 +327,8 @@ struct ConfigurationBuilder: Sendable {
             if disk.isInternal {
                 attachmentURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)
                 guard FileManager.default.fileExists(atPath: attachmentURL.path(percentEncoded: false)) else {
-                    Self.logger.error(
+                    #log(
+                        Self.logger, .error,
                         "Storage disk '\(disk.label, privacy: .public)' not found at '\(attachmentURL.path(percentEncoded: false), privacy: .public)'"
                     )
                     throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
@@ -344,7 +348,8 @@ struct ConfigurationBuilder: Sendable {
                 attachment = try VZDiskImageStorageDeviceAttachment(
                     url: attachmentURL, readOnly: disk.readOnly)
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(attachmentURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw ConfigurationBuilderError.storageDiskAttachFailed(
@@ -372,7 +377,8 @@ struct ConfigurationBuilder: Sendable {
                 built.append(usbStorage)
             }
 
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Attached storage disk '\(disk.label, privacy: .public)' (kind: \(disk.kind.rawValue, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))"
             )
         }
@@ -395,7 +401,8 @@ struct ConfigurationBuilder: Sendable {
     ) -> Bool {
         guard GuestAgentDiskDelivery.mode(for: config) == .virtio else { return false }
         guard let installerURL = guestAgentDiskURL else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "No guest agent installer image to attach to '\(config.name, privacy: .public)'")
             return false
         }
@@ -413,13 +420,15 @@ struct ConfigurationBuilder: Sendable {
             blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
             vzConfig.storageDevices.append(blockDevice)
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Couldn't attach the guest agent disk to '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             return false
         }
 
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Attached the guest agent disk to '\(config.name, privacy: .public)' as a virtio block device"
         )
         return true
@@ -439,7 +448,8 @@ struct ConfigurationBuilder: Sendable {
             try vzConfig.validate()
         } catch {
             guard guestAgentDiskAttached else { throw error }
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Dropping the guest agent disk from '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             vzConfig.storageDevices.removeLast()
@@ -456,7 +466,7 @@ struct ConfigurationBuilder: Sendable {
     ) throws -> [RemovableMediaDeviceInfo] {
         guard let items = config.removableMedia, !items.isEmpty else { return [] }
         guard let xhci = vzConfig.usbControllers.first else {
-            Self.logger.fault("USB controller missing when attaching removable media")
+            #log(Self.logger, .fault, "USB controller missing when attaching removable media")
             preconditionFailure("USB controller must be configured before removable media")
         }
 
@@ -475,7 +485,8 @@ struct ConfigurationBuilder: Sendable {
                 attachment = try VZDiskImageStorageDeviceAttachment(
                     url: resolved.url, readOnly: item.readOnly)
             } catch {
-                Self.logger.error(
+                #log(
+                    Self.logger, .error,
                     "Failed to attach removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw ConfigurationBuilderError.removableMediaAttachFailed(
@@ -490,7 +501,8 @@ struct ConfigurationBuilder: Sendable {
             attached.append(usbConfig)
             infos.append(RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
 
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Attached removable media '\(item.label, privacy: .public)' on XHCI (readOnly: \(item.readOnly, privacy: .public))"
             )
         }
@@ -562,7 +574,8 @@ struct ConfigurationBuilder: Sendable {
         -> VZBridgedNetworkDeviceAttachment?
     {
         guard entitlements.hasVMNetworking else {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Bridged networking requested for '\(config.name, privacy: .public)' in a build without com.apple.vm.networking"
             )
             throw ConfigurationBuilderError.bridgedNetworkingNotEntitled
@@ -578,18 +591,20 @@ struct ConfigurationBuilder: Sendable {
                 $0.identifier == chosen
             })
         else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Bridged networking for '\(config.name, privacy: .public)' has no bridgeable host interface — starting detached"
             )
             return nil
         }
 
         if let persisted = config.bridgedInterfaceIdentifier, persisted != chosen {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Bridged interface '\(persisted, privacy: .public)' is unavailable — bridging over '\(chosen, privacy: .public)' instead"
             )
         } else {
-            Self.logger.info("Bridging over '\(chosen, privacy: .public)'")
+            #log(Self.logger, .info, "Bridging over '\(chosen, privacy: .public)'")
         }
         return VZBridgedNetworkDeviceAttachment(interface: interface)
     }
@@ -604,7 +619,8 @@ struct ConfigurationBuilder: Sendable {
         do {
             return try vmnetNetworks.attachment(for: .shared)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Shared network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
             )
             return nil
@@ -620,7 +636,8 @@ struct ConfigurationBuilder: Sendable {
     /// retries once the session runs.
     private func hostOnlyAttachment(config: VMConfiguration) throws -> VZNetworkDeviceAttachment? {
         guard entitlements.hasVMNetworking else {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Host-only networking requested for '\(config.name, privacy: .public)' in a build without com.apple.vm.networking"
             )
             throw ConfigurationBuilderError.hostOnlyNetworkingNotEntitled
@@ -629,7 +646,8 @@ struct ConfigurationBuilder: Sendable {
         do {
             return try vmnetNetworks.attachment(for: .hostOnly)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Host Only network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
             )
             return nil
@@ -641,7 +659,8 @@ struct ConfigurationBuilder: Sendable {
     }
 
     private func configureAudio(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Configuring audio: audioInputEnabled=\(config.audioInputEnabled, privacy: .public), audioOutputEnabled=\(config.audioOutputEnabled, privacy: .public)"
         )
 
@@ -732,7 +751,7 @@ struct ConfigurationBuilder: Sendable {
 
         vzConfig.consoleDevices.append(consoleDevice)
 
-        Self.logger.info("Configured SPICE clipboard console port for '\(config.name, privacy: .public)'")
+        #log(Self.logger, .info, "Configured SPICE clipboard console port for '\(config.name, privacy: .public)'")
         return (inputPipe, outputPipe)
     }
 
@@ -745,7 +764,7 @@ struct ConfigurationBuilder: Sendable {
     private func configureVsockDevice(_ vzConfig: VZVirtualMachineConfiguration) {
         let socketDevice = VZVirtioSocketDeviceConfiguration()
         vzConfig.socketDevices.append(socketDevice)
-        Self.logger.info("Configured virtio-socket device for guest <-> host channel")
+        #log(Self.logger, .info, "Configured virtio-socket device for guest <-> host channel")
     }
 
     // MARK: - Directory Sharing
@@ -837,15 +856,16 @@ struct ConfigurationBuilder: Sendable {
         } catch {
             switch error {
             case .notFound:
-                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .private)'")
+                #log(logger, .error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
                 throw notFound
             case .unexpectedType:
-                logger.error("\(context, privacy: .public) path is a directory: '\(path, privacy: .private)'")
+                #log(logger, .error, "\(context, privacy: .public) path is a directory: '\(path, privacy: .private)'")
                 throw isDirectory
             case .notWritable:
-                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
+                #log(logger, .error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
                 guard let notWritableError = notWritable else {
-                    logger.fault(
+                    #log(
+                        logger, .fault,
                         "resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
@@ -853,7 +873,7 @@ struct ConfigurationBuilder: Sendable {
                 }
                 throw notWritableError
             case .notReadable:
-                logger.fault("Unexpected .notReadable from resolveFile for '\(path, privacy: .private)'")
+                #log(logger, .fault, "Unexpected .notReadable from resolveFile for '\(path, privacy: .private)'")
                 assertionFailure("resolveFile should never throw .notReadable")
                 throw notFound
             }
@@ -879,15 +899,18 @@ struct ConfigurationBuilder: Sendable {
         } catch {
             switch error {
             case .notFound:
-                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .private)'")
+                #log(logger, .error, "\(context, privacy: .public) not found at '\(path, privacy: .private)'")
                 throw notFound
             case .unexpectedType:
-                logger.error("\(context, privacy: .public) path is not a directory: '\(path, privacy: .private)'")
+                #log(
+                    logger, .error, "\(context, privacy: .public) path is not a directory: '\(path, privacy: .private)'"
+                )
                 throw notADirectory
             case .notReadable:
-                logger.error("\(context, privacy: .public) is not readable: '\(path, privacy: .private)'")
+                #log(logger, .error, "\(context, privacy: .public) is not readable: '\(path, privacy: .private)'")
                 guard let notReadableError = notReadable else {
-                    logger.fault(
+                    #log(
+                        logger, .fault,
                         "resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notReadable' error must be provided when 'requireReadable' is true")
@@ -895,9 +918,10 @@ struct ConfigurationBuilder: Sendable {
                 }
                 throw notReadableError
             case .notWritable:
-                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
+                #log(logger, .error, "\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
                 guard let notWritableError = notWritable else {
-                    logger.fault(
+                    #log(
+                        logger, .fault,
                         "resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")

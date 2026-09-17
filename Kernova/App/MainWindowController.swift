@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// Manages the main library window using an `NSSplitViewController` for sidebar/detail layout
 /// and an `NSToolbar` with native toolbar items.
@@ -24,7 +24,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
     private var sheetIsCustomizationPalette = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
 
     // Palette-only items (offered in the customize sheet, not in the default
@@ -118,7 +118,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         observeWindowState()
         adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
-        Self.logger.notice("Main window controller initialized")
+        #log(Self.logger, .notice, "Main window controller initialized")
     }
 
     required init?(coder: NSCoder) {
@@ -239,7 +239,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             newVMCollapseRemovalIndex = nil
             return
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Re-adopting collapse-removed New VM toolbar item at index \(index, privacy: .public)")
         newVMCollapseRemovalIndex = index
     }
@@ -267,7 +268,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private func updateToolbarItems() {
         guard let toolbar = window?.toolbar else {
-            Self.logger.warning("updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
+            #log(Self.logger, .warning, "updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
             return
         }
 
@@ -356,7 +357,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             // The snapshot indices stay valid only while every removal is paired
             // with a successful reinsert; bail out if the toolbar ever disagrees.
             guard index < toolbar.items.count else {
-                Self.logger.fault("windowDidEndSheet: toolbar item count drifted during recreate")
+                #log(Self.logger, .fault, "windowDidEndSheet: toolbar item count drifted during recreate")
                 assertionFailure("Toolbar item count drifted during recreate")
                 break
             }
@@ -462,7 +463,8 @@ extension MainWindowController: NSToolbarItemValidation {
                 return true
             }
 
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
             return true
         }

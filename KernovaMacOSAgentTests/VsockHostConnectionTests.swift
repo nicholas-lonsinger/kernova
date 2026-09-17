@@ -1,3 +1,4 @@
+import KernovaLogging
 import Testing
 import Foundation
 import Darwin
@@ -36,11 +37,11 @@ private final class AgentLogSink: @unchecked Sendable {
     }
 
     func install() {
-        KernovaLogger.forwardingSink = { [self] level, subsystem, category, message in
+        KernovaLogger.forwardingSink = { [self] level, subsystem, category, segments in
             guard category == "VsockHostConnection" else { return }
-            lock.withLock { recorded.append(message) }
+            lock.withLock { recorded.append(segments.map(\.text).joined()) }
             forwardTarget?.forwardLog(
-                level: level, subsystem: subsystem, category: category, message: message)
+                level: level, subsystem: subsystem, category: category, segments: segments)
             changed.notify()
         }
     }
@@ -69,7 +70,7 @@ struct VsockHostConnectionTests {
         conn.lock.withLock {
             conn.pendingLogs.compactMap { frame -> String? in
                 guard case .logRecord(let record) = frame.payload else { return nil }
-                return record.message
+                return record.segments.map(\.text).joined()
             }
         }
     }
@@ -563,6 +564,18 @@ struct VsockHostConnectionTests {
         guard case .logRecord(let record) = frame.payload else {
             throw TestFailure("Expected a LogRecord frame, got \(String(describing: frame.payload))")
         }
-        return record.message
+        return record.segments.map(\.text).joined()
+    }
+}
+
+extension VsockHostConnection {
+    /// Forwards a one-segment record — the shape these buffering tests need,
+    /// and what a message with no interpolation expands to.
+    fileprivate func forwardLog(
+        level: KernovaLogLevel, subsystem: String, category: String, message: String
+    ) {
+        forwardLog(
+            level: level, subsystem: subsystem, category: category,
+            segments: [LogSegment(text: message, isPrivate: false)])
     }
 }

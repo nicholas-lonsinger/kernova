@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The app's command socket: an `AF_UNIX` listener in the app-group container
 /// carrying length-prefixed `VMCommandRequest`/`VMCommandResponse` frames.
@@ -20,7 +20,7 @@ final class VMCommandSocketListener {
     /// not the only thing standing between a stranger and the socket.
     private static let socketFileMode = mode_t(S_IRUSR | S_IWUSR)
 
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMCommandSocketListener")
 
     private let router: VMCommandEnvelopeRouter
@@ -70,12 +70,14 @@ final class VMCommandSocketListener {
     /// Binds the socket and begins accepting same-team clients.
     func start() {
         guard let socketPath else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "No app-group container resolved — the command socket is unavailable in this build")
             return
         }
         guard let authorizer else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "No peer authorizer for this build's signature — the command socket stays closed")
             return
         }
@@ -103,7 +105,8 @@ final class VMCommandSocketListener {
                 }
             }
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "The command socket could not bind at \(socketPath, privacy: .public) — \(String(describing: error), privacy: .public)"
             )
             return
@@ -111,7 +114,8 @@ final class VMCommandSocketListener {
         self.listener = listener
         // Two copies of the app signed by the same team share this path, and
         // the second to bind wins after unlinking the first's socket file.
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Listening for VM commands at \(socketPath, privacy: .public)")
     }
 
@@ -189,7 +193,8 @@ final class VMCommandSocketListener {
         _ fd: Int32, router: VMCommandEnvelopeRouter, refusal: PeerRefusal
     ) {
         let reason = refusal.reason
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Refused a connection on the command socket: \(reason, privacy: .public)")
         let payload = router.encode(
             VMCommandResponse(result: .refused(.authorizationRefused(reason: reason))))
@@ -233,7 +238,7 @@ final class VMCommandConnection: @unchecked Sendable {
     /// Reaching it means the peer is gone or wedged, and the connection goes.
     private static let maxPendingWriteBytes = 8 * 1024 * 1024
 
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMCommandConnection")
 
     private let fd: Int32
@@ -295,7 +300,7 @@ final class VMCommandConnection: @unchecked Sendable {
             let deadline = DispatchSource.makeTimerSource(queue: queue)
             deadline.schedule(deadline: .now() + Self.firstFrameTimeout)
             deadline.setEventHandler { [weak self] in
-                Self.logger.notice("Closing a command connection that sent no frame in time")
+                #log(Self.logger, .notice, "Closing a command connection that sent no frame in time")
                 self?.closeNow()
             }
             timeoutSource = deadline
@@ -310,13 +315,14 @@ final class VMCommandConnection: @unchecked Sendable {
         queue.async { [self] in
             guard !isClosed else { return }
             guard let framed = try? StreamFrame.encode(payload) else {
-                Self.logger.error("A response was too large to frame; closing the connection")
+                #log(Self.logger, .error, "A response was too large to frame; closing the connection")
                 closeNow()
                 return
             }
             pendingWrite.append(framed)
             guard pendingWrite.count <= Self.maxPendingWriteBytes else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "A client stopped reading with \(self.pendingWrite.count, privacy: .public) bytes owed; closing the connection"
                 )
                 closeNow()
@@ -370,7 +376,8 @@ final class VMCommandConnection: @unchecked Sendable {
             do {
                 payload = try decoder.nextFrame()
             } catch {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "A client framed a request this build will not buffer; closing the connection")
                 closeNow()
                 return

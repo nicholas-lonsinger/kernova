@@ -1,13 +1,13 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// Manages VM bundle directories on disk under `~/Library/Application Support/Kernova/VMs/`.
 ///
 /// Each VM is a `.kernova` document package named by its UUID; `VMBundleLayout`
 /// owns the names of the files inside it.
 struct VMStorageService: Sendable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMStorageService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMStorageService")
 
     /// Whether `url` looks like a `.kernova` bundle, by extension.
     static func isBundleURL(_ url: URL) -> Bool {
@@ -94,7 +94,8 @@ struct VMStorageService: Sendable {
         {
             throw VMStorageError.bundleAlreadyExists(bundleURL)
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Published VM bundle \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
@@ -115,7 +116,8 @@ struct VMStorageService: Sendable {
             entries = try FileManager.default.contentsOfDirectory(
                 at: try stagingDirectory, includingPropertiesForKeys: nil, options: [])
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not enumerate staged VM bundles: \(error.localizedDescription, privacy: .public)"
             )
             return Task {}
@@ -125,11 +127,13 @@ struct VMStorageService: Sendable {
             for entry in entries {
                 do {
                     try FileManager.default.removeItem(at: entry)
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Reclaimed the staged bundle an interrupted write left at \(entry.lastPathComponent, privacy: .public)"
                     )
                 } catch {
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Could not reclaim the staged bundle at \(entry.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
                     )
                 }
@@ -161,7 +165,8 @@ struct VMStorageService: Sendable {
         let configURL = VMBundleLayout(bundleURL: bundleURL).configURL
         let data = try VMConfiguration.makeJSONEncoder().encode(configuration)
         try data.write(to: configURL, options: .atomic)
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Saved configuration for VM '\(configuration.name, privacy: .public)' to \(bundleURL.lastPathComponent, privacy: .public)"
         )
     }
@@ -174,7 +179,8 @@ struct VMStorageService: Sendable {
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
         try saveConfiguration(configuration, to: bundleURL)
 
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Created VM bundle for '\(configuration.name, privacy: .public)' at \(bundleURL.lastPathComponent, privacy: .public)"
         )
     }
@@ -196,7 +202,8 @@ struct VMStorageService: Sendable {
 
         try saveConfiguration(newConfiguration, to: destinationBundleURL)
 
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Cloned VM bundle from '\(sourceBundleURL.lastPathComponent, privacy: .public)' to '\(destinationBundleURL.lastPathComponent, privacy: .public)'"
         )
     }
@@ -207,7 +214,7 @@ struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
-        Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
+        #log(Self.logger, .notice, "Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
     /// Permanently deletes a VM bundle directory and all its contents, bypassing the Trash.
@@ -216,7 +223,7 @@ struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.removeItem(at: bundleURL)
-        Self.logger.notice("Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
+        #log(Self.logger, .notice, "Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
     }
 }
 

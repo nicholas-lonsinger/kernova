@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Reads the catalog of Linux installer images bundled with the app.
 ///
@@ -8,7 +8,7 @@ import os
 /// the chosen distribution's checksum manifest and ISO come off the network,
 /// from the distribution's own mirror.
 struct LinuxImageCatalogService: LinuxImageCatalogProviding {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "LinuxImageCatalogService")
 
     private static let resourceName = "LinuxImageCatalog"
@@ -23,7 +23,8 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Bundled Linux image catalog '\(Self.resourceName, privacy: .public).\(Self.resourceExtension, privacy: .public)' is missing or unreadable"
             )
             assertionFailure(
@@ -36,7 +37,8 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
 
         let result = Self.parse(data)
         for rejection in result.rejections {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Dropping Linux image catalog entry: \(rejection.description, privacy: .public)")
             assertionFailure("Dropping Linux image catalog entry: \(rejection.description)")
         }

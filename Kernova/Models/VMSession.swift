@@ -1,6 +1,6 @@
 import Foundation
+import KernovaLogging
 import Virtualization
-import os
 
 // MARK: - Session Events
 
@@ -103,7 +103,7 @@ actor VMSession {
     /// macOS 27.0 and this type is not; nothing ever reads it back.
     private let usbDelegateAdapter: AnyObject?
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMSession")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSession")
 
     private init(
         id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine,
@@ -295,7 +295,8 @@ actor VMSession {
 
         // A timeout is an anomaly; a user cancel is not. Log only the former.
         if vm.state != .stopped && !Task.isCancelled {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "VM did not reach .stopped within timeout (state: \(String(describing: self.vm.state), privacy: .public))"
             )
         }
@@ -389,7 +390,7 @@ actor VMSession {
             let device = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice })
                 as? VZVirtioSocketDevice
         else {
-            Self.logger.fault("Socket-device call on a session with no VZVirtioSocketDevice")
+            #log(Self.logger, .fault, "Socket-device call on a session with no VZVirtioSocketDevice")
             assertionFailure("Callers must guard on hasVirtioSocketDevice")
             return nil
         }
@@ -442,7 +443,7 @@ actor VMSession {
 
     private func usbController() throws -> VZUSBController {
         guard let controller = vm.usbControllers.first else {
-            Self.logger.fault("USB call on a session with no USB controller")
+            #log(Self.logger, .fault, "USB call on a session with no USB controller")
             assertionFailure("Callers must guard on hasUSBController")
             throw VMSessionError.usbControllerUnavailable
         }
@@ -477,14 +478,15 @@ actor VMSession {
         queue.async {
             self.assumeIsolated { session in
                 guard let device = session.vm.networkDevices.first else {
-                    Self.logger.fault("Network attachment install on a session with no network device")
+                    #log(Self.logger, .fault, "Network attachment install on a session with no network device")
                     assertionFailure("Callers must guard on hasNetworkDevice")
                     return
                 }
                 let attachment = make()
                 device.attachment = attachment
                 if attachment == nil {
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Network attachment could not be built at install time — leaving the device detached"
                     )
                     onBuildFailure()

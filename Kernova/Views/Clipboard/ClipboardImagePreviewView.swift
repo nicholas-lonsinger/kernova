@@ -1,6 +1,6 @@
 import AppKit
 import ImageIO
-import os
+import KernovaLogging
 
 /// Centered, aspect-fit image preview for the clipboard window.
 ///
@@ -10,7 +10,7 @@ import os
 /// original bytes.
 @MainActor
 final class ClipboardImagePreviewView: NSView {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardImagePreviewView")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardImagePreviewView")
     private static let thumbnailMaxPixelSize = 2048
 
     private let imageView: NSImageView
@@ -68,7 +68,8 @@ final class ClipboardImagePreviewView: NSView {
     /// falls back to the summary view.
     func configure(data: Data, uti: String) -> Bool {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not read image preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
             )
             imageView.image = nil
@@ -84,7 +85,8 @@ final class ClipboardImagePreviewView: NSView {
     /// is missing or not a decodable image — the caller falls back to a file chip.
     func configure(url: URL, uti: String) -> Bool {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not read image preview from file (uti=\(uti, privacy: .public))")
             imageView.image = nil
             return false
@@ -101,7 +103,8 @@ final class ClipboardImagePreviewView: NSView {
         ]
         guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not decode image preview (uti=\(uti, privacy: .public))")
             imageView.image = nil
             return false

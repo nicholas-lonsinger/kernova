@@ -28,11 +28,35 @@ struct VsockGuestLogServiceTests {
         }
     }
 
+    private func makeSegment(_ text: String, isPrivate: Bool = false) -> Kernova_V1_LogSegment {
+        Kernova_V1_LogSegment.with {
+            $0.text = text
+            $0.private = isPrivate
+        }
+    }
+
+    /// The record's message whole, the way the host reassembles it.
+    private func joinedText(_ record: Kernova_V1_LogRecord) -> String {
+        record.segments.map(\.text).joined()
+    }
+
     private func makeLogFrame(
         level: Kernova_V1_LogRecord.Level,
         subsystem: String = "app.kernova.macosagent",
         category: String = "Test",
         message: String = "hello",
+        timestampMs: Int64 = 1_700_000_000_000
+    ) -> Frame {
+        makeLogFrame(
+            level: level, subsystem: subsystem, category: category,
+            segments: [makeSegment(message)], timestampMs: timestampMs)
+    }
+
+    private func makeLogFrame(
+        level: Kernova_V1_LogRecord.Level,
+        subsystem: String = "app.kernova.macosagent",
+        category: String = "Test",
+        segments: [Kernova_V1_LogSegment],
         timestampMs: Int64 = 1_700_000_000_000
     ) -> Frame {
         var frame = Frame()
@@ -42,7 +66,7 @@ struct VsockGuestLogServiceTests {
             $0.level = level
             $0.subsystem = subsystem
             $0.category = category
-            $0.message = message
+            $0.segments = segments
         }
         return frame
     }
@@ -66,7 +90,7 @@ struct VsockGuestLogServiceTests {
 
         let records = emitter.snapshot()
         #expect(records.count == 1)
-        #expect(records.first?.message == "hello world")
+        #expect(records.first.map(joinedText) == "hello world")
         #expect(records.first?.level == .notice)
     }
 
@@ -87,7 +111,7 @@ struct VsockGuestLogServiceTests {
         }
         try await waitForRecords(emitter, count: 4)
 
-        let messages = emitter.snapshot().map(\.message)
+        let messages = emitter.snapshot().map(joinedText)
         #expect(messages == ["msg 1", "msg 2", "msg 3", "msg 4"])
     }
 
@@ -119,7 +143,7 @@ struct VsockGuestLogServiceTests {
 
         let records = emitter.snapshot()
         #expect(records.count == 1)
-        #expect(records.first?.message == "real record")
+        #expect(records.first.map(joinedText) == "real record")
     }
 
     @Test("A wrong-port payload closes the channel and emits nothing")
@@ -168,6 +192,56 @@ struct VsockGuestLogServiceTests {
 
         let receivedLevels = emitter.snapshot().map(\.level)
         #expect(receivedLevels == levels)
+    }
+
+    @Test("A record's per-segment privacy reaches the emitter intact")
+    func privateSegmentsReachTheEmitter() async throws {
+        let emitter = RecordingEmitter()
+        let (sender, receiver) = try makePair()
+        sender.start()
+        receiver.start()
+        defer { sender.close() }
+
+        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
+        service.start()
+        defer { service.stop() }
+
+        try sender.send(
+            makeLogFrame(
+                level: .notice,
+                segments: [makeSegment("copied "), makeSegment("secret.txt", isPrivate: true)]))
+        try await waitForRecords(emitter, count: 1)
+
+        let segments = emitter.snapshot().first?.segments ?? []
+        #expect(segments.map(\.text) == ["copied ", "secret.txt"])
+        #expect(segments.map(\.private) == [false, true])
+    }
+
+    @Test("A record with no private segment is republished with nothing to reveal")
+    func compositionOfAllPublicRecord() {
+        let frame = makeLogFrame(level: .notice, category: "Cat", message: "started")
+        guard case .logRecord(let record) = frame.payload else {
+            Issue.record("frame carries no log record")
+            return
+        }
+        let composed = OSLogGuestLogEmitter.Composition(record: record)
+        #expect(composed.placeholder == "[app.kernova.macosagent/Cat] started")
+        #expect(composed.cleartext.isEmpty)
+    }
+
+    @Test("A private segment is redacted in the placeholder and whole in the cleartext")
+    func compositionRedactsPrivateSegments() {
+        let frame = makeLogFrame(
+            level: .notice,
+            category: "Cat",
+            segments: [makeSegment("copied "), makeSegment("secret.txt", isPrivate: true)])
+        guard case .logRecord(let record) = frame.payload else {
+            Issue.record("frame carries no log record")
+            return
+        }
+        let composed = OSLogGuestLogEmitter.Composition(record: record)
+        #expect(composed.placeholder == "[app.kernova.macosagent/Cat] copied <private>")
+        #expect(composed.cleartext == "[app.kernova.macosagent/Cat] copied secret.txt")
     }
 
     @Test("A wrong-port payload notifies the owner that the channel is gone")

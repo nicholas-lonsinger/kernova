@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Reads the catalog of macOS restore images bundled with the app.
 ///
@@ -7,7 +7,7 @@ import os
 /// generation-time snapshot, so the picker opens instantly and offline. Only the
 /// chosen image's bytes come off the network, from Apple.
 struct RestoreImageCatalogService: RestoreImageCatalogProviding {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "RestoreImageCatalogService")
 
     private static let resourceName = "RestoreImageCatalog"
@@ -22,7 +22,8 @@ struct RestoreImageCatalogService: RestoreImageCatalogProviding {
                 forResource: Self.resourceName, withExtension: Self.resourceExtension),
             let data = try? Data(contentsOf: url)
         else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Bundled restore image catalog '\(Self.resourceName, privacy: .public).\(Self.resourceExtension, privacy: .public)' is missing or unreadable"
             )
             assertionFailure(
@@ -35,7 +36,8 @@ struct RestoreImageCatalogService: RestoreImageCatalogProviding {
 
         let result = Self.parse(data)
         for rejection in result.rejections {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "Dropping restore image catalog entry: \(rejection.description, privacy: .public)")
             assertionFailure("Dropping restore image catalog entry: \(rejection.description)")
         }

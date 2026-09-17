@@ -1,7 +1,7 @@
 import AppKit
 import KernovaKit
+import KernovaLogging
 import UniformTypeIdentifiers
-import os
 
 /// Writes a clipboard service's current content to the host `NSPasteboard`,
 /// lazily — the window-independent home of the "Copy to Mac" write-back path.
@@ -38,7 +38,7 @@ final class HostClipboardPublisher {
     /// so guest content is never re-forwarded back to the guest.
     var lastWriteChangeCount: Int? { publisher.lastWriteChangeCount }
 
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "HostClipboardPublisher")
 
     #if DEBUG
@@ -116,18 +116,19 @@ final class HostClipboardPublisher {
         // folder that failed to extract). Surface that rather than clearing the
         // Mac clipboard to write nothing.
         guard !specs.isEmpty else {
-            Self.logger.error("Host clipboard publish produced no pasteboard items (staging failed)")
+            #log(Self.logger, .error, "Host clipboard publish produced no pasteboard items (staging failed)")
             return .stagingFailed
         }
 
         guard publisher.write(specs, promised: !promises.isEmpty),
             let changeCount = publisher.lastWriteChangeCount
         else {
-            Self.logger.error("The pasteboard write failed for a host clipboard publish")
+            #log(Self.logger, .error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }
         let representationCount = resolvedReps.count + promises.count
-        Self.logger.info(
+        #log(
+            Self.logger, .info,
             "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
         return .written(
@@ -145,7 +146,7 @@ final class HostClipboardPublisher {
     /// supersedes an offer whose promises can no longer be served.
     func retractPromisedWrite() -> Bool {
         guard publisher.retractPromisedWrite() else { return false }
-        Self.logger.notice("Retracted stale promised clipboard write from the host pasteboard")
+        #log(Self.logger, .notice, "Retracted stale promised clipboard write from the host pasteboard")
         return true
     }
 

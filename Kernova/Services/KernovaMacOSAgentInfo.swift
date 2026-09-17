@@ -1,10 +1,10 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Static accessors for the Kernova guest agent that the host bundles in its
 /// Resources directory.
 enum KernovaMacOSAgentInfo {
-    private static let logger = Logger(subsystem: "app.kernova", category: "KernovaMacOSAgentInfo")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "KernovaMacOSAgentInfo")
 
     /// Filename of the version sidecar in `Kernova.app/Contents/Resources/`.
     private static let versionResourceName = "KernovaMacOSAgentVersion"
@@ -32,7 +32,7 @@ enum KernovaMacOSAgentInfo {
                 withExtension: versionResourceExtension
             )
         else {
-            logger.fault("KernovaMacOSAgentVersion.txt missing from app bundle")
+            #log(logger, .fault, "KernovaMacOSAgentVersion.txt missing from app bundle")
             assertionFailure(
                 "KernovaMacOSAgentVersion.txt missing — check 'Package Guest Agent DMG' build phase outputs")
             return nil
@@ -41,13 +41,15 @@ enum KernovaMacOSAgentInfo {
             let raw = try String(contentsOf: url, encoding: .utf8)
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
-                logger.fault("KernovaMacOSAgentVersion.txt is empty")
+                #log(logger, .fault, "KernovaMacOSAgentVersion.txt is empty")
                 assertionFailure("KernovaMacOSAgentVersion.txt is empty")
                 return nil
             }
             return trimmed
         } catch {
-            logger.fault("Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription, privacy: .public)")
+            #log(
+                logger, .fault,
+                "Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription, privacy: .public)")
             assertionFailure("Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription)")
             return nil
         }

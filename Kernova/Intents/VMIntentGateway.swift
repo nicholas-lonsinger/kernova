@@ -1,7 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The App Intents front door: everything Shortcuts and Spotlight ask of
 /// Kernova passes through here and reaches ``VMCommanding``.
@@ -18,7 +18,7 @@ import os
 /// which each intent renders in the framework's idiom.
 @MainActor
 final class VMIntentGateway {
-    nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMIntentGateway")
+    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     private let commands: any VMCommanding
     /// The app's first library read, shared with every other front door.
@@ -88,7 +88,8 @@ final class VMIntentGateway {
             do {
                 return VMEntity(try commands.info(.id(summary.id)))
             } catch {
-                Self.logger.fault(
+                #log(
+                    Self.logger, .fault,
                     "Listed VM \(summary.id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
                 )
                 assertionFailure("Listed VM \(summary.id.uuidString) has no info read: \(error)")
@@ -377,7 +378,8 @@ final class VMIntentGateway {
             return try await body()
         } catch let failure as CommandError {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message, privacy: .public)"
             )
             throw failure
@@ -487,7 +489,8 @@ final class VMIntentGateway {
             try await body()
             return true
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Spotlight failed \(operation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             return false

@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// The one owner of which user-facing windows exist, and whether any of them is
 /// on screen.
@@ -25,7 +25,7 @@ final class AppWindowRegistry {
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "AppWindowRegistry")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppWindowRegistry")
 
     init(viewModel: VMLibraryViewModel, displayPlacement: VMDisplayPlacementController) {
         self.viewModel = viewModel
@@ -55,14 +55,14 @@ final class AppWindowRegistry {
         residency?.prepareToPresentWindow()
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
-                Self.logger.debug("showLibrary: focusing existing window")
+                #log(Self.logger, .debug, "showLibrary: focusing existing window")
                 existingWindow.makeKeyAndOrderFront(nil)
             } else {
-                Self.logger.debug("showLibrary: showing existing window in background")
+                #log(Self.logger, .debug, "showLibrary: showing existing window in background")
                 existingWindow.orderBack(nil)
             }
         } else {
-            Self.logger.notice("showLibrary: recreating main window controller")
+            #log(Self.logger, .notice, "showLibrary: recreating main window controller")
             let windowController = MainWindowController(viewModel: viewModel)
             if bringToFront {
                 windowController.showWindow(nil)

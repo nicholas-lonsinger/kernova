@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaLogging
 import UniformTypeIdentifiers
 
 /// The one place a local gesture — a Mac copy, a guest copy, a drag onto a VM
@@ -148,7 +149,7 @@ public enum ClipboardPasteboardReader {
             let summary = outcome.skipped
                 .map { "\($0.uti): \(String(describing: $0.reason))" }
                 .joined(separator: ", ")
-            logger.info("Pasteboard snapshot skipped: \(summary, privacy: .public)")
+            #log(logger, .info, "Pasteboard snapshot skipped: \(summary, privacy: .public)")
         }
 
         guard !outcome.content.isEmpty else {

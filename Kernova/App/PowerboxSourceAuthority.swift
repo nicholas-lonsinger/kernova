@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaLogging
 import UniformTypeIdentifiers
-import os
 
 /// Reads a wire client's named file through the sandbox, asking the user for it
 /// when the container does not already admit it.
@@ -15,7 +15,7 @@ import os
 /// call mints one from the answered URL at the pick site.
 @MainActor
 final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
-    nonisolated private static let logger = Logger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "PowerboxSourceAuthority")
 
     /// Brings the app forward, for the panel that is about to go up: a request
@@ -31,7 +31,8 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         guard !FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
             return url
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
         activate()
 

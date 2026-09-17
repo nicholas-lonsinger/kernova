@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// A dedicated window displaying a single VM's screen, either as a resizable
 /// pop-out window or in native macOS fullscreen.
@@ -37,7 +37,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayWindowController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
     init(
         instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
@@ -255,7 +255,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateToolbarItems() {
         guard let toolbar = window?.toolbar else {
-            Self.logger.warning("updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
+            #log(Self.logger, .warning, "updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
             return
         }
         toolbarManager.updateToolbarItems(in: toolbar)

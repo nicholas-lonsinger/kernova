@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// The window seams a ``VMDisplayPlacementController`` needs but cannot own.
 @MainActor
@@ -96,7 +96,7 @@ final class VMDisplayPlacementController {
     /// requested until the close has been fully handled.
     private var pendingCloseReasons: [UUID: CloseReason] = [:]
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -344,12 +344,14 @@ final class VMDisplayPlacementController {
     func preferredScreenForFullscreen(of instance: VMInstance) -> NSScreen? {
         if let savedID = instance.configuration.lastFullscreenDisplayID {
             if let target = NSScreen.screens.first(where: { $0.displayID == savedID }) {
-                Self.logger.debug(
+                #log(
+                    Self.logger, .debug,
                     "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': using saved display \(savedID, privacy: .public)"
                 )
                 return target
             }
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "preferredScreenForFullscreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back"
             )
         }
@@ -399,7 +401,8 @@ final class VMDisplayPlacementController {
                     config.displayPreference = preference
                 }
             }
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: reason), privacy: .public), policy=\(NSApp.activationPolicy().rawValue, privacy: .public))"
             )
 

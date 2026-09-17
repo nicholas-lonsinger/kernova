@@ -1,5 +1,5 @@
 import Foundation
-import os
+import KernovaLogging
 
 /// Resolves a Linux installer image source against its server, just before
 /// downloading — and, for a user-supplied URL, once more in the wizard so the
@@ -15,7 +15,7 @@ import os
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
 /// same reason `DownloadService` is one.
 final class LinuxImageResolveService: LinuxImageResolving {
-    private static let logger = Logger(
+    private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "LinuxImageResolveService")
 
     /// The most of a checksum manifest that is read.
@@ -88,13 +88,15 @@ final class LinuxImageResolveService: LinuxImageResolving {
             // A cancelled request fails as a transport error, and the caller
             // that cancelled has no error of its own to report.
             try Task.checkCancellation()
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "No size for '\(DownloadService.loggableURL(isoURL), privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             throw LinuxImageResolveError.sizeUnavailable(filename: safeFilename)
         }
 
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Resolved \(entry.id, privacy: .public) to '\(safeFilename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes)"
         )
         return ResolvedLinuxImage(
@@ -110,14 +112,16 @@ final class LinuxImageResolveService: LinuxImageResolving {
             // A cancelled request fails as a transport error, and the caller
             // that cancelled has no error of its own to report.
             try Task.checkCancellation()
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "No size for '\(DownloadService.loggableURL(image.url), privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             throw (error as? RemoteFileSizeError).map(LinuxImageURLError.init)
                 ?? .transportFailed(description: error.localizedDescription)
         }
 
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.sha256 == nil ? "unverified" : "verified", privacy: .public))"
         )
         return ResolvedLinuxImage(
@@ -146,7 +150,8 @@ final class LinuxImageResolveService: LinuxImageResolving {
             if let refused = origin.refusedRedirect {
                 throw Self.redirectRefusal(of: manifest, to: refused)
             }
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Checksum manifest at '\(DownloadService.loggableURL(url), privacy: .public)' is unreachable: \(error.localizedDescription, privacy: .public)"
             )
             throw LinuxImageResolveError.manifestUnreachable(manifest: manifest, statusCode: nil)
@@ -177,14 +182,16 @@ final class LinuxImageResolveService: LinuxImageResolving {
         } catch {
             stream.task.cancel()
             try Task.checkCancellation()
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Checksum manifest at '\(DownloadService.loggableURL(url), privacy: .public)' stopped mid-body: \(error.localizedDescription, privacy: .public)"
             )
             throw LinuxImageResolveError.manifestUnreachable(manifest: manifest, statusCode: nil)
         }
         stream.task.cancel()
         guard body.count <= Self.maximumManifestBytes else {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Checksum manifest \(manifest, privacy: .public) ran past \(Self.maximumManifestBytes, privacy: .public) bytes — not reading further"
             )
             throw LinuxImageResolveError.manifestTooLarge(manifest: manifest)
@@ -197,7 +204,8 @@ final class LinuxImageResolveService: LinuxImageResolving {
         -> LinuxImageResolveError
     {
         let host = url.host() ?? url.absoluteString
-        logger.error(
+        #log(
+            logger, .error,
             "Checksum manifest \(manifest, privacy: .public) redirected to '\(host, privacy: .public)' — not following it off the host the catalog names"
         )
         return .manifestRedirected(manifest: manifest, host: host)

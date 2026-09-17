@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// The lifecycle verbs: everything that moves a VM between resting and
 /// running, plus the guest-setup pipelines a first start owes.
@@ -96,7 +97,8 @@ extension VMCommandCore {
     private func joinBringUp(
         _ instance: VMInstance, verb: VMVerb, refusal: (any Error) -> CommandError
     ) async throws {
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Joining the bring-up already in flight for '\(instance.name, privacy: .public)'")
         if case .failed(let error) = await lifecycle.awaitSettledOutcome(for: instance.id) {
             throw refusal(error)
@@ -109,7 +111,8 @@ extension VMCommandCore {
             let message =
                 instance.phase.errorMessage
                 ?? "The operation already under way left '\(instance.name)' \(state)."
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Joined bring-up of '\(instance.name, privacy: .public)' did not leave it running: \(message, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: verb, message: message)
@@ -124,7 +127,8 @@ extension VMCommandCore {
         if preferences.blockDuplicateMachineIDBoot,
             let conflict = liveMachineIDConflict(for: instance)
         {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Refused to run '\(instance.name, privacy: .public)': shares a machine ID with active VM '\(conflict.name, privacy: .public)'"
             )
             throw CommandError.conflict(
@@ -134,7 +138,8 @@ extension VMCommandCore {
             for: instance.configuration, excluding: instance),
             let mac = instance.configuration.macAddress
         {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Refused to run '\(instance.name, privacy: .public)': shares the MAC address \(mac, privacy: .public) with active VM '\(conflict.name, privacy: .public)'"
             )
             throw CommandError.conflict(
@@ -180,7 +185,8 @@ extension VMCommandCore {
         case nil:
             throw unansweredGuestAccount(account, on: instance)
         case .skip:
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Starting '\(instance.name, privacy: .public)' without the account '\(account.username, privacy: .public)' it was set up with — the answer was to skip it"
             )
             return nil
@@ -191,7 +197,8 @@ extension VMCommandCore {
             // have spent the one window macOS reads one in on a typo. Refused
             // here, the VM has not moved and the answer can be given again.
             if let refusal = MacOSGuestProvisioning.validate(credentials) {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Refused to start '\(instance.name, privacy: .public)': macOS turned down the password for '\(account.username, privacy: .public)'"
                 )
                 throw CommandError.invalidArgument(refusal.message)
@@ -220,7 +227,8 @@ extension VMCommandCore {
     private func unansweredGuestAccount(
         _ account: GuestAccountIntent, on instance: VMInstance
     ) -> CommandError {
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Refused to start '\(instance.name, privacy: .public)': nobody answered for the account '\(account.username, privacy: .public)' it was set up with"
         )
         return .guestAccountPasswordRequired(
@@ -286,7 +294,8 @@ extension VMCommandCore {
     private func applyMatchWindowBootResolution(to instance: VMInstance) {
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
         guard let surface = displayBootSurface?(instance) else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
             )
             return
@@ -302,7 +311,8 @@ extension VMCommandCore {
             // Assigned directly rather than through the funnel: disk still holds
             // `previous`, so re-persisting it is a second chance to fail.
             instance.configuration = previous
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"
             )
         }
@@ -314,7 +324,8 @@ extension VMCommandCore {
     /// attachment when one is at fault, the explained capacity message when the
     /// VM limit is, else the raw error.
     private func startFailure(_ error: Error, on instance: VMInstance) -> CommandError {
-        Self.logger.error(
+        #log(
+            Self.logger, .error,
             "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
         )
         if case VMLifecycleCoordinator.LifecycleError.operationInProgress = error {
@@ -425,7 +436,8 @@ extension VMCommandCore {
                 // the old one is still alive on `instance.session`.
                 instance.tearDownSession(restingAt: .initialBoot)
                 instance.setupState = nil
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
                 return
@@ -442,7 +454,8 @@ extension VMCommandCore {
                 instance.tearDownSession(restingAt: restingAtCancel ? .initialBoot : classified)
                 instance.setupState = nil
                 if Task.isCancelled {
-                    Self.logger.notice(
+                    #log(
+                        Self.logger, .notice,
                         "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
                     )
                 } else if let explained = self.explainedFailure(for: error, on: instance) {
@@ -511,7 +524,7 @@ extension VMCommandCore {
         guard confirmed else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
         }
-        Self.logger.info("Cancelling setup for '\(instance.name, privacy: .public)'")
+        #log(Self.logger, .info, "Cancelling setup for '\(instance.name, privacy: .public)'")
         task.cancel()
         // `runGuestSetup`'s cancel catch owns the status transition and
         // `setupState` cleanup — don't duplicate it here.
@@ -631,7 +644,7 @@ extension VMCommandCore {
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
                 try await lifecycle.forceStop(instance)
-                Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
+                #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
@@ -644,7 +657,8 @@ extension VMCommandCore {
             try await lifecycle.resume(instance)
             try await lifecycle.stop(instance)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to resume-and-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .stop, on: instance)
@@ -727,7 +741,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.pause(instance)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to pause '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .pause, on: instance)
@@ -757,7 +772,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.resume(instance)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to resume '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .resume, on: instance)
@@ -773,7 +789,8 @@ extension VMCommandCore {
         do {
             try await lifecycle.save(instance)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to save '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw failure(error, verb: .suspend, on: instance)
@@ -863,7 +880,8 @@ extension VMCommandCore {
         let settled = await waitForObservedChange(
             until: isOff, before: ObservedChangeDeadline(seconds: seconds, clock: clock))
         guard settled else {
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "'\(instance.name, privacy: .public)' had not powered off \(seconds, privacy: .public)s after the shutdown request"
             )
             throw CommandError.timedOut(vm: summary(instance), verb: verb, seconds: seconds)
@@ -915,9 +933,9 @@ extension VMCommandCore {
     /// going down — a client left reading a socket that simply closed cannot
     /// tell success from a crash.
     func quit() {
-        Self.logger.notice("Quit requested from a command front door")
+        #log(Self.logger, .notice, "Quit requested from a command front door")
         guard let requestQuit else {
-            Self.logger.fault("No adapter is wired to take the app down")
+            #log(Self.logger, .fault, "No adapter is wired to take the app down")
             assertionFailure("No adapter is wired to take the app down")
             return
         }

@@ -1,8 +1,8 @@
 import Cocoa
-import os
+import KernovaLogging
 
 extension NSImage {
-    private static let logger = Logger(subsystem: "app.kernova", category: "NSImage")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "NSImage")
 
     /// Returns a system symbol image, or a zero-size fallback if the symbol is not found.
     ///
@@ -11,7 +11,7 @@ extension NSImage {
     /// deployment-target mismatch.
     static func systemSymbol(_ name: String, accessibilityDescription: String) -> NSImage {
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: accessibilityDescription) else {
-            logger.fault("Failed to load system symbol '\(name, privacy: .public)'")
+            #log(logger, .fault, "Failed to load system symbol '\(name, privacy: .public)'")
             assertionFailure("Missing SF Symbol: \(name)")
             return NSImage()
         }

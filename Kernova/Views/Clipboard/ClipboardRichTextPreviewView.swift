@@ -1,6 +1,6 @@
 import AppKit
+import KernovaLogging
 import UniformTypeIdentifiers
-import os
 
 /// Read-only styled preview of inline RTF.
 ///
@@ -8,7 +8,7 @@ import os
 /// silently flatten its formatting.
 @MainActor
 final class ClipboardRichTextPreviewView: NSView {
-    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardRichTextPreviewView")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardRichTextPreviewView")
 
     private let textView: NSTextView
     private let scrollView: NSScrollView
@@ -77,7 +77,8 @@ final class ClipboardRichTextPreviewView: NSView {
                 options: [.documentType: documentType],
                 documentAttributes: nil)
         else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Could not decode rich-text preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
             )
             return false

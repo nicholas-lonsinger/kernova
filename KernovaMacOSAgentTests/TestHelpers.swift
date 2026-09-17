@@ -141,7 +141,12 @@ func makeLogFrame(message: String) -> Frame {
         $0.level = .info
         $0.subsystem = "test"
         $0.category = "test"
-        $0.message = message
+        $0.segments = [
+            Kernova_V1_LogSegment.with {
+                $0.text = message
+                $0.private = false
+            }
+        ]
     }
     return frame
 }

@@ -1,6 +1,6 @@
 import Foundation
 import KernovaKit
-import os
+import KernovaLogging
 
 /// The headless implementation of every VM verb, beneath the AppKit UI and
 /// every automation surface.
@@ -15,7 +15,7 @@ import os
 /// through ``surfaceDisplay``, ``readyDisplay`` or ``revealInLibrary``.
 @MainActor
 final class VMCommandCore: VMCommanding {
-    nonisolated static let logger = Logger(subsystem: "app.kernova", category: "VMCommandCore")
+    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
 
     // MARK: - Collaborators
 
@@ -324,7 +324,8 @@ final class VMCommandCore: VMCommanding {
     /// never wired one owes.
     func requireSourceAuthority(_ verb: VMVerb) throws -> any SandboxSourceAuthorizing {
         guard let sourceAuthority else {
-            Self.logger.fault(
+            #log(
+                Self.logger, .fault,
                 "No sandbox source authority is wired; \(String(describing: verb), privacy: .public) cannot reach a named path"
             )
             assertionFailure("No sandbox source authority is wired for \(verb)")

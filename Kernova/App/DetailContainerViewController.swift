@@ -1,5 +1,5 @@
 import Cocoa
-import os
+import KernovaLogging
 
 /// AppKit container that layers pure-AppKit VM displays on top of the detail
 /// content (the empty state, or the per-VM detail router).
@@ -46,7 +46,7 @@ final class DetailContainerViewController: NSViewController {
     /// `viewDidAppear` honors it once the window is available.
     private var pendingWizard = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "DetailContainerVC")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DetailContainerVC")
 
     // MARK: - Init
 
@@ -281,7 +281,7 @@ final class DetailContainerViewController: NSViewController {
         let staleIDs = backingViews.keys.filter { !activeInlineIDs.contains($0) }
         for id in staleIDs {
             removeBackingView(for: id)
-            Self.logger.debug("Removed stale backing view for VM \(id)")
+            #log(Self.logger, .debug, "Removed stale backing view for VM \(id)")
         }
 
         guard let instance = viewModel.selectedInstance,
@@ -301,7 +301,7 @@ final class DetailContainerViewController: NSViewController {
             }
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
-                Self.logger.debug("VM display hidden — detail content visible")
+                #log(Self.logger, .debug, "VM display hidden — detail content visible")
             }
             activeBackingViewID = nil
             return
@@ -316,7 +316,7 @@ final class DetailContainerViewController: NSViewController {
         let backing = backingView(for: instance)
         if backing.isHidden {
             backing.isHidden = false
-            Self.logger.debug("VM display shown for '\(instance.name, privacy: .public)'")
+            #log(Self.logger, .debug, "VM display shown for '\(instance.name, privacy: .public)'")
         }
         activeBackingViewID = instance.id
 
@@ -440,6 +440,6 @@ extension DetailContainerViewController: VMLibraryPresenting {
         let wizard = VMCreationWizardViewController(creationVM: creationVM)
         wizard.delegate = self
         wizardPresenter.show(content: wizard, in: window)
-        Self.logger.notice("Presented creation wizard")
+        #log(Self.logger, .notice, "Presented creation wizard")
     }
 }

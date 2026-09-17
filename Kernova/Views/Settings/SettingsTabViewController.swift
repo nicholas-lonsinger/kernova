@@ -1,5 +1,5 @@
 import AppKit
-import os
+import KernovaLogging
 
 /// A Settings pane that can outgrow the window and shows a scroller flash to
 /// say there is more below.
@@ -37,7 +37,7 @@ enum SettingsPaneMetrics {
 /// running guests — so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
-    private static let logger = Logger(subsystem: "app.kernova", category: "SettingsTabViewController")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SettingsTabViewController")
 
     private let viewModel: VMLibraryViewModel
     private let preferences: AppPreferences
@@ -157,7 +157,7 @@ final class SettingsTabViewController: NSTabViewController {
     /// degrading to no image in Release (per the project's defensive-unwrap rule).
     private static func symbol(_ name: String) -> NSImage? {
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else {
-            logger.fault("Missing SF Symbol '\(name, privacy: .public)' for Settings tab")
+            #log(logger, .fault, "Missing SF Symbol '\(name, privacy: .public)' for Settings tab")
             assertionFailure("Missing SF Symbol: \(name)")
             return nil
         }

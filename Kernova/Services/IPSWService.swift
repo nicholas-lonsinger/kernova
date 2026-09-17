@@ -1,14 +1,14 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import Virtualization
-import os
 
 /// Fetches and downloads macOS restore images (IPSWs) for macOS guest installation.
 ///
 /// The transfer itself belongs to `DownloadService`; what stays here is the
 /// macOS-specific part — what VZ says the newest installable image is.
 struct IPSWService: Sendable {
-    private static let logger = Logger(subsystem: "app.kernova", category: "IPSWService")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "IPSWService")
 
     private let downloadService: DownloadService
 
@@ -23,7 +23,7 @@ struct IPSWService: Sendable {
     // MARK: - Protocol Methods
 
     func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
-        Self.logger.info("Fetching latest supported macOS restore image...")
+        #log(Self.logger, .info, "Fetching latest supported macOS restore image...")
         let restoreImage = try await VZMacOSRestoreImage.latestSupported
         return LatestRestoreImage(
             url: restoreImage.url,

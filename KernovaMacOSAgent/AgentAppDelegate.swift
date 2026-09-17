@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 // Guest-side agent for macOS VMs managed by Kernova: an `.accessory` menu-bar
 // app holding four long-lived, self-reconnecting vsock connections to the host
@@ -18,7 +19,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private static let version: String = {
         guard let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else {
-            logger.fault("Version string not found in Info.plist")
+            #log(logger, .fault, "Version string not found in Info.plist")
             assertionFailure("Version string not found in Info.plist")
             return "unknown"
         }
@@ -27,12 +28,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private static let buildNumber: String = {
         guard let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
-            logger.fault("Build number not found in Info.plist")
+            #log(logger, .fault, "Build number not found in Info.plist")
             assertionFailure("Build number not found in Info.plist")
             return "unknown"
         }
         guard b != "AGENT_BUILD_NUMBER" else {
-            logger.fault("Build number was not preprocessed — literal macro name found in Info.plist")
+            #log(logger, .fault, "Build number was not preprocessed — literal macro name found in Info.plist")
             assertionFailure("Build number was not preprocessed")
             return "unknown"
         }
@@ -86,11 +87,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // banner itself buffers into the pre-connect ring.
         let vsockConnection = VsockHostConnection()
         VsockLogBridge.connection = vsockConnection
-        KernovaLogger.forwardingSink = { level, subsystem, category, message in
+        KernovaLogger.forwardingSink = { level, subsystem, category, segments in
             VsockLogBridge.connection?.forwardLog(
-                level: level, subsystem: subsystem, category: category, message: message)
+                level: level, subsystem: subsystem, category: category, segments: segments)
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
         )
 
@@ -216,7 +218,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // no main-actor isolation. Must exit 0 — the LaunchAgent's
         // `KeepAlive={SuccessfulExit:false}` only keeps a clean exit quit.
         let handler: @Sendable () -> Void = {
-            Self.logger.notice("Received termination signal, shutting down")
+            #log(Self.logger, .notice, "Received termination signal, shutting down")
             controlAgent.stop()
             clipboardAgent.stop()
             dropAgent.stop()

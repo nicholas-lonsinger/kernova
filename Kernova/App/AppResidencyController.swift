@@ -1,7 +1,7 @@
 import AppIntents
 import Cocoa
 import KernovaKit
-import os
+import KernovaLogging
 
 /// What the app is presenting, read at the moment a VM comes up.
 enum GUIPosture: Equatable {
@@ -137,7 +137,7 @@ final class AppResidencyController: AppResidencyHosting {
     /// performed, rather than the person reversing a ⌘H.
     private var isUnhidingForSummon = false
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "AppResidency")
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppResidency")
 
     init(
         viewModel: VMLibraryViewModel,
@@ -208,7 +208,7 @@ final class AppResidencyController: AppResidencyHosting {
 
     func openAutomationLink(_ url: URL) {
         guard let urlGateway else {
-            Self.logger.warning("A Kernova link arrived before the automation doors opened")
+            #log(Self.logger, .warning, "A Kernova link arrived before the automation doors opened")
             return
         }
         Task { await urlGateway.handle(url) }
@@ -295,7 +295,7 @@ final class AppResidencyController: AppResidencyHosting {
             configuration: Self.buildConfiguration,
             vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking,
             launch: provenance)
-        Self.logger.notice("Kernova resident app ready — \(line, privacy: .public)")
+        #log(Self.logger, .notice, "Kernova resident app ready — \(line, privacy: .public)")
         syncStatusItem()
         observeResidencyPreference()
 
@@ -341,7 +341,7 @@ final class AppResidencyController: AppResidencyHosting {
     /// `Tools/set-build-number.sh` — a missing value is a build misconfiguration.
     private static let buildNumber: String = {
         guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
-            logger.fault("CFBundleVersion not found in Info.plist")
+            #log(logger, .fault, "CFBundleVersion not found in Info.plist")
             assertionFailure("CFBundleVersion not found in Info.plist")
             return "?"
         }
@@ -542,7 +542,8 @@ final class AppResidencyController: AppResidencyHosting {
         setActivationPolicy(.regular)
         let event = NSApp.currentEvent
         let eventAge = event.map { ProcessInfo.processInfo.systemUptime - $0.timestamp }
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Summon: isActive=\(NSApp.isActive, privacy: .public) hasCurrentEvent=\(event != nil, privacy: .public) eventAge=\(eventAge.map { String(format: "%.3f", $0) } ?? "n/a", privacy: .public)"
         )
         requestSummonActivation()
@@ -565,7 +566,7 @@ final class AppResidencyController: AppResidencyHosting {
     /// it forward.
     private func unhideForSummon() {
         guard NSApp.isHidden else { return }
-        Self.logger.notice("Summoned while hidden — unhiding")
+        #log(Self.logger, .notice, "Summoned while hidden — unhiding")
         // Scoped across the call, which is what `applicationDidUnhide` is
         // delivered inside: the summon is already deciding what goes on screen,
         // and the unhide leg would otherwise read a window list the
@@ -603,7 +604,8 @@ final class AppResidencyController: AppResidencyHosting {
             at: Bundle.main.bundleURL, configuration: configuration
         ) { _, error in
             guard let error else { return }
-            logger.error(
+            #log(
+                logger, .error,
                 "Launch Services summon activation failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -845,7 +847,7 @@ final class AppResidencyController: AppResidencyHosting {
         case .waitForUnhide:
             break
         case .quit:
-            Self.logger.notice("Last window closed with the app set to quit — terminating")
+            #log(Self.logger, .notice, "Last window closed with the app set to quit — terminating")
             host?.requestFullQuit()
         }
     }
@@ -901,10 +903,10 @@ final class AppResidencyController: AppResidencyHosting {
         case .showDockIcon:
             setActivationPolicy(.regular)
         case .goHeadless:
-            Self.logger.notice("Unhidden with no window left — dropping to the status item")
+            #log(Self.logger, .notice, "Unhidden with no window left — dropping to the status item")
             setActivationPolicy(.accessory)
         case .presentLibrary:
-            Self.logger.notice("Unhidden with no window left — showing the library")
+            #log(Self.logger, .notice, "Unhidden with no window left — showing the library")
             presentSummonedInterface()
         }
         return outcome
@@ -929,7 +931,8 @@ final class AppResidencyController: AppResidencyHosting {
         let current = NSApp.activationPolicy()
         guard current != policy else { return }
         NSApp.setActivationPolicy(policy)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Activation policy \(current.rawValue, privacy: .public) → \(policy.rawValue, privacy: .public) (hasVisibleWindow=\(self.hasVisibleUserWindow, privacy: .public))"
         )
     }
