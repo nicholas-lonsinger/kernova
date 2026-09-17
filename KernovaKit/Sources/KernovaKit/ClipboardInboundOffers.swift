@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// What the peer has offered this side, and every pull that materializes it.
 ///
@@ -252,7 +253,8 @@ public final class ClipboardInboundOffers {
         let kept = reps.indices.filter { ClipboardPromisePolicy.keeps(reps[$0]) }
         guard !kept.isEmpty else {
             if !reps.isEmpty {
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Dropped the clipboard offer from '\(self.peerName, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.tag, privacy: .public)): none of its \(reps.count, privacy: .public) representation(s) survived receive-side filtering"
                 )
             }
@@ -268,7 +270,8 @@ public final class ClipboardInboundOffers {
         entries[offer.generation] = entry
         currentGeneration = offer.generation
         onOfferReceived(Self.offer(for: entry))
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Received a clipboard offer from '\(self.peerName, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.tag, privacy: .public), \(reps.count, privacy: .public) reps) — metadata only"
         )
     }
@@ -279,7 +282,8 @@ public final class ClipboardInboundOffers {
             return
         }
         retireCurrentOffer(reason: .released)
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "'\(self.peerName, privacy: .public)' released its clipboard offer (gen=\(release.generation, privacy: .public), conn=\(self.tag, privacy: .public))"
         )
     }
@@ -291,7 +295,8 @@ public final class ClipboardInboundOffers {
     /// asked for both sets of files.
     public func handleDropOffer(_ offer: Kernova_V1_DropOffer) {
         guard entries[offer.generation] == nil else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Duplicate drop offer for gen=\(offer.generation, privacy: .public) (conn=\(self.tag, privacy: .public)) — ignored"
             )
             return
@@ -306,7 +311,8 @@ public final class ClipboardInboundOffers {
         let entry = Entry(generation: offer.generation, reps: reps, isConcealed: false)
         entries[offer.generation] = entry
         onOfferReceived(Self.offer(for: entry))
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Accepted a drop of \(reps.count, privacy: .public) item(s) from '\(self.peerName, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.tag, privacy: .public))"
         )
     }
@@ -323,7 +329,8 @@ public final class ClipboardInboundOffers {
     /// A `clipboard.*` code is the peer's paste refusing; the refusal it becomes
     /// lands wherever this side's surface puts one.
     public func handlePeerError(_ error: Kernova_V1_Error) {
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Clipboard error from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)): \(error.code, privacy: .public) — \(error.message, privacy: .public)"
         )
         guard error.code.hasPrefix("clipboard.") else { return }
@@ -378,12 +385,14 @@ public final class ClipboardInboundOffers {
     ) -> [Kernova_V1_ClipboardRepresentationInfo] {
         let bounded = ClipboardOfferBounds.bounded(reps)
         if let truncatedFrom = bounded.truncatedFrom {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Offer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public)) declared \(truncatedFrom, privacy: .public) representations — truncated to \(bounded.reps.count, privacy: .public)"
             )
         }
         if bounded.clampedCount > 0 {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Clamped \(bounded.clampedCount, privacy: .public) implausible declared byte count(s) in the offer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
             )
         }
@@ -440,7 +449,8 @@ public final class ClipboardInboundOffers {
     public func cancelJoinedPulls(generation: UInt64) {
         guard let entry = entries[generation] else { return }
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "User cancelled the inbound transfer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
         )
     }
@@ -462,7 +472,8 @@ public final class ClipboardInboundOffers {
                     transferID: id, code: .cancelled, message: "Cancelled by the user",
                     neededBytes: nil, availableBytes: nil))
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Cancelled the inbound transfer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
         )
     }
@@ -620,7 +631,8 @@ public final class ClipboardInboundOffers {
         guard session.inbox == nil, let entry = entries[generation] else { return false }
         let fileSet = entry.reps.indices.filter { ClipboardPromisePolicy.servesFileURL(entry.reps[$0]) }
         guard fileSet.contains(where: { entry.materialized[$0] == nil }) else { return false }
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Paste fired for gen=\(generation, privacy: .public) of '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) after the session ended with the file set partly materialized — \(ClipboardErrorCode.pasteIncompleteSet.rawValue, privacy: .public); serving nothing"
         )
         // The N fires of one multi-file paste each report the same refusal; the
@@ -709,7 +721,8 @@ public final class ClipboardInboundOffers {
             return .refused(.cancelled)
         }
         guard entry.reps.indices.contains(repIndex) else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Pull requested out-of-range rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) — serving nothing"
             )
             return .refused(.cancelled)
@@ -719,7 +732,8 @@ public final class ClipboardInboundOffers {
             return .cached(cached, stagedURL: entry.stagedInlineURLs[repIndex])
         }
         guard let inbox = session.inbox else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Pull requested un-materialized rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) after the session ended — serving nothing"
             )
             return .refused(.cancelled)
@@ -756,12 +770,14 @@ public final class ClipboardInboundOffers {
     /// own publication is what retires those promises.
     private func logMissingOffer(generation: UInt64, repIndex: Int) {
         guard session.kind == .clipboard, currentGeneration == 0 else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Pull requested rep \(repIndex, privacy: .public) of retired gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (live gen=\(self.currentGeneration, privacy: .public), conn=\(self.tag, privacy: .public)) — serving nothing"
             )
             return
         }
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Pull requested rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) with no live offer — serving nothing"
         )
     }
@@ -772,7 +788,8 @@ public final class ClipboardInboundOffers {
     /// rather than each file: a set over the cap is refused whole rather than
     /// landing 2 of 3 files.
     private func refusePasteBudget(_ budget: ClipboardPromisePolicy.PasteBudget, entry: Entry) {
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(budget.total, privacy: .public) bytes, over the \(budget.limit, privacy: .public)-byte cap; refusing the whole file set"
         )
         onRefusal(.copy, .tooLarge(limitBytes: budget.limit))
@@ -813,7 +830,8 @@ public final class ClipboardInboundOffers {
         guard let needed = plan.preflightByteCount,
             !staging.hasCapacity(forByteCount: needed)
         else { return nil }
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Not enough disk space to receive rep '\(plan.uti, privacy: .public)' (\(plan.byteCount, privacy: .public) bytes)"
         )
         return .aborted(
@@ -869,7 +887,8 @@ public final class ClipboardInboundOffers {
             // No request went out, so no connection will arrive — resolve the
             // pull now instead of blocking to the backstop timeout.
             plan.inbox.cancelAwait(plan.transferID)
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to send the clipboard request: \(error.localizedDescription, privacy: .public)"
             )
             coordinator.abort(
@@ -956,7 +975,8 @@ public final class ClipboardInboundOffers {
         case .delivered:
             break
         case .aborted(let info):
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) aborted (\(info.rawCode, privacy: .public))"
             )
             guard let failure = ClipboardTransferFailure.inboundPullAborted(info) else {
@@ -974,7 +994,8 @@ public final class ClipboardInboundOffers {
                 Self.pasteErrorCode(forAbortCode: info.code), info.message, generation: plan.generation,
                 caller: caller)
         case .timedOut:
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) timed out"
             )
             // Nothing is sent to stop the peer: the coordinator's own retirement
@@ -987,12 +1008,14 @@ public final class ClipboardInboundOffers {
         case .cancelled:
             // `.debug`, not `.warning`: a cancellation also covers the benign
             // teardown and supersession, which are deliberately silent.
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) cancelled"
             )
             recordInterruption(caller: caller)
         case .mainThreadUnavailable:
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) refused: the fire holds the main thread where the event-loop wait is unavailable — serving nothing rather than freezing the app"
             )
             guard caller == .paste else { return }
@@ -1122,7 +1145,8 @@ public final class ClipboardInboundOffers {
             let sink = try? staging.makeSink(
                 generation: generation, filename: representation.filename)
         else {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to stage '\(representation.filename, privacy: .public)' from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public)) — serving nothing"
             )
             raiseRefusal(.paste, .stagingFailed)
@@ -1136,7 +1160,8 @@ public final class ClipboardInboundOffers {
         } catch {
             // Don't offer a truncated file — abort the partial stage.
             sink.abort()
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to write staged file '\(representation.filename, privacy: .public)' from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
             raiseRefusal(.paste, .stagingFailed)
@@ -1158,7 +1183,8 @@ public final class ClipboardInboundOffers {
     nonisolated private func logCacheHit(
         _ representation: ClipboardContent.Representation, generation: UInt64, repIndex: Int
     ) {
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Served rep \(repIndex, privacy: .public) (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public), '\(representation.uti, privacy: .public)') from cache — no transfer"
         )
     }

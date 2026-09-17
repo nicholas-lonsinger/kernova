@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`.
 ///
@@ -37,6 +38,16 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Whether a `drainPending()` run is enqueued or in flight, guarded by
     /// `lock` — one run at a time, however many records arrive.
     private var drainScheduled = false
+
+    /// A `scheduleDrain()` the running drain has not yet accounted for, guarded
+    /// by `lock`.
+    ///
+    /// A connect wakes the drain without appending a frame, so a wake landing
+    /// between the drain's channel read and its finishing lock hold would
+    /// otherwise be swallowed by `drainScheduled` and leave the ring parked
+    /// until the next record. The drain finishes only once it has seen a step
+    /// with no wake outstanding.
+    private var wakePending = false
 
     /// Records the ring has evicted since the drain last emptied it, guarded by
     /// `lock`.
@@ -112,11 +123,11 @@ final class VsockHostConnection: @unchecked Sendable {
         if enabled { client.resume() }
         guard needsTransition else { return }
         if enabled {
-            Self.logger.notice("Log forwarding enabled by host policy")
+            #log(Self.logger, .notice, "Log forwarding enabled by host policy")
         } else {
             client.pause()
             lock.withLock { discardPendingLocked() }
-            Self.logger.notice("Log forwarding disabled by host policy")
+            #log(Self.logger, .notice, "Log forwarding disabled by host policy")
         }
     }
 
@@ -127,10 +138,10 @@ final class VsockHostConnection: @unchecked Sendable {
     /// has stopped reading costs the caller nothing. With the ring full the
     /// oldest records go, counted and reported once the drain catches up.
     func forwardLog(
-        level: Kernova_V1_LogRecord.Level,
+        level: KernovaLogLevel,
         subsystem: String,
         category: String,
-        message: String
+        segments: [LogSegment]
     ) {
         let policy = lock.withLock { self.policy }
         if policy == .disabled { return }
@@ -140,14 +151,32 @@ final class VsockHostConnection: @unchecked Sendable {
         frame.logRecord = Kernova_V1_LogRecord.with {
             // Stamped at forward time, so chronology survives the deferred send.
             $0.timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
-            $0.level = level
+            $0.level = Self.wireLevel(level)
             $0.subsystem = subsystem
             $0.category = category
-            $0.message = message
+            $0.segments = segments.map { segment in
+                Kernova_V1_LogSegment.with {
+                    $0.text = segment.text
+                    $0.private = segment.isPrivate
+                }
+            }
         }
 
         bufferFrameUnlessDisabled(frame)
         scheduleDrain()
+    }
+
+    /// The wire spelling of a level. `KernovaLogging` owns the level so it can
+    /// stay clear of SwiftProtobuf; this is the one place the two meet.
+    private static func wireLevel(_ level: KernovaLogLevel) -> Kernova_V1_LogRecord.Level {
+        switch level {
+        case .debug: .debug
+        case .info: .info
+        case .notice: .notice
+        case .warning: .warning
+        case .error: .error
+        case .fault: .fault
+        }
     }
 
     /// Appends `frame` to the ring unless host policy has meanwhile gone
@@ -191,7 +220,8 @@ final class VsockHostConnection: @unchecked Sendable {
     /// then, so the append it makes announces nothing and the recursion stops
     /// one frame deep.
     private func reportDroppingStarted() {
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Log forward buffer full at \(Self.logBufferLimit, privacy: .public) records — dropping the oldest until the host channel drains"
         )
     }
@@ -201,6 +231,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Enqueues one `drainPending()` run unless one is already pending.
     private func scheduleDrain() {
         let alreadyScheduled: Bool = lock.withLock {
+            wakePending = true
             let scheduled = drainScheduled
             drainScheduled = true
             return scheduled
@@ -212,19 +243,35 @@ final class VsockHostConnection: @unchecked Sendable {
     /// What a drain does next, decided under `lock` so a record arriving
     /// alongside the drain either joins this run or schedules the next.
     private enum DrainStep {
-        case send(Frame)
+        case send(Frame, on: VsockChannel)
         case reportDrops(Int)
+        /// No channel, but a wake arrived since the last step: read the channel
+        /// again rather than finish on a stale `nil`.
+        case retry
         case finished
     }
 
-    private func nextDrainStep() -> DrainStep {
+    /// Without a channel to carry a frame the run ends, leaving the ring and
+    /// the overflow tally as they are: nothing is handed out only to be put
+    /// back, so what is buffered is what a reader sees at every instant, and the
+    /// tally still reaches the host alongside the records it describes.
+    private func nextDrainStep(channel: VsockChannel?) -> DrainStep {
         lock.withLock {
-            if !pendingLogs.isEmpty { return .send(pendingLogs.removeFirst()) }
+            let woken = wakePending
+            wakePending = false
+            guard let channel else {
+                if woken { return .retry }
+                drainScheduled = false
+                return .finished
+            }
+            if !pendingLogs.isEmpty { return .send(pendingLogs.removeFirst(), on: channel) }
             if droppedCount > 0 {
                 let dropped = droppedCount
                 droppedCount = 0
                 return .reportDrops(dropped)
             }
+            // A wake from an append is already visible as a frame above, and one
+            // from a connect changes nothing with the ring empty.
             drainScheduled = false
             return .finished
         }
@@ -237,20 +284,19 @@ final class VsockHostConnection: @unchecked Sendable {
     /// order and the frame a failed send was carrying goes back to the head.
     private func drainPending() {
         while true {
-            switch nextDrainStep() {
+            switch nextDrainStep(channel: client.liveChannel) {
             case .finished:
                 return
+            case .retry:
+                continue
             case .reportDrops(let dropped):
                 // `drainScheduled` still stands here, so this line's own record
                 // rides the run reporting it rather than scheduling another.
-                Self.logger.warning(
+                #log(
+                    Self.logger, .warning,
                     "Dropped \(dropped, privacy: .public) buffered log record(s) while the host channel was behind"
                 )
-            case .send(let frame):
-                guard let channel = client.liveChannel else {
-                    parkDrain(holding: frame, failure: nil)
-                    return
-                }
+            case .send(let frame, let channel):
                 do {
                     try channel.send(frame)
                     lock.withLock { sendFailureAnnounced = false }
@@ -265,19 +311,20 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Ends the drain with `frame` back at the head of the ring, where the next
     /// connect picks it up — head re-insertion is what keeps the host's view
     /// chronological across a failed send.
-    private func parkDrain(holding frame: Frame, failure: Error?) {
+    private func parkDrain(holding frame: Frame, failure: any Error) {
         let (startedDropping, held, announce): (Bool, Int, Bool) = lock.withLock {
             pendingLogs.insert(frame, at: 0)
             let trimmed = trimToLimitLocked()
-            let firstOfTheOutage = failure != nil && !sendFailureAnnounced
+            let firstOfTheOutage = !sendFailureAnnounced
             if firstOfTheOutage { sendFailureAnnounced = true }
             return (trimmed, pendingLogs.count, firstOfTheOutage)
         }
         // Emitted before `drainScheduled` clears, so the records these lines
         // forward cannot schedule a drain onto the channel that just refused
         // this one; they leave with the rest on the next connect.
-        if announce, let failure {
-            Self.logger.warning(
+        if announce {
+            #log(
+                Self.logger, .warning,
                 "Log channel send failed, holding \(held, privacy: .public) record(s) for the next connection: \(failure.localizedDescription, privacy: .public)"
             )
         }
@@ -296,17 +343,21 @@ final class VsockHostConnection: @unchecked Sendable {
         do {
             for try await frame in channel.incoming {
                 guard frame.protocolVersion == 1 else {
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Dropping inbound frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
                     )
                     continue
                 }
-                Self.logger.debug(
+                #log(
+                    Self.logger, .debug,
                     "Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
-            Self.logger.notice("Vsock channel closed by host")
+            #log(Self.logger, .notice, "Vsock channel closed by host")
         } catch {
-            Self.logger.warning("Vsock channel ended with error: \(error.localizedDescription, privacy: .public)")
+            #log(
+                Self.logger, .warning, "Vsock channel ended with error: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }

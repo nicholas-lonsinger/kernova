@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 // MARK: - Pasteboard protocol
 
@@ -233,7 +234,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
-        Self.logger.notice("Vsock clipboard agent started")
+        #log(Self.logger, .notice, "Vsock clipboard agent started")
     }
 
     /// Applies a host policy update: whether clipboard sharing is on, and the
@@ -258,7 +259,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         if enabled {
             startPolling()
             clipboardActivityStorage = .enabled
-            Self.logger.notice("Clipboard sharing enabled by host policy")
+            #log(Self.logger, .notice, "Clipboard sharing enabled by host policy")
         } else {
             client.pause()
             pollingTimer?.invalidate()
@@ -269,7 +270,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // a pasteboard outlives the session that staged it (mirrors the
             // host's stop()).
             clipboardActivityStorage = .disabled
-            Self.logger.notice("Clipboard sharing disabled by host policy")
+            #log(Self.logger, .notice, "Clipboard sharing disabled by host policy")
         }
     }
 
@@ -283,7 +284,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             self?.pollingTimer = nil
             self?.teardownConnectionState()
         }
-        Self.logger.notice("Vsock clipboard agent stopped")
+        #log(Self.logger, .notice, "Vsock clipboard agent stopped")
     }
 
     /// Clears per-connection streaming + pending state on the main queue.
@@ -348,7 +349,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             endpoint.delegate = self
             self.lastPasteboardChangeCount = Self.unobservedChangeCount
             endpoint.start()
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Vsock clipboard connected to host (conn=\(endpoint.connectionTag, privacy: .public))"
             )
             return endpoint
@@ -424,7 +426,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         switch snapshot {
         case .suppressed(let reason):
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Clipboard snapshot suppressed by \(String(describing: reason), privacy: .public) marker"
             )
             lastPasteboardChangeCount = currentCount
@@ -438,7 +441,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 changeCount: currentCount)
         case .textOnlyRefusal:
             // Unreachable: this poll always reads with `allowsBinary: true`.
-            Self.logger.fault("Clipboard snapshot refused as text-only on a binary transport")
+            #log(Self.logger, .fault, "Clipboard snapshot refused as text-only on a binary transport")
             assertionFailure("Clipboard snapshot refused as text-only on a binary transport")
             noteSnapshotOfferedNothing(
                 pasteboardHeldSomething: true, watchedItArrive: watchedItArrive,
@@ -452,7 +455,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // Mac's own content; offering it back is an echo, not a copy.
             let offerable = urls.filter { !staging.isInStagingRoot($0) }
             guard !offerable.isEmpty else {
-                Self.logger.notice(
+                #log(
+                    Self.logger, .notice,
                     "Copy held only files materialized from the host — not offered back (conn=\(self.connectionTag, privacy: .public))"
                 )
                 // Deliberate suppression, so nobody's copy came up short: the
@@ -492,7 +496,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // A copy was made in this guest and none of it could cross. Its own menu
         // is the only account of that (docs/CLIPBOARD.md §13), and without one
         // the line still reads as the copy before it, which did.
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Copy left nothing that can be offered to the host (conn=\(self.connectionTag, privacy: .public))"
         )
         clipboardActivityStorage = .copyCarriedNothing
@@ -523,7 +528,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         guard skipped > 0 else { return }
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "The offer to the host left \(skipped, privacy: .public) unreadable item(s) out (conn=\(self.connectionTag, privacy: .public))"
         )
         // Re-announcing a standing snapshot to a new host is nobody's gesture,
@@ -600,7 +606,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 for: $0, generation: offer.generation, serve: endpoint)
         }
         guard let specs, !specs.isEmpty else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Dropped the host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(offer.reps.count, privacy: .public) representation(s) can be promised — nothing written"
             )
             endpoint.discardInboundOffer()
@@ -614,7 +621,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             lastPasteboardChangeCount = changeCount
         }
         guard written else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to register host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
             )
             // The write failed, so the providers were never retained — there is
@@ -622,7 +630,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             endpoint.discardInboundOffer()
             return
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Registered host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(specs.count, privacy: .public) item(s))"
         )
         clipboardActivityStorage = .offeredFromHost

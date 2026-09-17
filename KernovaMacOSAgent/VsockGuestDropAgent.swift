@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// Guest-side agent for files dropped on the VM display, talking to the host's
 /// `VsockDropService` on `KernovaVsockPort.drop`.
@@ -136,7 +137,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
-        Self.logger.notice("Vsock drop agent started")
+        #log(Self.logger, .notice, "Vsock drop agent started")
     }
 
     /// Records the host's drag-and-drop setting and matches the reconnect loop
@@ -165,7 +166,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             self?.teardownConnectionState()
         }
-        Self.logger.notice("Vsock drop agent stopped")
+        #log(Self.logger, .notice, "Vsock drop agent stopped")
     }
 
     /// Clears per-connection state on the main queue.
@@ -212,7 +213,8 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             self.endpoint = endpoint
             endpoint.delegate = self
             endpoint.start()
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Vsock drop connected to host (conn=\(endpoint.connectionTag, privacy: .public))")
             return endpoint
         }
@@ -281,7 +283,8 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                         landed.append(try land(representation, named: offer.reps[index].filename))
                     } catch {
                         let failure = Self.classify(error)
-                        Self.logger.error(
+                        #log(
+                            Self.logger, .error,
                             "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
                         )
                         outcome = .failed(failure.0, failure.1)
@@ -304,11 +307,13 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                     // drop is still there to pull, and the side that made the
                     // gesture is the side that names what it left out.
                     skipped += 1
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Skipping dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public): the host couldn't read it"
                     )
                 } else {
-                    Self.logger.warning(
+                    #log(
+                        Self.logger, .warning,
                         "Dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
                     )
                     outcome = .failed(
@@ -349,7 +354,8 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             guard self?.jobs[generation] === operation else { return }
             self?.jobs[generation] = nil
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Drop job finished (gen=\(generation, privacy: .public), \(landed.count, privacy: .public) file(s) in Downloads, \(skipped, privacy: .public) skipped)"
         )
     }

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// One peer's clipboard transfer state, as every surface renders it — the host
 /// keeps one per VM, the guest agent one per process.
@@ -278,8 +279,9 @@ public final class ClipboardTransferReporter {
         absorbsRepeats = true
         failureAwaitsDisplacement = finish.failure != nil
         if let failure = finish.failure, finish.gesture.isMadeHere {
-            Self.logger.notice(
-                "\(finish.gesture, privacy: .public) from '\(finish.peerName, privacy: .public)' failed: \(failure, privacy: .public)"
+            #log(
+                Self.logger, .notice,
+                "\(String(describing: finish.gesture), privacy: .public) from '\(finish.peerName, privacy: .public)' failed: \(String(describing: failure), privacy: .public)"
             )
         }
         recompute()

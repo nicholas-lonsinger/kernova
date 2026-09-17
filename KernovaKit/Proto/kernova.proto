@@ -108,12 +108,24 @@ message AgentInfo {
   string agent_version = 3;  // e.g. "0.1.0"
 }
 
+// One run of a forwarded message: a piece of the message literal, or one
+// rendered interpolation.
+//
+// The text is cleartext either way — vsock is host-guest only and the host is
+// trusted. `private` carries the guest's privacy decision so the host can
+// redact by default and reveal on demand, as `logd` does for a record emitted
+// on the host itself.
+message LogSegment {
+  string text = 1;  // Must be valid UTF-8.
+  bool private = 2;
+}
+
 // One unit of log output forwarded from a guest agent to the host.
 //
-// The guest formats the message text locally so all privacy decisions stay on
-// the guest side; the host treats `message` as opaque and republishes it via
-// its own logger. Levels map directly onto Apple's `os.Logger` log levels so
-// the host can pass them through with the same severity semantics.
+// The guest renders each segment locally, so the message text never round-trips
+// through a format string; the host concatenates the segments and republishes
+// them via its own logger. Levels map directly onto Apple's `os.Logger` log
+// levels so the host can pass them through with the same severity semantics.
 message LogRecord {
   enum Level {
     LEVEL_UNSPECIFIED = 0;
@@ -138,8 +150,10 @@ message LogRecord {
   string subsystem = 3;
   string category = 4;
 
-  // Pre-formatted message text. Must be valid UTF-8.
-  string message = 5;
+  reserved 5;
+
+  // The message in emission order; concatenating every `text` gives it whole.
+  repeated LogSegment segments = 6;
 }
 
 // Per-representation metadata advertised in a `ClipboardOffer`. Carries no

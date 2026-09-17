@@ -171,26 +171,49 @@ struct OSLogGuestLogEmitter: GuestLogEmitter {
     }
 
     func emit(_ record: Kernova_V1_LogRecord) {
-        // Guest records are user-owned content from the user's own VM, not
-        // third-party data — emitting as `.public` keeps post-mortem analysis
-        // from being littered with `<private>` placeholders.
-        let composed = "[\(record.subsystem)/\(record.category)] \(record.message)"
+        let composed = Composition(record: record)
+        let level = Self.osLogType(record.level)
+        // Two arguments, so the host's `logd` redacts the guest's private values
+        // by default and reveals them exactly where it would reveal a host
+        // record's own — under Xcode or a logging profile.
+        guard !composed.cleartext.isEmpty else {
+            logger.log(level: level, "\(composed.placeholder, privacy: .public)")
+            return
+        }
+        logger.log(
+            level: level,
+            "\(composed.placeholder, privacy: .public) \(composed.cleartext, privacy: .private)")
+    }
 
-        switch record.level {
-        case .debug:
-            logger.debug("\(composed, privacy: .public)")
-        case .info:
-            logger.info("\(composed, privacy: .public)")
-        case .notice:
-            logger.notice("\(composed, privacy: .public)")
-        case .warning:
-            logger.warning("\(composed, privacy: .public)")
-        case .error:
-            logger.error("\(composed, privacy: .public)")
-        case .fault:
-            logger.fault("\(composed, privacy: .public)")
-        case .unspecified, .UNRECOGNIZED:
-            logger.log("\(composed, privacy: .public)")
+    /// The two forms a forwarded record takes on the host.
+    struct Composition: Equatable {
+        /// The message with every private segment replaced by `<private>`,
+        /// behind the guest's `[subsystem/category]` label.
+        let placeholder: String
+
+        /// The same message with nothing replaced, empty when the record
+        /// carries no private segment and there is therefore nothing to reveal.
+        let cleartext: String
+
+        init(record: Kernova_V1_LogRecord) {
+            let label = "[\(record.subsystem)/\(record.category)] "
+            placeholder =
+                label + record.segments.map { $0.private ? "<private>" : $0.text }.joined()
+            cleartext =
+                record.segments.contains { $0.private }
+                ? label + record.segments.map(\.text).joined()
+                : ""
+        }
+    }
+
+    private static func osLogType(_ level: Kernova_V1_LogRecord.Level) -> OSLogType {
+        switch level {
+        case .debug: .debug
+        case .info: .info
+        case .notice: .default
+        case .warning, .error: .error
+        case .fault: .fault
+        case .unspecified, .UNRECOGNIZED: .default
         }
     }
 }

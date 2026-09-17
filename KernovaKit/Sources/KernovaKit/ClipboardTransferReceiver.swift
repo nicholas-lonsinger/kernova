@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// Reassembles one clipboard representation off its own vsock data connection.
 ///
@@ -617,7 +618,8 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         // both paths — the dialler's own error and `ClipboardDataConnectionError`
         // — whose payload `localizedDescription` drops.
         let reason = String(describing: error)
-        Self.logger.error(
+        #log(
+            Self.logger, .error,
             "Clipboard transfer \(self.transferID, privacy: .public): \(attempt, privacy: .public) failed: \(reason, privacy: .public)"
         )
         return ReceiveStop(code: .sendFailed, message: "\(attempt) failed: \(reason)")

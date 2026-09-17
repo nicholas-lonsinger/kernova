@@ -251,12 +251,34 @@ public nonisolated struct Kernova_V1_AgentInfo: Sendable {
   public init() {}
 }
 
+/// One run of a forwarded message: a piece of the message literal, or one
+/// rendered interpolation.
+///
+/// The text is cleartext either way — vsock is host-guest only and the host is
+/// trusted. `private` carries the guest's privacy decision so the host can
+/// redact by default and reveal on demand, as `logd` does for a record emitted
+/// on the host itself.
+public nonisolated struct Kernova_V1_LogSegment: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Must be valid UTF-8.
+  public var text: String = String()
+
+  public var `private`: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// One unit of log output forwarded from a guest agent to the host.
 ///
-/// The guest formats the message text locally so all privacy decisions stay on
-/// the guest side; the host treats `message` as opaque and republishes it via
-/// its own logger. Levels map directly onto Apple's `os.Logger` log levels so
-/// the host can pass them through with the same severity semantics.
+/// The guest renders each segment locally, so the message text never round-trips
+/// through a format string; the host concatenates the segments and republishes
+/// them via its own logger. Levels map directly onto Apple's `os.Logger` log
+/// levels so the host can pass them through with the same severity semantics.
 public nonisolated struct Kernova_V1_LogRecord: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -276,8 +298,8 @@ public nonisolated struct Kernova_V1_LogRecord: Sendable {
 
   public var category: String = String()
 
-  /// Pre-formatted message text. Must be valid UTF-8.
-  public var message: String = String()
+  /// The message in emission order; concatenating every `text` gives it whole.
+  public var segments: [Kernova_V1_LogSegment] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1119,9 +1141,44 @@ nonisolated extension Kernova_V1_AgentInfo: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
+nonisolated extension Kernova_V1_LogSegment: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LogSegment"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}private\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.`private`) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
+    }
+    if self.`private` != false {
+      try visitor.visitSingularBoolField(value: self.`private`, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_LogSegment, rhs: Kernova_V1_LogSegment) -> Bool {
+    if lhs.text != rhs.text {return false}
+    if lhs.`private` != rhs.`private` {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LogRecord"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}timestamp_ms\0\u{1}level\0\u{1}subsystem\0\u{1}category\0\u{1}message\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}timestamp_ms\0\u{1}level\0\u{1}subsystem\0\u{1}category\0\u{2}\u{2}segments\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1133,7 +1190,7 @@ nonisolated extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf
       case 2: try { try decoder.decodeSingularEnumField(value: &self.level) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.subsystem) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.category) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      case 6: try { try decoder.decodeRepeatedMessageField(value: &self.segments) }()
       default: break
       }
     }
@@ -1152,8 +1209,8 @@ nonisolated extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf
     if !self.category.isEmpty {
       try visitor.visitSingularStringField(value: self.category, fieldNumber: 4)
     }
-    if !self.message.isEmpty {
-      try visitor.visitSingularStringField(value: self.message, fieldNumber: 5)
+    if !self.segments.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.segments, fieldNumber: 6)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1163,7 +1220,7 @@ nonisolated extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.level != rhs.level {return false}
     if lhs.subsystem != rhs.subsystem {return false}
     if lhs.category != rhs.category {return false}
-    if lhs.message != rhs.message {return false}
+    if lhs.segments != rhs.segments {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

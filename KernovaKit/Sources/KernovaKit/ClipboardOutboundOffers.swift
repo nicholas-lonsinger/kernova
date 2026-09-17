@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 
 /// One peer's pull of a single representation, however it reached this side.
 ///
@@ -264,7 +265,8 @@ public final class ClipboardOutboundOffers {
         // re-offered.
         let capped = content.cappedToOfferLimit()
         if let originalCount = capped.truncatedFrom {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Outbound offer truncated from \(originalCount, privacy: .public) to \(ClipboardContent.maxOfferableRepresentations, privacy: .public) representations (16-bit transfer-id limit)"
             )
         }
@@ -280,7 +282,8 @@ public final class ClipboardOutboundOffers {
                 reps: offered.representations.map(\.offerRepresentationInfo),
                 isConcealed: offered.isConcealed)
         } catch {
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Failed to send the outbound offer to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
             operation?.finish(.failed(.sendFailed))
@@ -312,7 +315,8 @@ public final class ClipboardOutboundOffers {
             reporter.clearFinished()
         }
         onActivity(.offerSent)
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Sent an offer to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(offered.representations.count, privacy: .public) reps, \(offered.totalByteCount, privacy: .public) bytes)"
         )
         return .sent(generation: generation)
@@ -344,7 +348,8 @@ public final class ClipboardOutboundOffers {
         do {
             try session.sendRelease(generation: entry.generation)
         } catch {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Failed to release offer gen=\(entry.generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             return false
@@ -355,7 +360,8 @@ public final class ClipboardOutboundOffers {
         // release just made false — so re-copying the released content is a new
         // copy to a peer whose clipboard this emptied, not a redundant offer.
         lastOfferedDigestStorage = nil
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "Released offer gen=\(entry.generation, privacy: .public) to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
         )
         return true
@@ -377,7 +383,8 @@ public final class ClipboardOutboundOffers {
             return
         }
         guard let entry = entries[request.generation], !entry.isCancelled else {
-            Self.logger.debug(
+            #log(
+                Self.logger, .debug,
                 "Refusing a stale request for gen=\(request.generation, privacy: .public) (conn=\(self.session.connectionTag, privacy: .public))"
             )
             // Refuse every dropped request so the peer's parked pull wakes
@@ -391,7 +398,8 @@ public final class ClipboardOutboundOffers {
         }
         let repIndex = ClipboardTransferID.repIndex(of: request.transferID)
         guard repIndex < entry.content.representations.count else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public) (conn=\(self.session.connectionTag, privacy: .public))"
             )
             outbox.refuse(
@@ -401,7 +409,8 @@ public final class ClipboardOutboundOffers {
         }
         let representation = entry.content.representations[repIndex]
         guard representation.uti == request.uti else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public) (conn=\(self.session.connectionTag, privacy: .public))"
             )
             outbox.refuse(
@@ -475,13 +484,15 @@ public final class ClipboardOutboundOffers {
                 if isClipboard { operation.finishWhenIdle() }
             })
         guard served else {
-            Self.logger.warning(
+            #log(
+                Self.logger, .warning,
                 "Ignoring a second request for transfer \(xid, privacy: .public), which is already streaming to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
             )
             return
         }
         onActivity(.transferServed)
-        Self.logger.debug(
+        #log(
+            Self.logger, .debug,
             "Streaming rep \(repIndex, privacy: .public) to '\(self.peerName, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"
         )
     }
@@ -518,7 +529,8 @@ public final class ClipboardOutboundOffers {
             entry.operation?.finish(.cancelled)
             armClaimDeadlines()
         }
-        Self.logger.notice(
+        #log(
+            Self.logger, .notice,
             "User cancelled the outbound transfer to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
     }
@@ -536,14 +548,16 @@ public final class ClipboardOutboundOffers {
             reportCompletedDrop(entry, generation: complete.generation)
         case .cancelled:
             entry.operation?.finish(.cancelled)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Drop to '\(self.peerName, privacy: .public)' cancelled (gen=\(complete.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
             )
         case .failed, .unspecified, .UNRECOGNIZED:
             // The code is matched, never the message: `message` is peer-supplied
             // text and the sentence the user reads is composed on this side.
             let code = ClipboardErrorCode(rawValue: complete.code)
-            Self.logger.error(
+            #log(
+                Self.logger, .error,
                 "Drop to '\(self.peerName, privacy: .public)' failed (gen=\(complete.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), code=\(complete.code, privacy: .public)): \(complete.message, privacy: .public)"
             )
             entry.operation?.finish(.failed(.peerReported(code)))
@@ -565,12 +579,14 @@ public final class ClipboardOutboundOffers {
         let gestured = entry.gesturedCount
         guard unreadable > 0 else {
             entry.operation?.finish(.completed)
-            Self.logger.notice(
+            #log(
+                Self.logger, .notice,
                 "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(gestured, privacy: .public) item(s))"
             )
             return
         }
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Drop to '\(self.peerName, privacy: .public)' left \(unreadable, privacy: .public) of \(gestured, privacy: .public) item(s) unsent (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
         // With not one item across there is no rest of the batch to speak of,
@@ -670,7 +686,8 @@ public final class ClipboardOutboundOffers {
         try? session.sendRelease(generation: generation)
         onDropSettled(generation)
         entry.operation?.finish(.failed(wasClaimed ? .timedOut : .unclaimed))
-        Self.logger.warning(
+        #log(
+            Self.logger, .warning,
             "Drop to '\(self.peerName, privacy: .public)' \(wasClaimed ? "stopped moving" : "went unclaimed", privacy: .public) for \(self.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
         armClaimDeadlines()
@@ -695,7 +712,8 @@ public final class ClipboardOutboundOffers {
     private func operation(for entry: Entry) -> ClipboardTransferOperation? {
         guard kind == .clipboard else {
             guard let operation = entry.operation else {
-                Self.logger.fault(
+                #log(
+                    Self.logger, .fault,
                     "Drop gen=\(entry.generation, privacy: .public) has no readout — refusing its request"
                 )
                 assertionFailure("Drop generation \(entry.generation) has no readout")

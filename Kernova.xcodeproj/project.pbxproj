@@ -18,6 +18,8 @@
 		A200000E /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000F /* KernovaTestSupport */; };
 		A2000010 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000011 /* KernovaAppRegistry */; };
 		A2000012 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000013 /* KernovaAppRegistry */; };
+		A2000014 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000015 /* KernovaLogging */; };
+		A2000016 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000017 /* KernovaLogging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -204,6 +206,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000004 /* KernovaKit in Frameworks */,
+				A2000014 /* KernovaLogging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -212,6 +215,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000006 /* KernovaKit in Frameworks */,
+				A2000016 /* KernovaLogging in Frameworks */,
 				A200000E /* KernovaTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -377,6 +381,7 @@
 			name = KernovaMacOSAgent;
 			packageProductDependencies = (
 				A2000005 /* KernovaKit */,
+				A2000015 /* KernovaLogging */,
 			);
 			productName = KernovaMacOSAgent;
 			productReference = A1000200 /* Kernova Guest Agent.app */;
@@ -402,6 +407,7 @@
 			name = KernovaMacOSAgentTests;
 			packageProductDependencies = (
 				A2000007 /* KernovaKit */,
+				A2000017 /* KernovaLogging */,
 				A200000F /* KernovaTestSupport */,
 			);
 			productName = KernovaMacOSAgentTests;
@@ -862,6 +868,14 @@
 		A2000013 /* KernovaAppRegistry */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaAppRegistry;
+		};
+		A2000015 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
+		};
+		A2000017 /* KernovaLogging */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaLogging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
