@@ -140,6 +140,12 @@ A principle is exempt from question 1 by design. Instead:
 - Is it stated as a decision rule (given A vs B, choose the one that…) rather
   than a value? Rewrite if not.
 - Does the worked case it cites still exist and still exemplify it? Verify.
+  A worked case is a symbol whose header carries the rule, never a doc
+  section that restates the principle; a citation that lands on a
+  restatement is repointed at the symbol.
+- Can the platform implement it? A principle the API cannot honor is false,
+  not aspirational — delete it, and delete with it any "if this is wrong,
+  fix it here first" self-instruction, which is filler that did not fire.
 - Do two principles contradict without a stated tiebreak? Flag.
 
 ### Pointers

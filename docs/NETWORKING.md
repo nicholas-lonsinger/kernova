@@ -1,105 +1,40 @@
 # NETWORKING.md
 
-Read this before picking up any networking issue, and before designing, extending, or
-refactoring how a guest attaches to a network or is reached from one — modes, port
-forwarding, guest-IP display, MAC handling, attachment recovery. Where this conflicts
-with an existing implementation, the implementation is the thing to change; if a
-principle here turns out to be wrong, fix it here first, then the code. The design
-investigation behind the Network section UI is recorded in
-[research/2026-08-12-network-settings-ui.md](research/2026-08-12-network-settings-ui.md);
-structural facts live in [ARCHITECTURE.md](ARCHITECTURE.md); UI philosophy in
-[DESIGN.md](DESIGN.md); the general principles this doc applies are in
-[AGENTS.md](../AGENTS.md#principles).
-
----
-
-## North star
-
-**The user decides a guest's reach.** Networking gives a guest exactly the network
-exposure the user chose for it — nothing more. Kernova's job is to make each choice work
-reliably and describe it honestly, never to widen it.
-
----
+Read this before changing how a guest attaches to a network or is reached from one.
 
 ## Principles
 
-### 1. A guest is private by default
+### 1. Exposure is the user's choice; recovery restores it, never widens or substitutes
 
-**Shared Network is the default mode, and nothing widens a guest's exposure to the LAN
-without an explicit per-VM user choice** — not a mode change, not a forwarding rule, not
-an upgrade, not a recovery path. Reachability from other machines is something the user
-turns on, per VM; the app never infers it from context or convenience.
+**A guest gets exactly the exposure the user chose for it, per VM.** Nothing widens it
+without that choice — not a mode change, a forwarding rule, a decode fallback, or a
+recovery path. When the exact choice is unavailable, recovery narrows within the chosen
+mode (a persisted bridged interface that is gone falls back to Automatic) or runs
+detached until it returns; it never attaches a mode the user did not choose.
 
-### 2. Recovery restores; it never escalates
+### 2. Refuse at entry what cannot take effect
 
-**Attachment recovery and Automatic interface resolution re-establish the mode the user
-chose.** When the exact choice is unavailable — the persisted bridged interface is absent —
-recovery may narrow within that mode (a specific interface falls back to Automatic) but
-never widens exposure and never silently substitutes a different mode.
+**A value the guest can never use is refused, or disclosed, where the user enters it** —
+a forwarding host port another VM already claims, a MAC address no frame can source, a
+share path that is not a folder — never accepted and left to fail at the next start.
 
-### 3. Forwarding rules bind conservatively
+### 3. An address is stated as fact only where the app assigns it
 
-**A new rule exposes the guest port on the narrowest useful listener; anything wider is
-an explicit per-rule widening** (Lima's posture). A rule that cannot take effect — a
-privileged host port the app cannot bind, a duplicate — is refused or disclosed when the
-user enters it, never accepted and left to fail at VM start.
+**Show a guest address as knowledge only when the app controls its assignment.** Where
+something else assigns it, say so; never present a guess — a sniffed lease, a value that
+may have expired — as the address.
 
-### 4. One forwarding model
+### 4. A MAC address belongs to one virtual machine
 
-**Port forwarding exists once.** Every consumer of forwarding — the Network section's
-rules today, any future feature needing port mappings (containers) — uses the same rule
-model and the same enforcement path ([AGENTS.md](../AGENTS.md#principles): one model per
-capability).
+**The app never authors a second holder of an address, and never rewrites or refuses
+one a bundle arrives with** — the guest may pin it, and a LAN's DHCP server may hold a
+reservation for it — so import, load and reconcile admit the duplicate, the VM's Network
+section names the other holder while the address stays editable, and two holders never
+run on one network at once: the second to start is refused.
 
-### 5. Outcome names in the UI; Apple's terms at the platform boundary
-
-**Mode names describe the outcome the user gets** — "Shared Network", "Bridged",
-"Host Only", "None" — **and Apple's vocabulary (NAT, vmnet, VZ attachment types) stays in
-code and at Apple-facing surfaces** ([AGENTS.md](../AGENTS.md#principles): vendor terms at
-the platform boundary).
-
-### 6. The IP display claims only what the mode guarantees
-
-**Show an address as fact only where the app controls assignment.** Shared and Host Only
-display the reservation-backed address — deterministic, so valid even while the VM is
-stopped. Bridged displays "Assigned by your network". Never present a guess — a sniffed
-lease, a cached value that may have expired — as knowledge.
-
-### 7. Environment interactions are disclosed at observed strength, where the user meets them
-
-**When the host environment changes what a mode or rule delivers, say so in UI copy**
-([AGENTS.md](../AGENTS.md#principles): UI copy states only what is known). Host VPN
-interaction with guest traffic, Wi-Fi bridging's MAC-sharing behavior, the macOS 26
-loopback-forwarding limitation (Apple DTS: "a known limitation of vmnet", FB7731708) —
-each is disclosed at the surface where the user hits it (the section's info popover, an
-entry-time note), not repeated per row and not escalated into consequences no one
-observed.
-
-### 8. Capability degrades by absence
-
-**A build that cannot deliver a mode does not offer it.** An unentitled build's picker
-omits Bridged and Host Only rather than presenting entries that would fail; the modes
-the build can deliver keep working unchanged ([AGENTS.md](../AGENTS.md#principles):
-capability degrades by absence).
-
-### 9. A MAC address belongs to one virtual machine
-
-**An address identifies exactly one VM in the library** — the DHCP reservation slot
-and the forwarding rules are both keyed on it, so two holders share one slot and one
-rule set. The app never writes a second holder: enforcement sits at the single
-configuration funnel, not at each surface that can write an address, and the user
-moves an address by changing or deleting the VM holding it first. An address a
-bundle arrives with is neither rewritten nor grounds to keep the bundle out — the
-guest can pin it, and under Bridged the LAN's DHCP server may hold a reservation for
-it — so import, load and reconcile admit it, and the VM's Network section names the
-other holder while the address stays editable. Two holders never run on one network
-at once: the second to start is refused.
-
-### 10. Guest-to-guest reach is network membership
+### 5. Guest-to-guest reach is network membership
 
 **A guest reaches another guest exactly when the user placed both on the same
-app-managed network.** Host Only is one such network: every guest the user puts in that
-mode shares it, reaching the host and each other and nothing wider. Isolation is
-expressed by membership — separate networks are mutually isolated — never by per-VM
-flags; a stricter grouping is a new network, not a mode variant. A network's addressing
-is part of what the user relies on, so it stays stable across app launches.
+app-managed network.** Isolation is expressed by membership — separate networks are
+mutually isolated — never by a per-VM flag; a stricter grouping is a new network, not a
+mode variant.

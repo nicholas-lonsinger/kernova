@@ -11,9 +11,10 @@ public enum PortForwardingTransport: String, Codable, Sendable, Hashable, CaseIt
 
 /// One host→guest port mapping on an app-managed network.
 ///
-/// The app's single forwarding model (docs/NETWORKING.md): every consumer of
-/// port mappings uses this rule and the enforcement path behind it — the
-/// persisted configuration, the vmnet declaration, and the wire edit alike.
+/// The app's single forwarding model (AGENTS.md, one model per capability):
+/// every consumer of port mappings uses this rule and the enforcement path
+/// behind it — the persisted configuration, the vmnet declaration, and the
+/// wire edit alike.
 public struct PortForwardingRule: Codable, Sendable, Equatable, Hashable {
     /// The transport forwarded.
     public var transport: PortForwardingTransport

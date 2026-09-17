@@ -111,6 +111,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
                 .body(
                     "A forwarded port is reachable from other devices on your network. Rule changes take effect the next time a Shared Network virtual machine starts."
                 ))
+            // A known vmnet limitation per Apple DTS (FB7731708); the same thread
+            // reports the fix in macOS 27: developer.apple.com/forums/thread/822658
             if #unavailable(macOS 27) {
                 paragraphs.append(
                     .body(
