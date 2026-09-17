@@ -322,7 +322,8 @@ session down without that hook, so a suspended session survives to revert at its
   `@Observable`: it holds no state, only `VMLibrary` and `VMLifecycleCoordinator`. VMs are addressed
   by `VMSelector` and refusals speak one `CommandError` vocabulary; consent is a non-defaulted
   `confirmed:` parameter, so a caller that supplies none gets a `ConfirmationPrompt` describing what
-  confirming entails. It presents nothing and imports no AppKit — a display a verb asks to look at
+  confirming entails, and a start's answer about the macOS account a VM owes its guest is the second
+  such parameter — `guestAccount:`, refused without by a `GuestAccountPrompt`. It presents nothing and imports no AppKit — a display a verb asks to look at
   leaves through the `surfaceDisplay` hook, one a bring-up readies without bringing the app forward
   through `readyDisplay`, a VM with no display to surface through `revealInLibrary`, a VM's bundle
   in the Finder through `revealInFinder`, an unawaited

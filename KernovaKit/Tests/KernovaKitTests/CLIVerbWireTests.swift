@@ -64,12 +64,28 @@ struct CLIVerbWireTests {
     @Test("start crosses carrying --recovery when the line asks for it")
     func startSendsItsRecoveryFlag() throws {
         let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted, tag: "start")
-        #expect(plain.sent == [.start(.idOrName("Alpha"), recovery: false)])
+        #expect(plain.sent == [.start(.idOrName("Alpha"), recovery: false, guestAccount: nil)])
         #expect(try plain.answer.payload() == .ok)
 
         let recovery = try CLIWire.exchange(
             ["start", "Alpha", "--recovery"], answering: accepted, tag: "start-rec")
-        #expect(recovery.sent == [.start(.idOrName("Alpha"), recovery: true)])
+        #expect(recovery.sent == [.start(.idOrName("Alpha"), recovery: true, guestAccount: nil)])
+    }
+
+    @Test("start crosses carrying the skip --without-account supplies up front")
+    func startSendsTheWithoutAccountAnswer() throws {
+        let skipped = try CLIWire.exchange(
+            ["start", "Alpha", "--without-account"], answering: accepted, tag: "start-noacct")
+        #expect(skipped.sent == [.start(.idOrName("Alpha"), recovery: false, guestAccount: .skip)])
+    }
+
+    @Test("start refuses a line answering for the account twice")
+    func startRefusesTwoAccountAnswers() {
+        #expect(throws: (any Error).self) {
+            try KernovaCommand.parseAsRoot([
+                "start", "Alpha", "--without-account", "--admin-password-stdin",
+            ])
+        }
     }
 
     @Test("stop crosses with the disposition its method names, its consent, and its deadline")

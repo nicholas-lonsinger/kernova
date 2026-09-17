@@ -38,7 +38,14 @@ extension KernovaCommand {
             commandName: "start",
             abstract: "Start a virtual machine.",
             discussion: "Nothing is brought in front of you; `kernova open` is the verb that puts "
-                + "a display there.")
+                + "a display there.\n\nA virtual machine that creates a macOS account on its "
+                + "first boot needs that account's password, and this tool does not ask for it: "
+                + "it runs in the App Sandbox, which denies turning terminal echo off, so a "
+                + "prompt here would print what you type. Supply it on standard input with "
+                + "--admin-password-stdin (read it into a shell variable first, so the value "
+                + "never reaches your history), skip the account with --without-account, or "
+                + "start the virtual machine in Kernova, which asks in a sheet. Without one of "
+                + "those the start exits 5.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -48,19 +55,72 @@ extension KernovaCommand {
         @Flag(name: .long, help: "Cold-boot a macOS guest into Recovery.")
         var recovery = false
 
+        /// Supply the guest account's password on standard input.
+        @Flag(
+            name: .long,
+            help: ArgumentHelp(
+                "Read the macOS account's password from standard input.",
+                discussion: "The trailing newline is stripped. There is no flag that takes the "
+                    + "password as a value: an argument is readable by every process on this Mac. "
+                    + "Standard input keeps it out of `ps`, but not out of your shell history if "
+                    + "you type it into the command line — `printf 'secret' | kernova start …` is "
+                    + "recorded like any other command. At a terminal, read it into a variable "
+                    + "first — `read -rs PASSWORD` shows no prompt, so type the password and "
+                    + "press Return — then `printf '%s' \"$PASSWORD\" | kernova start <vm> "
+                    + "--admin-password-stdin`. History then holds the variable's name, never its "
+                    + "value."
+            ))
+        var adminPasswordStdin = false
+
+        /// Start without creating the account the VM was set up with.
+        @Flag(
+            name: .long,
+            help: ArgumentHelp(
+                "Start without creating the macOS account the virtual machine was set up with.",
+                discussion: "Its one chance to be created is the boot this starts, so the "
+                    + "account is gone once that boot comes up and Setup Assistant asks for one "
+                    + "instead."))
+        var withoutAccount = false
+
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
-        /// The request this command line stands for.
+        /// Refuses a line that answers for the account twice.
+        func validate() throws {
+            guard !(adminPasswordStdin && withoutAccount) else {
+                throw ValidationError(
+                    "--admin-password-stdin creates the account and --without-account skips it; "
+                        + "pass one or the other.")
+            }
+        }
+
+        /// The request this command line stands for, carrying whatever answer
+        /// the flags supplied.
         func verb() throws -> VMCommandRequest.Verb {
-            .start(
-                try SelectorParsing.selector(from: vm, forcingID: options.id),
-                recovery: recovery)
+            try verb(guestAccount: suppliedGuestAccount())
         }
 
         /// Starts the VM.
+        ///
+        /// One round trip: a refusal is final, because the tool has no question
+        /// of its own to raise (``GuestAccountEntry``). The account is answered
+        /// by a flag on this line or not by this tool at all.
         func run() throws {
             try perform()
+        }
+
+        /// The answer the command line supplied before anything was asked, or
+        /// `nil` when it supplied none.
+        private func suppliedGuestAccount() -> GuestAccountAnswer? {
+            if withoutAccount { return .skip }
+            return adminPasswordStdin
+                ? .password(GuestAccountEntry.passwordFromStandardInput()) : nil
+        }
+
+        private func verb(guestAccount: GuestAccountAnswer?) throws -> VMCommandRequest.Verb {
+            .start(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                recovery: recovery, guestAccount: guestAccount)
         }
     }
 

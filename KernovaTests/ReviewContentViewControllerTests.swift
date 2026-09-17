@@ -220,6 +220,103 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
     }
 
+    // MARK: - Guest Account
+
+    /// A wizard model on an image that can be provisioned, with the account
+    /// toggle on and the form filled.
+    private func makeAccountModel(
+        password: String = "analytical-engine", remoteLogin: Bool = false
+    ) -> VMCreationViewModel {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
+        vm.unattendedSetupEnabled = true
+        vm.guestAccountFullName = "Ada Lovelace"
+        vm.guestAccountUsername = "ada"
+        vm.guestAccountPassword = password
+        vm.guestAccountVerifyPassword = password
+        vm.guestAccountLogsInAutomatically = true
+        vm.guestAccountEnablesRemoteLogin = remoteLogin
+        return vm
+    }
+
+    /// Every string the view tree puts in front of a user: label text and
+    /// placeholders, button titles, and tooltips.
+    private func renderedStrings(in view: NSView) -> [String] {
+        var strings: [String] = []
+        if let tip = view.toolTip { strings.append(tip) }
+        if let field = view as? NSTextField {
+            strings.append(field.stringValue)
+            if let placeholder = field.placeholderString { strings.append(placeholder) }
+        }
+        if let button = view as? NSButton { strings.append(button.title) }
+        for subview in view.subviews {
+            strings.append(contentsOf: renderedStrings(in: subview))
+        }
+        return strings
+    }
+
+    /// The bullet run the Account section shows in place of the password.
+    private func redactedPasswordLabel(in view: NSView) -> NSTextField? {
+        firstSubview(NSTextField.self, in: view) { field in
+            let text = field.stringValue
+            return !text.isEmpty && text.allSatisfy { $0 == "\u{2022}" }
+        }
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The Account section names the account the guest will be created with")
+    func accountSectionRendersTheAccount() {
+        let vc = ReviewContentViewController(creationVM: makeAccountModel(remoteLogin: true))
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "Account", in: vc.view) != nil)
+        #expect(findLabel(withText: "Ada Lovelace", in: vc.view) != nil)
+        #expect(findLabel(withText: "ada", in: vc.view) != nil)
+        #expect(findLabel(withText: "Automatic login", in: vc.view) != nil)
+        #expect(findLabel(withText: "Remote Login (SSH)", in: vc.view) != nil)
+        #expect(redactedPasswordLabel(in: vc.view) != nil)
+    }
+
+    @Test("A wizard creating no account shows no Account section")
+    func accountSectionAbsentWhenNoAccount() {
+        let vm = makeAccountModel()
+        vm.unattendedSetupEnabled = false
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "Account", in: vc.view) == nil)
+        #expect(findLabel(withText: "Ada Lovelace", in: vc.view) == nil)
+        #expect(redactedPasswordLabel(in: vc.view) == nil)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The password reaches no label, placeholder, button title or tooltip in the tree")
+    func passwordIsNeverRendered() {
+        let password = "correct-horse-battery-staple"
+        let vc = ReviewContentViewController(creationVM: makeAccountModel(password: password))
+        vc.loadViewIfNeeded()
+
+        let strings = renderedStrings(in: vc.view)
+        // The walk has to have found the section, or it proves nothing.
+        #expect(strings.contains("Ada Lovelace"))
+        #expect(!strings.contains { $0.contains(password) })
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The bullets stand for the password without echoing its length")
+    func passwordLengthIsNotEchoed() throws {
+        let shortVC = ReviewContentViewController(creationVM: makeAccountModel(password: "abcd"))
+        shortVC.loadViewIfNeeded()
+        let longVC = ReviewContentViewController(
+            creationVM: makeAccountModel(password: String(repeating: "z", count: 40)))
+        longVC.loadViewIfNeeded()
+
+        let short = try #require(redactedPasswordLabel(in: shortVC.view)).stringValue
+        let long = try #require(redactedPasswordLabel(in: longVC.view)).stringValue
+        #expect(short == long)
+        #expect(short.count != 4)
+    }
+
     @Test("Start-after-create switch writes back to the model")
     func startToggleWriteBack() {
         let vm = VMCreationViewModel()  // startAfterCreate defaults to true

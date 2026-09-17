@@ -48,7 +48,10 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// Subscribe: a snapshot frame, then one frame per library event.
         case events
 
-        case start(VMSelector, recovery: Bool)
+        /// `guestAccount` answers for the macOS account the VM owes its guest;
+        /// `nil` supplies no answer, which a VM that owes one refuses with
+        /// ``CommandErrorDTO/guestAccountPasswordRequired(prompt:)``.
+        case start(VMSelector, recovery: Bool, guestAccount: GuestAccountAnswer?)
         case cancelGuestSetup(VMSelector, confirmed: Bool)
         /// `timeout` bounds the wait for the guest to power off, in seconds;
         /// `nil` returns as soon as the guest has been asked to go down.

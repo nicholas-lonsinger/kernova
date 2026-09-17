@@ -131,7 +131,9 @@ final class VMIntentGateway {
 
     func start(_ id: UUID, recovery: Bool) async throws {
         try await perform(.start, on: id) {
-            try await self.commands.start(.id(id), recovery: recovery)
+            // Nothing to ask with: Shortcuts gathers a confirmation and not a
+            // password, so a VM owing an account refuses and says so.
+            try await self.commands.start(.id(id), recovery: recovery, guestAccount: nil)
         }
     }
 

@@ -60,7 +60,10 @@ extension VMCommandCore {
     // MARK: - Create
 
     @discardableResult
-    func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary {
+    func create(
+        configuration: VMConfiguration, startAfterCreate: Bool,
+        guestAccount: GuestAccountAnswer?
+    ) throws -> VMSummary {
         let bundleURL: URL
         do {
             bundleURL = try storageService.bundleURL(for: configuration)
@@ -103,7 +106,11 @@ extension VMCommandCore {
                 Task { [weak self] in
                     guard let self else { return }
                     do {
-                        try await self.start(phantom)
+                        // The wizard's answer rides this one start — the only
+                        // one the create authorises — and goes no further: a
+                        // bundle on disk holds no password, so the next Start
+                        // asks for one like any other.
+                        try await self.start(phantom, guestAccount: guestAccount)
                     } catch let failure as CommandError {
                         self.report(failure, on: phantom)
                     } catch {

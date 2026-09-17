@@ -50,14 +50,22 @@ struct AlertConfiguration {
     let buttons: [AlertButton]
     /// Shown between the message and the buttons; `nil` for a text-only alert.
     let accessoryView: NSView?
+    /// The control the sheet opens with keyboard focus in.
+    ///
+    /// An alert whose accessory view is something to fill in has to name it: an
+    /// `NSAlert` puts the focus on its default button otherwise, leaving a sheet
+    /// that exists to take typing with nowhere for the first keystroke to land.
+    let initialFirstResponder: NSView?
 
     init(
-        title: String, message: String, buttons: [AlertButton], accessoryView: NSView? = nil
+        title: String, message: String, buttons: [AlertButton], accessoryView: NSView? = nil,
+        initialFirstResponder: NSView? = nil
     ) {
         self.title = title
         self.message = message
         self.buttons = buttons
         self.accessoryView = accessoryView
+        self.initialFirstResponder = initialFirstResponder
     }
 
     /// Draws a core confirmation.
@@ -146,17 +154,20 @@ func makeSheetAlertDismissal(
     }
 }
 
-/// Presents an `NSAlert` as a window-modal sheet on `window`.
+/// Presents an `NSAlert` as a window-modal sheet on `window`, answering with
+/// the alert it put up — what a caller ending the sheet itself passes to
+/// `endSheet(_:returnCode:)`.
 ///
 /// The two hooks fire either side of the chosen button's action — see
 /// ``makeSheetAlertDismissal(buttons:didDismiss:completion:)``.
 @MainActor
+@discardableResult
 func presentSheetAlert(
     _ config: AlertConfiguration,
     in window: NSWindow,
     didDismiss: (() -> Void)? = nil,
     completion: (() -> Void)? = nil
-) {
+) -> NSAlert {
     assert(
         config.buttons.filter { $0.role == .default }.count <= 1,
         "An alert takes at most one Return key: '\(config.title)'")
@@ -171,11 +182,18 @@ func presentSheetAlert(
         configureNSAlertButton(nsButton, role: button.role)
     }
 
+    // After the buttons, so the alert's window is built from the finished
+    // layout — reading `alert.window` is what creates it.
+    if let responder = config.initialFirstResponder {
+        alert.window.initialFirstResponder = responder
+    }
+
     let dismissal = makeSheetAlertDismissal(
         buttons: config.buttons, didDismiss: didDismiss, completion: completion)
     alert.beginSheetModal(for: window) { response in
         dismissal(response)
     }
+    return alert
 }
 
 /// Applies the key-equivalent and destructive tint for a role to an
@@ -200,6 +218,11 @@ func configureNSAlertButton(_ button: NSButton, role: AlertButtonRole) {
 ///
 /// Responses are zero-indexed from `.alertFirstButtonReturn` (1000), so
 /// `response.rawValue - 1000` is the index of the button the user picked.
+///
+/// A response naming no button ran no action, because nothing was chosen. An
+/// alert whose answer something is waiting on gets that answer from whatever
+/// ended the sheet — `DetailAlertsPresenter.stop()` for a window going away —
+/// rather than from a guess made here about what a framework response meant.
 @MainActor
 func dispatchAction(for response: NSApplication.ModalResponse, buttons: [AlertButton]) {
     let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue

@@ -6,12 +6,21 @@ import KernovaKit
 extension VMCommandCore {
     // MARK: - Start
 
-    func start(_ selector: VMSelector, recovery: Bool) async throws {
-        try await start(try resolve(selector), recovery: recovery)
+    func start(
+        _ selector: VMSelector, recovery: Bool, guestAccount: GuestAccountAnswer?
+    ) async throws {
+        try await start(try resolve(selector), recovery: recovery, guestAccount: guestAccount)
     }
 
     /// The start every surface reaches, with the instance already resolved.
-    func start(_ instance: VMInstance, recovery: Bool = false) async throws {
+    ///
+    /// `guestAccount` is spelled by every caller, defaulted by none: a start
+    /// that silently answered `nil` for a VM owing an account would refuse, and
+    /// one that silently answered anything else would spend the guest's one
+    /// account-creating boot on nobody's decision.
+    func start(
+        _ instance: VMInstance, recovery: Bool = false, guestAccount: GuestAccountAnswer?
+    ) async throws {
         try require(.start, on: instance)
         // Both phases a bring-up stands in: a boot with a save file leaves
         // `.starting` for `.restoringSavedState` before its first await.
@@ -37,12 +46,17 @@ extension VMCommandCore {
         // address, so a conflicting one must be refused before it reaches the
         // installer, not only on the auto-boot that follows.
         try refuseDuplicateIdentity(instance)
+        // Before the setup dispatch, so an install nobody answered for is
+        // turned back rather than running and chaining a boot that is.
+        let provisioning = try guestProvisioning(
+            for: instance, recovery: recovery, answer: guestAccount)
 
         // Dispatch on the surviving setup context, not status, so `.error`
-        // retries route through the same pipeline too.
+        // retries route through the same pipeline too. The answer travels on to
+        // the boot the pipeline chains, which is what spends it.
         switch instance.configuration.pendingGuestSetup {
         case .macOSInstall(let context):
-            installAndAutoBoot(instance, context: context)
+            installAndAutoBoot(instance, context: context, guestAccount: guestAccount)
             return
         case .linuxImageDownload(let context):
             downloadAndAutoBoot(instance, context: context)
@@ -56,7 +70,8 @@ extension VMCommandCore {
         readyDisplay?(instance)
         applyMatchWindowBootResolution(to: instance)
         do {
-            try await lifecycle.start(instance, bootIntoRecovery: recovery)
+            try await lifecycle.start(
+                instance, bootIntoRecovery: recovery, provisioning: provisioning)
         } catch {
             throw startFailure(error, on: instance)
         }
@@ -125,6 +140,107 @@ extension VMCommandCore {
             throw CommandError.conflict(
                 vm: summary(instance), with: summary(conflict), reason: .macAddress)
         }
+    }
+
+    // MARK: - Guest Account
+
+    /// What this start hands the guest for the account its VM owes — `nil` when
+    /// it hands nothing, refusing when the caller answered nothing at all.
+    ///
+    /// macOS reads ``GuestAccountIntent`` on the first boot after restore and
+    /// on no other, so a boot carrying no account does not postpone it — it
+    /// destroys it. Every door reaches this, which is what makes the rule
+    /// uniform: whichever one can ask turns the refusal into its own question
+    /// (``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``), and one
+    /// that cannot passes the refusal to whoever called it.
+    ///
+    /// Retracts nothing, whichever way it is answered. The account is spent by
+    /// the boot, and a boot that carries none spends it just the same, so the
+    /// retraction belongs to the boot that came up
+    /// (``VirtualizationService/start(_:bootIntoRecovery:provisioning:)``) and
+    /// to nothing else. A start that fails after either answer leaves the
+    /// account where it was and the next start asks again — which is what the
+    /// answer riding the call rather than the VM buys.
+    ///
+    /// A password Virtualization will not accept is refused here, so the boot
+    /// that would have spent the window on it never runs. The swallow-and-warn
+    /// in ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
+    /// stays as the last line of defence, where coming up unprovisioned beats
+    /// not coming up at all.
+    ///
+    /// A recovery boot carries no account and spends no window, so it asks
+    /// nothing.
+    private func guestProvisioning(
+        for instance: VMInstance, recovery: Bool, answer: GuestAccountAnswer?
+    ) throws -> GuestProvisioningCredentials? {
+        guard !recovery, instance.startAsksForGuestAccount,
+            let account = instance.configuration.pendingGuestAccount
+        else { return nil }
+        switch answer {
+        case nil:
+            throw unansweredGuestAccount(account, on: instance)
+        case .skip:
+            Self.logger.notice(
+                "Starting '\(instance.name, privacy: .public)' without the account '\(account.username, privacy: .public)' it was set up with — the answer was to skip it"
+            )
+            return nil
+        case .password(let password):
+            let credentials = GuestProvisioningCredentials(intent: account, password: password)
+            // Before the boot rather than inside it: a password Virtualization
+            // turns down produces no account, and a boot that ran anyway would
+            // have spent the one window macOS reads one in on a typo. Refused
+            // here, the VM has not moved and the answer can be given again.
+            if let refusal = MacOSGuestProvisioning.validate(credentials) {
+                Self.logger.notice(
+                    "Refused to start '\(instance.name, privacy: .public)': macOS turned down the password for '\(account.username, privacy: .public)'"
+                )
+                throw CommandError.invalidArgument(refusal.message)
+            }
+            return credentials
+        }
+    }
+
+    /// Refuses an unanswered account before anything else happens, for a verb
+    /// that changes something on its way to the start.
+    ///
+    /// The gathering loop re-issues the whole call with the answer, so work the
+    /// first pass did would make the second a no-op — a removal that found
+    /// nothing stops short of the start it was meant to retry. Refusing up
+    /// front leaves the re-issued call exactly the work the first one had.
+    func refuseUnansweredGuestAccount(
+        _ instance: VMInstance, answer: GuestAccountAnswer?
+    ) throws {
+        guard answer == nil, instance.startAsksForGuestAccount,
+            let account = instance.configuration.pendingGuestAccount
+        else { return }
+        throw unansweredGuestAccount(account, on: instance)
+    }
+
+    /// The refusal asking for `account`, logged as it is raised.
+    private func unansweredGuestAccount(
+        _ account: GuestAccountIntent, on instance: VMInstance
+    ) -> CommandError {
+        Self.logger.notice(
+            "Refused to start '\(instance.name, privacy: .public)': nobody answered for the account '\(account.username, privacy: .public)' it was set up with"
+        )
+        return .guestAccountPasswordRequired(
+            GuestAccountPrompt(
+                vm: summary(instance), username: account.username, fullName: account.fullName,
+                message: Self.guestAccountMessage(vmName: instance.name, account: account)))
+    }
+
+    /// What every surface is told about an account nobody has answered for.
+    ///
+    /// Names the account as the wizard gathered it, states the two facts a
+    /// decision rests on — the boot creates it, and Kernova holds no password
+    /// for it — and ends with the one remedy true wherever this is read, since
+    /// the app can always ask. A door that can answer for itself adds its own
+    /// way on top, as the `kernova` tool adds `--yes` to a consent refusal.
+    private static func guestAccountMessage(vmName: String, account: GuestAccountIntent) -> String {
+        "\u{201C}\(vmName)\u{201D} creates the macOS account \u{201C}\(account.fullName)\u{201D} "
+            + "(\(account.username)) on its first boot, and Kernova doesn\u{2019}t save that "
+            + "account\u{2019}s password. Start it in Kernova to enter the password, or to skip "
+            + "setting up the account."
     }
 
     /// The first VM holding a live machine identity matching `instance`'s.
@@ -284,8 +400,11 @@ extension VMCommandCore {
     /// message on screen; cancel and transient failures (the running-VM cap)
     /// return it to `.initialBoot` for a retry that resumes the download from
     /// the `.kernovadownload` bundle if present.
+    ///
+    /// `guestAccount` is the answer the start that began this setup carried; it
+    /// rides through to the boot chained at the end, which is what spends it.
     private func runGuestSetup(
-        on instance: VMInstance,
+        on instance: VMInstance, guestAccount: GuestAccountAnswer?,
         _ pipeline: @escaping (VMLifecycleCoordinator) async throws -> Void
     ) {
         if instance.setupTask != nil { return }  // guard against rapid double-click
@@ -350,7 +469,7 @@ extension VMCommandCore {
             // while touching a task no longer doing anything cancellable.
             instance.setupTask = nil
             do {
-                try await self.start(instance)
+                try await self.start(instance, guestAccount: guestAccount)
             } catch let failure as CommandError {
                 self.report(failure, on: instance)
             } catch {
@@ -361,16 +480,21 @@ extension VMCommandCore {
         }
     }
 
-    /// Drives the macOS install pipeline, then chains the boot.
-    private func installAndAutoBoot(_ instance: VMInstance, context: MacOSInstallContext) {
-        runGuestSetup(on: instance) { lifecycle in
+    /// Drives the macOS install pipeline, then chains the boot that carries
+    /// `guestAccount`.
+    private func installAndAutoBoot(
+        _ instance: VMInstance, context: MacOSInstallContext, guestAccount: GuestAccountAnswer?
+    ) {
+        runGuestSetup(on: instance, guestAccount: guestAccount) { lifecycle in
             try await lifecycle.installMacOS(on: instance, context: context)
         }
     }
 
     /// Drives the Linux installer-image pipeline, then chains the boot.
+    ///
+    /// No account to carry: a Linux guest is offered none.
     private func downloadAndAutoBoot(_ instance: VMInstance, context: LinuxInstallContext) {
-        runGuestSetup(on: instance) { lifecycle in
+        runGuestSetup(on: instance, guestAccount: nil) { lifecycle in
             try await lifecycle.downloadLinuxImage(on: instance, context: context)
         }
     }
@@ -678,10 +802,21 @@ extension VMCommandCore {
     /// it back suspended on the baseline's memory image, and that is the state
     /// the mode promises — so it is resumed rather than booted, and never waited
     /// on for a `.stopped` that is not coming.
+    ///
+    /// A VM still owing its guest the account it was set up with is refused
+    /// before the stop. Running is not evidence the window is spent — an
+    /// install can finish and the guest be booted into Recovery, which reads no
+    /// account — and finding that out after the guest is down would leave the
+    /// VM powered off half way through a restart.
     func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
         try require(.restart, on: instance)
+        // Before the stop, not at the boot half: a VM still owing its account
+        // has a question outstanding, and discovering that after the guest is
+        // down leaves it powered off mid-restart. Refused here it keeps
+        // running, and the door that can ask re-issues the whole restart.
+        try refuseUnansweredGuestAccount(instance, answer: nil)
         try await stop(instance, disposition: .graceful, confirmed: true)
         try await awaitPowerOff(instance, within: timeout, verb: .restart)
         await waitForObservedChange { [library] in
@@ -689,7 +824,10 @@ extension VMCommandCore {
                 && (instance.canStart || instance.canResume)
         }
         if instance.canStart {
-            try await start(instance)
+            // Nothing to answer for: the gate above turned back every VM that
+            // still owes an account, and nothing between there and here can
+            // give it one.
+            try await start(instance, guestAccount: nil)
         } else {
             try await resume(.id(instance.id))
         }

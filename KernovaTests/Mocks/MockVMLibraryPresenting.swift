@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 @testable import Kernova
 
@@ -37,6 +38,13 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var creationWizardCount = 0
     /// Pairing prompts raised, each still unanswered until a test answers it.
     private(set) var usbPairingRequests: [USBAccessoryPairingRequest] = []
+    /// Guest-account prompts raised, in order.
+    private(set) var guestAccountPasswordRequests: [GuestAccountPasswordRequest] = []
+    /// What this mock answers a guest-account prompt with, answered on the spot.
+    ///
+    /// The start that raises one suspends on the answer, so a recorded-and-left
+    /// request would hang the call under test rather than fail it.
+    var guestAccountPasswordAnswer: GuestAccountPasswordAnswer = .answered(.skip)
     private(set) var focusGuestDisplayInstances: [VMInstance] = []
 
     func presentError(_ message: String, title: String) {
@@ -75,6 +83,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     }
     func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
         usbPairingRequests.append(request)
+    }
+    func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest) {
+        guestAccountPasswordRequests.append(request)
+        request.answer(guestAccountPasswordAnswer)
     }
     func presentCreationWizard() { creationWizardCount += 1 }
     func focusGuestDisplay(for instance: VMInstance) {

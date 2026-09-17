@@ -82,10 +82,12 @@ struct VMCommandingInProcessTests {
         let failure = StartFailedAttachment(
             kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open")
 
-        await commands.removeStartFailedAttachmentAndStart(.id(vm.id), attachment: failure)
+        try await commands.removeStartFailedAttachmentAndStart(
+            .id(vm.id), attachment: failure, guestAccount: .skip)
 
         let call = try #require(mock.removeStartFailedAttachmentCalls.first)
         #expect(call.selector == .id(vm.id))
         #expect(call.attachment == failure)
+        #expect(call.guestAccount == .skip)
     }
 }

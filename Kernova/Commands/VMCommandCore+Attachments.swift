@@ -577,15 +577,25 @@ extension VMCommandCore {
     /// are serialized, so this confirmation can arrive long after the failed
     /// start, and retrying after a removal that found nothing would re-raise the
     /// same failure.
+    ///
+    /// The removal reports its own trouble and stops there — the attachment is
+    /// still attached, so the start it would retry has nothing new to try. What
+    /// the retried start refuses with is thrown, which is how the door that
+    /// raised this gathers the account that start asks for.
     func removeStartFailedAttachmentAndStart(
-        _ selector: VMSelector, attachment failure: StartFailedAttachment
-    ) async {
+        _ selector: VMSelector, attachment failure: StartFailedAttachment,
+        guestAccount: GuestAccountAnswer?
+    ) async throws {
         guard let instance = try? resolve(selector) else {
             Self.logger.debug(
                 "Ignoring start-failed removal for already-removed VM '\(selector.displayText, privacy: .public)'"
             )
             return
         }
+        // Before the removal, not after it: the door that gathers the answer
+        // re-issues this call, and a removal already done would refuse the
+        // second time round and never reach the start it was meant to retry.
+        try refuseUnansweredGuestAccount(instance, answer: guestAccount)
         do {
             switch failure.kind {
             case .storageDisk:
@@ -614,13 +624,7 @@ extension VMCommandCore {
             )
             if instance.isColdPaused { instance.enter(.stopped) }
         }
-        do {
-            try await start(instance)
-        } catch let refusal as CommandError {
-            report(refusal, on: instance)
-        } catch {
-            report(.operationFailed(verb: .start, message: error.localizedDescription), on: instance)
-        }
+        try await start(instance, guestAccount: guestAccount)
     }
 
     // MARK: - Consent

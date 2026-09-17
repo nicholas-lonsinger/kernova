@@ -1,12 +1,17 @@
 import Foundation
+import KernovaKit
 import Virtualization
 import os
 
 /// Wizard steps for creating a new VM.
+///
+/// The full set; which of them a given configuration walks is
+/// ``VMCreationViewModel/steps``.
 enum VMCreationStep: String, CaseIterable, Sendable {
     case osSelection
     case bootConfig
     case resources
+    case guestAccount
     case review
 
     var title: String {
@@ -14,6 +19,7 @@ enum VMCreationStep: String, CaseIterable, Sendable {
         case .osSelection: "OS"
         case .bootConfig: "Boot"
         case .resources: "Resources"
+        case .guestAccount: "Account"
         case .review: "Review"
         }
     }
@@ -122,16 +128,54 @@ final class VMCreationViewModel {
 
     // MARK: - Wizard State
 
+    /// The step the wizard is showing, always one of ``steps``.
+    ///
+    /// Only ``goNext()``, ``goBack()`` and ``clampToWalkedStep()`` move it: the
+    /// account step leaves the walk the moment a pick that cannot deliver an
+    /// account lands, which can happen while the user is standing on it — a
+    /// local file's inspection finishing is the ordinary way — and a step
+    /// nothing brings back would leave Next and Back dead with no dot lit and
+    /// only Cancel out.
     var currentStep: VMCreationStep = .osSelection
+
+    /// Moves the user back off a step that has just left the walk, and nowhere
+    /// otherwise.
+    ///
+    /// Called wherever the walk can change, so what the user is looking at is
+    /// never a step the wizard does not walk. The move is *backwards* only, to
+    /// the last walked step before it: forwards is a navigation the user makes,
+    /// and a pick landing asynchronously must not mount a different step under
+    /// someone who is typing.
+    private func clampToWalkedStep() {
+        let walked = steps
+        guard !walked.contains(currentStep) else { return }
+        // `.osSelection` is in every walk, so it is the floor rather than a
+        // fallback that stands for nothing.
+        var clamped = VMCreationStep.osSelection
+        for step in VMCreationStep.allCases {
+            if step == currentStep { break }
+            if walked.contains(step) { clamped = step }
+        }
+        currentStep = clamped
+    }
 
     // MARK: - Step 1: OS Selection
 
-    var selectedOS: VMGuestOS = .macOS
+    /// The guest to create. Only a macOS guest is offered an account, so this
+    /// decides the walk — see ``clampToWalkedStep()``.
+    var selectedOS: VMGuestOS = .macOS {
+        didSet { clampToWalkedStep() }
+    }
 
     // MARK: - Step 2: Boot Config
 
     var selectedBootMode: VMBootMode = .efi
-    private(set) var ipswSelection: IPSWSelection = .downloadLatest
+
+    /// The image the install runs from. Its version is what the account is
+    /// offered against, so it decides the walk — see ``clampToWalkedStep()``.
+    private(set) var ipswSelection: IPSWSelection = .downloadLatest {
+        didSet { clampToWalkedStep() }
+    }
 
     /// Which source is current, for the radios and the source labels.
     var ipswSource: IPSWSource { ipswSelection.source }
@@ -140,8 +184,12 @@ final class VMCreationViewModel {
     /// answered; `nil` until then, and after a lookup that failed.
     ///
     /// A preview on the terms ``LatestRestoreImage`` states, read for display
-    /// and to name the download destination.
-    private(set) var latestImage: LatestRestoreImage?
+    /// and to name the download destination. It carries the version the account
+    /// is offered against under that source, so it decides the walk — see
+    /// ``clampToWalkedStep()``.
+    private(set) var latestImage: LatestRestoreImage? {
+        didSet { clampToWalkedStep() }
+    }
 
     /// How large ``latestImage`` is, when the server reported a size.
     ///
@@ -208,7 +256,110 @@ final class VMCreationViewModel {
     var diskSizeInGB: Int = 100
     var networkEnabled: Bool = true
 
-    // MARK: - Step 4: Review
+    // MARK: - Step 4: Guest Account
+
+    /// Whether the user asked for the account, as the boot-config toggle
+    /// records it.
+    ///
+    /// Everything downstream reads ``unattendedSetupActive`` instead: a toggle
+    /// left on for an image that could deliver the account must not survive a
+    /// pick that cannot. Turning it off takes the account step out of the walk
+    /// — see ``clampToWalkedStep()``.
+    var unattendedSetupEnabled: Bool = false {
+        didSet { clampToWalkedStep() }
+    }
+
+    var guestAccountFullName: String = ""
+    var guestAccountUsername: String = ""
+    var guestAccountPassword: String = ""
+    /// The second spelling of the password, which exists only in this form.
+    var guestAccountVerifyPassword: String = ""
+    var guestAccountLogsInAutomatically: Bool = true
+    var guestAccountEnablesRemoteLogin: Bool = false
+
+    /// The macOS version the current pick names, or `nil` while it names none.
+    ///
+    /// Every source reports its version as text and three of the four may not
+    /// know it yet — a lookup that has still to land, a URL whose filename does
+    /// not follow Apple's convention, a file mid-inspection.
+    var selectedImageVersion: MacOSVersion? {
+        switch ipswSelection {
+        case .downloadLatest: latestImage.flatMap { MacOSVersion($0.version) }
+        case .catalogVersion(let entry): MacOSVersion(entry.version)
+        case .customURL(let image): image.version.flatMap(MacOSVersion.init)
+        case .localFile(let image): image.inspection.usable.flatMap { MacOSVersion($0.version) }
+        }
+    }
+
+    /// Whether to offer the account toggle for the current guest and pick.
+    var offersUnattendedSetup: Bool {
+        selectedOS == .macOS
+            && MacOSGuestProvisioning.offersUnattendedSetup(forImageVersion: selectedImageVersion)
+    }
+
+    /// Whether this wizard is creating an account: the user asked for one *and*
+    /// the current pick can deliver it.
+    ///
+    /// The one question every surface asks — the step list, the persisted
+    /// account, the password handed to the create verb. A pick that cannot
+    /// deliver retracts the offer here rather than by writing the toggle back,
+    /// so the answer the user gave survives a pick that takes the capability
+    /// away and a later one that brings it back.
+    var unattendedSetupActive: Bool { offersUnattendedSetup && unattendedSetupEnabled }
+
+    /// The account exactly as it would be created, whether or not the wizard is
+    /// creating one.
+    ///
+    /// Trimmed here, once, so what is validated is what is persisted — the same
+    /// treatment ``buildConfiguration()`` gives the VM name, and the reason
+    /// nothing downstream trims again.
+    private var guestAccountCredentials: GuestProvisioningCredentials {
+        GuestProvisioningCredentials(
+            fullName: guestAccountFullName.trimmingCharacters(in: .whitespaces),
+            username: guestAccountUsername.trimmingCharacters(in: .whitespaces),
+            password: guestAccountPassword,
+            logsInAutomatically: guestAccountLogsInAutomatically,
+            enablesRemoteLogin: guestAccountEnablesRemoteLogin)
+    }
+
+    /// The account to persist with the VM, minus its password, or `nil` when
+    /// the wizard is creating none.
+    var unattendedSetupIntent: GuestAccountIntent? {
+        guard unattendedSetupActive else { return nil }
+        let credentials = guestAccountCredentials
+        return GuestAccountIntent(
+            fullName: credentials.fullName,
+            username: credentials.username,
+            logsInAutomatically: credentials.logsInAutomatically,
+            enablesRemoteLogin: credentials.enablesRemoteLogin)
+    }
+
+    /// The answer the start a create chains carries for
+    /// ``unattendedSetupIntent`` — the password, the one part of the account no
+    /// bundle carries.
+    ///
+    /// `nil` when the wizard is creating no account: the start has nothing to
+    /// answer for, and answering anything would be about a VM that owes
+    /// nothing.
+    var guestAccountForCreate: GuestAccountAnswer? {
+        unattendedSetupActive ? .password(guestAccountPassword) : nil
+    }
+
+    /// What stops this account being created, in the order the user meets it —
+    /// or `nil` when Virtualization accepts it.
+    ///
+    /// The rule itself belongs to ``MacOSGuestProvisioning``, which every
+    /// surface that gathers an account asks; the one word this step owns is
+    /// what a form still being filled in says, because it is the surface
+    /// gathering all four fields.
+    var guestAccountValidationMessage: String? {
+        guard unattendedSetupActive else { return nil }
+        return MacOSGuestProvisioning.refusal(
+            for: guestAccountCredentials, verifiedBy: guestAccountVerifyPassword,
+            gathering: .wholeAccount, incomplete: "Enter the account details to continue.")
+    }
+
+    // MARK: - Step 5: Review
 
     /// Whether to auto-start the VM immediately after the wizard creates it,
     /// backing the "Start this VM after creation" toggle on the Review step.
@@ -216,11 +367,39 @@ final class VMCreationViewModel {
 
     // MARK: - Navigation
 
+    /// The steps this wizard actually walks, in order.
+    ///
+    /// The account step is **absent** rather than disabled when nothing can
+    /// deliver an account — "Capability degrades by absence" — so the indicator,
+    /// Next and Back all read one list.
+    var steps: [VMCreationStep] {
+        VMCreationStep.allCases.filter { $0 != .guestAccount || unattendedSetupActive }
+    }
+
+    /// What blocks the step's primary button, or `nil` when nothing does.
+    ///
+    /// Review's primary is Create rather than Next, and Review gathers nothing
+    /// of its own, so what blocks it is always an earlier step's form. The hint
+    /// names that step: the user walked past it, and a disabled button beside
+    /// an empty line says only that something is wrong somewhere.
     var validationMessage: String? {
+        if currentStep == .review {
+            guard let blocking = stepBlockingCreate, let reason = message(blocking) else {
+                return nil
+            }
+            return "\(blocking.title): \(reason)"
+        }
         guard !canAdvance else { return nil }
-        switch currentStep {
+        return message(currentStep)
+    }
+
+    /// What the step with the walked-past form says about itself.
+    private func message(_ step: VMCreationStep) -> String? {
+        switch step {
         case .osSelection, .review:
             return nil
+        case .guestAccount:
+            return guestAccountValidationMessage
         case .bootConfig:
             switch selectedOS {
             case .macOS:
@@ -260,13 +439,27 @@ final class VMCreationViewModel {
             bootConfigValid
         case .resources:
             !vmName.trimmingCharacters(in: .whitespaces).isEmpty
+        case .guestAccount:
+            guestAccountValidationMessage == nil
         case .review:
             true
         }
     }
 
-    var canCreate: Bool {
-        !vmName.trimmingCharacters(in: .whitespaces).isEmpty
+    /// Whether Create may run from the Review step.
+    var canCreate: Bool { stepBlockingCreate == nil }
+
+    /// The step whose form still blocks Create, or `nil` when none does.
+    ///
+    /// The account is checked as well as the name, because Review can be
+    /// reached with the toggle on and the form untouched — the wizard walks
+    /// forward, but nothing stops a user turning the account on and clicking
+    /// through. Creating then would persist an empty account and arm an empty
+    /// password, producing a prompt nothing could ever satisfy.
+    private var stepBlockingCreate: VMCreationStep? {
+        if vmName.trimmingCharacters(in: .whitespaces).isEmpty { return .resources }
+        if guestAccountValidationMessage != nil { return .guestAccount }
+        return nil
     }
 
     var effectiveBootMode: VMBootMode {
@@ -304,19 +497,19 @@ final class VMCreationViewModel {
     }
 
     private var nextStep: VMCreationStep? {
-        let allSteps = VMCreationStep.allCases
-        guard let currentIndex = allSteps.firstIndex(of: currentStep),
-            currentIndex + 1 < allSteps.count
+        let steps = self.steps
+        guard let currentIndex = steps.firstIndex(of: currentStep),
+            currentIndex + 1 < steps.count
         else { return nil }
-        return allSteps[currentIndex + 1]
+        return steps[currentIndex + 1]
     }
 
     private var previousStep: VMCreationStep? {
-        let allSteps = VMCreationStep.allCases
-        guard let currentIndex = allSteps.firstIndex(of: currentStep),
+        let steps = self.steps
+        guard let currentIndex = steps.firstIndex(of: currentStep),
             currentIndex > 0
         else { return nil }
-        return allSteps[currentIndex - 1]
+        return steps[currentIndex - 1]
     }
 
     // MARK: - Defaults
@@ -766,10 +959,13 @@ final class VMCreationViewModel {
 
         // Persist the setup intent so the next Start can drive the pipeline
         // without the wizard: a macOS install, or the download of a Linux
-        // installer image the user picked from the catalog.
+        // installer image the user picked from the catalog. The account rides
+        // beside the install rather than inside it — it outlives the install by
+        // exactly one boot.
         switch selectedOS {
         case .macOS:
             configuration.installContext = buildInstallContext()
+            configuration.pendingGuestAccount = unattendedSetupIntent
         case .linux:
             configuration.linuxInstallContext = buildLinuxInstallContext()
         }

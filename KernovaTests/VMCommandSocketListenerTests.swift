@@ -195,7 +195,7 @@ struct VMCommandSocketListenerTests {
         // A headless start is a bring-up nobody asked to see.
         try client.send(
             VMCommandRequest(
-                verb: .start(.id(alpha.id), recovery: false)))
+                verb: .start(.id(alpha.id), recovery: false, guestAccount: nil)))
         _ = try await client.nextResponse()
         #expect(harness.surfaceCount.value == 1)
     }

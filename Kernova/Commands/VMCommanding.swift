@@ -9,9 +9,12 @@ import KernovaKit
 /// ``VMCommandEnvelopeRouter`` — so each inherits identical addressing, state
 /// gates, and consent semantics.
 ///
-/// Consent is a parameter, never a presentation: a destructive verb called
-/// without it refuses with ``CommandError/confirmationRequired(_:)`` describing
-/// what confirming entails. Implementations present nothing.
+/// What a verb needs from the caller is a parameter, never a presentation: a
+/// destructive verb called without consent refuses with
+/// ``CommandError/confirmationRequired(_:)``, and a start that would spend a
+/// guest's one account-creating boot refuses with
+/// ``CommandError/guestAccountPasswordRequired(_:)`` — each describing what it
+/// is asking for. Implementations present nothing.
 ///
 /// `@MainActor` is a decision, not an accident: library state is UI-adjacent,
 /// all VZ work already runs on per-VM `VMSession` actors, and command traffic is
@@ -73,18 +76,29 @@ protocol VMCommanding: AnyObject {
     ///
     /// Puts nothing in front of the user: a bring-up is not a request to look
     /// at the guest, which is what ``open(_:)`` asks for.
-    func start(_ selector: VMSelector, recovery: Bool) async throws
+    ///
+    /// `guestAccount` answers for the macOS account the VM owes its guest, the
+    /// second thing a verb takes as a parameter rather than gathering. A VM
+    /// that owes one and is answered `nil` refuses with
+    /// ``CommandError/guestAccountPasswordRequired(_:)``, which each door turns
+    /// into the question it can ask (``VMConsentPolicy``).
+    func start(
+        _ selector: VMSelector, recovery: Bool, guestAccount: GuestAccountAnswer?
+    ) async throws
 
     /// Detaches the attachment a failed start named and starts again — the
     /// confirmed action of the start-failed alert.
     ///
-    /// The file behind the attachment is untouched. Refuses nothing and reports
-    /// nothing: the user already consented, and the confirmation can arrive long
-    /// after the failed start, so a VM that has left the library and an entry
-    /// already removed are both no-ops.
+    /// The file behind the attachment is untouched. A VM that has left the
+    /// library and an entry already removed are both no-ops: alerts are
+    /// serialized, so the confirmation can arrive long after the failed start.
+    ///
+    /// Throws what the start it chains refuses with, so the door that gathered
+    /// the consent for the removal can gather what that start asks for too.
     func removeStartFailedAttachmentAndStart(
-        _ selector: VMSelector, attachment: StartFailedAttachment
-    ) async
+        _ selector: VMSelector, attachment: StartFailedAttachment,
+        guestAccount: GuestAccountAnswer?
+    ) async throws
 
     /// Cancels the guest setup a first start is running — a macOS install, or a
     /// Linux installer image being fetched or verified.
@@ -110,7 +124,7 @@ protocol VMCommanding: AnyObject {
 
     func pause(_ selector: VMSelector) async throws
 
-    /// Resumes the VM, presenting nothing as ``start(_:recovery:)`` does — and
+    /// Resumes the VM, presenting nothing as ``start(_:recovery:guestAccount:)`` does — and
     /// joining a restore already in flight the same way.
     func resume(_ selector: VMSelector) async throws
 
@@ -118,7 +132,7 @@ protocol VMCommanding: AnyObject {
     func suspend(_ selector: VMSelector) async throws
 
     /// Shuts the guest down and starts it again once it has powered off,
-    /// bringing it back up the way ``start(_:recovery:)`` would.
+    /// bringing it back up the way ``start(_:recovery:guestAccount:)`` would.
     ///
     /// `timeout` seconds bounds the shutdown half alone. A guest still up when
     /// it expires refuses with ``CommandError/timedOut(vm:verb:seconds:)`` and
@@ -167,8 +181,16 @@ protocol VMCommanding: AnyObject {
     ///
     /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
     /// write starts nothing.
+    ///
+    /// `guestAccount` is the answer the chained start carries for the account
+    /// `configuration` names, and is dropped along with the call when nothing
+    /// is started: a bundle on disk holds no secret, and the next Start asks
+    /// for one.
     @discardableResult
-    func create(configuration: VMConfiguration, startAfterCreate: Bool) throws -> VMSummary
+    func create(
+        configuration: VMConfiguration, startAfterCreate: Bool,
+        guestAccount: GuestAccountAnswer?
+    ) throws -> VMSummary
 
     /// Copies the VM's bundle into a new one, answering the row the copy fills.
     @discardableResult

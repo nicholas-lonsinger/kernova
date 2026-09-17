@@ -322,6 +322,58 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(vm.ipswSelection == .downloadLatest)
     }
 
+    // MARK: - The account offer
+
+    private static let accountToggleTitle = "Set up macOS automatically"
+
+    @available(macOS 27.0, *)
+    @Test("An image that can be provisioned offers the account toggle")
+    func provisionableImageOffersTheAccountToggle() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: Self.accountToggleTitle, in: vc.view) != nil)
+    }
+
+    @Test("An image that can't be provisioned shows no account toggle at all")
+    func unprovisionableImageShowsNoAccountToggle() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        // Absent, never disabled — a toggle explaining why it can't be used is
+        // a control the user is asked to reason about for nothing.
+        #expect(findLabel(withText: Self.accountToggleTitle, in: vc.view) == nil)
+        #expect(firstSubview(NSSwitch.self, in: vc.view) == nil)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("The account toggle writes back, and a pick that can't deliver takes the offer away")
+    func accountToggleWritesBackAndRetracts() throws {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        let toggle = try #require(firstSubview(NSSwitch.self, in: vc.view))
+        #expect(toggle.state == .off)
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+        #expect(vm.unattendedSetupEnabled)
+        #expect(vm.unattendedSetupActive)
+
+        // Picking an older image rebuilds this card away, and the wizard stops
+        // creating an account without the toggle's answer being rewritten.
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.4", build: "25E200"))
+        let rebuilt = IPSWSelectionContentViewController(creationVM: vm)
+        rebuilt.loadViewIfNeeded()
+        #expect(findLabel(withText: Self.accountToggleTitle, in: rebuilt.view) == nil)
+        #expect(!vm.unattendedSetupActive)
+    }
+
     // MARK: - Helpers
 
     @MainActor

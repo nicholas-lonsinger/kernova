@@ -130,6 +130,37 @@ struct CLIExitCodeTests {
         }
     }
 
+    @Test("An unanswered guest account exits 5, naming both flags that answer it")
+    func guestAccountRefusalNamesItsFlags() {
+        let refused = VMCommandResponse(
+            result: .failure(
+                .guestAccountPasswordRequired(
+                    prompt: GuestAccountPrompt(
+                        vm: vm, username: "ada", fullName: "Ada Lovelace",
+                        message: "\u{201C}Alpha\u{201D} creates the macOS account."))))
+        do {
+            _ = try refused.payload()
+            Issue.record("expected a refusal")
+        } catch let failure as CLIFailure {
+            // The same code a missing consent takes: the verb was refused for
+            // want of something only the caller can supply.
+            #expect(failure.code == .refusedByState)
+            #expect(failure.message.hasPrefix("\u{201C}Alpha\u{201D} creates the macOS account."))
+            // Names the shell idiom too: the tool raises no prompt of its own,
+            // so the command line is the whole of what it can offer.
+            let hint =
+                "Pass --admin-password-stdin to supply the password on standard input, "
+                + "or --without-account to start without the account. At a terminal, "
+                + "keep the password out of your history by reading it into a variable "
+                + "first (no prompt appears; type it and press Return): read -rs "
+                + "PASSWORD; printf '%s' \"$PASSWORD\" | kernova start \u{2026} "
+                + "--admin-password-stdin"
+            #expect(failure.message.hasSuffix(hint))
+        } catch {
+            Issue.record("expected a CLIFailure, got \(error)")
+        }
+    }
+
     @Test("A successful answer hands its payload back untouched")
     func responsePayloadReturnsTheResult() throws {
         let listing = VMCommandResponse(result: .summaries([vm]))

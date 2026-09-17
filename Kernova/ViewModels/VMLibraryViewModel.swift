@@ -642,7 +642,8 @@ final class VMLibraryViewModel {
     func createVM(from wizard: VMCreationViewModel) throws {
         try commands.create(
             configuration: wizard.buildConfiguration(),
-            startAfterCreate: wizard.startAfterCreate)
+            startAfterCreate: wizard.startAfterCreate,
+            guestAccount: wizard.guestAccountForCreate)
     }
 
     // MARK: - Lifecycle
@@ -709,17 +710,77 @@ final class VMLibraryViewModel {
     /// anywhere else goes through ``VMCommanding`` and moves nothing.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
-        await run(on: instance) {
-            try await self.commands.start(.id(instance.id), recovery: bootIntoRecovery)
+        await runGatheringGuestAccount(on: instance) { guestAccount in
+            try await self.commands.start(
+                .id(instance.id), recovery: bootIntoRecovery, guestAccount: guestAccount)
         }
     }
 
     /// Confirmed action of the start-failed alert, performed by the core that
     /// offered the recovery.
+    ///
+    /// Through the same loop as an ordinary Start, because it leads to the same
+    /// verb: the removal is consented to, and the start after it can still be
+    /// waiting on an account.
     func removeStartFailedAttachmentAndStart(
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
-        await commands.removeStartFailedAttachmentAndStart(.id(instance.id), attachment: failure)
+        await runGatheringGuestAccount(on: instance) { guestAccount in
+            try await self.commands.removeStartFailedAttachmentAndStart(
+                .id(instance.id), attachment: failure, guestAccount: guestAccount)
+        }
+    }
+
+    /// What a user walking away from the account question raises, so the door
+    /// that asked can tell it from a refusal worth an alert.
+    private struct GuestAccountPromptDismissed: Error {}
+
+    /// Runs a start through ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``,
+    /// raising the sheet for the account it refuses without.
+    ///
+    /// Asking is the door's job and deciding is the verb's: this presents the
+    /// sheet and hands the answer straight back to the start that asked for it,
+    /// writing nothing itself. A VM with no account outstanding never sees the
+    /// sheet, because the verb never refuses.
+    ///
+    /// A cancelled sheet ends the start with nothing on screen — the user just
+    /// said no to it — while every other refusal takes the ordinary error
+    /// surface, including the account refusal itself when no window exists to
+    /// ask in.
+    private func runGatheringGuestAccount(
+        on instance: VMInstance, _ verb: (GuestAccountAnswer?) async throws -> Void
+    ) async {
+        do {
+            try await VMConsentPolicy.runGatheringGuestAccount(
+                prompting: { try await self.askForGuestAccount($0) }, verb)
+        } catch is GuestAccountPromptDismissed {
+            Self.logger.notice(
+                "Start of '\(instance.name, privacy: .public)' cancelled at the account password"
+            )
+        } catch {
+            present(error, for: instance)
+        }
+    }
+
+    /// Puts the account question on screen and waits for the one answer it
+    /// gives.
+    ///
+    /// - Throws: ``GuestAccountPromptDismissed`` when the user walked away, and
+    ///   the refusal itself when there is no presenter to ask through — a door
+    ///   with nobody to ask says so by not answering.
+    private func askForGuestAccount(
+        _ prompt: GuestAccountPrompt
+    ) async throws -> GuestAccountAnswer {
+        guard let presenter else { throw CommandError.guestAccountPasswordRequired(prompt) }
+        let answer = await withCheckedContinuation { continuation in
+            presenter.presentGuestAccountPassword(
+                GuestAccountPasswordRequest(
+                    prompt: prompt, answer: { continuation.resume(returning: $0) }))
+        }
+        switch answer {
+        case .answered(let answer): return answer
+        case .cancelled: throw GuestAccountPromptDismissed()
+        }
     }
 
     func stop(_ instance: VMInstance) async {
@@ -1231,9 +1292,18 @@ final class VMLibraryViewModel {
             guard instance.configuration.startsAutomaticallyOnLaunch,
                 let step = capabilities.unattendedBringUp(for: instance)
             else {
-                Self.logger.debug(
-                    "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
-                )
+                if instance.startAsksForGuestAccount {
+                    // A login launch has no window to ask in and leaves no
+                    // other trace, so this is the only place the user can find
+                    // out why a VM they marked did not come up.
+                    Self.logger.notice(
+                        "Launch auto-start: '\(instance.name, privacy: .public)' was not started — it creates a macOS account on its first boot and the password for it is only ever held in memory. Start it by hand to enter the password, or to skip setting up the account"
+                    )
+                } else {
+                    Self.logger.debug(
+                        "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
+                    )
+                }
                 skippedCount += 1
                 continue
             }
@@ -1241,7 +1311,11 @@ final class VMLibraryViewModel {
             // buffers for the status item, and nothing is selected or focused.
             await run(on: instance) {
                 switch step {
-                case .start: try await self.commands.start(.id(instance.id), recovery: false)
+                // No answer, and none needed: the catalog passed over every VM
+                // whose start would ask for one.
+                case .start:
+                    try await self.commands.start(
+                        .id(instance.id), recovery: false, guestAccount: nil)
                 case .resume: try await self.commands.resume(.id(instance.id))
                 }
             }

@@ -2338,7 +2338,10 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance(name: "Sequoia", guestOS: .macOS)
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
         instance.enter(.initialBoot)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -3231,6 +3234,52 @@ struct VMLibraryViewModelTests {
         return wizard
     }
 
+    /// A wizard filled in for a macOS VM whose image can be provisioned, with
+    /// the account toggle on and the form filled.
+    private func makeAccountCreationWizard(name: String) -> VMCreationViewModel {
+        let wizard = VMCreationViewModel()
+        wizard.vmName = name
+        wizard.startAfterCreate = false
+        wizard.selectCatalogEntry(makeCatalogEntry(version: "27.0", build: "27A100"))
+        wizard.unattendedSetupEnabled = true
+        wizard.guestAccountFullName = "Ada Lovelace"
+        wizard.guestAccountUsername = "ada"
+        wizard.guestAccountPassword = "analytical-engine"
+        wizard.guestAccountVerifyPassword = "analytical-engine"
+        return wizard
+    }
+
+    @available(macOS 27.0, *)
+    @Test("createVM persists the account without its password, leaving the start to ask")
+    func createVMPersistsTheAccountWithoutThePassword() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = makeAccountCreationWizard(name: "Provisioned VM")
+
+        try viewModel.createVM(from: wizard)
+
+        let created = try #require(viewModel.instances.first)
+        // The four non-secret values are the bundle's; the password is not, so
+        // a start that this create did not chain has a question to ask.
+        #expect(created.configuration.pendingGuestAccount?.username == "ada")
+        #expect(created.configuration.pendingGuestAccount?.fullName == "Ada Lovelace")
+        #expect(created.startAsksForGuestAccount)
+        // The password went to the verb and nowhere else.
+        #expect(wizard.guestAccountForCreate == .password("analytical-engine"))
+    }
+
+    @Test("createVM answers nothing when the wizard is creating no account")
+    func createVMAnswersNothingWithoutAnAccount() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = makeCreationWizard(name: "Plain VM", startAfterCreate: false)
+
+        try viewModel.createVM(from: wizard)
+
+        let created = try #require(viewModel.instances.first)
+        #expect(created.configuration.pendingGuestAccount == nil)
+        #expect(!created.startAsksForGuestAccount)
+        #expect(wizard.guestAccountForCreate == nil)
+    }
+
     @Test("createVM registers a creating phantom row before anything is written")
     func createVMRegistersPhantomRow() throws {
         let (viewModel, storage, diskService, _, _) = makeViewModel()
@@ -3578,7 +3627,10 @@ struct VMLibraryViewModelTests {
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
         )
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
         instance.enter(.initialBoot)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -3657,7 +3709,10 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance(name: "Debian")
         instance.configuration.linuxInstallContext = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()), downloadDestinationPath: destinationPath)
-        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            return true
+        }
         instance.enter(.initialBoot)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -4368,6 +4423,27 @@ struct VMLibraryViewModelTests {
 
         #expect(virtService.startCallCount == 0)
         #expect(stalled.status == .error)
+    }
+
+    /// A start that would raise the account sheet is not a bring-up nobody is
+    /// present for, and a login launch has no window to raise it in.
+    @available(macOS 27.0, *)
+    @Test("startAutomaticVMsForLaunch leaves a marked VM owing a guest account alone")
+    func autoStartSkipsAnOutstandingGuestAccount() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let owing = markAutoStart(makeInstance(name: "Unattended", guestOS: .macOS))
+        owing.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        owing.enter(.stopped)
+        viewModel.instances = [owing]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        // Passed over, not refused: nothing is alerted about at a login.
+        #expect(presenter.errors.isEmpty)
+        #expect(owing.configuration.pendingGuestAccount != nil)
     }
 
     @Test("startAutomaticVMsForLaunch carries on past a VM that fails to start")

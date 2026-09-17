@@ -21,7 +21,24 @@ final class VirtualizationService {
     /// `bootIntoRecovery` boots into macOS Recovery for this launch only, and
     /// applies to a macOS cold boot alone — no effect on Linux guests or on the
     /// restore-from-save path.
-    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
+    ///
+    /// `provisioning` is the account this boot creates inside the guest, which
+    /// travels with the call rather than on the VM: the password exists for the
+    /// start that supplied it and for nothing else. The same value goes into
+    /// every file-lock retry, each of which is the same boot trying again.
+    ///
+    /// A cold boot that comes up retracts the account whether or not it carried
+    /// one: this is the moment the single post-restore boot macOS reads the
+    /// options on is spent, and nothing after it can create the account. Not
+    /// before, though — a boot that threw never reached the guest, so the
+    /// window is still unspent and the next start must still be able to offer
+    /// it. A recovery boot reads none and retracts none, for the reason
+    /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
+    /// states.
+    func start(
+        _ instance: VMInstance, bootIntoRecovery: Bool = false,
+        provisioning: GuestProvisioningCredentials? = nil
+    ) async throws {
         Self.logger.debug(
             "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public), bootIntoRecovery=\(bootIntoRecovery, privacy: .public)"
         )
@@ -40,7 +57,9 @@ final class VirtualizationService {
             } else {
                 sessionID = try await coldBootRetryingLockContention(
                     instance, bootIntoRecovery: bootIntoRecovery,
+                    provisioning: bootIntoRecovery ? nil : provisioning,
                     attemptSessionID: &attemptSessionID)
+                if !bootIntoRecovery { instance.retractGuestAccount() }
             }
 
             guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
@@ -104,13 +123,14 @@ final class VirtualizationService {
     /// right now: `nil` before its `VZVirtualMachine` exists, and again once it
     /// is released.
     private func coldBootRetryingLockContention(
-        _ instance: VMInstance, bootIntoRecovery: Bool, attemptSessionID: inout UUID?
+        _ instance: VMInstance, bootIntoRecovery: Bool,
+        provisioning: GuestProvisioningCredentials?, attemptSessionID: inout UUID?
     ) async throws -> UUID {
         var attempt = 0
         while true {
             do {
                 return try await coldBoot(
-                    instance, bootIntoRecovery: bootIntoRecovery,
+                    instance, bootIntoRecovery: bootIntoRecovery, provisioning: provisioning,
                     attemptSessionID: &attemptSessionID)
             } catch let startError {
                 guard Self.isFileLockContention(startError),
@@ -155,7 +175,8 @@ final class VirtualizationService {
     /// `nil` before its `VZVirtualMachine` exists, and again once it is
     /// released. A throw leaves it naming whatever the caller must act for.
     private func coldBoot(
-        _ instance: VMInstance, bootIntoRecovery: Bool, attemptSessionID: inout UUID?
+        _ instance: VMInstance, bootIntoRecovery: Bool,
+        provisioning: GuestProvisioningCredentials?, attemptSessionID: inout UUID?
     ) async throws -> UUID {
         // Per attempt, not once per start: the lock-contention retry loop tears the
         // session down between attempts, taking this context's scopes with it.
@@ -166,8 +187,9 @@ final class VirtualizationService {
             throw VirtualizationError.noVirtualMachine
         }
         attemptSessionID = session.id
-        let startOptions = Self.recoveryStartOptions(
-            bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
+        let startOptions = MacOSGuestProvisioning.macOSStartOptions(
+            bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS,
+            provisioning: provisioning)
         try await session.start(options: startOptions)
         return session.id
     }
@@ -204,20 +226,6 @@ final class VirtualizationService {
         ]
         guard delays.indices.contains(attempt) else { return nil }
         return delays[attempt]
-    }
-
-    /// Builds the one-shot start options for a recovery boot.
-    ///
-    /// Returns `nil` — a normal boot — unless a recovery boot is requested for a
-    /// macOS guest. `nonisolated` so the fresh options object stays in a
-    /// disconnected region the session's `sending` parameter can take.
-    nonisolated static func recoveryStartOptions(
-        bootIntoRecovery: Bool, guestOS: VMGuestOS
-    ) -> VZMacOSVirtualMachineStartOptions? {
-        guard bootIntoRecovery, guestOS == .macOS else { return nil }
-        let options = VZMacOSVirtualMachineStartOptions()
-        options.startUpFromMacOSRecovery = true
-        return options
     }
 
     // MARK: - Stop
@@ -1013,7 +1021,8 @@ final class VirtualizationService {
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes,
     /// retrying with bounded backoff when the attempt fails on VZ file-lock
     /// contention (see ``isFileLockContention(_:)``) — the restore-path
-    /// counterpart of ``coldBootRetryingLockContention(_:bootIntoRecovery:)``.
+    /// counterpart of
+    /// ``coldBootRetryingLockContention(_:bootIntoRecovery:provisioning:attemptSessionID:)``.
     ///
     /// A restore or resume failure surfaces as
     /// ``VirtualizationError/restoreFailed(underlying:)`` with the save file
