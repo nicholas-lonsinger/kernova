@@ -6,6 +6,13 @@
 # AUTOMATION_APPLE_EVENTS) straight into the inline block, where they silently
 # shadow the xcconfig — this check is what turns that into a lint failure
 # instead of a divergence nobody reads.
+#
+# The app and both test bundles additionally assign no signing of their own: a
+# target xcconfig outranks Config/Local.xcconfig, so an identity, team, profile
+# or entitlement path written there reverts a developer to ad-hoc signing while
+# `make doctor` goes on reporting Local.xcconfig's values.
+#
+# Reports every violation before failing, so one run fixes them all.
 
 set -uo pipefail
 
@@ -67,10 +74,60 @@ violations=$(awk '
     }
 ' "$pbxproj" "$pbxproj")
 
+# The three targets Config/Local.xcconfig has to reach. KernovaCLI.xcconfig and
+# KernovaRelaunchHelper.xcconfig pin Release to `-` on purpose — export
+# re-signs them — so they are out of scope here.
+signing_files=(
+    Config/Targets/Kernova.xcconfig
+    Config/Targets/KernovaTests.xcconfig
+    Config/Targets/KernovaMacOSAgentTests.xcconfig
+)
+
+for f in "${signing_files[@]}"; do
+    if [ ! -f "$f" ]; then
+        echo "check-build-settings-layering: $f is missing" >&2
+        exit 1
+    fi
+done
+
+# A declaration is NAME, optional [condition] groups, then `=`; the condition
+# is part of the spelling, not an escape, so a conditioned assignment fails the
+# same way an unconditioned one does.
+signing_violations=$(awk '
+    {
+        line = $0
+        sub(/\/\/.*$/, "", line)
+        if (!match(line, /^[A-Za-z_][A-Za-z0-9_]*([[:space:]]*\[[^]]*\])*[[:space:]]*=/)) next
+
+        name = substr(line, 1, RLENGTH)
+        sub(/([[:space:]]*\[[^]]*\])*[[:space:]]*=$/, "", name)
+        value = substr(line, RLENGTH + 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+
+        if (name == "CODE_SIGN_IDENTITY" || name == "DEVELOPMENT_TEAM")
+            printf "  %s:%d: %s — Config/Local.xcconfig has to reach this target\n", FILENAME, FNR, name
+        else if (name == "PROVISIONING_PROFILE_SPECIFIER" && value != "")
+            printf "  %s:%d: %s = %s — leave it empty\n", FILENAME, FNR, name, value
+        else if (name == "CODE_SIGN_ENTITLEMENTS" && value != "$(KERNOVA_APP_ENTITLEMENTS)")
+            printf "  %s:%d: %s = %s — read $(KERNOVA_APP_ENTITLEMENTS) instead\n", FILENAME, FNR, name, value
+    }
+' "${signing_files[@]}")
+
+failed=0
+
 if [ -n "$violations" ]; then
     echo "check-build-settings-layering: $pbxproj holds build settings Config/ should own:" >&2
     echo "$violations" >&2
-    exit 1
+    failed=1
 fi
 
+if [ -n "$signing_violations" ]; then
+    echo "check-build-settings-layering: a target xcconfig assigns signing Config/Local.xcconfig has to own:" >&2
+    echo "$signing_violations" >&2
+    failed=1
+fi
+
+[ "$failed" -eq 0 ] || exit 1
+
 echo "  ✓ build settings: every configuration is xcconfig-backed with an empty inline block"
+echo "  ✓ signing: the app and test xcconfigs name no identity, team, profile, or entitlement path"

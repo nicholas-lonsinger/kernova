@@ -15,8 +15,10 @@ RESULT_BUNDLE     := artifacts/TestResults.xcresult
 # CI-only settings. `CI=1 make test` reproduces a CI build locally.
 ifneq ($(strip $(CI)),)
 # OMIT -derivedDataPath on a dev machine so a terminal build shares the Xcode
-# GUI's arena; pass it under CI so artifacts land at a fixed path. Omitting the
-# flag is load-bearing — docs/BUILD.md "Derived data and build arenas".
+# GUI's arena; pass it under CI so artifacts land at a fixed path. Omitting is
+# load-bearing: the flag, even at the identical resolved path, records a
+# different arena identity in the build description, and every CLI↔GUI switch
+# then rebuilds the whole graph both ways (measured in Relative mode).
 DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
 # Plugin validation is an interactive trust prompt no runner can answer; the
 # index store serves an editor CI does not have. The compilation cache is on
@@ -177,7 +179,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering, and build phases
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering, build phases, and the KernovaKit package reference
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -195,6 +197,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
+	@bash Tools/check-package-reference.sh
 
 # Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own
 # `-derivedDataPath`, `-quiet`, `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`,

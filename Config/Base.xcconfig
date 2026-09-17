@@ -1,8 +1,7 @@
 // Project-level base configuration, wired as the base of both project
 // XCBuildConfigurations. Per-target facts live in Config/Targets/<Target>.xcconfig,
 // which outranks this file; signing overrides live in the gitignored
-// Local.xcconfig included at the end — docs/BUILD.md "Signing identity" owns
-// the full story.
+// Local.xcconfig included at the end.
 //
 // Debug/Release differences carry a `[config=…]` condition rather than living
 // in separate files, so the settings both configurations share are written once.

@@ -10,8 +10,8 @@ import os
 enum CommandLineToolInstaller {
     /// Where the tool lives inside the app bundle.
     ///
-    /// `Contents/Helpers`, never `Contents/MacOS` — [BUILD.md](docs/BUILD.md)
-    /// "The bundled `kernova` tool" says why.
+    /// `Contents/Helpers`, never `Contents/MacOS` —
+    /// `Config/Targets/KernovaCLI.xcconfig` says why.
     static var bundledToolURL: URL {
         Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers", isDirectory: true)

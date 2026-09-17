@@ -155,7 +155,7 @@ struct CommandLineToolInstallerTests {
         let path = CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false)
         #expect(path.hasSuffix("/Contents/Helpers/kernova"))
         // A case-insensitive volume makes Contents/MacOS/kernova the app's own
-        // executable — docs/BUILD.md "The bundled kernova tool".
+        // executable — Config/Targets/KernovaCLI.xcconfig.
         #expect(!path.contains("/Contents/MacOS/"))
     }
 

@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   # Renaming this job means editing the "Required actions" ruleset in the same
-  # change — docs/BUILD.md "CI".
+  # change: the ruleset matches a required check by job name.
   lint:
     runs-on: xcode-27
     timeout-minutes: 5

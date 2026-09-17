@@ -2,7 +2,7 @@
 # https://github.com/peripheryapp/periphery
 #
 # Consumed by `make dead-code`, run locally and by the
-# `.github/workflows/dead-code.yml` job — see docs/BUILD.md "CI".
+# `.github/workflows/dead-code.yml` job.
 
 project: Kernova.xcodeproj
 schemes:

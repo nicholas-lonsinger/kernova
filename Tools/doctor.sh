@@ -175,7 +175,7 @@ section 'Build arena'
 
 # Where builds land. Kernova follows the machine's Xcode derived-data
 # preference rather than prescribing one — a flag-less terminal build and the
-# GUI share one arena in every mode (docs/BUILD.md "Derived data and build arenas"), and the
+# GUI share one arena in every mode (Tools/derived-data-path.sh), and the
 # cleanup tooling (make clean, make ghosts) resolves the same location. Purely
 # informational: every mode works; this just says where the products are.
 arena=$(Tools/derived-data-path.sh 2>/dev/null || true)

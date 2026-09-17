@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Resolve the DerivedData build arena Xcode uses for a project — the folder a
-# flag-less `xcodebuild` and the Xcode GUI both build into (docs/BUILD.md
-# "Derived data and build arenas").
+# flag-less `xcodebuild` and the Xcode GUI both build into.
 #
 # Usage:
 #   Tools/derived-data-path.sh                                # this repo's Kernova.xcodeproj

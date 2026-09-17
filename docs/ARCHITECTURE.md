@@ -274,7 +274,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `VsockControlService` (macOS) or `SpiceClipboardService` (Linux) and read through
   `VMInstance.agentStatus`.
 - `KernovaMacOSAgentInfo` — accessors for the bundled agent's version and installer DMG, the version
-  read from a build-phase-written sidecar ([BUILD.md](BUILD.md)).
+  read from a build-phase-written sidecar (`Tools/package-guest-agent-dmg.sh`).
 
 Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the login-item toggle),
 `EntitlementService` (what this build's signature authorizes, so feature UI can degrade in builds
@@ -590,8 +590,9 @@ context) and one release point (`VMSessionContext.tearDown`).
   `AppTerminationController` during a quit that followed a TCC revocation. It watches the app's PID
   and relaunches through `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
-- **KernovaCLI** — the `kernova` tool, embedded at `Contents/Helpers/kernova` ([BUILD.md](BUILD.md)
-  says why not `Contents/MacOS`) and installed from Settings → Advanced by two services:
+- **KernovaCLI** — the `kernova` tool, embedded at `Contents/Helpers/kernova`
+  (`Config/Targets/KernovaCLI.xcconfig` says why not `Contents/MacOS`) and installed from
+  Settings → Advanced by two services:
   `CommandLineToolInstaller` writes the symlink to the binary, and `ShellCompletionInstaller` writes
   a per-shell file that loads the tool's completions from the tool itself. It is sandboxed with
   `app-sandbox` plus the app group and nothing
@@ -605,7 +606,7 @@ context) and one release point (`VMSessionContext.tearDown`).
   `ClipboardEndpoint`, the same KernovaKit type the host services do. It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
   `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
-  ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).
+  ([RELEASING.md](RELEASING.md)); version bumps are in [AGENTS.md](../AGENTS.md) "Build & Test".
 
   That DMG reaches a guest on one of two buses, and `GuestAgentDiskDelivery` owns the choice:
   the host's `toggleGuestAgentDisk` menu item hot-plugs it as USB mass storage, while a guest too
