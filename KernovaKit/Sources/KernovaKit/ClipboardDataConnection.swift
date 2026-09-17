@@ -387,6 +387,7 @@ final class ClipboardPayloadReader: @unchecked Sendable {
     private var atEnd = false
     private var hasher = SHA256()
     private var released = 0
+    private var firstFailure: Error?
 
     /// Creates a reader for `fd`.
     ///
@@ -407,6 +408,14 @@ final class ClipboardPayloadReader: @unchecked Sendable {
 
     /// Payload bytes released so far.
     var byteCount: Int { lock.withLock { released } }
+
+    /// The first failure a read reported, if any.
+    ///
+    /// A driver that hands this reader to a codec must consult it rather than
+    /// trust the codec's own result: AppleArchive rewraps whatever the source
+    /// threw, so a connection that timed out under an extract reaches the
+    /// driver as an archive failure and would be named one.
+    var failure: Error? { lock.withLock { firstFailure } }
 
     /// The SHA-256 over every payload byte released so far.
     func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
@@ -502,8 +511,14 @@ final class ClipboardPayloadReader: @unchecked Sendable {
     private func fill() throws {
         guard !atEnd else { return }
         var block = Data(count: bufferBytes)
-        let got = try block.withUnsafeMutableBytes { raw in
-            try ClipboardDataConnection.read(fd: fd, into: raw)
+        let got: Int
+        do {
+            got = try block.withUnsafeMutableBytes { raw in
+                try ClipboardDataConnection.read(fd: fd, into: raw)
+            }
+        } catch {
+            lock.withLock { if firstFailure == nil { firstFailure = error } }
+            throw error
         }
         guard got > 0 else {
             atEnd = true

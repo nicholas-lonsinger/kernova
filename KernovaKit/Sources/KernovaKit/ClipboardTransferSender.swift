@@ -433,11 +433,12 @@ final class ClipboardTransferSender: @unchecked Sendable {
             // what the wire has carried.
             onProgress?(produced, 0)
         }
-        // The connection's own failure outranks a codec that returned
-        // normally: AppleArchive can report success over a stream callback
-        // whose write failed, which would end the transfer with a completion
-        // trailer over a payload the peer never received.
-        if let failure = failure ?? writer.failure { throw stopBox.value ?? failure }
+        // The connection's own failure outranks whatever the codec reports:
+        // AppleArchive rewraps what a stream callback threw, and can report
+        // success over a callback whose write failed, which would end the
+        // transfer with a completion trailer over a payload the peer never
+        // received.
+        if let failure = writer.failure ?? failure { throw stopBox.value ?? failure }
     }
 
     /// Records and throws this side's own reason for stopping, so it survives

@@ -8,7 +8,7 @@ PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent
 // The guest agent's own version, independent of the app's. Bump it whenever a
 // change means a running guest needs the agent reinstalled — AGENTS.md
 // "Build & Test".
-MARKETING_VERSION = 0.78.0
+MARKETING_VERSION = 0.79.0
 
 MACOSX_DEPLOYMENT_TARGET = $(KERNOVA_AGENT_DEPLOYMENT_TARGET)
 

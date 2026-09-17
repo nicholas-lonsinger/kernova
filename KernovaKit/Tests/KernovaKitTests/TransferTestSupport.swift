@@ -55,6 +55,38 @@ func drainUntilPeerCloses(_ fd: Int32, timeout: TimeInterval = 5) throws -> Data
     return try readToEnd(fd: fd)
 }
 
+/// A scratch tree holding one incompressible file of `byteCount` bytes, so its
+/// archive is as big as the tree and the wire has something to carry.
+func makeBulkyTree(named name: String, byteCount: Int) throws -> (scratch: URL, source: URL) {
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "bulky-\(UUID().uuidString)", isDirectory: true)
+    let source = scratch.appendingPathComponent(name, isDirectory: true)
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    try randomBytes(count: byteCount).write(to: source.appendingPathComponent("big.bin"))
+    return (scratch, source)
+}
+
+/// What a pull for a folder registers: the name to unpack under, and the size
+/// the offer advertised.
+func folderPlan(named name: String, advertised: Int) -> ClipboardTransferReceiver.Plan {
+    ClipboardTransferReceiver.Plan(
+        uti: ClipboardArchive.directoryUTI, filename: name, extractsDirectoryNamed: name,
+        advertisedByteCount: advertised)
+}
+
+/// Suspends until the transfer has either delivered a representation or
+/// reported an abort.
+func settle(_ harness: TransferHarness, _ transferID: UInt64) async throws {
+    try await harness.collector.gate.wait {
+        harness.collector.representation(transferID) != nil || harness.collector.abortCount > 0
+    }
+}
+
+/// The single abort a transfer reported.
+func abort(_ harness: TransferHarness) throws -> ClipboardStreamAbortInfo {
+    try #require(harness.collector.abortInfos.first)
+}
+
 /// `count` incompressible bytes, so a fixture's wire size tracks its payload.
 func randomBytes(count: Int) throws -> Data {
     let urandom = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/urandom"))
@@ -194,6 +226,10 @@ final class StagingProbe: @unchecked Sendable {
 final class TransferHarness: @unchecked Sendable {
     private let staging: ClipboardFileStaging
     private let stagingTempRoot: URL
+    private let socketTimeout: TimeInterval
+    private let maxResidentInlineBytes: Int
+    private let minimumExtractAllowance: Int
+    private let extractPacingBytes: Int
     let inbox: ClipboardTransferInbox
     let outbox: ClipboardTransferOutbox
     let collector = TransferCollector()
@@ -247,6 +283,10 @@ final class TransferHarness: @unchecked Sendable {
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
         extractPacingBytes: Int = ClipboardStreamTuning.extractPacingBytes
     ) {
+        self.socketTimeout = socketTimeout
+        self.maxResidentInlineBytes = maxResidentInlineBytes
+        self.minimumExtractAllowance = minimumExtractAllowance
+        self.extractPacingBytes = extractPacingBytes
         stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString, isDirectory: true)
         staging = ClipboardFileStaging(
@@ -274,13 +314,19 @@ final class TransferHarness: @unchecked Sendable {
 
     /// A receiver on this harness's staging, for a test driving one transfer's
     /// own lifecycle rather than a round trip through the inbox.
+    ///
+    /// The harness's own tuning applies, as it does to a receiver the inbox
+    /// makes.
     func makeReceiver(
         transferID: UInt64, generation: UInt64, plan: ClipboardTransferReceiver.Plan,
         source: ClipboardTransferReceiver.Source
     ) -> ClipboardTransferReceiver {
         ClipboardTransferReceiver(
             transferID: transferID, generation: generation, source: source,
-            plan: plan, staging: staging)
+            plan: plan, staging: staging, socketTimeout: socketTimeout,
+            maxResidentInlineBytes: maxResidentInlineBytes,
+            minimumExtractAllowance: minimumExtractAllowance,
+            extractPacingBytes: extractPacingBytes)
     }
 
     /// Registers the pull for `transferID` with the inbox.

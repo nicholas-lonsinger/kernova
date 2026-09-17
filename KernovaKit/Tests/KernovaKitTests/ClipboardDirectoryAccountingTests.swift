@@ -41,29 +41,6 @@ struct ClipboardDirectoryAccountingTests {
             directorySourceURL: source, estimatedByteCount: estimate, filename: name)
     }
 
-    /// What a pull for a folder registers: the name to unpack under, and the
-    /// size the offer advertised.
-    private func folderPlan(named name: String, advertised: Int)
-        -> ClipboardTransferReceiver.Plan
-    {
-        ClipboardTransferReceiver.Plan(
-            uti: ClipboardArchive.directoryUTI, filename: name, extractsDirectoryNamed: name,
-            advertisedByteCount: advertised)
-    }
-
-    /// Suspends until the transfer has either delivered a representation or
-    /// reported an abort.
-    private func settle(_ harness: TransferHarness, _ transferID: UInt64) async throws {
-        try await harness.collector.gate.wait {
-            harness.collector.representation(transferID) != nil || harness.collector.abortCount > 0
-        }
-    }
-
-    /// The single abort a transfer reported.
-    private func abort(_ harness: TransferHarness) throws -> ClipboardStreamAbortInfo {
-        try #require(harness.collector.abortInfos.first)
-    }
-
     @Test("a volume that fills is caught while the tree is being written, not per wire byte")
     func diskGuardIsPacedByTheTreeNotTheWire() async throws {
         let fm = FileManager.default
