@@ -8,7 +8,7 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 **pre-push** runs `make lint`. Bypass an individual push with `git push --no-verify`.
 
-**commit-msg** requires an agent's `Co-authored-by:` trailer — one whose address is a vendor's `noreply@` — to name the model and version `git blame` joins on, per AGENTS.md's "Git Workflow". A parenthetical closing the name (`Claude Opus 5 (1M context)`) is stripped in place rather than refused. Any other address is a human co-author and passes untouched. Bypass an individual commit with `git commit --no-verify`.
+**commit-msg** requires an agent's `Co-authored-by:` trailer — one whose address is a vendor's `noreply@` — to name the model and version `git blame` joins on, per AGENTS.md's "Git Workflow". A parenthetical closing the name (`Claude Opus 5 (1M context)`) is ignored, not rewritten — the trailer is written as typed. Any other address is a human co-author and passes untouched. Bypass an individual commit with `git commit --no-verify`.
 
 **post-checkout** runs `Tools/worktree-setup.sh` for a new worktree, so it needs no manual step: the script copies the gitignored local files listed in `.worktreeinclude` from the main checkout, sweeps LaunchServices ghosts (below), and writes the worktree's own `buildServer.json` via `Tools/lsp-config.sh` when `xcode-build-server` is installed — that config pins an absolute build root, so it is written per checkout rather than copied, and `make install-lsp` is what installs the tool.
 

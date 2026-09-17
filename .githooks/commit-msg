@@ -7,8 +7,8 @@
 # co-author and passes untouched. Bypass with `git commit --no-verify`.
 #
 # A parenthetical closing an agent's name — `Claude Opus 5 (1M context)` — is
-# a context label, not part of the model's identity: it is stripped from the
-# message and the commit is written with the bare name, rather than refused.
+# a context label, not part of the model's identity: it is ignored when the
+# name is checked. The hook only validates; it never rewrites the message.
 #
 # Only the co-author trailer is in scope — a `Claude-Session:` line, or any
 # other trailer, passes through untouched.
@@ -21,14 +21,14 @@ message_file="$1"
 # both `Co-authored-by` and `Co-Authored-By`.
 shopt -s nocasematch
 
-# Key, name, and the address in its brackets, split so a rewritten line keeps
-# the spelling and spacing of every part but the name.
-trailer='^(co-authored-by:[[:space:]]*)(.*[^[:space:]])([[:space:]]*<([^>]*)>[[:space:]]*)$'
+# Name before the angle brackets, address inside them.
+trailer='^co-authored-by:[[:space:]]*(.*[^[:space:]])[[:space:]]*<([^>]*)>[[:space:]]*$'
 
 # A vendor no-reply address is what marks a trailer as an agent's.
 agent_address='^noreply@[^@[:space:]]+\.[^@[:space:]]+$'
 
-# A context label closing the name, and the whitespace holding it on.
+# A context label closing the name, and the whitespace holding it on; both
+# are ignored for the check below.
 parenthetical='^(.*[^[:space:]])[[:space:]]+\([^()]*\)$'
 
 # The version closing the name: dot-separated numbers, its own token, with a
@@ -38,40 +38,18 @@ version='[^[:space:]][[:space:]]+[0-9]+(\.[0-9]+)*$'
 findings=""
 note() { findings="$findings  $1"$'\n'"      $2"$'\n'; }
 
-# Git writes a final newline, but never assume one: a rewrite has to hand the
-# file back exactly as it found it apart from the lines it means to change.
-trailing_newline=1
-if [ -s "$message_file" ] && [ -n "$(tail -c 1 "$message_file")" ]; then
-    trailing_newline=0
-fi
-
-lines=()
-rewrote=0
-
 # A `#` line is the template's commentary, and every line of a verbose
 # commit's diff carries a marker, so neither reaches the match below.
 while IFS= read -r line || [ -n "$line" ]; do
-    kept="$line"
-    case "$line" in '#'*) lines+=("$kept"); continue ;; esac
+    case "$line" in '#'*) continue ;; esac
+    [[ $line =~ $trailer ]] || continue
+    name="${BASH_REMATCH[1]}"
+    address="${BASH_REMATCH[2]}"
 
-    if [[ ! $line =~ $trailer ]]; then
-        lines+=("$kept")
-        continue
-    fi
-    key="${BASH_REMATCH[1]}"
-    name="${BASH_REMATCH[2]}"
-    tail_part="${BASH_REMATCH[3]}"
-    address="${BASH_REMATCH[4]}"
-
-    if [[ ! $address =~ $agent_address ]]; then
-        lines+=("$kept")
-        continue
-    fi
+    [[ $address =~ $agent_address ]] || continue
 
     if [[ $name =~ $parenthetical ]]; then
         name="${BASH_REMATCH[1]}"
-        kept="$key$name$tail_part"
-        rewrote=1
     fi
 
     reason=""
@@ -85,23 +63,9 @@ while IFS= read -r line || [ -n "$line" ]; do
         reason="${reason}Anthropic's agent is Claude <model> <version>"
     fi
     if [ -n "$reason" ]; then
-        note "$kept" "$reason"
+        note "$line" "$reason"
     fi
-
-    lines+=("$kept")
 done <"$message_file"
-
-if [ "$rewrote" -eq 1 ]; then
-    : >"$message_file"
-    last=$((${#lines[@]} - 1))
-    for i in "${!lines[@]}"; do
-        if [ "$i" -eq "$last" ] && [ "$trailing_newline" -eq 0 ]; then
-            printf '%s' "${lines[$i]}" >>"$message_file"
-        else
-            printf '%s\n' "${lines[$i]}" >>"$message_file"
-        fi
-    done
-fi
 
 if [ -n "$findings" ]; then
     echo "commit-msg: an agent's Co-authored-by trailer must name its model." >&2
