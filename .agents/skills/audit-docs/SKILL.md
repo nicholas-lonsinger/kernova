@@ -196,8 +196,9 @@ proposed:
   for section-number forms. A code comment cites a doc by heading name, as a
   trailing clause after a fact the comment states itself, never by section
   number.
-- **Coverage of the doc rules:** AGENTS.md's "Never kept" list; lint owns the
-  line cap and link resolution. A doc's read-trigger is its `docs/README.md`
+- **Coverage of the doc rules:** AGENTS.md's routing tests, including the
+  rule that a section mirroring another layer is deleted whole; lint owns
+  the line cap and link resolution. A doc's read-trigger is its `docs/README.md`
   row, and the row must match the file's opener.
 - **Self-consistency:** does AGENTS.md obey its own routing tests and layer
   table? Apply them to AGENTS.md as strictly as to any other file.

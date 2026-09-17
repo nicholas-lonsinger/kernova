@@ -71,6 +71,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
     // MARK: Network
 
+    /// The Network section and the info popover carrying the panel's whole
+    /// claim about what networking does.
+    ///
+    /// "UI copy states only what is known": every paragraph is built from what
+    /// this build and this host can actually deliver — the Shared reach clause
+    /// concedes the absent port forwarding instead of promising it when the
+    /// entitlement is missing, and the vmnet and Wi-Fi limitations are stated
+    /// at Apple's strength, on the surface the user picks a mode from.
     private func buildNetworkSection() -> NSView {
         // Deliberately outside `lockableRows`: the picker is the live-switch
         // surface while the VM runs, so `refreshNetwork()` owns its enablement

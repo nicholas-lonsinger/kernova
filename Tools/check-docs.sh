@@ -42,8 +42,8 @@ done < <(git ls-files '*.md')
 # The anchor ids GitHub gives a Markdown file's headings, in document order:
 # the heading text lowercased, everything but letters, digits, hyphens,
 # underscores and spaces dropped, spaces turned into hyphens, and a repeat of
-# an earlier id suffixed -1, -2. A fenced block holds no headings — the commit
-# template in AGENTS.md's "Commit Messages" is `## Summary` inside one.
+# an earlier id suffixed -1, -2. A fenced block holds no headings: a `##` line
+# inside one is sample text, and anchoring to it would resolve nothing.
 heading_slugs() {
     awk '
         {

@@ -50,6 +50,12 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT := xcrun swift-format
 
+# The skill scripts' fixture suites. Each drives its script through every
+# verdict against recorded fixtures — no Xcode, no network, seconds to run —
+# which is what lets `lint` gate them, and the pre-push hook with it.
+SKILL_TESTS := .agents/skills/freshen-main/tests/run.sh \
+               .agents/skills/make-verdict/tests/run.sh
+
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
 # which runs `make lint`). Tracked files define the roots: an untracked .swift
@@ -179,7 +185,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, and the KernovaKit package reference
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the skill fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, and the KernovaKit package reference
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -189,6 +195,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	else \
 		echo 'lint: shellcheck not installed — skipping shell static analysis (brew install shellcheck)'; \
 	fi
+	@for t in $(SKILL_TESTS); do bash "$$t" || exit 1; done
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh
