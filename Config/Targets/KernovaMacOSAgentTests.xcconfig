@@ -2,6 +2,10 @@
 //
 // No signing identity or team is assigned here: a target xcconfig outranks
 // Config/Local.xcconfig, and test bundle and host must sign together.
+//
+// The test plan runs this bundle serially, which its JSON cannot say why: the
+// agent sources compiled in here carry process-global state
+// (`VsockLogBridge.connection`) that parallel tests in one process would share.
 
 PRODUCT_NAME = $(TARGET_NAME)
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.tests

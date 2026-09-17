@@ -2,6 +2,14 @@ import Foundation
 import KernovaLogging
 
 /// Shared path validation for user-supplied file and directory paths.
+///
+/// Resolving symlinks is for host-side durability, not a Virtualization
+/// requirement: VZ opens a disk image whose leaf *or* whose directory component
+/// is a symlink and starts the VM (observed 2026-09-16, macOS 26A428). What
+/// resolution buys is an attachment that no longer depends on a link the user
+/// can retarget or delete while the VM runs. Under the App Sandbox the
+/// container's `Downloads` is itself a symlink to the user's, so every path
+/// picked there carries one.
 enum PathValidation {
     /// The result of resolving a path through symlinks.
     struct ResolvedPath: Sendable {

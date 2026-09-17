@@ -32,6 +32,13 @@ final class VMInstance {
     // MARK: - Properties
 
     let instanceID: UUID
+
+    /// Changed through ``VMLibrary/updateConfiguration(of:mutate:)``, which
+    /// persists the new value and applies live policy.
+    ///
+    /// A direct assignment is only for a value disk already holds: a rollback
+    /// to what is still on disk, or the configuration a snapshot restore just
+    /// wrote there.
     var configuration: VMConfiguration
 
     /// Where this VM is in its lifecycle — the one stored value its status, its

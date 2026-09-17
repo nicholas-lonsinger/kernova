@@ -4,7 +4,7 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 
 | Document | Read it when |
 |----------|--------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Making structural changes — the authoritative component map, data flow, and design decisions, plus the helper targets and dependencies |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Making a structural change — the component map: which type owns a behavior, and the seams between them |
 | [DESIGN.md](DESIGN.md) | Writing UI or making product decisions — design philosophy and GUI guidelines (layout, typography, spacing, colors, controls); the general engineering/product principles are in AGENTS.md |
 | [CLIPBOARD.md](CLIPBOARD.md) | Touching host↔guest copy/paste — the clipboard subsystem's principles and trade-off rules; authoritative for any clipboard work |
 | [NETWORKING.md](NETWORKING.md) | Changing how a guest attaches to a network or is reached from one — exposure, entry-time refusal, IP-display, MAC-uniqueness, and network-membership principles; authoritative for networking work |

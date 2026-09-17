@@ -322,7 +322,8 @@ struct ConfigurationBuilder: Sendable {
         var built: [VZStorageDeviceConfiguration] = []
         for disk in disks {
             // VZ is handed the symlink-resolved URL, so the attachment doesn't
-            // depend on a host-side symlink that could break at runtime.
+            // depend on a host-side symlink that could break at runtime — the
+            // reason `PathValidation` records, not a VZ requirement.
             let attachmentURL: URL
             if disk.isInternal {
                 attachmentURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)

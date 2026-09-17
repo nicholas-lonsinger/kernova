@@ -4,6 +4,10 @@ import Foundation
 ///
 /// VM bundles are directories under `~/Library/Application Support/Kernova/VMs/`
 /// holding a `config.json` plus these data files.
+///
+/// Every file a VM needs is under its bundle root, so the VM moves, copies and
+/// imports as one Finder item. User-picked external attachments are the
+/// exception, and carry security-scoped bookmarks instead.
 struct VMBundleLayout: Sendable {
     let bundleURL: URL
 
