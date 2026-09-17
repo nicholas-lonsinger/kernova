@@ -172,8 +172,8 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         }
     }
 
-    /// Abandons the transfer, waking a read parked on a peer that has gone
-    /// quiet.
+    /// Abandons the transfer: a read parked on a peer that has gone quiet is
+    /// woken, and an extract already under way stops at its next checkpoint.
     ///
     /// Safe from any thread and idempotent. The outcome the owner sees is
     /// `cancelled`, which retires the transfer quietly rather than reporting a
@@ -402,6 +402,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             // bar stated in payload units: report from the output instead, at
             // the guard's own cadence.
             report(written)
+            guard !cancelled else { throw cancellationStop }
             // Paced by the payload being *written*, not by the archive arriving:
             // compression can reach ~100:1, so a guard clocked on wire bytes
             // would let ~100 MB land between checks and the margin would never
@@ -572,6 +573,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     private func verify(_ trailer: ClipboardTransferTrailer, against reader: ClipboardPayloadReader)
         throws
     {
+        guard !cancelled else { throw cancellationStop }
         switch trailer.ending {
         case .aborted(let rawCode):
             throw stop(forAbortedTrailer: rawCode)
@@ -630,13 +632,16 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         ReceiveStop(rawCode: rawCode, message: "The sender ended the transfer")
     }
 
-    /// The stop `error` ends the transfer with, honoring a local cancellation
-    /// over whatever the interrupted read reported.
+    /// The stop `error` ends the transfer with.
+    ///
+    /// A local cancellation outranks every other reason — the sender's own
+    /// trailer and this side's stops included — so a transfer the owner gave up
+    /// on retires quietly however far along the stream the cancellation landed.
     private func stop(for error: Error, shortPayloadFrom reader: ClipboardPayloadReader? = nil)
         -> ReceiveStop
     {
-        if let stop = error as? ReceiveStop { return stop }
         if cancelled { return cancellationStop }
+        if let stop = error as? ReceiveStop { return stop }
         if case ClipboardArchiveStreamError.outputRefused(let refusal) = error {
             switch refusal {
             case .diskFull:
