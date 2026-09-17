@@ -329,7 +329,12 @@ final class VsockGuestClient: @unchecked Sendable {
 
     /// Stops the loop and tears down any active channel; later `start` calls are
     /// no-ops.
-    func stop() {
+    ///
+    /// - Returns: the loop task this call cancelled, still winding down when
+    ///   the call returns — the `serve` closure may be mid-run inside it — so a
+    ///   caller needing this client to be wholly quiet awaits it.
+    @discardableResult
+    func stop() -> Task<Void, Never>? {
         let (task, ch): (Task<Void, Never>?, VsockChannel?) = lock.withLock {
             stopped = true
             let t = reconnectTask
@@ -340,6 +345,7 @@ final class VsockGuestClient: @unchecked Sendable {
         }
         task?.cancel()
         ch?.close()
+        return task
     }
 
     /// Currently-attached channel, for callers making synchronous best-effort
