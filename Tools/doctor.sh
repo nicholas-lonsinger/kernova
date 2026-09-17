@@ -127,7 +127,7 @@ section 'Repository'
 # configured path actually contains the hooks instead of string-comparing
 # against ".githooks".
 if hooks_dir=$(Tools/hooks-installed.sh); then
-    pass "git hooks installed ($hooks_dir): pre-push lint, post-checkout worktree setup"
+    pass "git hooks installed ($hooks_dir): pre-push lint, commit-msg model trailer, post-checkout worktree setup"
 else
     warn "git hooks not installed — run 'make install-hooks' (one-time per clone)"
 fi

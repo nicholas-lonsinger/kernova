@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+#
+# An AI agent's `Co-authored-by:` trailer names the model that wrote the
+# change — model and version — so `git blame` joins a line back to it, per
+# AGENTS.md's "Git Workflow". A trailer at a vendor's no-reply address is an
+# agent's and has to carry a version token; anything else is a human
+# co-author and passes untouched. Bypass with `git commit --no-verify`.
+#
+# A parenthetical closing an agent's name — `Claude Opus 5 (1M context)` — is
+# a context label, not part of the model's identity: it is stripped from the
+# message and the commit is written with the bare name, rather than refused.
+#
+# Only the co-author trailer is in scope — a `Claude-Session:` line, or any
+# other trailer, passes through untouched.
+
+set -euo pipefail
+
+message_file="$1"
+
+# Case-insensitively, because git reads trailer keys that way and agents write
+# both `Co-authored-by` and `Co-Authored-By`.
+shopt -s nocasematch
+
+# Key, name, and the address in its brackets, split so a rewritten line keeps
+# the spelling and spacing of every part but the name.
+trailer='^(co-authored-by:[[:space:]]*)(.*[^[:space:]])([[:space:]]*<([^>]*)>[[:space:]]*)$'
+
+# A vendor no-reply address is what marks a trailer as an agent's.
+agent_address='^noreply@[^@[:space:]]+\.[^@[:space:]]+$'
+
+# A context label closing the name, and the whitespace holding it on.
+parenthetical='^(.*[^[:space:]])[[:space:]]+\([^()]*\)$'
+
+# The version closing the name: dot-separated numbers, its own token, with a
+# model name in front of it — `Claude Fable 5.1`, `GPT-5.4 Codex 0.42`.
+version='[^[:space:]][[:space:]]+[0-9]+(\.[0-9]+)*$'
+
+findings=""
+note() { findings="$findings  $1"$'\n'"      $2"$'\n'; }
+
+# Git writes a final newline, but never assume one: a rewrite has to hand the
+# file back exactly as it found it apart from the lines it means to change.
+trailing_newline=1
+if [ -s "$message_file" ] && [ -n "$(tail -c 1 "$message_file")" ]; then
+    trailing_newline=0
+fi
+
+lines=()
+rewrote=0
+
+# A `#` line is the template's commentary, and every line of a verbose
+# commit's diff carries a marker, so neither reaches the match below.
+while IFS= read -r line || [ -n "$line" ]; do
+    kept="$line"
+    case "$line" in '#'*) lines+=("$kept"); continue ;; esac
+
+    if [[ ! $line =~ $trailer ]]; then
+        lines+=("$kept")
+        continue
+    fi
+    key="${BASH_REMATCH[1]}"
+    name="${BASH_REMATCH[2]}"
+    tail_part="${BASH_REMATCH[3]}"
+    address="${BASH_REMATCH[4]}"
+
+    if [[ ! $address =~ $agent_address ]]; then
+        lines+=("$kept")
+        continue
+    fi
+
+    if [[ $name =~ $parenthetical ]]; then
+        name="${BASH_REMATCH[1]}"
+        kept="$key$name$tail_part"
+        rewrote=1
+    fi
+
+    reason=""
+    if [[ ! $name =~ $version ]]; then
+        reason="names no model version — git blame joins on it"
+    fi
+    if [[ $address == noreply@anthropic.com && ! $name =~ ^claude([[:space:]]|$) ]]; then
+        if [ -n "$reason" ]; then
+            reason="$reason; "
+        fi
+        reason="${reason}Anthropic's agent is Claude <model> <version>"
+    fi
+    if [ -n "$reason" ]; then
+        note "$kept" "$reason"
+    fi
+
+    lines+=("$kept")
+done <"$message_file"
+
+if [ "$rewrote" -eq 1 ]; then
+    : >"$message_file"
+    last=$((${#lines[@]} - 1))
+    for i in "${!lines[@]}"; do
+        if [ "$i" -eq "$last" ] && [ "$trailing_newline" -eq 0 ]; then
+            printf '%s' "${lines[$i]}" >>"$message_file"
+        else
+            printf '%s\n' "${lines[$i]}" >>"$message_file"
+        fi
+    done
+fi
+
+if [ -n "$findings" ]; then
+    echo "commit-msg: an agent's Co-authored-by trailer must name its model." >&2
+    printf '%s' "$findings" >&2
+    echo "" >&2
+    echo "            expected: Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>" >&2
+    echo "                      one trailer per model that wrote part of the change." >&2
+    echo "            Bypass with git commit --no-verify." >&2
+    exit 1
+fi

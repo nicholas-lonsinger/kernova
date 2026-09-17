@@ -84,13 +84,14 @@ setup: install-hooks ## Set up a clone: hooks, Homebrew tools, LSP config, Perip
 
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an
-# individual push with `git push --no-verify`), and `.githooks/post-checkout`
-# sets up fresh worktrees: it copies the gitignored files listed in
-# .worktreeinclude from the main checkout. Per-repo config (no `--global`);
-# core.hooksPath is shared by all worktrees of this repo.
-install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree setup)
+# individual push with `git push --no-verify`), `.githooks/commit-msg` checks
+# that an agent's co-author trailer names the model and version, and
+# `.githooks/post-checkout` sets up fresh worktrees: it copies the gitignored
+# files listed in .worktreeinclude from the main checkout. Per-repo config
+# (no `--global`); core.hooksPath is shared by all worktrees of this repo.
+install-hooks: ## Point git at .githooks/ (pre-push lint; commit-msg model trailer; post-checkout worktree setup)
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies).'
+	@echo 'Hooks installed. Pre-push runs `make lint`; commit-msg checks that the co-author trailer names the model and version; post-checkout sets up new worktrees (.worktreeinclude copies).'
 
 # Silent when the hooks are wired up, or under CI (which has no hooks to
 # install); otherwise a one-line nudge. Runs as a prerequisite of the
@@ -176,7 +177,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, and build-setting layering
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering, and build phases
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -193,6 +194,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	@bash Tools/check-headless-core.sh
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-build-settings-layering.sh
+	@bash Tools/check-build-phases.sh
 
 # Unused-code scan, reading .periphery.yml. Periphery 3.x passes its own
 # `-derivedDataPath`, `-quiet`, `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`,

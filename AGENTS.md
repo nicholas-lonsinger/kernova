@@ -37,7 +37,7 @@ These bind every change in every subsystem — engineering and product decisions
 
 ## Build & Test
 
-Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#development-setup); machinery: [docs/BUILD.md](docs/BUILD.md).
+Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#building-kernova); machinery: [docs/BUILD.md](docs/BUILD.md).
 
 The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64)` guards are unnecessary.
 
