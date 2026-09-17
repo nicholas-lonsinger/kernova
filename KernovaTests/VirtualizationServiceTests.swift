@@ -9,17 +9,6 @@ import KernovaTestSupport
 struct VirtualizationServiceTests {
     private let service = VirtualizationService()
 
-    private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
-    }
-
     // MARK: - Snapshot capture
 
     @Test("A capture puts a running guest back to running")
@@ -77,7 +66,7 @@ struct VirtualizationServiceTests {
     /// A live session holding `count` passthrough accessories.
     private func instanceHoldingAccessories(_ count: Int) -> (VMInstance, UUID, [UUID]) {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
         let context = instance.beginSessionContext()
         var deviceIDs: [UUID] = []
         for index in 0..<count {
@@ -185,7 +174,7 @@ struct VirtualizationServiceTests {
     @Test("An attempt that still holds the session it acted for keeps the phase")
     func overtakenAttemptKeepsThePhaseWhileItHoldsItsSession() {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .saving(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .saving(sessionID: sessionID))
 
         #expect(VirtualizationService.attemptStillOwnsThePhase(instance, actingFor: sessionID))
     }
@@ -193,7 +182,7 @@ struct VirtualizationServiceTests {
     @Test("A force stop landing mid-suspend takes the phase away from the attempt")
     func forceStopDuringASuspendOvertakesTheAttempt() {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .saving(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .saving(sessionID: sessionID))
 
         // What `forceStop` leaves behind: the coordinator releases the suspend's
         // claim so the user can interrupt, but the suspend's body keeps running
@@ -209,7 +198,7 @@ struct VirtualizationServiceTests {
     @Test("An attempt with no session of its own is recognized by the VM still being mid-operation")
     func attemptWithoutASessionIsRecognizedByItsInFlightPhase() {
         // A start whose configuration build failed never created one.
-        let starting = makeInstance(phase: .starting(sessionID: nil))
+        let starting = VMInstanceFixture.make(phase: .starting(sessionID: nil))
         #expect(VirtualizationService.attemptStillOwnsThePhase(starting, actingFor: nil))
 
         // Every phase an interruption rests at is settled, which is what
@@ -220,14 +209,14 @@ struct VirtualizationServiceTests {
         ] {
             #expect(
                 !VirtualizationService.attemptStillOwnsThePhase(
-                    makeInstance(phase: phase), actingFor: nil), "\(phase)")
+                    VMInstanceFixture.make(phase: phase), actingFor: nil), "\(phase)")
         }
     }
 
     @Test("A start overtaken by a force stop and a re-Start leaves the successor alone")
     func overtakenStartLeavesTheSuccessorsBringUpAlone() {
         let abortedSessionID = UUID()
-        let instance = makeInstance(phase: .starting(sessionID: abortedSessionID))
+        let instance = VMInstanceFixture.make(phase: .starting(sessionID: abortedSessionID))
 
         // Force Stop, then an immediate re-Start, both landing before the
         // aborted start's `session.start()` throws.
@@ -247,7 +236,7 @@ struct VirtualizationServiceTests {
     @Test("An attempt that still owns the VM rests it and releases its session")
     func owningAttemptRestsTheVMAndReleasesItsSession() {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .starting(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .starting(sessionID: sessionID))
         instance.beginSessionContext()
 
         #expect(
@@ -263,7 +252,7 @@ struct VirtualizationServiceTests {
     @Test("A guest that dies mid-capture leaves the VM where the teardown put it, not running")
     func warmCaptureDoesNotHandTheVMBackToADeadSession() async throws {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
         let session = MockSnapshotSession(guestState: .running)
         let store = MockVMSnapshotStore()
         let snapshot = VMSnapshot(name: "Before the update")
@@ -299,7 +288,7 @@ struct VirtualizationServiceTests {
     @Test("A capture that keeps its session hands the VM back to it")
     func warmCaptureRestoresTheRunningPhase() async throws {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
         let session = MockSnapshotSession(guestState: .running)
         let store = MockVMSnapshotStore()
         let snapshot = VMSnapshot(name: "Before the update")
@@ -313,7 +302,7 @@ struct VirtualizationServiceTests {
     @Test("A capture of a live-paused guest hands it back live-paused")
     func warmCaptureRestoresTheLivePausedPhase() async throws {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .livePaused(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: sessionID))
         let session = MockSnapshotSession(guestState: .paused)
         let store = MockVMSnapshotStore()
 
@@ -327,7 +316,7 @@ struct VirtualizationServiceTests {
     @Test("A failed capture puts a running guest back, and a dead session's answer is dropped")
     func warmCaptureFailureRestsWhereTheGuestIs() async throws {
         let sessionID = UUID()
-        let instance = makeInstance(phase: .running(sessionID: sessionID))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
         let session = MockSnapshotSession(guestState: .running)
         let store = MockVMSnapshotStore()
         store.captureError = VMSnapshotError.snapshotMissingSavedState
@@ -356,16 +345,16 @@ struct VirtualizationServiceTests {
     private func makeRevertFixture(
         phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm
     ) throws -> RevertFixture {
-        var config = VMConfiguration(name: "Revert VM", guestOS: .linux, bootMode: .efi)
-        config.memorySizeInGB = 16
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RevertTests-\(UUID().uuidString)", isDirectory: true)
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        let instance = VMInstanceFixture.make(name: "Revert VM", phase: phase) {
+            $0.memorySizeInGB = 16
+        }
+        let layout = instance.bundleLayout
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
         try Data("live-disk".utf8).write(to: layout.diskImageURL)
 
         // The capture: taken while the VM had 8 GB and a second disk.
-        var capturedConfiguration = config
+        var capturedConfiguration = instance.configuration
         capturedConfiguration.memorySizeInGB = 8
         let extraID = UUID()
         capturedConfiguration.storageDisks = [
@@ -386,7 +375,6 @@ struct VirtualizationServiceTests {
             .write(to: snapshotLayout.configURL)
 
         // The VM as it stands now: more memory, and the second disk removed.
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         return RevertFixture(
             instance: instance, snapshot: snapshot, store: VMSnapshotStore(),
@@ -626,7 +614,7 @@ struct VirtualizationServiceTests {
 
     @Test("start throws when VM is already running")
     func startThrowsWhenRunning() async {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
 
         await #expect(throws: VirtualizationError.self) {
             try await service.start(instance)
@@ -635,7 +623,7 @@ struct VirtualizationServiceTests {
 
     @Test("start throws when VM is paused")
     func startThrowsWhenPaused() async {
-        let instance = makeInstance(phase: .suspended)
+        let instance = VMInstanceFixture.make(phase: .suspended)
 
         await #expect(throws: VirtualizationError.self) {
             try await service.start(instance)
@@ -644,7 +632,7 @@ struct VirtualizationServiceTests {
 
     @Test("start throws when VM is starting")
     func startThrowsWhenStarting() async {
-        let instance = makeInstance(phase: .starting(sessionID: nil))
+        let instance = VMInstanceFixture.make(phase: .starting(sessionID: nil))
 
         await #expect(throws: VirtualizationError.self) {
             try await service.start(instance)
@@ -655,7 +643,7 @@ struct VirtualizationServiceTests {
 
     @Test("stop throws when VM is stopped")
     func stopThrowsWhenStopped() async {
-        let instance = makeInstance(phase: .stopped)
+        let instance = VMInstanceFixture.make(phase: .stopped)
 
         await #expect(throws: VirtualizationError.self) {
             try await service.stop(instance)
@@ -664,7 +652,7 @@ struct VirtualizationServiceTests {
 
     @Test("stop throws when VM is starting")
     func stopThrowsWhenStarting() async {
-        let instance = makeInstance(phase: .starting(sessionID: nil))
+        let instance = VMInstanceFixture.make(phase: .starting(sessionID: nil))
 
         await #expect(throws: VirtualizationError.self) {
             try await service.stop(instance)
@@ -675,7 +663,7 @@ struct VirtualizationServiceTests {
 
     @Test("pause throws when VM is stopped")
     func pauseThrowsWhenStopped() async {
-        let instance = makeInstance(phase: .stopped)
+        let instance = VMInstanceFixture.make(phase: .stopped)
 
         await #expect(throws: VirtualizationError.self) {
             try await service.pause(instance)
@@ -684,7 +672,7 @@ struct VirtualizationServiceTests {
 
     @Test("pause throws when VM is paused")
     func pauseThrowsWhenAlreadyPaused() async {
-        let instance = makeInstance(phase: .suspended)
+        let instance = VMInstanceFixture.make(phase: .suspended)
 
         await #expect(throws: VirtualizationError.self) {
             try await service.pause(instance)
@@ -695,7 +683,7 @@ struct VirtualizationServiceTests {
 
     @Test("resume throws when VM is stopped")
     func resumeThrowsWhenStopped() async {
-        let instance = makeInstance(phase: .stopped)
+        let instance = VMInstanceFixture.make(phase: .stopped)
 
         await #expect(throws: VirtualizationError.self) {
             try await service.resume(instance)
@@ -704,7 +692,7 @@ struct VirtualizationServiceTests {
 
     @Test("resume throws when VM is running")
     func resumeThrowsWhenRunning() async {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
 
         await #expect(throws: VirtualizationError.self) {
             try await service.resume(instance)
@@ -715,7 +703,7 @@ struct VirtualizationServiceTests {
 
     @Test("save throws when VM is stopped")
     func saveThrowsWhenStopped() async {
-        let instance = makeInstance(phase: .stopped)
+        let instance = VMInstanceFixture.make(phase: .stopped)
 
         await #expect(throws: VirtualizationError.self) {
             try await service.save(instance)
@@ -726,7 +714,7 @@ struct VirtualizationServiceTests {
 
     @Test("forceStop throws when no virtual machine exists and not cold-paused")
     func forceStopThrowsWhenNoVM() async {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         // No virtualMachine assigned, and not cold-paused (status is .running)
 
         await #expect(throws: VirtualizationError.self) {
@@ -942,7 +930,7 @@ struct VirtualizationServiceTests {
 
     @Test("a failed restore rests suspended with the save file intact")
     func restingPhaseAfterRestoreFailureKeepsSaveFile() throws {
-        let instance = makeInstance(phase: .restoringSavedState(sessionID: nil))
+        let instance = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: nil))
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
@@ -961,7 +949,7 @@ struct VirtualizationServiceTests {
 
     @Test("a failed restore with the save file already discarded rests stopped")
     func restingPhaseAfterRestoreFailureWithoutSaveFileIsStopped() {
-        let instance = makeInstance(phase: .restoringSavedState(sessionID: nil))
+        let instance = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: nil))
 
         instance.enter(VirtualizationService.restingPhaseAfterRestoreFailure(on: instance))
 
@@ -972,7 +960,7 @@ struct VirtualizationServiceTests {
     @Test("The resting phase after a lifecycle failure dispatches by kind and entry point")
     func restingPhaseAfterLifecycleFailureDispatches() throws {
         // A restore failure rests suspended, regardless of entry point.
-        let restored = makeInstance(phase: .restoringSavedState(sessionID: nil))
+        let restored = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: nil))
         try FileManager.default.createDirectory(
             at: restored.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: restored.bundleURL) }
@@ -985,14 +973,14 @@ struct VirtualizationServiceTests {
                 on: restored, transientRestingPhase: .stopped) == .suspended)
 
         // A permanent start failure rests at `.failed` carrying the message.
-        let started = makeInstance(phase: .starting(sessionID: nil))
+        let started = VMInstanceFixture.make(phase: .starting(sessionID: nil))
         let permanent = VirtualizationService.restingPhaseAfterLifecycleFailure(
             VirtualizationError.noVirtualMachine, on: started, transientRestingPhase: .stopped)
         #expect(permanent.status == .error)
         #expect(permanent.errorMessage != nil)
 
         // A transient start failure rests at the given phase with no message.
-        let transient = makeInstance(phase: .starting(sessionID: nil))
+        let transient = VMInstanceFixture.make(phase: .starting(sessionID: nil))
         #expect(
             VirtualizationService.restingPhaseAfterLifecycleFailure(
                 NSError(
@@ -1000,7 +988,7 @@ struct VirtualizationServiceTests {
                 on: transient, transientRestingPhase: .stopped) == .stopped)
 
         // A resume failure (no transient phase) rests at `.failed` with the message.
-        let resumed = makeInstance(phase: .suspended)
+        let resumed = VMInstanceFixture.make(phase: .suspended)
         let resumeFailure = VirtualizationService.restingPhaseAfterLifecycleFailure(
             VirtualizationError.noSaveFile, on: resumed, transientRestingPhase: nil)
         #expect(resumeFailure.status == .error)
@@ -1062,7 +1050,7 @@ struct VirtualizationServiceTests {
 
     @Test("start sets error status for permanent config error")
     func startSetsErrorForPermanentConfigError() async throws {
-        let instance = makeInstance(phase: .stopped)
+        let instance = VMInstanceFixture.make(phase: .stopped)
 
         // start() fails at buildConfiguration (no real disk image) with a
         // ConfigurationBuilderError — a permanent error. The transient path

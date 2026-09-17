@@ -78,17 +78,6 @@ struct VMLibraryViewModelTests {
         return (vm, suspending)
     }
 
-    private func makeInstance(name: String = "Test VM", guestOS: VMGuestOS = .linux) -> VMInstance {
-        let config = VMConfiguration(
-            name: name,
-            guestOS: guestOS,
-            bootMode: guestOS == .macOS ? .macOS : .efi
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     // MARK: - Initial State
 
     @Test("ViewModel starts with empty instances when storage is empty")
@@ -106,7 +95,7 @@ struct VMLibraryViewModelTests {
     @Test("requestDelete always presents the unified delete sheet")
     func requestDelete() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.requestDelete(instance)
@@ -120,7 +109,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM removes instance and clears selection")
     func deleteVM() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
 
@@ -138,8 +127,8 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM selects first remaining instance when deleting selected")
     func deleteVMUpdatesSelection() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let first = makeInstance(name: "First")
-        let second = makeInstance(name: "Second")
+        let first = VMInstanceFixture.make(name: "First")
+        let second = VMInstanceFixture.make(name: "Second")
         viewModel.instances = [first, second]
         viewModel.selectedID = second.id
 
@@ -154,7 +143,7 @@ struct VMLibraryViewModelTests {
     @Test("requestDelete forwards the immediate flag to the delete sheet")
     func requestDeleteForwardsPermanentlyFlag() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.requestDelete(instance)
@@ -167,7 +156,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM removes a cold-paused VM without a discard-saved-state pass")
     func deleteVMColdPaused() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)  // no live VM ⇒ cold-paused ("Suspended")
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
@@ -186,7 +175,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM refuses a VM that stopped being deletable while the sheet was open")
     func deleteVMRefusesWhenNoLongerDeletable() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)  // Suspended when the sheet opened…
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -206,7 +195,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let (viewModel, suspending) = makeSuspendingViewModel(storage: storage)
         suspending.shouldSuspendOnResume = true
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -233,7 +222,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM permanently hard-deletes the bundle, bypassing the Trash")
     func deleteVMPermanentlyUsesHardDelete() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -250,7 +239,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM permanently deletes the selected external files")
     func deleteVMPermanentlyDeletesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let externalDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
 
@@ -281,14 +270,14 @@ struct VMLibraryViewModelTests {
 
         let sharedID = UUID()
         let sharedPath = sharedDisk.path(percentEncoded: false)
-        let target = makeInstance(name: "Target")
+        let target = VMInstanceFixture.make(name: "Target")
         target.configuration.storageDisks = [
             StorageDisk(
                 id: sharedID, path: sharedPath,
                 readOnly: false, label: "Shared", isInternal: false, kind: .virtio
             )
         ]
-        let other = makeInstance(name: "Other")
+        let other = VMInstanceFixture.make(name: "Other")
         other.configuration.storageDisks = [
             StorageDisk(
                 path: sharedPath, readOnly: false, label: "Shared",
@@ -309,7 +298,7 @@ struct VMLibraryViewModelTests {
     @Test("requestDelete routes to sheet when the VM references external attachments")
     func requestDeleteRoutesToSheetWithExternals() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.removableMedia = [
             RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true)
         ]
@@ -325,7 +314,7 @@ struct VMLibraryViewModelTests {
     func externalAttachmentsLists() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let sharedISO = "/tmp/shared-installer.iso"
-        let target = makeInstance(name: "Target")
+        let target = VMInstanceFixture.make(name: "Target")
         target.configuration.storageDisks = [
             StorageDisk(
                 path: "Disk.asif", readOnly: false, label: "Main",
@@ -340,11 +329,11 @@ struct VMLibraryViewModelTests {
             RemovableMediaItem(path: sharedISO, readOnly: true, label: "Shared ISO")
         ]
 
-        let sharer = makeInstance(name: "Sharer")
+        let sharer = VMInstanceFixture.make(name: "Sharer")
         sharer.configuration.removableMedia = [
             RemovableMediaItem(path: sharedISO, readOnly: true, label: "Shared ISO")
         ]
-        let unrelated = makeInstance(name: "Unrelated")
+        let unrelated = VMInstanceFixture.make(name: "Unrelated")
         viewModel.instances = [target, sharer, unrelated]
 
         let attachments = await viewModel.externalAttachments(for: target)
@@ -363,7 +352,7 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments lists a Linux VM's kernel and initrd")
     func externalAttachmentsIncludeKernelAndInitrd() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let target = makeInstance(name: "Linux")
+        let target = VMInstanceFixture.make(name: "Linux")
         target.configuration.kernelPath = "/Users/me/vmlinuz"
         target.configuration.initrdPath = "/Users/me/initrd.img"
         viewModel.instances = [target]
@@ -378,9 +367,9 @@ struct VMLibraryViewModelTests {
     func externalAttachmentsMarkSharedKernel() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let kernelPath = "/Users/me/vmlinuz"
-        let target = makeInstance(name: "Original")
+        let target = VMInstanceFixture.make(name: "Original")
         target.configuration.kernelPath = kernelPath
-        let clone = makeInstance(name: "Clone")
+        let clone = VMInstanceFixture.make(name: "Clone")
         clone.configuration.kernelPath = kernelPath
         viewModel.instances = [target, clone]
 
@@ -393,7 +382,7 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments never offers a shared directory")
     func externalAttachmentsExcludeSharedDirectories() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let target = makeInstance(name: "Sharer")
+        let target = VMInstanceFixture.make(name: "Sharer")
         target.configuration.sharedDirectories = [SharedDirectory(path: "/Users/me/Projects")]
         viewModel.instances = [target]
 
@@ -410,7 +399,7 @@ struct VMLibraryViewModelTests {
         let missingPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-\(UUID().uuidString).iso").path
 
-        let instance = makeInstance(name: "Target")
+        let instance = VMInstanceFixture.make(name: "Target")
         instance.configuration.storageDisks = [
             StorageDisk(
                 path: presentDisk.path, readOnly: false, label: "Present",
@@ -433,7 +422,7 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments is empty when the VM only has internal disks")
     func externalAttachmentsEmptyForInternalOnly() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.storageDisks = [
             StorageDisk(
                 path: "Disk.asif", readOnly: false, label: "Main",
@@ -450,7 +439,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.removableMedia = [
             RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent"),
             RemovableMediaItem(path: "/Volumes/External/installer.iso", readOnly: true, label: "Installer"),
@@ -471,7 +460,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.removableMedia = [
             RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
         ]
@@ -488,7 +477,7 @@ struct VMLibraryViewModelTests {
         let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
         let agentID = UUID()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.removableMedia = [
             RemovableMediaItem(id: agentID, path: agentPath, readOnly: true, label: "Kernova Guest Agent")
         ]
@@ -509,7 +498,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM with no selected externals leaves external files untouched")
     func deleteVMKeepsExternalsByDefault() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let externalDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
         let externalISO = FileManager.default.temporaryDirectory
@@ -540,7 +529,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM trashes the selected external disks and removable media")
     func deleteVMTrashesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let externalDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
         let externalISO = FileManager.default.temporaryDirectory
@@ -572,7 +561,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM trashes only the selected external and keeps the rest")
     func deleteVMTrashesOnlySelectedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let trashedDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-trash.img")
         let keptDisk = FileManager.default.temporaryDirectory
@@ -608,7 +597,7 @@ struct VMLibraryViewModelTests {
 
         let sharedID = UUID()
         let sharedPath = sharedDisk.path(percentEncoded: false)
-        let target = makeInstance(name: "Target")
+        let target = VMInstanceFixture.make(name: "Target")
         target.configuration.storageDisks = [
             StorageDisk(
                 id: sharedID, path: sharedPath,
@@ -616,7 +605,7 @@ struct VMLibraryViewModelTests {
             )
         ]
         // A second VM references the same path, marking it shared.
-        let other = makeInstance(name: "Other")
+        let other = VMInstanceFixture.make(name: "Other")
         other.configuration.storageDisks = [
             StorageDisk(
                 path: sharedPath, readOnly: false, label: "Shared",
@@ -642,7 +631,7 @@ struct VMLibraryViewModelTests {
 
         let sharedID = UUID()
         let sharedPath = sharedDisk.path(percentEncoded: false)
-        let target = makeInstance(name: "Target")
+        let target = VMInstanceFixture.make(name: "Target")
         target.configuration.storageDisks = [
             StorageDisk(
                 id: sharedID, path: sharedPath,
@@ -651,7 +640,7 @@ struct VMLibraryViewModelTests {
         ]
         // The sibling stores the decomposed form APFS reports for the same
         // name — a divergence a boot's path healing writes on its own.
-        let other = makeInstance(name: "Other")
+        let other = VMInstanceFixture.make(name: "Other")
         other.configuration.storageDisks = [
             StorageDisk(
                 path: sharedPath.decomposedStringWithCanonicalMapping, readOnly: false,
@@ -704,7 +693,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
 
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
         instance.configuration.installContext = MacOSInstallContext(
@@ -732,7 +721,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
 
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
         instance.configuration.installContext = MacOSInstallContext(
@@ -758,7 +747,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
 
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         // A destination path is set so the source — not a nil destination — is
         // what keeps the cleanup from firing.
         let destination = FileManager.default.temporaryDirectory
@@ -781,7 +770,7 @@ struct VMLibraryViewModelTests {
         let ipswService = MockIPSWService()
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -794,7 +783,7 @@ struct VMLibraryViewModelTests {
     func deleteVMSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         fileSystem.trashError = CocoaError(.fileNoSuchFile)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let ghostID = UUID()
         let ghostPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
@@ -815,7 +804,7 @@ struct VMLibraryViewModelTests {
     func deleteVMPermanentlySwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         fileSystem.removeError = CocoaError(.fileNoSuchFile)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let ghostID = UUID()
         let ghostPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
@@ -837,7 +826,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM ignores a repeat confirm for an already-removed VM")
     func deleteVMIgnoresStaleRepeatConfirm() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -870,7 +859,7 @@ struct VMLibraryViewModelTests {
     @Test("Showing a VM in the Finder goes through the facade to the delegate's hook")
     func showInFinderReachesTheFinderHook() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Filed")
+        let instance = VMInstanceFixture.make(name: "Filed")
         viewModel.instances.append(instance)
         var revealed: [URL] = []
         // What `AppDelegate` answers with `activateFileViewerSelecting`.
@@ -885,7 +874,7 @@ struct VMLibraryViewModelTests {
     @Test("start delegates to lifecycle coordinator")
     func startDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         await viewModel.start(instance)
@@ -898,7 +887,7 @@ struct VMLibraryViewModelTests {
     @Test("requestStartInRecovery routes to the presenter")
     func requestStartInRecoveryRoutesToPresenter() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.requestStartInRecovery(instance)
@@ -912,7 +901,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         // macOS only: Virtualization.framework has no recovery start option for
         // Linux/EFI guests, and the verb refuses one.
-        let instance = makeInstance(guestOS: .macOS)
+        let instance = VMInstanceFixture.make(guestOS: .macOS)
         viewModel.instances.append(instance)
 
         await viewModel.start(instance, bootIntoRecovery: true)
@@ -924,7 +913,7 @@ struct VMLibraryViewModelTests {
     @Test("stop delegates to lifecycle coordinator")
     func stopDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -937,7 +926,7 @@ struct VMLibraryViewModelTests {
     @Test("forceStop delegates to lifecycle coordinator")
     func forceStopDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -950,7 +939,7 @@ struct VMLibraryViewModelTests {
     @Test("pause delegates to lifecycle coordinator")
     func pauseDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -963,7 +952,7 @@ struct VMLibraryViewModelTests {
     @Test("resume delegates to lifecycle coordinator")
     func resumeDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
 
@@ -976,7 +965,7 @@ struct VMLibraryViewModelTests {
     @Test("start of an inline-display VM focuses the guest display without asking for the library")
     func startRequestsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
@@ -994,7 +983,7 @@ struct VMLibraryViewModelTests {
     @Test("start of an inline-display VM with no window buffers its focus and asks for no library")
     func startWithNoWindowBuffersFocusWithoutTheLibrary() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         viewModel.presenter = nil
         var libraryRequests = 0
@@ -1014,7 +1003,7 @@ struct VMLibraryViewModelTests {
     @Test("start of a pop-out VM requests no inline focus")
     func startPopOutSkipsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.displayPreference = .popOut
         viewModel.instances.append(instance)
 
@@ -1026,7 +1015,7 @@ struct VMLibraryViewModelTests {
     @Test("resume of an inline-display VM focuses the guest display without asking for the library")
     func resumeRequestsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
         var libraryRequests = 0
@@ -1042,7 +1031,7 @@ struct VMLibraryViewModelTests {
     @Test("resume of a pop-out VM requests no inline focus, as start does")
     func resumePopOutSkipsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         instance.configuration.displayPreference = .popOut
         viewModel.instances.append(instance)
@@ -1059,8 +1048,8 @@ struct VMLibraryViewModelTests {
     @Test("Surfacing an inline VM's display selects it, whatever was selected before")
     func openSelectsTheVMItSurfaces() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let onScreen = makeInstance(name: "OnScreen")
-        let wanted = makeInstance(name: "Wanted")
+        let onScreen = VMInstanceFixture.make(name: "OnScreen")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         viewModel.instances.append(contentsOf: [onScreen, wanted])
         viewModel.selectedID = onScreen.id
@@ -1078,7 +1067,7 @@ struct VMLibraryViewModelTests {
     @Test("Surfacing an inline VM asks for the library even with a window attached")
     func openOfAnInlineVMAlwaysAsksForTheLibrary() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wanted = makeInstance(name: "Wanted")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         viewModel.instances.append(wanted)
         // `makeViewModel` attaches the presenter, standing in for a window that
@@ -1095,7 +1084,7 @@ struct VMLibraryViewModelTests {
     @Test("Surfacing a pop-out VM's display asks for no library window")
     func openOfAPopOutVMAsksForNoLibrary() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wanted = makeInstance(name: "Wanted")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         wanted.configuration.displayPreference = .popOut
         viewModel.instances.append(wanted)
@@ -1113,7 +1102,7 @@ struct VMLibraryViewModelTests {
     @Test("Surfacing an inline VM with no window asks for the library, then focuses it")
     func openWithNoWindowRequestsTheLibraryFirst() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wanted = makeInstance(name: "Wanted")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         viewModel.instances.append(wanted)
         // No main window has been created, which is what leaves `presenter` nil.
@@ -1134,8 +1123,8 @@ struct VMLibraryViewModelTests {
     @Test("Revealing a stopped VM selects it and asks for the library window")
     func revealSelectsAndAsksForTheLibrary() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let onScreen = makeInstance(name: "OnScreen")
-        let wanted = makeInstance(name: "Wanted")
+        let onScreen = VMInstanceFixture.make(name: "OnScreen")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         viewModel.instances.append(contentsOf: [onScreen, wanted])
         viewModel.selectedID = onScreen.id
         var libraryRequests = 0
@@ -1152,7 +1141,7 @@ struct VMLibraryViewModelTests {
     @Test("Revealing a VM with no window yet asks for the library the same way")
     func revealWithNoWindowAsksForTheLibrary() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wanted = makeInstance(name: "Wanted")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         viewModel.instances.append(wanted)
         // No main window has been created, which is what leaves `presenter` nil.
         viewModel.presenter = nil
@@ -1168,7 +1157,7 @@ struct VMLibraryViewModelTests {
     @Test("Revealing a running VM focuses its display, not just its library row")
     func revealOfARunningVMSurfacesTheDisplay() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wanted = makeInstance(name: "Wanted")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         viewModel.instances.append(wanted)
         var libraryRequests = 0
@@ -1185,7 +1174,7 @@ struct VMLibraryViewModelTests {
     @Test("A buffered surface request is dropped when its VM leaves before the window arrives")
     func bufferedSurfaceRequestSurvivesAVanishedVM() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let wanted = makeInstance(name: "Wanted")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         viewModel.instances.append(wanted)
         viewModel.presenter = nil
@@ -1201,8 +1190,8 @@ struct VMLibraryViewModelTests {
     @Test("Surfacing a pop-out VM's display leaves the selection where it was")
     func openOfAPopOutVMLeavesTheSelectionAlone() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let onScreen = makeInstance(name: "OnScreen")
-        let wanted = makeInstance(name: "Wanted")
+        let onScreen = VMInstanceFixture.make(name: "OnScreen")
+        let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
         wanted.configuration.displayPreference = .popOut
         viewModel.instances.append(contentsOf: [onScreen, wanted])
@@ -1217,7 +1206,7 @@ struct VMLibraryViewModelTests {
     @Test("save delegates to lifecycle coordinator")
     func saveDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -1240,8 +1229,8 @@ struct VMLibraryViewModelTests {
         startingID: Data = Data([1, 2, 3]),
         otherID: Data = Data([1, 2, 3])
     ) -> (starting: VMInstance, other: VMInstance) {
-        let starting = makeInstance(name: "Starting", guestOS: guestOS)
-        let other = makeInstance(name: "Twin", guestOS: guestOS)
+        let starting = VMInstanceFixture.make(name: "Starting", guestOS: guestOS)
+        let other = VMInstanceFixture.make(name: "Twin", guestOS: guestOS)
         for (instance, identifier) in [(starting, startingID), (other, otherID)] {
             if guestOS == .macOS {
                 instance.configuration.machineIdentifierData = identifier
@@ -1325,8 +1314,8 @@ struct VMLibraryViewModelTests {
     func startBlockedByFileOnlyMachineIDTwin() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let starting = makeInstance(name: "Starting", guestOS: .macOS)
-        let other = makeInstance(name: "Twin", guestOS: .macOS)
+        let starting = VMInstanceFixture.make(name: "Starting", guestOS: .macOS)
+        let other = VMInstanceFixture.make(name: "Twin", guestOS: .macOS)
         // The identifier lives only on disk, exactly as it does in a bundle
         // written before the configuration carried the field.
         for instance in [starting, other] {
@@ -1435,8 +1424,8 @@ struct VMLibraryViewModelTests {
         mode: VMNetworkMode = .shared,
         otherMode: VMNetworkMode = .shared
     ) -> (starting: VMInstance, other: VMInstance) {
-        let starting = makeInstance(name: "Starting")
-        let other = makeInstance(name: "Twin")
+        let starting = VMInstanceFixture.make(name: "Starting")
+        let other = VMInstanceFixture.make(name: "Twin")
         starting.configuration.macAddress = mac
         starting.configuration.networkMode = mode
         other.configuration.macAddress = otherMAC
@@ -1673,7 +1662,7 @@ struct VMLibraryViewModelTests {
     private func appendVMWithMedia(
         to viewModel: VMLibraryViewModel, in phase: VMLifecyclePhase
     ) -> VMInstance {
-        let instance = makeInstance(name: "Media VM")
+        let instance = VMInstanceFixture.make(name: "Media VM")
         instance.configuration.removableMedia = [
             RemovableMediaItem(path: "/tmp/media.iso", readOnly: true)
         ]
@@ -1831,7 +1820,7 @@ struct VMLibraryViewModelTests {
     /// A VM whose display is sized to its window at every cold start, at the
     /// screen's scale — both defaults.
     private func makeMatchWindowInstance(guestOS: VMGuestOS = .macOS) -> VMInstance {
-        makeInstance(guestOS: guestOS)
+        VMInstanceFixture.make(guestOS: guestOS)
     }
 
     private static let retinaSurface = DisplayBootSurface(
@@ -1918,7 +1907,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
         viewModel.displayBootGeometryProvider = provider
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.displaySizesToWindow = false
         viewModel.instances.append(instance)
 
@@ -1976,7 +1965,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         await viewModel.start(instance)
 
@@ -1990,7 +1979,7 @@ struct VMLibraryViewModelTests {
     func startOffersRemovalOnRemovableMediaAttachFailure() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2015,7 +2004,7 @@ struct VMLibraryViewModelTests {
     func startFailureWithNoWindowBuffersTheRecovery() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2045,7 +2034,7 @@ struct VMLibraryViewModelTests {
     func bufferedStartFailureIsDroppedWhenItsVMLeaves() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2071,7 +2060,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         viewModel.presenter = nil
 
@@ -2092,7 +2081,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
         viewModel.presenter = nil
@@ -2110,7 +2099,7 @@ struct VMLibraryViewModelTests {
     func removeStartFailedAttachmentAndStartRetries() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2131,7 +2120,7 @@ struct VMLibraryViewModelTests {
     func removeStartFailedAttachmentDiscardsSaveFile() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2158,7 +2147,7 @@ struct VMLibraryViewModelTests {
     func startSoleDiskAttachFailureStaysGeneric() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         // The synthesized main disk is what a nil storageDisks list resolves to.
         let mainDisk = StorageDisk.mainDisk(
@@ -2178,7 +2167,7 @@ struct VMLibraryViewModelTests {
     func startOffersRemovalOnMainDiskAttachFailureWithASibling() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
         let extra = StorageDisk(
             path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
@@ -2201,7 +2190,7 @@ struct VMLibraryViewModelTests {
     func startOffersRemovalOnExternalDiskAttachFailure() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         let external = StorageDisk(
             id: UUID(), path: "/tmp/gone.img", readOnly: false, label: "External",
@@ -2226,7 +2215,7 @@ struct VMLibraryViewModelTests {
     func startDoesNotOfferRemovalForLockContention() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/shared.iso", readOnly: true, label: "Shared ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2252,7 +2241,7 @@ struct VMLibraryViewModelTests {
     func removeStartFailedAttachmentIgnoresDeletedVM() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         // Never added to `instances` — models the VM being deleted while the
@@ -2271,7 +2260,7 @@ struct VMLibraryViewModelTests {
     func removeStartFailedAttachmentSkipsRetryWhenEntryGone() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         // The user removed it in Settings before confirming the alert. Retrying
@@ -2287,7 +2276,7 @@ struct VMLibraryViewModelTests {
     func startStaysGenericWhenMediaNotConfigured() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
             id: UUID(), path: "/tmp/ghost.iso", label: "Ghost",
@@ -2307,7 +2296,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.startError = makeVMLimitExceededError()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance(name: "Ubuntu")
+        let instance = VMInstanceFixture.make(name: "Ubuntu")
         viewModel.instances.append(instance)
 
         await viewModel.start(instance)
@@ -2335,7 +2324,7 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
-        let instance = makeInstance(name: "Sequoia", guestOS: .macOS)
+        let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS)
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         instance.onUpdateConfiguration = { mutate in
@@ -2362,7 +2351,7 @@ struct VMLibraryViewModelTests {
     func attachmentFailureWinsOverLimitExplanation() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
@@ -2383,7 +2372,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.forceStopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         await viewModel.forceStop(instance)
 
@@ -2396,7 +2385,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         await viewModel.stop(instance)
 
@@ -2409,7 +2398,7 @@ struct VMLibraryViewModelTests {
     @Test("resumeAndStop dispatches resume then stop")
     func resumeAndStopDispatches() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
 
@@ -2422,7 +2411,7 @@ struct VMLibraryViewModelTests {
     @Test("resumeAndStop clears confirmation state after dispatch")
     func resumeAndStopClearsConfirmationState() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
 
@@ -2435,7 +2424,7 @@ struct VMLibraryViewModelTests {
     @Test("forceStopFromPaused dispatches forceStop and clears state")
     func forceStopFromPausedDispatches() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
         viewModel.instances.append(instance)
 
@@ -2451,7 +2440,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
 
         await viewModel.resumeAndStop(instance)
@@ -2463,7 +2452,7 @@ struct VMLibraryViewModelTests {
     @Test("stop on running VM still delegates directly without confirmation")
     func stopRunningSkipsConfirmation() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -2479,7 +2468,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.pauseError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
 
@@ -2501,7 +2490,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         await viewModel.resume(instance)
 
@@ -2514,7 +2503,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         await viewModel.save(instance)
 
@@ -2531,7 +2520,7 @@ struct VMLibraryViewModelTests {
         mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM",
         rules: [PortForwardingRule] = []
     ) -> VMInstance {
-        let instance = makeInstance(name: name)
+        let instance = VMInstanceFixture.make(name: name)
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = mode
         instance.configuration.macAddress = mac
@@ -2696,7 +2685,7 @@ struct VMLibraryViewModelTests {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, _, _, _) = makeViewModel(
             vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
         instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
@@ -2849,7 +2838,7 @@ struct VMLibraryViewModelTests {
     func updateConfigurationDeclaresForwardingRules() {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
 
         viewModel.updateConfiguration(of: instance) {
             $0.networkEnabled = true
@@ -2866,7 +2855,7 @@ struct VMLibraryViewModelTests {
     func modeSwitchWithdrawsForwardingRules() {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.updateConfiguration(of: instance) {
             $0.networkEnabled = true
             $0.networkMode = .shared
@@ -2883,7 +2872,7 @@ struct VMLibraryViewModelTests {
     func macAddressChangeMovesForwardingRules() {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.updateConfiguration(of: instance) {
             $0.networkEnabled = true
             $0.networkMode = .shared
@@ -2907,7 +2896,7 @@ struct VMLibraryViewModelTests {
     func deleteWithdrawsForwardingRules() async {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
         instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
@@ -2924,7 +2913,7 @@ struct VMLibraryViewModelTests {
         let vmnet = MockVmnetNetworkProvider()
         vmnet.scriptedPendingKinds = [.shared]
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
         instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
@@ -2940,7 +2929,7 @@ struct VMLibraryViewModelTests {
         mode: VMNetworkMode, vmnet: MockVmnetNetworkProvider
     ) -> (VMLibraryViewModel, VMInstance) {
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = mode
         instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
@@ -3196,7 +3185,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -3210,7 +3199,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.forceStopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -3498,7 +3487,7 @@ struct VMLibraryViewModelTests {
 
     @Test("The cancel confirmation for a create reads as a creation")
     func cancelPreparingPromptNamesCreation() {
-        let instance = makeInstance(name: "Half-written VM")
+        let instance = VMInstanceFixture.make(name: "Half-written VM")
 
         let prompt = VMCommandCore.cancelPreparingPrompt(.creating, on: instance)
 
@@ -3570,7 +3559,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelGuestSetup preserves bundle and instance (non-destructive)")
     func cancelGuestSetupPreservesBundle() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Installing VM")
+        let instance = VMInstanceFixture.make(name: "Installing VM")
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
         )
@@ -3623,7 +3612,7 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
-        let instance = makeInstance(name: "Race VM")
+        let instance = VMInstanceFixture.make(name: "Race VM")
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
         )
@@ -3659,8 +3648,8 @@ struct VMLibraryViewModelTests {
     @Test("cancelGuestSetup does not change selection")
     func cancelGuestSetupKeepsSelection() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let first = makeInstance(name: "First")
-        let installing = makeInstance(name: "Installing")
+        let first = VMInstanceFixture.make(name: "First")
+        let installing = VMInstanceFixture.make(name: "Installing")
         installing.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
         )
@@ -3706,7 +3695,7 @@ struct VMLibraryViewModelTests {
         storage: MockVMStorageService,
         destinationPath: String? = nil
     ) -> VMInstance {
-        let instance = makeInstance(name: "Debian")
+        let instance = VMInstanceFixture.make(name: "Debian")
         instance.configuration.linuxInstallContext = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()), downloadDestinationPath: destinationPath)
         instance.onUpdateConfiguration = { mutate in
@@ -3914,7 +3903,7 @@ struct VMLibraryViewModelTests {
     @Test("setAgentInstallNudgeDismissed persists in both directions")
     func setAgentInstallNudgeDismissedPersistsBothDirections() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.setAgentInstallNudgeDismissed(true, for: instance)
@@ -3929,7 +3918,7 @@ struct VMLibraryViewModelTests {
     @Test("setAgentInstallNudgeDismissed no-ops when unchanged")
     func setAgentInstallNudgeDismissedNoOpsWhenUnchanged() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         // Default is already false; setting false again writes nothing.
@@ -3940,7 +3929,7 @@ struct VMLibraryViewModelTests {
     @Test("dismissAgentInstallNudge still sets the flag to true")
     func dismissAgentInstallNudgeSetsTrue() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.dismissAgentInstallNudge(for: instance)
@@ -3952,9 +3941,9 @@ struct VMLibraryViewModelTests {
     @Test("resetAllAgentInstallNudges re-arms every VM and the app-wide preference")
     func resetAllAgentInstallNudgesReArmsEveryVM() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let first = makeInstance(name: "First")
-        let second = makeInstance(name: "Second")
-        let third = makeInstance(name: "Third")
+        let first = VMInstanceFixture.make(name: "First")
+        let second = VMInstanceFixture.make(name: "Second")
+        let third = VMInstanceFixture.make(name: "Third")
         first.configuration.agentInstallNudgeDismissed = true
         second.configuration.agentInstallNudgeDismissed = true
         // `third` stays armed to confirm the reset no-ops on already-armed VMs.
@@ -3994,7 +3983,7 @@ struct VMLibraryViewModelTests {
     @Test("hasUninterruptibleWork covers transitioning VMs but not settled ones")
     func hasUninterruptibleWorkCoversTransitions() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances = [instance]
 
         for phase in Self.transitionalPhases {
@@ -4020,7 +4009,7 @@ struct VMLibraryViewModelTests {
     @Test("hasSaveInFlight covers a saving VM alone")
     func hasSaveInFlightCoversSavingOnly() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances = [instance]
 
         instance.enter(.saving(sessionID: UUID()))
@@ -4045,9 +4034,9 @@ struct VMLibraryViewModelTests {
     @Test("hasSaveInFlight finds a saving VM among settled ones")
     func hasSaveInFlightFindsAnyInstance() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let running = makeInstance()
+        let running = VMInstanceFixture.make()
         running.enter(.running(sessionID: UUID()))
-        let saving = makeInstance()
+        let saving = VMInstanceFixture.make()
         saving.enter(.saving(sessionID: UUID()))
         viewModel.instances = [running, saving]
 
@@ -4063,7 +4052,7 @@ struct VMLibraryViewModelTests {
     @Test("isBusy is false for a settled VM")
     func isBusyIsFalseWhenSettled() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances = [instance]
 
         for phase in [
@@ -4078,7 +4067,7 @@ struct VMLibraryViewModelTests {
     @Test("isBusy covers a preparing row and every transitioning phase")
     func isBusyCoversPreparingAndTransitions() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances = [instance]
 
         for phase in Self.transitionalPhases {
@@ -4097,7 +4086,7 @@ struct VMLibraryViewModelTests {
     @Test("isBusy reads true through a settling pause whose phase still says running")
     func isBusyCoversSettlingPause() async throws {
         let (viewModel, suspending) = makeSuspendingViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances = [instance]
 
@@ -4116,7 +4105,7 @@ struct VMLibraryViewModelTests {
     @Test("An isBusy wait resolves by observation when a settling pause ends")
     func isBusyWakesAnObservedWait() async throws {
         let (viewModel, suspending) = makeSuspendingViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances = [instance]
 
@@ -4176,8 +4165,8 @@ struct VMLibraryViewModelTests {
     @Test("Toggling agentInstallPromptDisabled leaves every per-VM flag alone")
     func agentInstallPromptDisabledLeavesPerVMFlagsAlone() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let dismissed = makeInstance(name: "Dismissed")
-        let armed = makeInstance(name: "Armed")
+        let dismissed = VMInstanceFixture.make(name: "Dismissed")
+        let armed = VMInstanceFixture.make(name: "Armed")
         dismissed.configuration.agentInstallNudgeDismissed = true
         viewModel.instances = [dismissed, armed]
 
@@ -4194,7 +4183,7 @@ struct VMLibraryViewModelTests {
     @Test("renameVMInDetail sets activeRename to detail target")
     func renameVMInDetailSetsDetailTarget() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.renameVMInDetail(instance)
@@ -4205,7 +4194,7 @@ struct VMLibraryViewModelTests {
     @Test("renameVMInSidebar sets activeRename to sidebar target")
     func renameVMInSidebarSetsSidebarTarget() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         viewModel.renameVMInSidebar(instance)
@@ -4216,7 +4205,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename updates name and persists")
     func commitRenameUpdatesName() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Old Name")
+        let instance = VMInstanceFixture.make(name: "Old Name")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4230,7 +4219,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename trims whitespace")
     func commitRenameTrimWhitespace() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Original")
+        let instance = VMInstanceFixture.make(name: "Original")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4243,7 +4232,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename rejects empty name and preserves original")
     func commitRenameRejectsEmpty() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Keep Me")
+        let instance = VMInstanceFixture.make(name: "Keep Me")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4257,7 +4246,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename rejects whitespace-only name and preserves original")
     func commitRenameRejectsWhitespace() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Keep Me")
+        let instance = VMInstanceFixture.make(name: "Keep Me")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4271,7 +4260,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename from a superseded surface commits but keeps the newer rename active")
     func commitRenameFromSupersededSurfaceKeepsNewerRename() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Old Name")
+        let instance = VMInstanceFixture.make(name: "Old Name")
         viewModel.instances.append(instance)
         // The sidebar rename was superseded by a detail rename (clicking the
         // settings pane's Name button while the sidebar edit was pending); the
@@ -4289,7 +4278,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelRename clears state without saving")
     func cancelRenameClearsState() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         viewModel.activeRename = .sidebar(instance.id)
 
@@ -4302,7 +4291,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelRename from a superseded surface keeps the newer rename active")
     func cancelRenameFromSupersededSurfaceKeepsNewerRename() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4314,8 +4303,8 @@ struct VMLibraryViewModelTests {
     @Test("commitRename for one VM cannot clear another VM's rename marker")
     func commitRenameForOtherVMKeepsMarker() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let renamed = makeInstance(name: "Renamed VM")
-        let other = makeInstance(name: "Other VM")
+        let renamed = VMInstanceFixture.make(name: "Renamed VM")
+        let other = VMInstanceFixture.make(name: "Other VM")
         viewModel.instances.append(contentsOf: [renamed, other])
         // A rename-switch handoff: the marker already moved to the other VM's
         // row when the first row's deferred commit lands.
@@ -4350,10 +4339,10 @@ struct VMLibraryViewModelTests {
     @Test("macOSVMNamesMarkedForAutoStart lists marked macOS VMs in library order")
     func markedMacOSVMNamesFollowLibraryOrder() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let firstMac = markAutoStart(makeInstance(name: "Mac One", guestOS: .macOS))
-        let unmarkedMac = makeInstance(name: "Mac Unmarked", guestOS: .macOS)
-        let markedLinux = markAutoStart(makeInstance(name: "Linux Marked"))
-        let secondMac = markAutoStart(makeInstance(name: "Mac Two", guestOS: .macOS))
+        let firstMac = markAutoStart(VMInstanceFixture.make(name: "Mac One", guestOS: .macOS))
+        let unmarkedMac = VMInstanceFixture.make(name: "Mac Unmarked", guestOS: .macOS)
+        let markedLinux = markAutoStart(VMInstanceFixture.make(name: "Linux Marked"))
+        let secondMac = markAutoStart(VMInstanceFixture.make(name: "Mac Two", guestOS: .macOS))
         viewModel.instances = [firstMac, unmarkedMac, markedLinux, secondMac]
 
         // Linux guests don't count against the macOS cap, and an unmarked macOS
@@ -4364,9 +4353,9 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch starts only marked VMs")
     func autoStartStartsOnlyMarked() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let marked1 = markAutoStart(makeInstance(name: "Marked 1"))
-        let marked2 = markAutoStart(makeInstance(name: "Marked 2"))
-        let unmarked = makeInstance(name: "Unmarked")
+        let marked1 = markAutoStart(VMInstanceFixture.make(name: "Marked 1"))
+        let marked2 = markAutoStart(VMInstanceFixture.make(name: "Marked 2"))
+        let unmarked = VMInstanceFixture.make(name: "Unmarked")
         viewModel.instances = [marked1, marked2, unmarked]
 
         await viewModel.startAutomaticVMsForLaunch()
@@ -4380,7 +4369,7 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch resumes a marked VM with saved state")
     func autoStartResumesColdPaused() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let saved = markAutoStart(makeInstance(name: "Suspended"))
+        let saved = markAutoStart(VMInstanceFixture.make(name: "Suspended"))
         saved.enter(.suspended)
         viewModel.instances = [saved]
 
@@ -4397,7 +4386,7 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch leaves a marked VM awaiting initial boot alone")
     func autoStartSkipsInitialBoot() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let fresh = markAutoStart(makeInstance(name: "Never Booted"))
+        let fresh = markAutoStart(VMInstanceFixture.make(name: "Never Booted"))
         fresh.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
         fresh.enter(.initialBoot)
         viewModel.instances = [fresh]
@@ -4413,7 +4402,7 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch leaves a marked VM whose setup failed alone")
     func autoStartSkipsFailedSetup() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let stalled = markAutoStart(makeInstance(name: "Setup Failed"))
+        let stalled = markAutoStart(VMInstanceFixture.make(name: "Setup Failed"))
         stalled.configuration.linuxInstallContext = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()))
         stalled.enter(.failed(message: "Test failure"))
@@ -4431,7 +4420,7 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch leaves a marked VM owing a guest account alone")
     func autoStartSkipsAnOutstandingGuestAccount() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let owing = markAutoStart(makeInstance(name: "Unattended", guestOS: .macOS))
+        let owing = markAutoStart(VMInstanceFixture.make(name: "Unattended", guestOS: .macOS))
         owing.configuration.pendingGuestAccount = GuestAccountIntent(
             fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
             enablesRemoteLogin: false)
@@ -4451,8 +4440,8 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let failing = markAutoStart(makeInstance(name: "Failing"))
-        let following = markAutoStart(makeInstance(name: "Following"))
+        let failing = markAutoStart(VMInstanceFixture.make(name: "Failing"))
+        let following = markAutoStart(VMInstanceFixture.make(name: "Following"))
         viewModel.instances = [failing, following]
 
         await viewModel.startAutomaticVMsForLaunch()
@@ -4467,7 +4456,7 @@ struct VMLibraryViewModelTests {
         virtService.resumeError = VirtualizationError.restoreFailed(
             underlying: NSError(domain: "test", code: 1))
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let suspended = markAutoStart(makeInstance(name: "Suspended"))
+        let suspended = markAutoStart(VMInstanceFixture.make(name: "Suspended"))
         suspended.enter(.suspended)
         try FileManager.default.createDirectory(
             at: suspended.bundleURL, withIntermediateDirectories: true)
@@ -4475,7 +4464,7 @@ struct VMLibraryViewModelTests {
         FileManager.default.createFile(
             atPath: suspended.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
-        let following = markAutoStart(makeInstance(name: "Following"))
+        let following = markAutoStart(VMInstanceFixture.make(name: "Following"))
         viewModel.instances = [suspended, following]
 
         await viewModel.startAutomaticVMsForLaunch()
@@ -4490,8 +4479,8 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch stops between VMs once cancelled")
     func autoStartHonorsCancellation() async {
         let (viewModel, suspending) = makeSuspendingViewModel()
-        let first = markAutoStart(makeInstance(name: "First"))
-        let second = markAutoStart(makeInstance(name: "Second"))
+        let first = markAutoStart(VMInstanceFixture.make(name: "First"))
+        let second = markAutoStart(VMInstanceFixture.make(name: "Second"))
         viewModel.instances = [first, second]
 
         let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
@@ -4509,8 +4498,8 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch skips a VM that left the library mid-pass")
     func autoStartSkipsInstanceRemovedMidPass() async {
         let (viewModel, suspending) = makeSuspendingViewModel()
-        let first = markAutoStart(makeInstance(name: "First"))
-        let second = markAutoStart(makeInstance(name: "Second"))
+        let first = markAutoStart(VMInstanceFixture.make(name: "First"))
+        let second = markAutoStart(VMInstanceFixture.make(name: "Second"))
         viewModel.instances = [first, second]
 
         let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
@@ -4529,7 +4518,7 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")
     func autoStartNoOpWhenNothingMarked() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        viewModel.instances = [makeInstance(name: "Unmarked")]
+        viewModel.instances = [VMInstanceFixture.make(name: "Unmarked")]
 
         await viewModel.startAutomaticVMsForLaunch()
 
@@ -4546,10 +4535,10 @@ struct VMLibraryViewModelTests {
         // No window exists on a headless launch, which is what leaves the
         // presenter nil.
         viewModel.presenter = nil
-        let popOut = markAutoStart(makeInstance(name: "Pop Out"))
+        let popOut = markAutoStart(VMInstanceFixture.make(name: "Pop Out"))
         popOut.configuration.displayPreference = .popOut
-        let inline = markAutoStart(makeInstance(name: "Inline"))
-        let saved = markAutoStart(makeInstance(name: "Suspended"))
+        let inline = markAutoStart(VMInstanceFixture.make(name: "Inline"))
+        let saved = markAutoStart(VMInstanceFixture.make(name: "Suspended"))
         saved.enter(.suspended)
         viewModel.instances = [popOut, inline, saved]
         viewModel.selectedID = inline.id
@@ -4692,7 +4681,7 @@ struct VMLibraryViewModelTests {
     @Test("importVM selects the existing instance when a VM with the same UUID is already in the library")
     func importVMDuplicateUUIDSelectsExisting() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let existing = makeInstance(name: "Existing VM")
+        let existing = VMInstanceFixture.make(name: "Existing VM")
         viewModel.instances.append(existing)
 
         // Source lives elsewhere on disk (never copied — the duplicate-UUID short-circuit
@@ -4727,7 +4716,7 @@ struct VMLibraryViewModelTests {
     @Test("importVMs batch with a duplicate in the middle still imports the surrounding bundles")
     func importVMsBatchWithDuplicateInMiddle() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let existing = makeInstance(name: "Already Imported")
+        let existing = VMInstanceFixture.make(name: "Already Imported")
         viewModel.instances.append(existing)
 
         let first = try makeImportSource(name: "Batch VM 1", storage: storage)
@@ -4808,7 +4797,7 @@ struct VMLibraryViewModelTests {
     @Test("importVM proceeds while a clone is preparing (#487 — import/clone can't collide)")
     func importVMProceedsWhileCloning() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let existing = makeInstance(name: "Cloning VM")
+        let existing = VMInstanceFixture.make(name: "Cloning VM")
         markPreparing(existing)
         viewModel.instances.append(existing)
 
@@ -4861,7 +4850,7 @@ struct VMLibraryViewModelTests {
     @Test("registerPhantom preserves selection of an instance the user is already watching prepare (#487)")
     func registerPhantomPreservesSelectionOfPreparingInstance() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let preparing = makeInstance(name: "Already Preparing")
+        let preparing = VMInstanceFixture.make(name: "Already Preparing")
         markPreparing(preparing, operation: .cloning(sourceID: UUID()))
         viewModel.instances.append(preparing)
         viewModel.selectedID = preparing.id
@@ -4891,7 +4880,7 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM creates phantom row immediately with preparingState")
     func cloneVMCreatesPhantomRow() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Original")
+        let instance = VMInstanceFixture.make(name: "Original")
         instance.enter(.stopped)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -4910,7 +4899,7 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM transitions phantom to real on success")
     func cloneVMTransitionsPhantom() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Original")
+        let instance = VMInstanceFixture.make(name: "Original")
         instance.enter(.stopped)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -4934,7 +4923,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        let instance = makeInstance(name: "Fail Clone")
+        let instance = VMInstanceFixture.make(name: "Fail Clone")
         instance.enter(.stopped)
         viewModel.instances.append(instance)
 
@@ -4960,7 +4949,7 @@ struct VMLibraryViewModelTests {
         storage.publishBundleError = VMStorageError.bundleAlreadyExists(
             URL(filePath: "/tmp/occupied.kernova"))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        let instance = makeInstance(name: "Clone Source")
+        let instance = VMInstanceFixture.make(name: "Clone Source")
         instance.enter(.stopped)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -4983,7 +4972,7 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM is skipped when VM is running")
     func cloneVMSkippedWhenRunning() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Running VM")
+        let instance = VMInstanceFixture.make(name: "Running VM")
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -4996,9 +4985,9 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM proceeds while an import is preparing (#487 — clone/import can't collide)")
     func cloneVMProceedsWhileImportPreparing() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let existing = makeInstance(name: "Importing")
+        let existing = VMInstanceFixture.make(name: "Importing")
         markPreparing(existing, operation: .importing)
-        let instance = makeInstance(name: "Source")
+        let instance = VMInstanceFixture.make(name: "Source")
         instance.enter(.stopped)
         viewModel.instances = [existing, instance]
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -5018,9 +5007,9 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM proceeds while another clone is preparing (#487 — UUID-named bundles can't collide)")
     func cloneVMProceedsWhileAnotherCloneIsPreparing() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let existing = makeInstance(name: "Cloning")
+        let existing = VMInstanceFixture.make(name: "Cloning")
         markPreparing(existing, operation: .cloning(sourceID: UUID()))
-        let instance = makeInstance(name: "Source")
+        let instance = VMInstanceFixture.make(name: "Source")
         instance.enter(.stopped)
         viewModel.instances = [existing, instance]
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -5039,9 +5028,9 @@ struct VMLibraryViewModelTests {
     @Test("cloneVM increments name when Copy already exists")
     func cloneVMIncrementsName() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makeInstance(name: "VM")
+        let instance = VMInstanceFixture.make(name: "VM")
         instance.enter(.stopped)
-        let copyInstance = makeInstance(name: "VM Copy")
+        let copyInstance = VMInstanceFixture.make(name: "VM Copy")
         viewModel.instances = [instance, copyInstance]
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -5057,7 +5046,7 @@ struct VMLibraryViewModelTests {
 
         // Build a source bundle on disk with a real additional-disk file
         // living at `AdditionalDisks/<source-disk-id>.asif`.
-        let instance = makeInstance(name: "Original")
+        let instance = VMInstanceFixture.make(name: "Original")
         instance.enter(.stopped)
         let sourceDiskID = UUID()
         let sourceLayout = VMBundleLayout(bundleURL: instance.bundleURL)
@@ -5117,7 +5106,7 @@ struct VMLibraryViewModelTests {
         to viewModel: VMLibraryViewModel, storage: MockVMStorageService, guestOS: VMGuestOS,
         machineID: Data? = sourceMachineID
     ) -> VMInstance {
-        let instance = makeInstance(name: "Original", guestOS: guestOS)
+        let instance = VMInstanceFixture.make(name: "Original", guestOS: guestOS)
         instance.enter(.stopped)
         if guestOS == .macOS {
             instance.configuration.machineIdentifierData = machineID
@@ -5281,7 +5270,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelPreparingVerb marks the row Cancelling… and keeps it until the copy settles (#496)")
     func cancelPreparingVerbMarksCancelling() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let phantom = makeInstance(name: "Cloning VM")
+        let phantom = VMInstanceFixture.make(name: "Cloning VM")
         markPreparing(phantom)
         viewModel.instances.append(phantom)
         viewModel.selectedID = phantom.id
@@ -5340,7 +5329,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelPreparingVerb selects remaining instance after the copy settles (#496)")
     func cancelPreparingVerbSelectsRemaining() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let other = makeInstance(name: "Other VM")
+        let other = VMInstanceFixture.make(name: "Other VM")
         viewModel.instances.append(other)
         let source = try makeImportSource(name: "Cancel Me", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
@@ -5359,7 +5348,7 @@ struct VMLibraryViewModelTests {
     @Test("requestCancelPreparing sets state for alert")
     func requestCancelPreparingSetsState() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let phantom = makeInstance(name: "Cloning VM")
+        let phantom = VMInstanceFixture.make(name: "Cloning VM")
         markPreparing(phantom)
         viewModel.instances.append(phantom)
 
@@ -5374,7 +5363,7 @@ struct VMLibraryViewModelTests {
     @Test("requestForceStop sets instance and shows confirmation")
     func requestForceStop() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -5387,7 +5376,7 @@ struct VMLibraryViewModelTests {
     @Test("forceStopVerb delegates to lifecycle")
     func forceStopVerb() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -5402,9 +5391,9 @@ struct VMLibraryViewModelTests {
     @Test("moveVM reorders instances and persists order to UserDefaults")
     func moveVMReordersAndPersists() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let a = makeInstance(name: "A")
-        let b = makeInstance(name: "B")
-        let c = makeInstance(name: "C")
+        let a = VMInstanceFixture.make(name: "A")
+        let b = VMInstanceFixture.make(name: "B")
+        let c = VMInstanceFixture.make(name: "C")
         viewModel.instances = [a, b, c]
 
         viewModel.moveVM(fromOffsets: IndexSet(integer: 2), toOffset: 0)
@@ -5500,8 +5489,8 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM removes VM from persisted order")
     func deleteRemovesFromOrder() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let a = makeInstance(name: "A")
-        let b = makeInstance(name: "B")
+        let a = VMInstanceFixture.make(name: "A")
+        let b = VMInstanceFixture.make(name: "B")
         viewModel.instances = [a, b]
         viewModel.selectedID = b.id
         storage.bundles[b.bundleURL] = b.configuration
@@ -5545,7 +5534,7 @@ struct VMLibraryViewModelTests {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance(guestOS: .macOS)
+        let instance = VMInstanceFixture.make(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         viewModel.instances.append(instance)
@@ -5570,7 +5559,7 @@ struct VMLibraryViewModelTests {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance(guestOS: .macOS)
+        let instance = VMInstanceFixture.make(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         instance.configuration.removableMedia = [
             RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
@@ -5590,7 +5579,7 @@ struct VMLibraryViewModelTests {
     func mountGuestAgentInstallerManagePurpose() throws {
         _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance(guestOS: .macOS)
+        let instance = VMInstanceFixture.make(guestOS: .macOS)
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
 
@@ -5605,7 +5594,7 @@ struct VMLibraryViewModelTests {
         _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance(guestOS: .macOS)
+        let instance = VMInstanceFixture.make(guestOS: .macOS)
         instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         instance.enter(.running(sessionID: UUID()))
         viewModel.instances.append(instance)
@@ -5653,7 +5642,7 @@ struct VMLibraryViewModelTests {
     @Test("An edit naming an attachment that is already gone raises no alert")
     func staleAttachmentEditIsSilent() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
 
         // The verb refuses — a rename field can commit after its row went — and
@@ -5669,17 +5658,17 @@ struct VMLibraryViewModelTests {
     func sharingVMNamesDetectsAndExcludes() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let sharedPath = "/Volumes/External/shared.img"
-        let target = makeInstance(name: "Target")
+        let target = VMInstanceFixture.make(name: "Target")
         target.configuration.storageDisks = [
             StorageDisk(path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
         ]
-        let diskSharer = makeInstance(name: "DiskSharer")
+        let diskSharer = VMInstanceFixture.make(name: "DiskSharer")
         diskSharer.configuration.storageDisks = [
             StorageDisk(path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
         ]
-        let mediaSharer = makeInstance(name: "MediaSharer")
+        let mediaSharer = VMInstanceFixture.make(name: "MediaSharer")
         mediaSharer.configuration.removableMedia = [RemovableMediaItem(path: sharedPath, readOnly: true)]
-        let unrelated = makeInstance(name: "Unrelated")
+        let unrelated = VMInstanceFixture.make(name: "Unrelated")
         viewModel.instances = [target, diskSharer, mediaSharer, unrelated]
 
         let names = await viewModel.sharingVMNames(forPath: sharedPath, bookmark: nil, excluding: target)
@@ -5694,11 +5683,11 @@ struct VMLibraryViewModelTests {
     @Test("sharingVMNames ignores internal (bundle-relative) disks")
     func sharingVMNamesIgnoresInternalDisks() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let a = makeInstance(name: "A")
+        let a = VMInstanceFixture.make(name: "A")
         a.configuration.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio)
         ]
-        let b = makeInstance(name: "B")
+        let b = VMInstanceFixture.make(name: "B")
         b.configuration.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio)
         ]
@@ -5712,13 +5701,13 @@ struct VMLibraryViewModelTests {
     func readsForADepartedVMAnswerEmpty() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let sharedPath = "/Volumes/External/shared.img"
-        let departed = makeInstance(name: "Departed")
+        let departed = VMInstanceFixture.make(name: "Departed")
         departed.configuration.storageDisks = [
             StorageDisk(
                 path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
         ]
         departed.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Base")])
-        let sharer = makeInstance(name: "Sharer")
+        let sharer = VMInstanceFixture.make(name: "Sharer")
         sharer.configuration.storageDisks = [
             StorageDisk(
                 path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
@@ -5753,7 +5742,7 @@ struct VMLibraryViewModelTests {
     func liveRemovableReorderIsNoOp() async throws {
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -5794,7 +5783,7 @@ struct VMLibraryViewModelTests {
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -5832,7 +5821,7 @@ struct VMLibraryViewModelTests {
         let mock = MockRemovableMediaDeviceService()
         mock.attachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         instance.enter(.running(sessionID: UUID()))
         instance.beginSessionContext()
         let id = UUID()
@@ -5863,7 +5852,7 @@ struct VMLibraryViewModelTests {
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -5903,7 +5892,7 @@ struct VMLibraryViewModelTests {
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
-        let instance = makeInstance()
+        let instance = VMInstanceFixture.make()
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.beginSessionContext()
@@ -5958,7 +5947,7 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
-        let instance = makeInstance(name: "Work")
+        let instance = VMInstanceFixture.make(name: "Work")
         viewModel.library.wirePersistence(for: instance)
         viewModel.library.instances.append(instance)
         instance.usbPairings.upsert(

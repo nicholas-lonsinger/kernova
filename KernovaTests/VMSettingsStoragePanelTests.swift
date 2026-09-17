@@ -19,10 +19,6 @@ struct VMSettingsStoragePanelTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
-        makeSettingsInstance(guestOS: guestOS)
-    }
-
     private func makeController(
         guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage,
         phase: VMLifecyclePhase = .stopped
@@ -40,7 +36,7 @@ struct VMSettingsStoragePanelTests {
         VMSettingsViewController, VMInstance
     ) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux)
         instance.configuration.storageDisks = [StorageDisk(path: path, label: "Scratch")]
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
@@ -141,7 +137,7 @@ struct VMSettingsStoragePanelTests {
 
         // A phantom row cloning this VM locks Storage Disks for a reason the
         // shared "Editable when stopped" would misstate on a stopped VM.
-        let phantom = makeInstance(guestOS: .linux)
+        let phantom = makeSettingsInstance(guestOS: .linux)
         let task = Task {}
         defer { task.cancel() }
         phantom.preparingState = VMInstance.PreparingState(
@@ -249,7 +245,7 @@ struct VMSettingsStoragePanelTests {
     @Test("Every row of a two-disk VM offers Remove\u{2026}, Disk.asif included")
     func attachmentMenuOffersRemoveOnEveryDiskWithASibling() {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux)
         let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
         instance.configuration.storageDisks = [
             main,
@@ -274,7 +270,7 @@ struct VMSettingsStoragePanelTests {
     @Test("A VM's only disk offers no Remove\u{2026}")
     func attachmentMenuOmitsRemoveOnTheSoleDisk() {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux)
         instance.configuration.storageDisks = [
             StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         ]

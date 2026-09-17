@@ -175,14 +175,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
 
     @MainActor
     private func make(disks: [StorageDisk]) -> StorageDiskReorderSheetContentViewController {
-        let config = VMConfiguration(
-            name: "Reorder Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(name: "Reorder Test VM")
         return StorageDiskReorderSheetContentViewController(
             disks: disks,
             instance: instance,

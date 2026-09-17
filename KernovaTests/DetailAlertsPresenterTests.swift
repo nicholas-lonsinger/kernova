@@ -63,10 +63,7 @@ struct DetailAlertsPresenterTests {
     private func makeInstance(name: String = "Test VM", in viewModel: VMLibraryViewModel)
         -> VMInstance
     {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(name: name)
         viewModel.library.instances.append(instance)
         return instance
     }
@@ -77,13 +74,12 @@ struct DetailAlertsPresenterTests {
     private func makeInstanceWithExternalDisk(name: String = "Ext VM", in viewModel: VMLibraryViewModel)
         -> VMInstance
     {
-        var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        config.storageDisks = [
-            StorageDisk(path: "/tmp/does-not-exist-\(config.id.uuidString).img", isInternal: false)
-        ]
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(name: name) { config in
+            config.storageDisks = [
+                StorageDisk(
+                    path: "/tmp/does-not-exist-\(config.id.uuidString).img", isInternal: false)
+            ]
+        }
         viewModel.library.instances.append(instance)
         return instance
     }

@@ -34,19 +34,12 @@ struct VMSleepWakeCoordinatorTests {
         return (coordinator, roster, virtualizationService)
     }
 
-    private func makeInstance(name: String = "Test VM") -> VMInstance {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     /// A VM the coordinator has actually paused for sleep — the only way into
     /// the resume set, which no caller writes directly.
     private func makeSleepPaused(
         _ coordinator: VMSleepWakeCoordinator, roster: StubVMInstanceRoster, name: String
     ) async -> VMInstance {
-        let instance = makeInstance(name: name)
+        let instance = VMInstanceFixture.make(name: name)
         instance.enter(.running(sessionID: UUID()))
         roster.instances.append(instance)
         await coordinator.pauseAllForSleep()
@@ -58,13 +51,13 @@ struct VMSleepWakeCoordinatorTests {
     @Test("pauseAllForSleep pauses only running VMs")
     func pauseAllForSleepPausesRunning() async {
         let (coordinator, roster, virtService) = makeCoordinator()
-        let running1 = makeInstance(name: "Running 1")
+        let running1 = VMInstanceFixture.make(name: "Running 1")
         running1.enter(.running(sessionID: UUID()))
-        let running2 = makeInstance(name: "Running 2")
+        let running2 = VMInstanceFixture.make(name: "Running 2")
         running2.enter(.running(sessionID: UUID()))
-        let stopped = makeInstance(name: "Stopped")
+        let stopped = VMInstanceFixture.make(name: "Stopped")
         stopped.enter(.stopped)
-        let paused = makeInstance(name: "User Paused")
+        let paused = VMInstanceFixture.make(name: "User Paused")
         paused.enter(.suspended)
         roster.instances = [running1, running2, stopped, paused]
 
@@ -81,7 +74,7 @@ struct VMSleepWakeCoordinatorTests {
     @Test("resumeAllAfterWake resumes only sleep-paused VMs")
     func resumeAllAfterWakeResumesOnlySleepPaused() async {
         let (coordinator, roster, virtService) = makeCoordinator()
-        let userPaused = makeInstance(name: "User Paused")
+        let userPaused = VMInstanceFixture.make(name: "User Paused")
         userPaused.enter(.suspended)
         roster.instances = [userPaused]
         let sleepPaused = await makeSleepPaused(coordinator, roster: roster, name: "Sleep Paused")
@@ -99,7 +92,7 @@ struct VMSleepWakeCoordinatorTests {
         let virtService = MockVirtualizationService()
         virtService.pauseError = VirtualizationError.noVirtualMachine
         let (coordinator, roster, _) = makeCoordinator(virtualizationService: virtService)
-        let running = makeInstance(name: "Running")
+        let running = VMInstanceFixture.make(name: "Running")
         running.enter(.running(sessionID: UUID()))
         roster.instances = [running]
 
@@ -130,7 +123,7 @@ struct VMSleepWakeCoordinatorTests {
     @Test("pauseAllForSleep is no-op when no running VMs")
     func pauseAllForSleepNoOp() async {
         let (coordinator, roster, virtService) = makeCoordinator()
-        let stopped = makeInstance(name: "Stopped")
+        let stopped = VMInstanceFixture.make(name: "Stopped")
         stopped.enter(.stopped)
         roster.instances = [stopped]
 
@@ -143,7 +136,7 @@ struct VMSleepWakeCoordinatorTests {
     @Test("resumeAllAfterWake is no-op when no sleep-paused VMs")
     func resumeAllAfterWakeNoOp() async {
         let (coordinator, roster, virtService) = makeCoordinator()
-        let paused = makeInstance(name: "User Paused")
+        let paused = VMInstanceFixture.make(name: "User Paused")
         paused.enter(.suspended)
         roster.instances = [paused]
         // sleepPausedInstanceIDs is empty
@@ -156,11 +149,11 @@ struct VMSleepWakeCoordinatorTests {
     @Test("pauseAllForSleep skips non-running states")
     func pauseAllForSleepSkipsNonRunning() async {
         let (coordinator, roster, virtService) = makeCoordinator()
-        let starting = makeInstance(name: "Starting")
+        let starting = VMInstanceFixture.make(name: "Starting")
         starting.enter(.starting(sessionID: nil))
-        let saving = makeInstance(name: "Saving")
+        let saving = VMInstanceFixture.make(name: "Saving")
         saving.enter(.saving(sessionID: UUID()))
-        let error = makeInstance(name: "Error")
+        let error = VMInstanceFixture.make(name: "Error")
         error.enter(.failed(message: "Test failure"))
         roster.instances = [starting, saving, error]
 

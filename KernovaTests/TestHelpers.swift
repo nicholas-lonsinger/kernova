@@ -72,13 +72,11 @@ func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
 func makeInstanceWithLiveSession(named name: String = "Live Session VM")
     -> (instance: VMInstance, sessionID: UUID)
 {
-    var config = VMConfiguration(name: name, guestOS: .macOS, bootMode: .macOS)
-    config.clipboardSharingEnabled = true
-    config.agentLogForwardingEnabled = true
-    config.dropFilesEnabled = true
-    let bundleURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+    let instance = VMInstanceFixture.make(name: name, guestOS: .macOS) {
+        $0.clipboardSharingEnabled = true
+        $0.agentLogForwardingEnabled = true
+        $0.dropFilesEnabled = true
+    }
     let sessionID = UUID()
     instance.enter(.running(sessionID: sessionID))
     instance.beginSessionContext()

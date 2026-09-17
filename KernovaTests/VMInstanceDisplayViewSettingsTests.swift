@@ -13,12 +13,10 @@ struct VMInstanceDisplayViewSettingsTests {
     private func makeInstance(
         systemKeyForwarding: VMSystemKeyForwarding = .always, displayAutoResizes: Bool = true
     ) -> VMInstance {
-        let config = VMConfiguration(
-            name: "Keys VM", guestOS: .macOS, bootMode: .macOS,
-            displayAutoResizes: displayAutoResizes, systemKeyForwarding: systemKeyForwarding)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
+        VMInstanceFixture.make(name: "Keys VM", guestOS: .macOS) {
+            $0.displayAutoResizes = displayAutoResizes
+            $0.systemKeyForwarding = systemKeyForwarding
+        }
     }
 
     @Test("Auto-resize is carried straight through")

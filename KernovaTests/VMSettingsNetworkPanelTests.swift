@@ -31,10 +31,6 @@ struct VMSettingsNetworkPanelTests {
             preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled)
     }
 
-    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
-        makeSettingsInstance(guestOS: guestOS)
-    }
-
     // MARK: - Network mode picker
 
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
@@ -54,14 +50,13 @@ struct VMSettingsNetworkPanelTests {
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
-        let config = VMConfiguration(
-            name: "Test VM", guestOS: .linux, bootMode: .efi,
-            networkEnabled: networkEnabled, networkMode: mode,
-            bridgedInterfaceIdentifier: bridgedInterfaceIdentifier, macAddress: macAddress,
-            portForwardingRules: portForwardingRules)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        let instance = VMInstanceFixture.make(phase: phase) {
+            $0.networkEnabled = networkEnabled
+            $0.networkMode = mode
+            $0.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
+            $0.macAddress = macAddress
+            $0.portForwardingRules = portForwardingRules
+        }
         // The pane always shows a VM the library holds, and the library's slot
         // declaration is what makes an address derivable — so `vmnetNetworks`
         // reaches the panel through the library, never the panel directly.
@@ -487,7 +482,7 @@ struct VMSettingsNetworkPanelTests {
         _ mac: String, presenter: MockVMLibraryPresenting? = nil
     ) -> VMLibraryViewModel {
         let viewModel = makeViewModel()
-        let holder = makeInstance(guestOS: .linux)
+        let holder = makeSettingsInstance(guestOS: .linux)
         holder.configuration.name = "Holder"
         holder.configuration.macAddress = mac
         viewModel.instances = [holder]
@@ -853,7 +848,7 @@ struct VMSettingsNetworkPanelTests {
     @Test("An added rule goes through the verb that owns the host-port claim")
     func addingARuleGoesThroughTheVerb() throws {
         let viewModel = makeViewModel()
-        let holder = makeInstance(guestOS: .linux)
+        let holder = makeSettingsInstance(guestOS: .linux)
         holder.configuration.portForwardingRules = [Self.webRule]
         viewModel.instances = [holder]
         let (vc, instance) = makeNetworkController(viewModel: viewModel)
@@ -897,10 +892,10 @@ struct VMSettingsNetworkPanelTests {
         let viewModel = makeViewModel()
         // A rule persists across a mode switch and takes its host port back on
         // the way in, so a Host Only VM still holds the claim.
-        let hostOnly = makeInstance(guestOS: .linux)
+        let hostOnly = makeSettingsInstance(guestOS: .linux)
         hostOnly.configuration.networkMode = .hostOnly
         hostOnly.configuration.portForwardingRules = [Self.sshRule]
-        let disabled = makeInstance(guestOS: .linux)
+        let disabled = makeSettingsInstance(guestOS: .linux)
         disabled.configuration.networkEnabled = false
         disabled.configuration.portForwardingRules = [
             PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53)

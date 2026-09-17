@@ -41,15 +41,7 @@ struct VMToolbarManagerTests {
     private func makeInstance(
         phase: VMLifecyclePhase = .stopped, clipboardSharing: Bool = true
     ) -> VMInstance {
-        var config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        config.clipboardSharingEnabled = clipboardSharing
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        VMInstanceFixture.make(phase: phase) { $0.clipboardSharingEnabled = clipboardSharing }
     }
 
     private func makeManager(

@@ -48,22 +48,20 @@ struct GuestAccountResumePromptTests {
         in viewModel: VMLibraryViewModel, storage: MockVMStorageService,
         intent: GuestAccountIntent?, installPending: Bool = true
     ) -> VMInstance {
-        var config = VMConfiguration(name: "Sequoia", guestOS: .macOS, bootMode: .macOS)
-        if installPending {
-            config.installContext = MacOSInstallContext(
-                source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS) {
+            if installPending {
+                $0.installContext = MacOSInstallContext(
+                    source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+            }
+            $0.pendingGuestAccount = intent
         }
-        config.pendingGuestAccount = intent
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             return true
         }
         instance.enter(installPending ? .initialBoot : .stopped)
         viewModel.instances.append(instance)
-        storage.bundles[bundleURL] = instance.configuration
+        storage.bundles[instance.bundleURL] = instance.configuration
         return instance
     }
 

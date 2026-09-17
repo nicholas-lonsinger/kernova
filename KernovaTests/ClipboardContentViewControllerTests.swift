@@ -52,17 +52,16 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
 /// read it live, so an instance on the real domain makes those assertions depend
 /// on whatever the developer last picked in Settings.
 private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstance {
-    var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
-    // The window this controller fills is offered only while sharing is on
-    // (``VMInstance/canShowClipboard``), and passthrough rides on it, so every
-    // VM the controller ever sees carries the flag.
-    config.clipboardSharingEnabled = true
-    config.clipboardPassthroughEnabled = passthroughEnabled
-    let bundleURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    let instance = VMInstance(
-        configuration: config, bundleURL: bundleURL,
-        preferences: makeEphemeralPreferences(suiteName: "test.kernova.clipboard-vc-instance"))
+    let instance = VMInstanceFixture.make(
+        name: "Clipboard VM",
+        preferences: makeEphemeralPreferences(suiteName: "test.kernova.clipboard-vc-instance")
+    ) {
+        // The window this controller fills is offered only while sharing is on
+        // (``VMInstance/canShowClipboard``), and passthrough rides on it, so every
+        // VM the controller ever sees carries the flag.
+        $0.clipboardSharingEnabled = true
+        $0.clipboardPassthroughEnabled = passthroughEnabled
+    }
     // The clipboard service is session state, so it needs a session to live in.
     instance.beginSessionContext()
     return instance

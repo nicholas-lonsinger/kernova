@@ -73,11 +73,8 @@ struct VMLibraryViewModelSnapshotTests {
     private func makeInstance(
         in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .running(sessionID: UUID())
     ) -> VMInstance {
-        let config = VMConfiguration(name: "Snapshot VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
+        let instance = VMInstanceFixture.make(
+            name: "Snapshot VM", phase: phase, preferences: preferences)
         viewModel.instances.append(instance)
         return instance
     }

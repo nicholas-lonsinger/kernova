@@ -16,13 +16,9 @@ import Testing
 @MainActor
 struct ClipboardPasteLimitPolicyPushTests {
     private func makeInstance(preferences: AppPreferences) -> VMInstance {
-        var config = VMConfiguration(name: "Ceiling VM", guestOS: .macOS, bootMode: .macOS)
-        config.clipboardSharingEnabled = true
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: .running(sessionID: UUID()),
-            preferences: preferences)
+        let instance = VMInstanceFixture.make(
+            name: "Ceiling VM", guestOS: .macOS, phase: .running(sessionID: UUID()),
+            preferences: preferences, mutate: { $0.clipboardSharingEnabled = true })
         // The phase's session identity stands in for a live `VZVirtualMachine`,
         // not for the session context the control service lives in.
         instance.beginSessionContext()

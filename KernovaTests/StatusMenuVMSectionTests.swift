@@ -21,10 +21,7 @@ struct StatusMenuVMSectionTests {
     private func makeInstance(name: String = "Test VM", phase: VMLifecyclePhase = .running(sessionID: UUID()))
         -> VMInstance
     {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        VMInstanceFixture.make(name: name, phase: phase)
     }
 
     private func row(_ id: UUID, _ title: String, notice: String? = nil) -> StatusMenuVMRow {

@@ -17,14 +17,10 @@ enum RegisteredVMInstanceFixture {
         name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, snapshots: [VMSnapshot] = [],
         library: VMLibrary, storage: MockVMStorageService, preferences: AppPreferences
     ) -> VMInstance {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-        config.networkEnabled = false
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        let instance = VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
-        storage.bundles[bundleURL] = config
+        let instance = VMInstanceFixture.make(
+            name: name, guestOS: guestOS, phase: phase, preferences: preferences,
+            mutate: { $0.networkEnabled = false })
+        storage.bundles[instance.bundleURL] = instance.configuration
         library.wirePersistence(for: instance)
         if !snapshots.isEmpty {
             instance.snapshotManifest = VMSnapshotManifest(snapshots: snapshots)

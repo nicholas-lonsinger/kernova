@@ -9,14 +9,7 @@ struct RemovableMediaDeviceServiceTests {
     private func makeInstance(phase: VMLifecyclePhase = .running(sessionID: UUID()))
         -> VMInstance
     {
-        let config = VMConfiguration(
-            name: "USB Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+        VMInstanceFixture.make(name: "USB Test VM", phase: phase)
     }
 
     // MARK: - RemovableMediaDeviceInfo Model Tests

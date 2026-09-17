@@ -23,10 +23,7 @@ struct VMInstanceVsockAdmissionTests {
     }
 
     private func makeInstance() -> VMInstance {
-        let config = VMConfiguration(name: "Admission VM", guestOS: .macOS, bootMode: .macOS)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstanceFixture.make(name: "Admission VM", guestOS: .macOS)
         // Every service below is session state, so it needs a session to live
         // in — the boot paths open one before any listener is wired.
         instance.beginSessionContext()

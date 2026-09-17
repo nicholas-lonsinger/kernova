@@ -47,11 +47,7 @@ func makeMenuInstance(
     guestOS: VMGuestOS = .macOS, name: String = "Menu VM",
     phase: VMLifecyclePhase = .stopped
 ) -> VMInstance {
-    let config = VMConfiguration(
-        name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-    let bundleURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+    VMInstanceFixture.make(name: name, guestOS: guestOS, phase: phase)
 }
 
 /// One menu item carrying `action`, as the menu bar builds it.

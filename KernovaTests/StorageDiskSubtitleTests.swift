@@ -8,11 +8,10 @@ import Testing
 @MainActor
 struct StorageDiskSubtitleTests {
     private func makeInstanceWithBundle() throws -> VMInstance {
-        let config = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return VMInstance(configuration: config, bundleURL: url)
+        let instance = VMInstanceFixture.make(name: "VM")
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        return instance
     }
 
     /// Writes a file with `totalBytes` of content; when `capacitySectors` is

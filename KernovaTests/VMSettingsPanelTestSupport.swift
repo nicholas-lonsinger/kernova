@@ -33,11 +33,7 @@ func makeSettingsViewModel(
 
 @MainActor
 func makeSettingsInstance(guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped) -> VMInstance {
-    let config = VMConfiguration(
-        name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-    let bundleURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    return VMInstance(configuration: config, bundleURL: bundleURL, phase: phase)
+    VMInstanceFixture.make(guestOS: guestOS, phase: phase)
 }
 
 /// Puts `instance` in the view model's library, which is what lets the command
