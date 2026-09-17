@@ -179,7 +179,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering, build phases, and the KernovaKit package reference
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, and the KernovaKit package reference
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -195,6 +195,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, entitl
 	@bash Tools/check-entitlements.sh
 	@bash Tools/check-headless-core.sh
 	@bash Tools/check-agent-deployment-floor.sh
+	@bash Tools/check-test-plan-allowance.sh
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
 	@bash Tools/check-package-reference.sh

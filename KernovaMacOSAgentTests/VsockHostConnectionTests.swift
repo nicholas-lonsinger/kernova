@@ -546,9 +546,8 @@ struct VsockHostConnectionTests {
         // The host hangs up, as a refused feature channel does; the record
         // written while the loop is parked has nowhere to go but the buffer.
         host0.close()
-        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
-        // tests") — `liveChannel` is lock-protected client state with no signal
-        // to await.
+        // No-signal poll — `liveChannel` is lock-protected client state with
+        // no signal to await.
         try await waitUntil { dialled.client.liveChannel == nil }
         conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "buffered")
 

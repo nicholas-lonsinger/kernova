@@ -824,12 +824,11 @@ struct SidebarViewControllerTests {
             return
         }
 
-        // Await the production Task the row's preparing state is held on, per
-        // docs/TESTING.md's "await the production Task" seam, rather than
-        // polling the flag it flips. (The mock's copy settles fast enough that
-        // polling for an intermediate "still preparing" reload count would
-        // race it — the two reloads below can both have landed by the first
-        // poll tick.)
+        // Await the production Task the row's preparing state is held on,
+        // rather than polling the flag it flips. (The mock's copy settles fast
+        // enough that polling for an intermediate "still preparing" reload
+        // count would race it — the two reloads below can both have landed by
+        // the first poll tick.)
         await phantom.preparingState?.task.value
         #expect(!phantom.isPreparing)
 
@@ -840,11 +839,11 @@ struct SidebarViewControllerTests {
         // hang a `waitForChange` off of (it fires through an internal
         // `ObservationLoop` cascade), so poll the counter.
         //
-        // RATIONALE: genuine no-signal predicate (docs/TESTING.md) — the
-        // reload count is driven by an internal `ObservationLoop` cascade with
-        // no test-facing signal to await; `==`, not `>=`, so a stray extra
-        // reload (e.g. an unrelated `VMDirectoryWatcher` reconciliation) fails
-        // the test instead of being silently masked by a looser bound.
+        // Genuine no-signal predicate — the reload count is driven by an
+        // internal `ObservationLoop` cascade with no test-facing signal to
+        // await; `==`, not `>=`, so a stray extra reload (e.g. an unrelated
+        // `VMDirectoryWatcher` reconciliation) fails the test instead of being
+        // silently masked by a looser bound.
         try await waitUntil {
             controller.reloadInstancesCallCountForTesting == reloadsBeforeClone + 2
         }

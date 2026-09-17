@@ -66,10 +66,9 @@ struct VMSettingsStoragePanelTests {
         FileManager.default.createFile(atPath: path, contents: Data([0]))
 
         let (vc, _) = makeStorageController(externalDiskAt: path)
-        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
-        // tests") — the observed effect is an `NSTextField`'s rendered text at
-        // the end of a debounced file-system watch, with no Observable or
-        // `AsyncGate` signal to arm against.
+        // Genuine no-signal predicate — the observed effect is an
+        // `NSTextField`'s rendered text at the end of a debounced file-system
+        // watch, with no Observable or `AsyncGate` signal to arm against.
         try await waitUntil { !self.showsMissingBadge(in: vc) }
 
         // A change landing while the pane is away ends that observation cycle.

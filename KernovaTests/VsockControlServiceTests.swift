@@ -76,8 +76,7 @@ struct VsockControlServiceTests {
     /// sub-second window makes every test's runtime an implicit deadline, so a
     /// test that pauses past it (waiting on a frame, a `waitUntil`, or scheduler
     /// jitter) sees the channel closed out from under it as an EOF / `.closed`
-    /// flake. These values make the watchdog an explicit opt-in instead. See
-    /// docs/TESTING.md "Async waits in tests".
+    /// flake. These values make the watchdog an explicit opt-in instead.
     private static let watchdogDisabledUnresponsive: TimeInterval = 3_600
     private static let watchdogDisabledTerminate: TimeInterval = 7_200
 
@@ -512,7 +511,7 @@ struct VsockControlServiceTests {
 
         // The recovery → .current transition was the original CI flake (the poll
         // budget timed out under jitter). This suite's agentStatus/isConnected
-        // waits are all event-driven now; see docs/TESTING.md "Async waits in tests".
+        // waits are all event-driven now.
         try await waitForChange {
             service.agentStatus == .current(version: "0.9.0")
         }
@@ -696,7 +695,7 @@ struct VsockControlServiceTests {
         try await connectLatched(guest: guest, hello: helloObserved)
 
         // RATIONALE: negative assertion ("prove the watchdog never fired") —
-        // a fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // a fixed observation window, not a wait timeout.
         // Four terminate windows with the guest sending nothing at all.
         try await Task.sleep(for: .milliseconds(800))
         #expect(service.isConnected)
@@ -711,7 +710,7 @@ struct VsockControlServiceTests {
         defer { guest.close() }
 
         // Production-scale windows crossed by advancing the clock, not by
-        // sleeping through a shrunken cadence (docs/TESTING.md). The liveness
+        // sleeping through a shrunken cadence (`TestEngineClock`). The liveness
         // tick derives to 20 s — `unresponsiveAfter / 3`, under the heartbeat
         // interval — which is what tells it apart from the heartbeat sleep
         // parked on the same clock.
@@ -793,8 +792,8 @@ struct VsockControlServiceTests {
         try await connectLatched(guest: guest, hello: helloObserved)
 
         // RATIONALE: negative assertion ("prove the watchdog didn't fire during
-        // the pause") — a fixed observation window, per docs/TESTING.md "Async
-        // waits in tests". Three terminate windows, guest sending nothing.
+        // the pause") — a fixed observation window, not a wait timeout. Three
+        // terminate windows, guest sending nothing.
         try await Task.sleep(for: .milliseconds(600))
         #expect(service.isConnected)
 
@@ -845,8 +844,7 @@ struct VsockControlServiceTests {
         // false failure.
         //
         // RATIONALE: no signal marks "the in-flight frame has landed", so the
-        // settle is a fixed window like the negative assertion it precedes
-        // (docs/TESTING.md "Async waits in tests").
+        // settle is a fixed window like the negative assertion it precedes.
         suspension.isSuspended = true
         try await Task.sleep(for: .milliseconds(150))
 
@@ -942,9 +940,9 @@ struct VsockControlServiceTests {
         #expect(!service.isConnected)
 
         // RATIONALE: negative assertion ("prove the callback never fired") —
-        // a fixed observation window, per docs/TESTING.md "Async waits in
-        // tests". The consume task also unwinds in here, and its settle must
-        // not fire the callback either: the owner's stop() latched first.
+        // a fixed observation window, not a wait timeout. The consume task also
+        // unwinds in here, and its settle must not fire the callback either:
+        // the owner's stop() latched first.
         try await Task.sleep(for: .milliseconds(200))
         #expect(lost.count == 0)
     }
@@ -1409,8 +1407,7 @@ struct VsockControlServiceTests {
 ///
 /// Reference type so the observer's closure capture and the test's read site
 /// see the same buffer without `inout` shenanigans. Main-bound because
-/// `onAgentInfoObserved` is `@MainActor` in production, not by convenience
-/// (docs/TESTING.md).
+/// `onAgentInfoObserved` is `@MainActor` in production, not by convenience.
 @MainActor
 private final class ObservedRecorder {
     private(set) var values: [ObservedAgentInfo] = []
@@ -1428,7 +1425,7 @@ private final class ObservedRecorder {
 /// thaw the guest.
 ///
 /// Main-bound because `isGuestSuspended` is `@MainActor` in production — the
-/// heartbeat reads it from there — not by convenience (docs/TESTING.md).
+/// heartbeat reads it from there — not by convenience.
 @MainActor
 private final class SuspensionFlag {
     var isSuspended = false

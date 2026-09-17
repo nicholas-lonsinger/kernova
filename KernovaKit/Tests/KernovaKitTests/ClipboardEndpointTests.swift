@@ -475,8 +475,8 @@ struct ClipboardEndpointTests {
         // Closing every peer end is the end of stream each parked read is
         // waiting on, so the connection held back gets its slot as they clear.
         for fd in peers { ClipboardDataConnection.end(fd: fd) }
-        // RATIONALE: no-signal predicate — nothing publishes a notification when
-        // a header read finishes and frees its slot (docs/TESTING.md).
+        // No-signal predicate — nothing publishes a notification when a header
+        // read finishes and frees its slot.
         try await waitUntil {
             endpoint.dataAcceptsForTesting.running == 0
                 && endpoint.dataAcceptsForTesting.waiting == 0

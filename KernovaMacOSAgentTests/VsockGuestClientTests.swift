@@ -62,9 +62,8 @@ struct VsockGuestClientTests {
 
         _ = try await awaitFirst(enteredStream)
 
-        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
-        // tests") — `liveChannel` is lock-protected SUT state, not @Observable
-        // or a test-owned double, so there is no signal to await.
+        // No-signal poll — `liveChannel` is lock-protected SUT state, not
+        // @Observable or a test-owned double, so there is no signal to await.
         try await waitUntil { client.liveChannel != nil }
         #expect(client.liveChannel != nil)
 
@@ -119,7 +118,7 @@ struct VsockGuestClientTests {
         try await stopDone.changed.wait { stopDone.value > 0 }
 
         // RATIONALE: negative assertion ("prove serve was never invoked") — a
-        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // fixed observation window, not a wait timeout.
         // The provider only returns `.success(localFd)` after the release above,
         // so the window has to span the loop's post-provider `stopped` check.
         // `nanoseconds:`, not `for:` — this target deploys to macOS 12.
@@ -861,8 +860,8 @@ struct BoundedBlockingConnectTests {
         // The kernel finally returns; the worker discharges the parked
         // attempt, then closes the fd it now owns.
         parked.signal()
-        // RATIONALE: another thread's close(2) emits no signal — genuinely
-        // signal-less predicate.
+        // Another thread's close(2) emits no signal — genuinely signal-less
+        // predicate.
         try await waitUntil { fcntl(fd, F_GETFD) == -1 }
         #expect(gate.parkedCountForTesting("test") == 0)
     }

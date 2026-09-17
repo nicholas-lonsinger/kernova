@@ -292,7 +292,7 @@ struct VsockGuestLogServiceTests {
         service.start()
 
         // RATIONALE: negative assertion ("prove nothing was consumed") — a fixed
-        // observation window, per docs/TESTING.md "Async waits in tests".
+        // observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(emitter.snapshot().isEmpty)
     }

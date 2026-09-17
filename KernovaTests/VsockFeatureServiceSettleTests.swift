@@ -94,7 +94,7 @@ struct VsockFeatureServiceSettleTests {
         fixture.service.stop()
 
         // RATIONALE: negative assertion ("prove the callback never fired") — a
-        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // fixed observation window, not a wait timeout.
         // The service's own consume tail also unwinds in here, and its settle
         // must not fire the callback either: the owner's stop() latched first.
         try await Task.sleep(for: .milliseconds(200))
@@ -115,7 +115,7 @@ struct VsockFeatureServiceSettleTests {
         fixture.service.start()
 
         // RATIONALE: negative assertion ("prove the callback never fired") — a
-        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // fixed observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(fixture.lost.count == 0)
     }
@@ -134,7 +134,7 @@ struct VsockFeatureServiceSettleTests {
         fixture.service.stop()
 
         // RATIONALE: negative assertion ("prove no second callback fired") — a
-        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // fixed observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(fixture.lost.count == 1)
     }

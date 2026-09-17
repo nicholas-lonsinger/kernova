@@ -25,6 +25,8 @@ Propose, then let the maintainer sequence it — do it now, land the refactor fi
 
 Build and test through the `Makefile` (`make help`); its `xcodebuild` flags are not the obvious ones.
 
+Test waits are event-driven; the seams and their contracts are `KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift` and `KernovaTests/TestHelpers.swift` (`waitForChange`).
+
 A change that needs the guest agent reinstalled bumps `MARKETING_VERSION` in `Config/Targets/KernovaMacOSAgent.xcconfig` — the version mismatch is the only thing that offers the update — and each further behavioral revision on the same branch bumps again, since a guest that installed an earlier branch build is offered the update only by a version change (minor for the branch's first bump, patch for later ones).
 
 ## Dependencies
@@ -62,6 +64,8 @@ No compatibility path is written for any shape that is not the current one.
 **The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and the `MARKETING_VERSION` bump is the whole remedy.
 
 Nothing refuses an older agent, either: it keeps every feature it can still run, and the version mismatch surfaces the update affordance while nothing else acts on it.
+
+Live verification against a guest reads the connected agent's version first — the Clipboard window's status bar, or `VsockControlService`'s connect line in the log — and takes an offered update before observing anything: what an older agent does is not what the build does.
 
 ### File Operations
 

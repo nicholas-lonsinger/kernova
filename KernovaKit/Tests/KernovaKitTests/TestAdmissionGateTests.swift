@@ -8,9 +8,8 @@ import Testing
 /// quietly disable the bound it exists to impose.
 @Suite("TestAdmissionGate")
 struct TestAdmissionGateTests {
-    // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
-    // tests") — `waiterCountForTesting` is NSLock-guarded state inside the
-    // subject, and a caller reaching `acquire()`'s suspension point publishes
+    // No-signal polls — `waiterCountForTesting` is NSLock-guarded state inside
+    // the subject, and a caller reaching `acquire()`'s suspension point publishes
     // nothing a test could arm on. Queuing is the one thing that cannot be
     // observed any other way, since awaiting the caller would suspend the test.
 

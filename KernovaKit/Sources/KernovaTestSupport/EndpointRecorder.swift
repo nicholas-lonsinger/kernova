@@ -97,7 +97,7 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
     /// `sinceCount`.
     ///
     /// A negative assertion has no signal to await, so it takes a fixed
-    /// observation window rather than a wait timeout (docs/TESTING.md).
+    /// observation window rather than a wait timeout.
     public func expectNoNewRefusals(
         sinceCount before: Int, for duration: TimeInterval = 0.15
     ) async throws {

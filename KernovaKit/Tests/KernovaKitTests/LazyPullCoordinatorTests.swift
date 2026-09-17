@@ -6,9 +6,8 @@ import KernovaTestSupport
 
 @Suite("LazyPullCoordinator", .admissionGated)
 struct LazyPullCoordinatorTests {
-    // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
-    // tests") — `pendingSlotCountForTesting` and `waiterCountForTesting` are
-    // NSLock-guarded SUT state, not @Observable, and neither slot nor waiter
+    // No-signal polls — `pendingSlotCountForTesting` and `waiterCountForTesting`
+    // are NSLock-guarded SUT state, not @Observable, and neither slot nor waiter
     // registration publishes anything a test could arm on. Stated once for the
     // suite: every poll below is one of these two reads.
 
@@ -126,8 +125,8 @@ struct LazyPullCoordinatorTests {
         let starts = Tally()
 
         // The refusal is immediate, so no timeout of this call's is ever read
-        // and the main thread is held for nothing — the hostage-window rule in
-        // docs/TESTING.md has nothing to bound here.
+        // and the main thread is held for nothing — the hostage-window rule on
+        // `testWaitBackstop` has nothing to bound here.
         let outcome = coordinator.pull(
             transferID: 77, timeout: testWaitBackstop, retire: {}, start: { starts.bump() })
 

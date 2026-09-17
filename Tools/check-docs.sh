@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Checks the two documentation rules that a machine can decide: the 80-word
-# line cap from AGENTS.md's "Documentation and Comments", and that every
-# relative Markdown link resolves — the file it names, and the heading its
+# Checks the two documentation rules that a machine can decide: a prose line
+# caps at 80 words — this check is where that cap is stated — and every
+# relative Markdown link resolves, the file it names and the heading its
 # `#fragment` names.
 #
-# These two are here and the rest of the convention is not, because they are
-# the only rules whose violation can be fixed without deleting anything. An
-# over-long line is fixed by breaking it; a dead link by repointing it. Every
-# other rule in that section — is this derivable, is this an external fact, is
-# this the deepest layer — can only be satisfied by removing a sentence, and a
-# checker that is sometimes wrong about those would delete facts on a false
-# positive. Those stay with the reader.
+# These two are here and the rest of the documentation convention is not,
+# because they are the only rules whose violation can be fixed without deleting
+# anything. An over-long line is fixed by breaking it; a dead link by
+# repointing it. Every other rule — is this derivable, is this an external
+# fact, is this the deepest layer — can only be satisfied by removing a
+# sentence, and a checker that is sometimes wrong about those would delete
+# facts on a false positive. Those stay with the reader.
 #
 # Reports every violation before failing, so one run fixes them all.
 

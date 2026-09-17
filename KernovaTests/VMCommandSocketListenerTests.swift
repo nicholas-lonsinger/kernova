@@ -153,11 +153,10 @@ struct VMCommandSocketListenerTests {
 
         try client.send(VMCommandRequest(verb: .list))
 
-        // RATIONALE: a fixed observation window, the negative-assertion case
-        // docs/TESTING.md sanctions — the claim is that nothing arrives, and
-        // there is no signal for an event that must not happen. An empty
-        // library reported as the truth is worse than any refusal, because it
-        // exits 0.
+        // RATIONALE: a fixed observation window for a negative assertion —
+        // the claim is that nothing arrives, and there is no signal for an
+        // event that must not happen. An empty library reported as the truth
+        // is worse than any refusal, because it exits 0.
         client.observe(forAtMost: 2)
         #expect(try await client.nextResponse() == nil)
         #expect(harness.commands.listCallCount == 0)

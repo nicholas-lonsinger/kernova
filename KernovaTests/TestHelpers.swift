@@ -59,16 +59,6 @@ func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
     return wrapped
 }
 
-// MARK: - drainMainQueue
-
-/// Waits for everything already queued on the main queue — one FIFO turn of
-/// the `MainActorBridge.async` bridge a listener's accepted channel rides.
-func drainMainQueue() async {
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-        MainActorBridge.async { continuation.resume() }
-    }
-}
-
 // MARK: - Live-session vsock fixtures
 
 /// An instance standing in for one with a live session: every feature toggle on
@@ -144,7 +134,7 @@ func expectEOF(on channel: VsockChannel) async {
 /// adds **zero** wake-ups to the shared (and, on CI, contended) MainActor, and
 /// `timeout` is a stuck-condition backstop the happy path never reaches rather
 /// than the success deadline. This is the fix for the poll-budget flakes in the
-/// flaky-CI investigation; see docs/TESTING.md "Async waits in tests".
+/// flaky-CI investigation.
 ///
 /// The predicate must read every value it inspects through an `@Observable`
 /// getter so tracking registers a dependency, and it must be **side-effect-free**
@@ -341,7 +331,7 @@ func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
 ///
 /// `sample` is assigned after the service exists, since the thing worth sampling
 /// is the service the recorder is wired into. Main-bound because `onChannelLost`
-/// is `@MainActor` in production, not by convenience (docs/TESTING.md).
+/// is `@MainActor` in production, not by convenience.
 @MainActor
 final class ChannelLostRecorder {
     private(set) var count = 0

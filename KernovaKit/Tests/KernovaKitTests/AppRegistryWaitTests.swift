@@ -43,8 +43,8 @@ struct AppRegistryWaitTests {
     func waitFailsAtItsDeadline() async throws {
         let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()])
 
-        // The deadline is the assertion here, so it is deliberately small
-        // (docs/TESTING.md, "Injected production timeouts").
+        // The deadline is the assertion here, so it is deliberately small —
+        // the exception `testWaitBackstop` names.
         let released = await awaitDeregistration(from: registry, scope: .all, within: 0.2)
 
         #expect(!released)
@@ -109,8 +109,8 @@ struct AppRegistryWaitTests {
         let registry = FakeAppRegistry(
             registered: [], byProcessIdentifier: [42: FakeRegisteredInstance()])
 
-        // The deadline is the assertion here, so it is deliberately small
-        // (docs/TESTING.md, "Injected production timeouts").
+        // The deadline is the assertion here, so it is deliberately small —
+        // the exception `testWaitBackstop` names.
         let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0.2)
 
         #expect(!released)
@@ -136,8 +136,7 @@ struct AppRegistryWaitTests {
 
     /// Runs the wait on a GCD thread, the way production runs it on a main
     /// thread whose run loop it services rather than parks — so it must not
-    /// hold a cooperative-pool thread (docs/TESTING.md, "Blocking bridge
-    /// calls").
+    /// hold a cooperative-pool thread (`offCooperativePool`).
     private func awaitDeregistration(
         from registry: FakeAppRegistry, scope: RegisteredInstanceScope, within deadline: TimeInterval
     ) async -> Bool {
