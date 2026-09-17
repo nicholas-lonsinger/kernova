@@ -12,15 +12,18 @@ import KernovaLogging
 /// once that drop settles — the drop's own end is the only thing that can tell a
 /// queued drop from a stale one. ``reclaimAll`` at launch is the crash backstop,
 /// the way `ClipboardFileStaging` bounds a paste's.
-enum DropPromiseStaging {
+struct DropPromiseStaging {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DropPromiseStaging")
 
-    /// The root every drop's directory sits under, inside the app container.
-    ///
-    /// `tempRoot` is the seam a test stages under a root of its own, so the
-    /// launch reclaim never runs against files another suite is writing.
-    static func root(tempRoot: URL = FileManager.default.temporaryDirectory) -> URL {
-        tempRoot.appendingPathComponent("DisplayDropPromises", isDirectory: true)
+    /// The root every drop's directory sits under.
+    let root: URL
+
+    /// - Parameter tempRoot: the directory the root sits in. The app reclaims
+    ///   that root whole at launch and every test-host process shares one app
+    ///   container, so a test stages under a root of its own: another host can
+    ///   launch while a test is mid-drag.
+    init(tempRoot: URL = FileManager.default.temporaryDirectory) {
+        root = tempRoot.appendingPathComponent("DisplayDropPromises", isDirectory: true)
     }
 
     /// Removes every drop's staged files, crash orphans included.
@@ -30,18 +33,21 @@ enum DropPromiseStaging {
     /// pulled from. A drop this run stages is freed by ``release(_:)`` instead.
     static func reclaimAll(tempRoot: URL = FileManager.default.temporaryDirectory) {
         do {
-            try FileManager.default.removeItem(at: root(tempRoot: tempRoot))
+            try FileManager.default.removeItem(at: Self(tempRoot: tempRoot).root)
         } catch CocoaError.fileNoSuchFile {
             // Nothing was staged last run.
         } catch {
             #log(
-                logger, .warning,
+                Self.logger, .warning,
                 "Could not reclaim staged drop files: \(error.localizedDescription, privacy: .public)"
             )
         }
     }
 
     /// Removes one drop's directory, once nothing can read from it again.
+    ///
+    /// Static because a settled drop is named by its directory alone, and
+    /// `VsockDropService` frees ones it never staged.
     ///
     /// Idempotent, and silent about a directory that is already gone: the drag
     /// that never reached an offer and the drop the guest finished both end
@@ -53,7 +59,7 @@ enum DropPromiseStaging {
             // Already released.
         } catch {
             #log(
-                logger, .warning,
+                Self.logger, .warning,
                 "Could not release a settled drop's staged files: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -63,15 +69,14 @@ enum DropPromiseStaging {
     ///
     /// `nil` when it cannot be created, which leaves the drop with nowhere to put
     /// the promised files and is reported as a drop that produced nothing.
-    static func makeDropDirectory(tempRoot: URL = FileManager.default.temporaryDirectory) -> URL? {
-        let directory = root(tempRoot: tempRoot)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    func makeDropDirectory() -> URL? {
+        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
         } catch {
             #log(
-                logger, .error,
+                Self.logger, .error,
                 "Could not stage a dropped file promise: \(error.localizedDescription, privacy: .public)"
             )
             return nil

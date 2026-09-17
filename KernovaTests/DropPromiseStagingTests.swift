@@ -8,8 +8,7 @@ import Testing
 /// the guest's pull, which can come long after the drag is over.
 @Suite("DropPromiseStaging", .admissionGated)
 struct DropPromiseStagingTests {
-    /// A temp root of this test's own, so the reclaim never reaches the files
-    /// another suite's drop is staging under the shared one.
+    /// A temp root of this test's own — the caller's to remove.
     private func makeTempRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("DropPromiseStagingTests-\(UUID().uuidString)", isDirectory: true)
@@ -22,8 +21,8 @@ struct DropPromiseStagingTests {
         let tempRoot = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-        let first = try #require(DropPromiseStaging.makeDropDirectory(tempRoot: tempRoot))
-        let second = try #require(DropPromiseStaging.makeDropDirectory(tempRoot: tempRoot))
+        let first = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
+        let second = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
 
         #expect(first != second)
         for directory in [first, second] {
@@ -44,7 +43,7 @@ struct DropPromiseStagingTests {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let staged = try (0..<6).map { index -> URL in
-            let directory = try #require(DropPromiseStaging.makeDropDirectory(tempRoot: tempRoot))
+            let directory = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
             let file = directory.appendingPathComponent("promised-\(index).bin")
             try Data("promised".utf8).write(to: file)
             return file
@@ -60,18 +59,18 @@ struct DropPromiseStagingTests {
         let tempRoot = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-        let directory = try #require(DropPromiseStaging.makeDropDirectory(tempRoot: tempRoot))
+        let directory = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
         try Data("promised".utf8).write(to: directory.appendingPathComponent("a.bin"))
 
         DropPromiseStaging.reclaimAll(tempRoot: tempRoot)
         #expect(
             !FileManager.default.fileExists(
-                atPath: DropPromiseStaging.root(tempRoot: tempRoot).path))
+                atPath: DropPromiseStaging(tempRoot: tempRoot).root.path))
 
         // Reclaiming a root nothing was staged under is the ordinary
         // first-launch case, not a failure.
         DropPromiseStaging.reclaimAll(tempRoot: tempRoot)
 
-        #expect(DropPromiseStaging.makeDropDirectory(tempRoot: tempRoot) != nil)
+        #expect(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory() != nil)
     }
 }
