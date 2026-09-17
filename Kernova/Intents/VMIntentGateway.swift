@@ -25,8 +25,8 @@ final class VMIntentGateway {
     private let readiness: LibraryReadiness
     /// Where the library is written for Spotlight to match a searched name in.
     private let index: any VMEntityIndexing
-    /// Holds the identifiers already written to the index, across launches.
-    private let defaults: UserDefaults
+    /// Holds the identifiers already written to the index.
+    private let record: any VMIndexRecording
     /// Puts the library window in front of the user, for a search with no VM to
     /// reveal.
     private let surfaceLibrary: @MainActor () -> Void
@@ -43,13 +43,13 @@ final class VMIntentGateway {
         commands: any VMCommanding,
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
-        defaults: UserDefaults = .standard,
+        record: any VMIndexRecording = DefaultsVMIndexRecord(),
         surfaceLibrary: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands
         self.readiness = readiness
         self.index = index
-        self.defaults = defaults
+        self.record = record
         self.surfaceLibrary = surfaceLibrary
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
@@ -411,13 +411,13 @@ final class VMIntentGateway {
     private func syncWholeLibrary() async {
         let all = await vms()
         let current = all.map(\.id)
-        let stale = indexedVMIDs.subtracting(current)
+        let stale = record.indexedVMIDs.subtracting(current)
         guard await write("indexing every VM", { try await self.index.index(all) }) else {
             pendingIndex.formUnion(current)
             return
         }
         pendingIndex.subtract(current)
-        indexedVMIDs = Set(current)
+        record.indexedVMIDs = Set(current)
         if !stale.isEmpty { await removeFromIndex(Array(stale)) }
     }
 
@@ -460,7 +460,7 @@ final class VMIntentGateway {
             return
         }
         pendingIndex.subtract(ids)
-        indexedVMIDs.formUnion(entities.map(\.id))
+        record.indexedVMIDs.formUnion(entities.map(\.id))
     }
 
     /// Drops the records the VMs `ids` names.
@@ -474,7 +474,7 @@ final class VMIntentGateway {
             return
         }
         pendingRemove.subtract(ids)
-        indexedVMIDs.subtract(ids)
+        record.indexedVMIDs.subtract(ids)
     }
 
     /// Runs one index write, logging a refusal and answering whether it landed.
@@ -495,27 +495,6 @@ final class VMIntentGateway {
             )
             return false
         }
-    }
-
-    // MARK: - Indexed Identifiers
-
-    /// The literal `UserDefaults` key the indexed identifiers are stored under.
-    static let indexedVMIDsKey = "SpotlightIndexedVMIDs"
-
-    /// Which VMs the index is believed to hold, as of the last write that
-    /// landed.
-    ///
-    /// Persisted because it is what a later launch prunes against: the index
-    /// outlives the process, so a VM deleted while Kernova was not running is
-    /// only findable-but-gone until some run notices it is no longer in the
-    /// library.
-    private var indexedVMIDs: Set<UUID> {
-        get {
-            Set(
-                (defaults.stringArray(forKey: Self.indexedVMIDsKey) ?? [])
-                    .compactMap(UUID.init(uuidString:)))
-        }
-        set { defaults.set(newValue.map(\.uuidString), forKey: Self.indexedVMIDsKey) }
     }
 }
 

@@ -19,12 +19,22 @@ final class MockVMEntityIndex: VMEntityIndexing {
     private(set) var operations: [Operation] = []
 
     /// Notified after each recorded write, so a test waits rather than polls.
-    let gate = AsyncGate()
+    private let gate = AsyncGate()
 
     /// What `index` throws, after recording the call.
     var indexError: Error?
     /// The same for `remove`.
     var removeError: Error?
+
+    /// Suspends until at least `count` writes have been recorded.
+    ///
+    /// `>=` rather than `==`: one main-actor turn can write more than once and
+    /// carry the count past an equality check before the waiter re-checks,
+    /// which leaves the wait sitting to its backstop. The assertion that
+    /// follows states the exact writes.
+    func awaitOperations(_ count: Int) async throws {
+        try await gate.wait { self.operations.count >= count }
+    }
 
     func index(_ vms: [VMEntity]) async throws {
         record(.index(vms.map(\.id)))

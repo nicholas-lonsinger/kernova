@@ -1,7 +1,6 @@
 import AppIntents
 import Foundation
 import KernovaKit
-import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -17,8 +16,7 @@ struct VMSnapshotIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: {}),
-            index: MockVMEntityIndex(),
-            defaults: makeEphemeralDefaults(suiteName: "test.kernova.intents.snapshot"))
+            index: MockVMEntityIndex(), record: MockVMIndexRecord())
     }
 
     /// A library of one VM, seeded with `snapshots`.

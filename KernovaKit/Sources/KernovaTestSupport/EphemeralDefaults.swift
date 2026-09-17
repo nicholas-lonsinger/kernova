@@ -5,7 +5,13 @@ import Foundation
 
 // MARK: - makeEphemeralDefaults
 
-/// Opens an isolated, pre-cleaned `UserDefaults` suite for a `.serialized` test suite.
+/// Opens a pre-cleaned `UserDefaults` suite for a `.serialized` test suite,
+/// isolated from every other suite in this process.
+///
+/// Isolation stops at the process: each concurrent test host shares the
+/// `app.kernova` container, so a suite name held past the clear can be written
+/// by another run — what a test reads back is trustworthy only where this
+/// process wrote it in between.
 ///
 /// A run hard-killed mid-test (CI timeout, SIGKILL) skips any `defer`, so
 /// clearing *before* use is the load-bearing half. Pass a fixed `suiteName`
@@ -26,10 +32,11 @@ public func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
 
 // MARK: - withEphemeralDefaults
 
-/// Runs `body` with a fresh value of `T` wrapping an isolated, pre-cleaned
-/// `UserDefaults` suite (via `makeEphemeralDefaults`), then tears the suite
-/// down — including its cfprefsd tombstone plist — so tests never leak state
-/// into another test, another run, or the real `.standard` domain.
+/// Runs `body` with a fresh value of `T` wrapping a pre-cleaned `UserDefaults`
+/// suite (via `makeEphemeralDefaults`, whose `///` carries how far the isolation
+/// reaches), then tears the suite down — including its cfprefsd tombstone plist
+/// — so the suite leaks nothing into another test in this process or into the
+/// real `.standard` domain.
 public func withEphemeralDefaults<T>(
     suiteName: String,
     wrap: (UserDefaults) -> T,
