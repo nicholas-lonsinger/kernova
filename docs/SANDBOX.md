@@ -1,6 +1,6 @@
 # SANDBOX.md
 
-Read this before changing entitlements — and read it to audit what a Kernova build is permitted to do on the machine running it. The rules for writing new code inside the sandbox are in [AGENTS.md](../AGENTS.md#app-sandbox-rules); signing and the release flow are in [RELEASING.md](RELEASING.md).
+Read this before changing entitlements — and read it to audit what a Kernova build is permitted to do on the machine running it. The rules for writing new code inside the sandbox are in [AGENTS.md](../AGENTS.md#app-sandbox-rules); the release procedure is in [RELEASING.md](RELEASING.md).
 
 Kernova targets the **Mac App Store** and runs under the **App Sandbox in every build configuration**.
 

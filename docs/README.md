@@ -12,7 +12,7 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 | [SANDBOX.md](SANDBOX.md) | Touching entitlements, or auditing what a build is permitted to do — the Mac App Store readiness story and launch model behind the sandbox rules in AGENTS.md |
 | [VERSION-FLOORS.md](VERSION-FLOORS.md) | Choosing how to deliver something to a guest, or explaining why a feature works on one guest and not another — the guest-side capability floors and what Virtualization allows a live VM |
 | [REVIEW.md](REVIEW.md) | Filing review-debt issues or annotating findings — the full severity bar, issue format and labels, issue hygiene, `RATIONALE:` and `periphery:ignore` formats |
-| [RELEASING.md](RELEASING.md) | Cutting a release — the notarized Developer ID release flow, one-time signing prerequisites, and verification checklist |
+| [RELEASING.md](RELEASING.md) | Cutting a release — the ordered TestFlight and Developer ID steps, each naming the file that explains its mechanism |
 | [research/](research/) | Dated research write-ups that ground design decisions (e.g. vsock transport throughput) |
 
 Also at the repo root: [README.md](../README.md) (project landing page), [CONTRIBUTING.md](../CONTRIBUTING.md) (contribution policy), [LICENSE](../LICENSE), and the agent entry points ([AGENTS.md](../AGENTS.md), imported by `CLAUDE.md`). Agent-neutral project skills live in `.agents/skills/`.

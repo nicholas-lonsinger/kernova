@@ -34,15 +34,19 @@ RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO
 RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO
 CLANG_INSTRUMENT_FOR_OPTIMIZATION_PROFILING[config=Debug] = NO
 
-// The agent runs inside the guest, where a host code identity buys nothing, so
-// Debug stays ad-hoc; Release carries the Developer ID a distributed agent
-// needs. Both pins shadow Config/Local.xcconfig by design.
+// The agent ships inside Resources/KernovaMacOSAgent.dmg, a disk image the
+// Organizer's export re-signing does not open, so its Release signature is the
+// one guests receive: the Developer ID identity, the secure timestamp, and the
+// absence of an injected get-task-allow are set here rather than left to
+// export, which is where Xcode otherwise adds the one and strips the other
+// (developer.apple.com/documentation/security/resolving-common-notarization-issues).
+// Debug stays ad-hoc: inside the guest a host code identity buys nothing. Both
+// identity pins shadow Config/Local.xcconfig by design.
 CODE_SIGN_IDENTITY[sdk=macosx*] = -
 CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = Developer ID Application
 CODE_SIGN_STYLE = Automatic
 CODE_SIGN_STYLE[config=Release] = Manual
 PROVISIONING_PROFILE_SPECIFIER =
-PROVISIONING_PROFILE_SPECIFIER[config=Release] = Kernova macOS Agent Developer ID
 CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
 OTHER_CODE_SIGN_FLAGS[config=Release] = --timestamp
 SKIP_INSTALL[config=Release] = YES

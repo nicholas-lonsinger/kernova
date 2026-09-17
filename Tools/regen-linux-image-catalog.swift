@@ -3,6 +3,9 @@
 // Regenerate Kernova/Resources/LinuxImageCatalog.json — the Linux installer
 // images offered by the creation wizard's distribution source.
 //
+// Run before cutting a release, and whenever a distribution ships a point
+// release.
+//
 // Everything written here is scraped from remote mirrors, and it reaches the
 // shipped app through a reviewed diff — that review is the check on the input.
 //

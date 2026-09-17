@@ -194,7 +194,7 @@ Then open `Kernova.xcodeproj`, pick the `Kernova` scheme, and run (⌘R). `make`
 Every `xcodebuild` invocation lives in the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is the `Tools/check-*.sh` scripts that `make lint` runs, and the hooks `make setup` activates are in `.githooks/`. Each of those files explains itself in its own header.
 
 > [!IMPORTANT]
-> **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds. **Release** needs a paid membership and a distribution identity ([docs/RELEASING.md](docs/RELEASING.md)).
+> **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds. **Release** needs a paid membership and a distribution identity.
 
 The `com.apple.security.virtualization` entitlement is already in the project configuration.
 
