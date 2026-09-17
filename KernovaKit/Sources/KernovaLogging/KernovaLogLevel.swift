@@ -12,7 +12,7 @@ public enum KernovaLogLevel: Sendable {
     case warning
     /// An operation that did not complete.
     case error
-    /// A programming error.
+    /// A programming error; pairs with `assertionFailure`.
     case fault
 
     /// The `OSLogType` `os.Logger`'s same-named method would log at.

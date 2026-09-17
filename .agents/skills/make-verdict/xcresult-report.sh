@@ -132,8 +132,10 @@ printf 'result=%s total=%s passed=%s failed=%s skipped=%s xfail=%s\n' \
     "$result" "$total" "$passed" "$failed" "$skipped" "$xfail"
 
 # Verdict-mode caps keep a mass failure readable: 40 blocks, 20 lines each,
-# 400 characters a line. `--failures` is the uncapped form.
-failure_blocks | awk -v cap=40 -v lines=20 -v width=400 '
+# 400 characters a line. The cap line spells the whole uncapped command with
+# its bundle path: make-verdict.sh, the caller most readers reach for, rejects
+# a bare `--failures`, and re-running the target instead costs a second run.
+failure_blocks | awk -v cap=40 -v lines=20 -v width=400 -v bundle="$bundle" '
     /^=== / { blocks++; n = 0; if (blocks > cap) next; print; next }
     blocks > cap { next }
     {
@@ -142,7 +144,10 @@ failure_blocks | awk -v cap=40 -v lines=20 -v width=400 '
         if (length($0) > width) $0 = substr($0, 1, width) " …"
         print
     }
-    END { if (blocks > cap) printf "+%d more failing tests (--failures lists them all)\n", blocks - cap }
+    END {
+        if (blocks > cap)
+            printf "+%d more failing tests (.agents/skills/make-verdict/xcresult-report.sh --path %s --failures lists them all)\n", blocks - cap, bundle
+    }
 '
 
 if [ "$total" -eq 0 ]; then

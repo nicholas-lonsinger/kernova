@@ -30,11 +30,16 @@
 #                 which is only right in the checkout the push came from; with
 #                 an explicit <pr-number>, a checkout whose upstream is not the
 #                 PR's head branch is refused rather than guessed at.
-#   --timeout     Overall deadline in seconds. The default, 3300, sits inside
-#                 the caller's 1-hour prompt-cache TTL with margin for the
-#                 exit-to-next-request gap, so one invocation never returns
-#                 to a cold cache; a caller on the 5-minute TTL passes 300.
-#                 On expiry the script exits 3; re-run it to keep waiting.
+#   --timeout     Overall deadline in seconds. A cache entry's lifetime runs
+#                 from the start of the request that issued the call, so the
+#                 deadline sits inside the caller's prompt-cache TTL with
+#                 margin for that request's own time and the exit-to-next-
+#                 request gap. The default, 3300, fits the one-hour TTL Claude
+#                 Code requests for the main conversation on a subscription
+#                 within plan usage; a caller on the five-minute TTL — a
+#                 subagent, or a session on usage credits or an API key —
+#                 passes 240. On expiry the script exits 3; re-run to keep
+#                 waiting.
 #   --repo        owner/repo (default: inferred from the working directory).
 #   --remote      Git remote the PR's head branch lives on, used to verify the
 #                 push actually landed (default origin).
@@ -323,7 +328,7 @@ verify_remote_ref() {
     sleep 5
   done
   if [ -z "$_remote_sha" ]; then
-    finish 4 push-missing "branch '$_branch' does not exist on $REMOTE — the push never landed (a bare 'git push' with mismatched local/remote branch names silently no-ops; push with an explicit refspec: git push $REMOTE HEAD:$_branch)"
+    finish 4 push-missing "branch '$_branch' does not exist on $REMOTE — the push never landed (a bare 'git push' errors out without pushing when the upstream's name differs from the current branch's; push with an explicit refspec: git push $REMOTE HEAD:$_branch)"
   fi
   finish 4 push-missing "$REMOTE/$_branch is at $(printf '%.8s' "$_remote_sha"), expected $(printf '%.8s' "$EXPECTED_SHA") — the push didn't land (push with an explicit refspec: git push $REMOTE HEAD:$_branch; if a newer commit was pushed intentionally, re-run with --sha)$(sha_hint)"
 }
@@ -349,7 +354,7 @@ while :; do
     if [ "$PUSH_CONFIRMED" -eq 1 ]; then
       finish 4 head-mismatch "the push landed on $REMOTE but the PR head is still $(printf '%.8s' "$SNAP_HEAD") — the API never caught up; re-run to keep waiting"
     fi
-    finish 4 head-mismatch "PR head is $(printf '%.8s' "$SNAP_HEAD"), expected $(printf '%.8s' "$EXPECTED_SHA") — did the push land? (a bare 'git push' with mismatched local/remote branch names silently no-ops; push with an explicit refspec and re-run)$(sha_hint)"
+    finish 4 head-mismatch "PR head is $(printf '%.8s' "$SNAP_HEAD"), expected $(printf '%.8s' "$EXPECTED_SHA") — did the push land? (a bare 'git push' errors out without pushing when the upstream's name differs from the current branch's; push with an explicit refspec and re-run)$(sha_hint)"
   fi
   progress "PR head is $(printf '%.8s' "$SNAP_HEAD"), waiting for the push to land…"
   sleep 5
