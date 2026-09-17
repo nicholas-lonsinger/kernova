@@ -97,7 +97,7 @@ jobs:
           OPEN_ISSUE=$(gh issue list \
             --label "$TRACKER_LABEL" \
             --state open \
-            --limit 1 \
+            --limit 50 \
             --json number,title \
             --jq 'map(select(.title | startswith("Dead-code scan"))) | .[0].number // empty')
 
@@ -138,7 +138,7 @@ jobs:
             PREV_CLOSED=$(gh issue list \
               --label "$TRACKER_LABEL" \
               --state closed \
-              --limit 1 \
+              --limit 50 \
               --json number,title \
               --jq 'map(select(.title | startswith("Dead-code scan"))) | .[0].number // empty')
 

@@ -5,6 +5,9 @@
 # `.github/workflows/dead-code.yml` job.
 
 project: Kernova.xcodeproj
+
+# Each scheme is built with `build-for-testing`, so test targets are indexed
+# and a production symbol only tests reach is never reported.
 schemes:
   - Kernova
   - KernovaMacOSAgent

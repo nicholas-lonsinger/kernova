@@ -63,8 +63,8 @@ Left-behind worktrees are removable the same way: verify `gh pr list --head
 (recall-biased — "err on the side of surfacing", uncertain findings expected by
 design) for features, redesigns, and the clipboard, vsock, and networking
 subsystems where theoretical races are often real. Findings from recall-biased runs
-especially must clear the severity bar in [docs/REVIEW.md](docs/REVIEW.md) before
-being filed.
+especially must clear the severity bar in [AGENTS.md](AGENTS.md#review-feedback-handling)
+before being filed.
 
 ## Post-Commit
 
