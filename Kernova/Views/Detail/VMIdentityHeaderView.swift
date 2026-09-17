@@ -237,9 +237,8 @@ final class VMIdentityHeaderView: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(column)
-        // The header is as tall as the taller of the two — the tile at ordinary
-        // text sizes, the column once the system scales type past it — with a
-        // weak height pulling it no taller than that.
+        // The header is as tall as the taller of the two — the tile, or the
+        // column when it outgrows it — with a weak height pulling it no taller.
         let hugsContent = heightAnchor.constraint(equalToConstant: 0)
         hugsContent.priority = .defaultLow
         NSLayoutConstraint.activate([

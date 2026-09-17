@@ -18,7 +18,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private var sidebarCollapseObservation: NSKeyValueObservation?
     /// The toolbar index New VM was programmatically removed from for a
     /// collapsed sidebar, or `nil` when it is in the toolbar (or the user
-    /// removed it themselves via customization).
+    /// removed it themselves via customization). The index is what is
+    /// remembered, never a neighbor: New VM is user-movable within its
+    /// section, so a reinsert anchored to `.toggleSidebar` reorders a
+    /// customized layout.
     private var newVMCollapseRemovalIndex: Int? {
         didSet { preferences.mainToolbarNewVMCollapseIndex = newVMCollapseRemovalIndex }
     }
@@ -162,11 +165,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// Hides New VM while the sidebar is collapsed and restores it on expand.
     ///
-    /// Implemented as remove/insert rather than `NSToolbarItem.isHidden`:
-    /// with the sidebar collapsed, hiding the item turns its slot into leading
-    /// flexible space instead of reclaiming it (measured on macOS 27.0
-    /// 26A428), leaving a dead gap between the window controls and the
-    /// sidebar toggle, while removal closes it — see docs/TOOLBAR.md.
+    /// Implemented as remove/insert rather than the `NSToolbarItem.isHidden`
+    /// Apple's guidance names ([Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass),
+    /// "Check how you hide toolbar items"): with the sidebar collapsed, hiding
+    /// the item turns its slot into leading flexible space instead of
+    /// reclaiming it (measured on macOS 27.0 26A428), leaving a dead gap
+    /// between the window controls and the sidebar toggle, while removal
+    /// closes it.
     private func observeSidebarCollapse() {
         sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial]) {
             [weak self] _, _ in

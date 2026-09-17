@@ -1,9 +1,7 @@
 import AppKit
 
-/// Centralized design tokens for the AppKit UI.
-///
-/// The AppKit realization of the design rhythm described in `DESIGN.md`; prefer
-/// these over inline literals when building view hierarchies.
+/// Centralized design tokens for the AppKit UI; prefer these over inline
+/// literals when building view hierarchies.
 
 /// Standard inter-element spacing for `NSStackView`s and manual layout.
 ///
@@ -46,7 +44,8 @@ enum Alpha {
 
 /// Status → color mapping shared by VM-status and guest-agent-status indicators.
 enum StatusColor {
-    /// Inert / not-yet-connected (stopped VM, agent waiting/connecting).
+    /// Inert / not-yet-connected (agent waiting/connecting; the clipboard
+    /// window's idle states).
     static let inactive = NSColor.secondaryLabelColor
     /// Transitional or attention-needed (preparing/starting/saving/restoring/
     /// installing/cold-paused; agent outdated/unresponsive/expected-missing).

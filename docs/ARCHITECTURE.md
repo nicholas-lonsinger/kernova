@@ -44,6 +44,11 @@ the facade and present its refusals in their own idiom:
 `VMSession` actor alone touches the `VZVirtualMachine`. `VMBundleLayout`
 derives every in-bundle path.
 
+Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
+`MacOSGuestProvisioning` each carry one `MacOSVersion` floor and read
+`VMConfiguration.effectiveGuestMacOSVersion`, the one source of a guest's
+version.
+
 ## Services (`Kernova/Services/`)
 
 - VZ-facing: `ConfigurationBuilder` (the one `VZVirtualMachineConfiguration`
@@ -72,6 +77,9 @@ derives every in-bundle path.
 `DetailContainerViewController`; the detail side routes through
 `VMDetailRouterViewController` on `DetailRoute`, and a live display is
 `VMDisplayBackingView`, fed only through `VMDisplayHandle`.
+`MainWindowController` and `VMDisplayWindowController` each build their
+toolbar through a `VMToolbarManager`; `ClipboardToolbarButton` is the one
+view-backed item.
 
 ## Shared package and helper targets
 

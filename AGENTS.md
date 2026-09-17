@@ -19,7 +19,7 @@ Propose, then let the maintainer sequence it — do it now, land the refactor fi
 - **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: `rebuildNetworkModeMenu()`.
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `buildNetworkSection()`.
 - **Outcome names in the UI; vendor terms at the platform boundary.** Where Apple's own UI names the thing — a permission, an entitlement, a System Settings pane — keep Apple's term at that boundary and the outcome-describing domain term everywhere else. Worked case: `NetworkModeChoice.title(entitled:interfaces:)`.
-- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked cases: `ClipboardPassthroughCoordinator`, `PortForwardingRule`, `Tools/worktree-setup.sh`.
+- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked cases: `ClipboardPassthroughCoordinator`, `PortForwardingRule`, `VMSettingsViewController.writeMirrored`, `Tools/worktree-setup.sh`.
 
 ## Build & Test
 
@@ -106,7 +106,6 @@ Write to that baseline — no onboarding prose, no introducing a term, no explai
 | A principles doc | Rules constraining *future* decisions — never a description of what was built |
 | ARCHITECTURE.md | What exists and how pieces connect — never what a component does internally |
 | A runbook | The procedure you follow while doing it |
-| A reference inventory | What exists on one surface, enumerated in step with the code it lists — never why |
 | `docs/research/YYYY-MM-DD-*.md` | A finding plus its method. Immutable — superseded by a new note, never edited |
 | A GitHub issue | Known gaps, planned work, triage |
 | The PR body | The argument, the route taken, rejected alternatives |

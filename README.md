@@ -196,7 +196,7 @@ Every `xcodebuild` invocation lives in the `Makefile` (`make help`). Build setti
 > [!IMPORTANT]
 > **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds. **Release** needs a paid membership and a distribution identity.
 
-The `com.apple.security.virtualization` entitlement is already in the project configuration.
+The app's entitlements are `Kernova/Resources/Kernova.entitlements` — the shipping set, each key's reason beside it — and `Kernova.Development.entitlements`, the default: the same set minus the restricted keys `Tools/check-entitlements.sh` names, which a signature without an authorizing profile cannot carry. `Config/Local.xcconfig.example` is the opt-in to the full set.
 
 ### Testing
 
@@ -211,10 +211,8 @@ Runs every test target via the test plan — [Swift Testing](https://developer.a
 | Read | For |
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The component map — which type owns a behavior, and the seams between them |
-| [DESIGN.md](docs/DESIGN.md) | Design philosophy and UI guidelines |
 | [CLIPBOARD.md](docs/CLIPBOARD.md) | The clipboard subsystem's principles |
 | [NETWORKING.md](docs/NETWORKING.md) | Networking principles |
-| [VERSION-FLOORS.md](docs/VERSION-FLOORS.md) | Which guest versions support what |
 | [docs/README.md](docs/README.md) | The full index |
 
 ## Contributing and security

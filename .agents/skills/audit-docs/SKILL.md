@@ -22,27 +22,26 @@ The review is a walkthrough. Present the headline defects first, then take
 them one at a time with the maintainer. Every decision the maintainer makes
 is generalized before the next item: restate it as a test, apply it to every
 remaining verdict, and write it into this file by restatement into the
-section it belongs to — never as an example, a date, or a "learned from"
-note. When the walkthrough ends, before anything else, read this whole file
-and revise it once more: fold in what the walkthrough showed as a pattern
-rather than a single decision, restate any test the decisions bent, and
-delete what no longer earns its place. Then re-run the file under the
-updated skill, reusing the first run's verified facts and discarding its
-verdicts. The second run's proposed text is what gets applied, and the
-updated skill lands in the same PR as the edits.
+section it belongs to — as the principle, never as the instance that
+prompted it, a date, or a "learned from" note. When the walkthrough ends,
+read this whole file and revise it once more: fold in what the walkthrough
+showed as a pattern, restate any test the decisions bent, and delete what no
+longer earns its place. Then re-run the file under the updated skill, reusing
+the first run's verified facts and discarding its verdicts. The second run's
+proposed text is what gets applied, and the updated skill lands in the same
+PR as the edits.
 
 Verdicts fall to one of two owners. The audit decides everything the tests
-below decide. A stated preference with no wrong action behind it — the shape
-of a PR body, the form of a trailer — is the maintainer's: list those
-separately, each with one recommended option, and stop there.
+below decide. A stated preference with no wrong action behind it is the
+maintainer's: list those separately, each with one recommended option, and
+stop there.
 
 What the audit uncovers beside the docs is acted on, not deferred. A code
 defect or a mechanism gap becomes a small PR on a subagent while the review
 continues, or a GitHub issue filed on the spot. A large refactor or cleanup
-is wanted; "low priority, leave it for whoever touches it next" is not a
-verdict. A mechanism the audit proposes — a lint, a hook, a repo setting —
-is explained before it merges: what it does, where it is called from, and
-how it behaves at the edges, in plain terms.
+is wanted; "leave it for whoever touches it next" is not a verdict. A
+mechanism the audit proposes is explained before it merges: what it does,
+where it is called from, and how it behaves at the edges, in plain terms.
 
 Work one section at a time. Within a section, go clause by clause — no
 skimming, no sampling. A table row, a list item, and each clause of a compound
@@ -56,28 +55,29 @@ Assign exactly one kind before judging it:
 
 - **Declaration** — a claim about the repo, the platform, or a vendor.
 - **Rule** — tells the reader to do or not do something.
-- **Principle** — steers a judgment call when no rule applies (AGENTS.md
-  "Principles", DESIGN.md).
+- **Principle** — steers a judgment call when no rule applies.
 - **Pointer** — a link or "read X when Y".
 - **Filler** — none of the above (onboarding prose, motivation, restating
-  another layer).
+  another layer, a doc's instructions about itself).
 
 ## Tests by kind
 
 ### Declarations — verify, then ask whether it needs stating
 
 Check every declaration against the current tree, not against another doc:
-grep, read the code, read the xcconfig/pbxproj, run `make help`, run `gh api`
-for repo settings, fetch the vendor doc for a vendor claim. Report each as
-**true**, **false** (with the evidence), or **unverifiable** (say what would
-verify it). A grep that matches one line undercounts multi-line declarations;
-give the grep rather than the number.
+grep, read the code, read the build configuration, run the tools, fetch the
+vendor doc for a vendor claim. Report each as **true**, **false** (with the
+evidence), or **unverifiable** (say what would verify it). Give the grep
+rather than a count, since a count is only as good as the pattern.
 
 A true declaration is still deleted when a reader with the repo derives it in
-seconds — a directory listing, a file header, a grep, `git log`. A false one is
-not automatically a rewrite: correct it, then run the corrected version through
-the same derivability test and the layer test. Most corrected declarations
-belong one layer down, or nowhere.
+seconds. A false one is not automatically a rewrite: correct it, then run the
+corrected version through the same derivability test and the layer test. Most
+corrected declarations belong one layer down, or nowhere.
+
+Third-party material — competitive analysis, what another product does or
+ships, research into someone else's software — has no home in the repo.
+Delete it wherever it appears.
 
 ### Rules — the model's judgment is the baseline
 
@@ -85,45 +85,37 @@ A rule earns its place only by preventing a wrong action that a capable model,
 given the codebase and no rule, would take **and would not notice**. Three
 questions, in order; the first failure sets the verdict.
 
-1. **Would the model choose wrong?** Name the specific wrong action. If the
-   rule fixes a choice the model is competent to make — when to run the full
-   suite, how to phrase a commit, which helper to reuse — it replaces judgment
-   with a fixed action, and the verdict is `delete`. "Good practice" and "what
-   we do" are not wrong actions. A convention every neighboring file already
+1. **Would the model choose wrong?** Name the specific wrong action. A rule
+   that fixes a choice the model is competent to make replaces judgment with
+   a fixed action, and the verdict is `delete`. "Good practice" and "what we
+   do" are not wrong actions. A convention every neighboring file already
    follows is derivable by reading neighbors, so it is not a wrong choice
    either.
 2. **Would the wrong action fail silently?** If lint, a compile error, a
    required CI check, a hook, a repo setting, or the first review catches it,
    the rule is a reminder, and reminders are deleted — a loud failure is
-   caught even when it comes after an irreversible step, unless that step
-   did damage. If the mechanism exists but is not yet wired (a lint that could
-   check it, a repo setting that could forbid it), the verdict is
-   `fix mechanism → delete`, naming the mechanism; the maintainer flips a
-   repo setting on the spot. If the rule exists because the tree is
-   inconsistent and the rule picks one side, the tree is the defect:
-   `fix code → delete`. What survives this question is the failure that looks
-   like success — the poll loop that passes locally and flakes in CI, the log
-   filter that drops records while the capture looks complete, the pick site
-   that works until relaunch.
+   caught even when it comes after an irreversible step, unless that step did
+   damage. If the mechanism exists but is not yet wired, the verdict is
+   `fix mechanism → delete`, naming the mechanism. If the rule exists because
+   the tree is inconsistent and the rule picks one side, the tree is the
+   defect: `fix code → delete`. What survives this question is the failure
+   that looks like success.
 3. **Is it the right rule, in the right place?** Given the wrong action, is
    this the narrowest instruction that prevents it? State the fact that makes
-   the model choose right ("the Makefile encodes flags that are not the
-   obvious ones") rather than the prohibition ("never hand-write
-   xcodebuild") — a model told the fact chooses right on its own, and the
-   prohibition removes discretion the model would exercise well. Drop the
-   method when only the outcome matters; keep it only when the method is the
-   non-obvious part. Then apply AGENTS.md's layer table: a rule that fires
-   only during one procedure belongs in that runbook; one that must fire
-   without a lookup stays in AGENTS.md.
+   the model choose right rather than the prohibition — a model told the fact
+   chooses right on its own, and the prohibition removes discretion the model
+   would exercise well. Drop the method when only the outcome matters; keep
+   it only when the method is the non-obvious part. Then apply AGENTS.md's
+   layer table: a rule that fires only during one procedure belongs in that
+   runbook; one that must fire without a lookup stays in AGENTS.md.
 
 A rule that passes all three is **load-bearing**; say so in one word and move
 on.
 
-A rule that carves out an exception — two logger types, two transport types
-kept plain — is judged with its exception: the audit states why the
-exception is structural rather than preferred, and what change would dissolve
-it. An exception with no structural reason is a defect to dissolve, and one
-with a reason gets its removal path named.
+A rule that carves out an exception is judged with its exception: the audit
+states why the exception is structural rather than preferred, and what change
+would dissolve it. An exception with no structural reason is a defect to
+dissolve, and one with a reason gets its removal path named.
 
 A violation of the rule elsewhere in the tree is evidence about that file, not
 about the rule. Route the violation to the offending file's verdict list, then
@@ -139,13 +131,12 @@ A principle is exempt from question 1 by design. Instead:
   design already satisfies decides nothing — delete.
 - Is it stated as a decision rule (given A vs B, choose the one that…) rather
   than a value? Rewrite if not.
-- Does the worked case it cites still exist and still exemplify it? Verify.
-  A worked case is a symbol whose header carries the rule, never a doc
-  section that restates the principle; a citation that lands on a
-  restatement is repointed at the symbol.
+- Does the worked case it cites still exist and still exemplify it? A worked
+  case is a symbol whose header carries the rule, never a doc section that
+  restates the principle; a citation that lands on a restatement is repointed
+  at the symbol.
 - Can the platform implement it? A principle the API cannot honor is false,
-  not aspirational — delete it, and delete with it any "if this is wrong,
-  fix it here first" self-instruction, which is filler that did not fire.
+  not aspirational — delete it.
 - Do two principles contradict without a stated tiebreak? Flag.
 
 ### Pointers
@@ -164,27 +155,26 @@ only when the why changes what the reader does.
 ### Runbooks
 
 A runbook describes the procedure the maintainer actually runs, verified
-against what is installed and what has shipped — profiles, release history,
-the distribution channels in use. A lane the maintainer has not run, or a
-step nothing has yet reached, is a plan and is not written; it is written
-when it happens.
+against evidence that it is run. What has not happened yet is a plan and is
+not written; it is written when it happens.
 
 ### The file as a whole
 
-A doc whose sections each mirror one code-layer header — a script's, an
-xcconfig's, a hook's, a Makefile comment — is deleted, not trimmed: mirrored
-prose is the prose that drifts, and its reader has the header open. The facts
-it holds that nothing else does move into the headers that cite the doc for
-them. What survives of such a doc is a map — the pieces that exist and where
-each explains itself, a few sentences naming places, never summarizing
-behavior — placed in the entry-point doc the reader starts from.
+A doc that mirrors what the code already holds — an inventory the code keeps
+with each entry's reason beside it, or sections that each restate one header
+— is deleted, not trimmed: mirrored prose is the prose that drifts, and its
+reader has the source open. The facts it holds that nothing else does move
+beside what they explain. What survives of such a doc is a map — the pieces
+that exist and where each explains itself, a few sentences naming places,
+never summarizing behavior — placed in the entry-point doc the reader starts
+from.
 
 ## Mechanisms the audit proposes
 
-A `fix mechanism` verdict names lint, a hook, a CI check, a repo setting, or
-a GitHub template: a PR or issue body shape written out in a doc is a
-`.github/` template, which the web UI and `gh` present at the point of use.
-Two constraints on what gets proposed:
+A `fix mechanism` verdict names whatever enforces or presents the rule at the
+point of use: lint, a hook, a CI check, a repo setting, a template the
+platform shows when the thing is created. Two constraints on what gets
+proposed:
 
 - A tool never silently changes what an author wrote. When a check could
   rewrite or block, prefer the instruction plus a validating check, see how
@@ -201,18 +191,14 @@ Two constraints on what gets proposed:
   agrees with. When the code follows the file that does not own the subject
   under the layer table, the owner's rule wins and the code is swept to it.
 - **Dangling references:** for every section the audit deletes, grep the
-  other docs for its anchor and for its name in prose, for any sentence
-  describing what the audited file contains, and code comments for the file
-  name and for bare `§N` forms. A code comment cites a doc by heading name,
-  as a trailing clause after a fact the comment states itself —
-  `// Bytes are read only on consume — docs/CLIPBOARD.md, "Pay on consume".`
-  — never by section number, which lint cannot resolve and renumbering
-  strands.
-- **Coverage of the doc rules:** AGENTS.md's "Never kept" list (annotated
-  trees, issue-keyed tables, inventories, changelogs, status notes,
-  alternatives clauses); `Tools/check-docs.sh` owns the line cap and link
-  resolution, so lint reports those. A doc's read-trigger is its
-  `docs/README.md` row, and the row must match the file's opener.
+  other docs for its anchor and its name in prose, any sentence describing
+  what the audited file contains, and code comments for the file name and
+  for section-number forms. A code comment cites a doc by heading name, as a
+  trailing clause after a fact the comment states itself, never by section
+  number.
+- **Coverage of the doc rules:** AGENTS.md's "Never kept" list; lint owns the
+  line cap and link resolution. A doc's read-trigger is its `docs/README.md`
+  row, and the row must match the file's opener.
 - **Self-consistency:** does AGENTS.md obey its own routing tests and layer
   table? Apply them to AGENTS.md as strictly as to any other file.
 
@@ -227,19 +213,19 @@ Verdicts: `keep`, `delete`, `rewrite` (give the text), `move → <file>`,
 `fix mechanism → delete` (name it), `fix code → delete` (name the sites),
 `false → <evidence>`, `unverifiable`, `contradicts <file>`.
 
-One verdict per clause, and no hedged alternatives — never "delete, or narrow
-to X if the maintainer prefers". If two verdicts seem possible, the tests
-above decide, and when they genuinely tie the verdict is `delete`; that is
-AGENTS.md's own rule and it applies to AGENTS.md. Do not soften a verdict
-because the rule is well-written, recently added, or was violated somewhere.
+One verdict per clause, and no hedged alternatives. If two verdicts seem
+possible, the tests above decide, and when they genuinely tie the verdict is
+`delete`; that is AGENTS.md's own rule and it applies to AGENTS.md. Do not
+soften a verdict because the rule is well-written, recently added, or was
+violated somewhere.
 
 After each section's table, the proposed final text of that section, checked
-against the 80-word line cap `Tools/check-docs.sh` enforces. After each
-file's tables: the maintainer's-call list (preferences, each with one
-recommendation); the incidental findings — code defects, mechanism gaps,
-violations in other files — each with its location and its triage under
-AGENTS.md's categories; the cross-document findings; then at most five
-sentences on the file as a whole: does it still earn its slot in
-docs/README.md, and is its named reader the reader it actually serves.
+against the line cap lint enforces. After each file's tables: the
+maintainer's-call list (preferences, each with one recommendation); the
+incidental findings — code defects, mechanism gaps, violations in other files
+— each with its location and its triage under AGENTS.md's categories; the
+cross-document findings; then at most five sentences on the file as a whole:
+does it still earn its slot in docs/README.md, and is its named reader the
+reader it actually serves.
 
 Do not edit any audited file.

@@ -20,7 +20,10 @@ CLANG_ENABLE_MODULES = YES
 CLANG_ENABLE_OBJC_ARC = YES
 CLANG_ENABLE_OBJC_WEAK = YES
 
-// The guest agent runs inside guests that predate the host's floor. Read by
+// The guest agent runs inside guests that predate the host's floor, down to
+// the oldest macOS Virtualization installs: a 12.0.1 guest completes a
+// guest-initiated vsock connect to the host listener
+// (docs/research/2026-07-31-macos12-guest-vsock.md). Read by
 // Tools/check-agent-deployment-floor.sh, which holds KernovaKit/Package.swift's
 // `.macOS(…)` — the one statement SwiftPM cannot take from an xcconfig — to it.
 KERNOVA_AGENT_DEPLOYMENT_TARGET = 12.0
@@ -113,8 +116,8 @@ CODE_SIGN_IDENTITY = -
 DEVELOPMENT_TEAM =
 
 // The app target's CODE_SIGN_ENTITLEMENTS, both configurations. The
-// Development variant omits the restricted com.apple.vm.networking key an
-// ad-hoc signature cannot carry.
+// Development variant omits the restricted keys an unauthorized signature
+// cannot carry — Tools/check-entitlements.sh names them.
 KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.Development.entitlements
 
 // `#include?` (trailing `?`) is the optional form: it silently no-ops when

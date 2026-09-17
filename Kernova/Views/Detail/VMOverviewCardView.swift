@@ -8,6 +8,10 @@ import KernovaLogging
 /// The card holds no state of its own — every value comes from
 /// ``configure(rows:toggles:note:action:headerSummary:warning:)``,
 /// and a flipped switch is reported to the owner rather than written here.
+///
+/// It makes no lock claim of its own. The `lock.fill` hint belongs on a panel's
+/// section header, beside the controls it covers; here, where live switches sit
+/// next to dimmed rows, any claim short enough to fit is too vague to act on.
 @MainActor
 final class VMOverviewCardView: NSView {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMOverviewCardView")

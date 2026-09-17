@@ -15,7 +15,7 @@ final class VMToolbarManager: NSObject {
         let lifecycleID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
         /// Sits immediately after ``saveStateID`` with no space between, so the
-        /// two capture-state actions share one glass capsule (docs/TOOLBAR.md).
+        /// two capture-state actions share one glass capsule.
         let takeSnapshotID: NSToolbarItem.Identifier
         let clipboardID: NSToolbarItem.Identifier?
         let popOutID: NSToolbarItem.Identifier
@@ -49,9 +49,11 @@ final class VMToolbarManager: NSObject {
     /// The shared items in default-layout order, with fixed spaces between the
     /// glass capsule clusters.
     ///
-    /// Adjacent bordered items merge into one shared capsule platter (see
-    /// docs/TOOLBAR.md), so the spaces choose the groupings. The lifecycle group
-    /// needs no space — an `NSToolbarItemGroup` always gets its own platter.
+    /// Adjacent bordered items share one glass background and a fixed space
+    /// separates them ([Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)),
+    /// so the spaces choose the groupings. An `NSToolbarItemGroup` always gets
+    /// its own platter (measured on macOS 27.0 26A428), so the lifecycle group
+    /// needs no space.
     var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
         let clusterStarts = clusterStartIdentifiers
         return sharedItemIdentifiers.flatMap { clusterStarts.contains($0) ? [.space, $0] : [$0] }
@@ -186,7 +188,10 @@ final class VMToolbarManager: NSObject {
         case configuration.clipboardID:
             // A view-backed item so the transfer bar is a real subview over the
             // glyph rather than baked into the item's image. The nil target sends
-            // showClipboard down the responder chain, as the bordered items do.
+            // showClipboard down the responder chain, as the bordered items do —
+            // from the overflow menu too: the entry AppKit synthesizes for a
+            // view-backed item carries the label and the button's glyph and fires
+            // the button's action (measured on macOS 27.0 26A428).
             let button = ClipboardToolbarButton()
             button.action = #selector(AppDelegate.showClipboard(_:))
             button.toolTip = Self.clipboardToolTip
@@ -544,7 +549,7 @@ final class VMToolbarManager: NSObject {
         item.toolTip = toolTip
         item.isBordered = true
         // Autovalidation fights the update methods' writes visibly here: the
-        // items flicker when switching between stopped VMs (docs/TOOLBAR.md).
+        // items flicker when switching between stopped VMs.
         item.autovalidates = false
         return item
     }
