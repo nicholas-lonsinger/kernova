@@ -11,7 +11,6 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 | [TOOLBAR.md](TOOLBAR.md) | Adding or changing a toolbar item — the macOS 26 glass-platter model (capsule clustering, the 36×36 metric), the constraints on view-backed items, and the sidebar section's collapse rules |
 | [SANDBOX.md](SANDBOX.md) | Touching entitlements, or auditing what a build is permitted to do — the Mac App Store readiness story and launch model behind the sandbox rules in AGENTS.md |
 | [VERSION-FLOORS.md](VERSION-FLOORS.md) | Choosing how to deliver something to a guest, or explaining why a feature works on one guest and not another — the guest-side capability floors and what Virtualization allows a live VM |
-| [TESTING.md](TESTING.md) | Writing any test that waits on async state or needs private production state — the async-wait seams, the injected-timeout rule, and test-only exposure patterns |
 | [REVIEW.md](REVIEW.md) | Filing review-debt issues or annotating findings — the full severity bar, issue format and labels, issue hygiene, `RATIONALE:` and `periphery:ignore` formats |
 | [RELEASING.md](RELEASING.md) | Cutting a release — the notarized Developer ID release flow, one-time signing prerequisites, and verification checklist |
 | [research/](research/) | Dated research write-ups that ground design decisions (e.g. vsock transport throughput) |

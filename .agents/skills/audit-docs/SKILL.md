@@ -182,7 +182,8 @@ Two constraints on what gets proposed:
 - **Duplication:** the same fact or rule stated in two files. Name both, name
   the deeper layer, recommend keeping only that one.
 - **Contradiction:** two files that disagree. Name both, and which the code
-  agrees with.
+  agrees with. When the code follows the file that does not own the subject
+  under the layer table, the owner's rule wins and the code is swept to it.
 - **Dangling references:** for every section the audit deletes, grep the
   other docs for its anchor and for its name in prose, and for any sentence
   describing what the audited file contains.

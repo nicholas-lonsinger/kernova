@@ -195,7 +195,7 @@ public final class FrameRecorder: @unchecked Sendable {
     /// `sinceCount`.
     ///
     /// A negative assertion has no signal to await, so it takes a fixed
-    /// observation window rather than a wait timeout (docs/TESTING.md).
+    /// observation window rather than a wait timeout.
     public func expectNoNewFrames(
         sinceCount before: Int, for duration: TimeInterval = 0.15
     ) async throws {

@@ -79,7 +79,7 @@ jobs:
       # hosts run at once, so the machine-wide bound is 3×). It is a herd cap
       # sized for headroom as the suite grows, not a tuning knob: the suite
       # must stay green at any width, and a flake a width change surfaces gets
-      # fixed or deleted (docs/TESTING.md, "Flaky tests"), never quieted by
+      # fixed or deleted (AGENTS.md, "Fix root causes"), never quieted by
       # re-tuning this number. Only the prefixed spelling reaches the test
       # hosts: `xcodebuild` forwards `TEST_RUNNER_`-prefixed variables to the
       # test runner with the prefix stripped and passes nothing else through,

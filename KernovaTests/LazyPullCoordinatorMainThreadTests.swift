@@ -19,9 +19,10 @@ import Testing
 struct LazyPullCoordinatorMainThreadTests {
     // RATIONALE: 5 s, far below `testWaitBackstop`. Each test holds the real
     // main thread inside `pull` from this main-queue job, where the nested loop
-    // cannot drain the main queue (docs/TESTING.md), so the window caps how long
-    // the bundle's MainActor is held hostage if the fast path loses; every fast
-    // path here is ms-scale and same-thread, so the value never masks a failure.
+    // cannot drain the main queue (`NestedEventLoopWait`), so the window caps
+    // how long the bundle's MainActor is held hostage if the fast path loses;
+    // every fast path here is ms-scale and same-thread, so the value never masks
+    // a failure.
     private static let window: TimeInterval = 5
 
     private nonisolated func inlineRep(_ text: String) -> ClipboardContent.Representation {
@@ -103,8 +104,9 @@ struct LazyPullCoordinatorMainThreadTests {
         let clock = ContinuousClock()
         // Stretch the re-check slice to the whole window: without the wake the
         // loop still returns `.delivered`, but only once a slice elapses, so the
-        // duration is the assertion — the deadline itself (docs/TESTING.md), and
-        // the 4 s bound leaves the ms-scale wake room under scheduling jitter.
+        // duration is the assertion — the deadline itself (`testWaitBackstop`),
+        // and the 4 s bound leaves the ms-scale wake room under scheduling
+        // jitter.
         NestedEventLoopWait.sliceSecondsForTesting = Self.window
         defer { NestedEventLoopWait.sliceSecondsForTesting = nil }
 

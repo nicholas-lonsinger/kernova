@@ -4,9 +4,9 @@ import KernovaKit
 /// An `EngineClock` whose reading moves only when the test advances it.
 ///
 /// Lets a test cross a production time window — a burst window, a backoff — in
-/// one call instead of sleeping through it (docs/TESTING.md, "Async waits in
-/// tests"). `sleep(for:)` advances the reading and returns without suspending,
-/// so a subject that sleeps on this clock runs at test speed.
+/// one call instead of sleeping through it. `sleep(for:)` advances the reading
+/// and returns without suspending, so a subject that sleeps on this clock runs
+/// at test speed.
 public final class TestEngineClock: EngineClock, @unchecked Sendable {
     private let lock = NSLock()
     private var nanoseconds: UInt64

@@ -71,8 +71,9 @@ final class TestAdmissionGate: @unchecked Sendable {
 /// Swift Testing starts every test as a task immediately, so a bundle's whole
 /// suite is in flight at once, contending for the `@MainActor` while sharing
 /// one wall-clock `testWaitBackstop`. Gating admission bounds that in-flight
-/// set; the tests beyond it stay suspended *before* their setup runs, so no
-/// clock is armed while they queue.
+/// set; the tests beyond it stay suspended *before* their setup runs, so they
+/// arm none of the test's own backstops; the plan's execution-time allowance
+/// runs (``width``).
 ///
 /// **The bound is per process, which is the granularity the contention has.**
 /// `xcodebuild` runs a parallelizable target as several test-host clones, and
@@ -106,6 +107,14 @@ public enum TestAdmission {
     @TaskLocal public static var isAdmitted = false
 
     /// Concurrent test cases admitted per process; 0 disables gating entirely.
+    ///
+    /// A queued case's execution-time allowance is already running — Swift
+    /// Testing applies the plan's time limit around the scoping traits
+    /// (`Runner._runSingleTestCaseIteration`) — so a width narrow enough to
+    /// queue a case past `Kernova.xctestplan`'s allowance fails it by timeout
+    /// before its body starts. Narrowing is the flake reproducer: at 8, one
+    /// branch run surfaced with failure text a family the default width had
+    /// shown only piecemeal (2026-08-20, `chore/test-admission-gate`).
     public static let width: Int = resolveWidth()
 
     /// The shared gate, sized by ``width``.

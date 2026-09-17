@@ -145,8 +145,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 @Suite("VsockGuestClipboardAgent state machine", .admissionGated)
 struct VsockGuestClipboardAgentTests {
-    // RATIONALE: every `…ForTesting` lifecycle poll in this suite is the
-    // sanctioned no-signal kind (docs/TESTING.md "Async waits in tests") —
+    // Every `…ForTesting` lifecycle poll in this suite is the no-signal kind —
     // `liveChannelForTesting` and `inboundPromiseGenerationForTesting` read
     // main-queue-confined SUT internals that are neither `@Observable` nor
     // owned by a test double, and the agent publishes no transition a test
@@ -1463,10 +1462,9 @@ struct VsockGuestClipboardAgentTests {
         // The host goes away. The promise stays on the pasteboard, held alive by
         // its own data providers.
         agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        // RATIONALE: sanctioned no-signal poll of the filesystem-appearance kind
-        // (docs/TESTING.md "Async waits in tests") — `liveChannelForTesting` is
-        // SUT-internal state the teardown simply stops publishing, with no
-        // @Observable getter and no test double to notify.
+        // No-signal poll — `liveChannelForTesting` is SUT-internal state the
+        // teardown simply stops publishing, with no @Observable getter and no
+        // test double to notify.
         try await waitUntil { agent.liveChannelForTesting == nil }
 
         // A materialized rep still pastes from the cache...

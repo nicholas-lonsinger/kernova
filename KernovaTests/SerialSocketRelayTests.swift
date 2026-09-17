@@ -11,8 +11,7 @@ import KernovaTestSupport
 @MainActor
 @Suite("SerialSocketRelay", .admissionGated)
 struct SerialSocketRelayTests {
-    // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
-    // tests") — this suite's only waits are kernel socket/pipe readability
+    // No-signal polls — this suite's only waits are kernel socket/pipe readability
     // (`readChunk`) and `relay.hasClientForTesting`, NSLock-guarded SUT state;
     // neither is @Observable or a test-owned recorder.
 

@@ -204,7 +204,7 @@ The `com.apple.security.virtualization` entitlement is already in the project co
 make test
 ```
 
-Runs every test target via the test plan — [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks ([docs/TESTING.md](docs/TESTING.md)).
+Runs every test target via the test plan — [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks.
 
 ## Documentation
 

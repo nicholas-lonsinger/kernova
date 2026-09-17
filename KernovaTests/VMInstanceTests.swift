@@ -1350,8 +1350,8 @@ struct VMInstanceTests {
         return frame
     }
 
-    // Sized past macos-26 GitHub Actions MainActor jitter, which far exceeds
-    // local hardware (docs/TESTING.md "Async waits in tests").
+    // Sized past GitHub Actions MainActor jitter, which far exceeds local
+    // hardware.
     private static let testWatchdogGrace: Duration = .milliseconds(200)
 
     @Test("Watchdog flips agentExpectedButMissing when no Hello arrives in the grace window")

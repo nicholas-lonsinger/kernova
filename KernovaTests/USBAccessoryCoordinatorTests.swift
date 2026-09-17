@@ -209,7 +209,7 @@ struct USBAccessoryCoordinatorTests {
         // user already said where this one goes.
         #expect(recorder.requests.isEmpty)
         // RATIONALE: negative assertion ("prove nothing was attached") — a fixed
-        // observation window, per docs/TESTING.md "Async waits in tests".
+        // observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
@@ -418,7 +418,7 @@ struct USBAccessoryCoordinatorTests {
 
         #expect(recorder.requests.isEmpty)
         // RATIONALE: negative assertion ("prove nothing was attached") — a fixed
-        // observation window, per docs/TESTING.md "Async waits in tests".
+        // observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
@@ -444,7 +444,7 @@ struct USBAccessoryCoordinatorTests {
         service.assign(paired)
 
         // RATIONALE: negative assertion ("prove nothing was attached") — a fixed
-        // observation window, per docs/TESTING.md "Async waits in tests".
+        // observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
@@ -489,8 +489,7 @@ struct USBAccessoryCoordinatorTests {
         #expect(await putBack.value?.registryID == 1)
 
         // RATIONALE: negative assertion ("prove the coordinator attached
-        // nothing") — a fixed observation window, per docs/TESTING.md "Async
-        // waits in tests".
+        // nothing") — a fixed observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
@@ -540,7 +539,7 @@ struct USBAccessoryCoordinatorTests {
         service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
         #expect(recorder.requests.isEmpty)
         // RATIONALE: negative assertion ("prove nothing was attached") — a fixed
-        // observation window, per docs/TESTING.md "Async waits in tests".
+        // observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs.isEmpty)
     }
@@ -616,8 +615,7 @@ struct USBAccessoryCoordinatorTests {
         instance.settle(.running(sessionID: sessionID), for: sessionID)
 
         // RATIONALE: negative assertion ("prove no second attach was issued") —
-        // a fixed observation window, per docs/TESTING.md "Async waits in
-        // tests".
+        // a fixed observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs == [1])
     }
@@ -678,8 +676,7 @@ struct USBAccessoryCoordinatorTests {
         _ = await held.value
 
         // RATIONALE: negative assertion ("prove the second attach was never
-        // issued") — a fixed observation window, per docs/TESTING.md "Async
-        // waits in tests".
+        // issued") — a fixed observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs == [1])
     }

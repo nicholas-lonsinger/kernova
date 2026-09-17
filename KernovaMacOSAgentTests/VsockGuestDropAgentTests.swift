@@ -62,8 +62,8 @@ struct VsockGuestDropAgentTests {
         func start() async throws {
             agent.start()
             agent.applyPolicy(enabled: true)
-            // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the
-            // lifecycle read is SUT-internal state with nothing to await on.
+            // No-signal poll — the lifecycle read is SUT-internal state with
+            // nothing to await on.
             try await waitUntil { agent.liveChannelForTesting != nil }
         }
 
@@ -497,8 +497,8 @@ struct VsockGuestDropAgentTests {
         #expect(harness.agent.liveChannelForTesting == nil)
 
         harness.agent.applyPolicy(enabled: true)
-        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the lifecycle
-        // read is SUT-internal state with nothing to await on.
+        // No-signal poll — the lifecycle read is SUT-internal state with
+        // nothing to await on.
         try await waitUntil { harness.agent.liveChannelForTesting != nil }
     }
 }

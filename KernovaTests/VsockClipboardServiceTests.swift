@@ -529,10 +529,10 @@ struct VsockClipboardServiceTests {
     /// for an unregistered rep are ignored (the host's continuation stays parked
     /// until the test tears down or supersedes).
     ///
-    /// Off the main actor by construction (docs/TESTING.md): it answers while an
-    /// off-main pull holds the main thread, so main-actor isolation would make it
-    /// unanswerable exactly when a test needs an answer. `@unchecked Sendable` —
-    /// every mutable field is read and written under `lock`, and the gates and
+    /// Off the main actor by construction: it answers while an off-main pull
+    /// holds the main thread, so main-actor isolation would make it unanswerable
+    /// exactly when a test needs an answer. `@unchecked Sendable` — every
+    /// mutable field is read and written under `lock`, and the gates and
     /// connections it holds are thread-safe in their own right. `openConnection`
     /// bounds what "while main is held" covers.
     private final class FakeGuestResponder: @unchecked Sendable {
@@ -780,7 +780,7 @@ struct VsockClipboardServiceTests {
         /// Stops answering and abandons every parked connection.
         ///
         /// Synchronous and isolation-free so a `@MainActor` test can call it from
-        /// a `defer`, which cannot `await` (docs/TESTING.md).
+        /// a `defer`, which cannot `await`.
         func cancel() {
             let (task, held) = lock.withLock { () -> (Task<Void, Never>?, [ParkedDataConnection]) in
                 isCancelled = true
@@ -878,8 +878,8 @@ struct VsockClipboardServiceTests {
         /// This is what bounds the claim above: the responder answers while the
         /// main thread is held by an **off-main** pull, and by a nested wait
         /// entered at the run loop's base — not by one entered from a main-queue
-        /// callout, whose drain the nested loop cannot re-enter. docs/TESTING.md
-        /// forbids a test from putting a waiting pull there at all.
+        /// callout, whose drain the nested loop cannot re-enter
+        /// (`NestedEventLoopWait`).
         private func openConnection() throws -> Int32 {
             let (peerEnd, hostEnd) = try makeRawSocketPair()
             let service = self.service
@@ -2517,8 +2517,7 @@ struct VsockClipboardServiceTests {
         let heldTransfer = inboundTransferID(generation: 44, repIndex: 0)
         try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
         let preview = Task { await service.materializeForPreview() }
-        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
-        // tests") — the waiter count is NSLock-guarded SUT state, not
+        // No-signal poll — the waiter count is NSLock-guarded SUT state, not
         // @Observable, and nothing the test owns fires when a pull is joined.
         try await waitUntil {
             service.inboundPullWaiterCountForTesting(generation: 44, repIndex: 0) == 2
@@ -3182,7 +3181,7 @@ struct VsockClipboardServiceTests {
 
         // The pull is failed by the guest's own abort trailer, not the
         // lazyPullTimeout backstop, so no second clock races the test body
-        // (docs/TESTING.md's injected-timeout rule).
+        // (`testWaitBackstop`'s injected-timeout rule).
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
             lazyPullTimeout: 60)

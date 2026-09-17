@@ -611,8 +611,8 @@ struct ClipboardPassthroughCoordinatorTests {
         // Event-driven: the gate fires when the inbound auto-publish completes, so
         // the wait resolves on the publish itself — never a poll deadline — even
         // when a contended CI main actor delays the observation → publish Task
-        // chain (docs/TESTING.md "Async waits in tests"). The generous timeout is a
-        // stuck-condition backstop, not the success deadline.
+        // chain. The generous timeout is a stuck-condition backstop, not the
+        // success deadline.
         let published = AsyncGate()
         h.coordinator.onInboundPublishedForTesting = { published.notify() }
         h.coordinator.start()

@@ -11,7 +11,7 @@ import KernovaTestSupport
 /// isolated provider registry, and an `AsyncGate` already wired to the
 /// registry's retain/release signal so a test awaits the registration event
 /// rather than polling `countForTesting` — the one-shot effect a starved CI
-/// MainActor can miss inside a poll deadline (docs/TESTING.md "Async waits in tests").
+/// MainActor can miss inside a poll deadline.
 ///
 /// File-scoped so every suite here shares one definition of the harness.
 ///
@@ -428,11 +428,10 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         // `clipboardPassthroughEnabled`, which is exactly the regression that
         // would freeze the window's chrome until it is reopened.
         //
-        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
-        // tests") — the observed effect is an `NSSwitch`'s state and a button's
-        // `isEnabled`, plain AppKit properties with no Observable or `AsyncGate`
-        // signal to arm against; the loop's internal re-arm hop is not
-        // test-facing.
+        // Genuine no-signal predicate — the observed effect is an `NSSwitch`'s
+        // state and a button's `isEnabled`, plain AppKit properties with no
+        // Observable or `AsyncGate` signal to arm against; the loop's internal
+        // re-arm hop is not test-facing.
         instance.configuration.clipboardPassthroughEnabled = true
         try await waitUntil { vc.isPassthroughSwitchOnForTesting }
         #expect(vc.areCommandActionsEnabledForTesting == false)
@@ -808,9 +807,9 @@ struct ClipboardPassthroughSwitchTests {
         // The switch follows the model on the observation pass the write kicks
         // off, the same as any other surface showing the setting.
         //
-        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
-        // tests") — the observed effect is an `NSSwitch`'s state, a plain AppKit
-        // property with no Observable or `AsyncGate` signal to arm against.
+        // Genuine no-signal predicate — the observed effect is an `NSSwitch`'s
+        // state, a plain AppKit property with no Observable or `AsyncGate`
+        // signal to arm against.
         try await waitUntil { vc.isPassthroughSwitchOnForTesting }
     }
 
@@ -837,9 +836,9 @@ struct ClipboardPassthroughSwitchTests {
         // The settings pane's write path, landing on the same model.
         _ = viewModel.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
 
-        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
-        // tests") — the observed effect is an `NSSwitch`'s state, a plain AppKit
-        // property with no Observable or `AsyncGate` signal to arm against.
+        // Genuine no-signal predicate — the observed effect is an `NSSwitch`'s
+        // state, a plain AppKit property with no Observable or `AsyncGate`
+        // signal to arm against.
         try await waitUntil { vc.isPassthroughSwitchOnForTesting }
     }
 }

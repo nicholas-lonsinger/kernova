@@ -3,7 +3,8 @@ import Testing
 
 /// Bounds how many test cases run concurrently in this process, admitting each
 /// through the shared `TestAdmission` gate before its body — and its setup —
-/// starts. Queued cases cost one suspended task and arm no clocks.
+/// starts. Queued cases cost one suspended task and arm none of the test's own
+/// backstops; the plan's execution-time allowance runs (`TestAdmission.width`).
 ///
 /// The gate resolves to pass-through unless a width is configured, so applying
 /// this trait everywhere is inert by default.

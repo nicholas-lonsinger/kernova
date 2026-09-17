@@ -6,10 +6,19 @@ import KernovaKit
 
 /// Default stuck-condition backstop for every test wait helper, in seconds.
 ///
-/// Sized past any plausible CI scheduler stall — starved macos-26 runners have
-/// defeated 5 s and 10 s backstops. Success-path waits must not pass a smaller
-/// explicit timeout; explicit values are for behavior-under-test deadlines only
-/// (docs/TESTING.md, "Async waits in tests").
+/// Sized past any plausible stall on a GitHub-hosted runner: 5 s and 10 s
+/// backstops each timed out sound event-driven waits (2026-07-19, two
+/// consecutive `main` runs, twelve waits). A success-path wait passes no
+/// smaller explicit timeout; an explicit value is for a deadline the test
+/// asserts.
+///
+/// A timeout injected into the subject is sized the same way — the production
+/// default, or at least this value — unless that deadline is the behavior
+/// under test: a shorter one is a second clock racing the test body, and a
+/// starved runner loses the race. The one exception runs the other way: a
+/// timeout capping how long a test holds the main thread stays far below this
+/// value, so a lost fast path fails that test alone instead of freezing every
+/// concurrent test's main-actor work (`LazyPullCoordinatorMainThreadTests`).
 public let testWaitBackstop: TimeInterval = 60
 
 // MARK: - Test-session OS activity
@@ -182,6 +191,10 @@ public final class AsyncGate: @unchecked Sendable {
 
     /// Suspend until `predicate()` holds (re-checked on each `notify()`), or
     /// throw `TestFailure` after `timeout` seconds.
+    ///
+    /// Returns the moment the predicate holds, whichever step made it hold and
+    /// whether or not this gate has fired — so the predicate names the state
+    /// the caller acts on next, never an earlier step's.
     public func wait(
         timeout: TimeInterval = testWaitBackstop,
         isolation: isolated (any Actor)? = #isolation,
@@ -294,7 +307,6 @@ public func drainMainQueue() async {
 /// pool's 3-4 CI threads. Parked on the cooperative pool instead, enough pulls
 /// exhaust it, the tasks the reply depends on starve, and the bundle freezes
 /// until the shortest injected timeout fires — the 2026-07-19 CI mass failures.
-/// See docs/TESTING.md "Blocking bridge calls run on GCD".
 public func offCooperativePool<T: Sendable>(
     _ body: @escaping @Sendable () -> T
 ) async -> T {
