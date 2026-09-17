@@ -41,16 +41,6 @@ struct ClipboardDirectoryAccountingTests {
             directorySourceURL: source, estimatedByteCount: estimate, filename: name)
     }
 
-    /// What a pull for a folder registers: the name to unpack under, and the
-    /// size the offer advertised.
-    private func folderPlan(named name: String, advertised: Int)
-        -> ClipboardTransferReceiver.Plan
-    {
-        ClipboardTransferReceiver.Plan(
-            uti: ClipboardArchive.directoryUTI, filename: name, extractsDirectoryNamed: name,
-            advertisedByteCount: advertised)
-    }
-
     /// Suspends until the transfer has either delivered a representation or
     /// reported an abort.
     private func settle(_ harness: TransferHarness, _ transferID: UInt64) async throws {

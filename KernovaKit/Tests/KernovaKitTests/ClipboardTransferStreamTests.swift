@@ -680,6 +680,216 @@ struct ClipboardTransferStreamTests {
         #expect(try drainUntilPeerCloses(peer).isEmpty)
     }
 
+    // MARK: - Cancelling a streamed extract
+
+    /// A descriptor over `bytes`, to hand a receiver as its accepted source.
+    ///
+    /// A regular file rather than a socketpair, so a cancellation's
+    /// `shutdown(2)` is `ENOTSOCK` and discards nothing: every byte the payload
+    /// has left is still readable after the cancel lands, which is the case a
+    /// socketpair only reaches when the peer's last writes happen to already be
+    /// in the receive buffer.
+    private func acceptedFile(_ bytes: Data, in scratch: URL) throws -> Int32 {
+        let url = scratch.appendingPathComponent("payload-\(UUID().uuidString)")
+        try bytes.write(to: url)
+        let fd = Darwin.open(url.path, O_RDONLY)
+        try #require(fd >= 0)
+        return fd
+    }
+
+    /// The reply an accepted archive transfer is adopted with.
+    private func archiveReply(transferID: UInt64) -> Kernova_V1_ClipboardTransferReply {
+        Kernova_V1_ClipboardTransferReply.with {
+            $0.transferID = transferID
+            $0.isArchive = true
+        }
+    }
+
+    /// Cancels the receiver on the first progress report satisfying `when`,
+    /// returning whether that report ever came.
+    private func startCancelling(
+        _ receiver: ClipboardTransferReceiver, _ harness: TransferHarness, _ transferID: UInt64,
+        when: @escaping @Sendable (Int) -> Bool
+    ) -> Box<Bool> {
+        let collector = harness.collector
+        let cancelled = Box(false)
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) },
+            onProgress: { [weak receiver] extracted, _ in
+                guard when(extracted), !cancelled.value else { return }
+                cancelled.value = true
+                receiver?.cancel()
+            })
+        return cancelled
+    }
+
+    @Test("a cancel mid-extract outranks the payload bytes the reader held back")
+    func cancelOutranksHeldBackPayloadBytes() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 2 << 20)
+        defer { try? fm.removeItem(at: treeScratch) }
+
+        // An archive cut short, so the extract fails at end of stream, followed
+        // by 33 payload bytes that parse as an abort trailer naming a code no
+        // build defines. Those are the bytes the reader holds back as a
+        // presumptive trailer once end of stream is latched — and
+        // reading them as the sender's reason reports that code in place of the
+        // cancellation this side raised.
+        var payload = Data(try clipboardArchiveBytes(ofDirectoryAt: source).prefix(3 << 19))
+        let code = Array("not-a-code".utf8)
+        payload.append(1)
+        payload.append(contentsOf: code)
+        payload.append(Data(count: ClipboardTransferTrailer.byteCount - 1 - code.count))
+
+        // A pacing quantum nothing here reaches, so the output guard is never
+        // consulted and the failed extract is the only thing left to answer the
+        // cancellation. The cancel keys to the reader's own report for the same
+        // reason: how much of a truncated archive AppleArchive decodes before it
+        // gives up is its own business, and a trigger keyed to the extract's
+        // output inherits that.
+        let transferID: UInt64 = 0x1D1
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 29,
+            plan: folderPlan(named: "Project", advertised: 2 << 20),
+            source: .accepted(
+                fd: try acceptedFile(payload, in: scratch),
+                reply: archiveReply(transferID: transferID)),
+            extractPacingBytes: 64 << 20)
+        let cancelled = startCancelling(receiver, harness, transferID) { _ in true }
+        try await settle(harness, transferID)
+
+        #expect(cancelled.value)
+        let info = try abort(harness)
+        #expect(info.code == .cancelled)
+        #expect(info.isRetiring)
+        #expect(harness.collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    @Test("a cancel mid-extract stops an archive that is arriving complete")
+    func cancelStopsACompleteArchiveMidExtract() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 4 << 20)
+        defer { try? fm.removeItem(at: treeScratch) }
+
+        // Nothing is wrong with what arrives: a whole archive under the digest
+        // that describes it. The extract runs several pacing quanta, so the
+        // output guard is consulted again after the cancel lands.
+        let archive = try clipboardArchiveBytes(ofDirectoryAt: source)
+        let payload =
+            archive + ClipboardTransferTrailer(ending: .complete(digest: sha256(archive))).encoded
+
+        let transferID: UInt64 = 0x1D2
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 30,
+            plan: folderPlan(named: "Project", advertised: 4 << 20),
+            source: .accepted(
+                fd: try acceptedFile(payload, in: scratch),
+                reply: archiveReply(transferID: transferID)))
+        let cancelled = startCancelling(receiver, harness, transferID) { $0 > 0 }
+        try await settle(harness, transferID)
+
+        #expect(cancelled.value)
+        #expect(try abort(harness).code == .cancelled)
+        #expect(harness.collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    @Test("a cancel with no output guard left to consult still stops the delivery")
+    func cancelAfterTheLastOutputGuardStopsTheDelivery() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 4 << 20)
+        defer { try? fm.removeItem(at: treeScratch) }
+
+        let archive = try clipboardArchiveBytes(ofDirectoryAt: source)
+        let payload =
+            archive + ClipboardTransferTrailer(ending: .complete(digest: sha256(archive))).encoded
+
+        // A pacing quantum the whole payload fits inside, so the output guard is
+        // never consulted and the cancel lands where a real one landing in the
+        // extract's last quantum does: with the tree already whole on disk and
+        // nothing between it and the pull but the delivery itself.
+        let transferID: UInt64 = 0x1D3
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 31,
+            plan: folderPlan(named: "Project", advertised: 4 << 20),
+            source: .accepted(
+                fd: try acceptedFile(payload, in: scratch),
+                reply: archiveReply(transferID: transferID)),
+            extractPacingBytes: 64 << 20)
+        // Reported from the reader rather than from the extract, which reports
+        // nothing at this pacing.
+        let cancelled = startCancelling(receiver, harness, transferID) { _ in true }
+        try await settle(harness, transferID)
+
+        #expect(cancelled.value)
+        #expect(try abort(harness).code == .cancelled)
+        #expect(harness.collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    @Test("a sender streaming past the tail allowance is not read to the end for its trailer")
+    func surplusPastTheTailAllowanceIsNotRead() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        // Not an archive at all, so the extract gives up near the front of a
+        // stream with megabytes still to come — and the trailer at the end of
+        // it is past the allowance, so it is not the sender's reason to give.
+        // Reading that far for it is what would pull a peer-controlled stream
+        // into memory whole.
+        let payload =
+            try randomBytes(count: 8 << 20)
+            + ClipboardTransferTrailer(ending: .aborted(rawCode: "superseded")).encoded
+
+        let transferID: UInt64 = 0x1D4
+        let fd = try acceptedFile(payload, in: scratch)
+        // Shares its file offset with the descriptor the receiver is handed, so
+        // it still reports how far the receiver read after that one is closed.
+        let offsetObserver = dup(fd)
+        defer { _ = Darwin.close(offsetObserver) }
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 32,
+            plan: folderPlan(named: "Project", advertised: 8 << 20),
+            source: .accepted(fd: fd, reply: archiveReply(transferID: transferID)))
+        let collector = harness.collector
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) })
+        try await settle(harness, transferID)
+
+        #expect(lseek(offsetObserver, 0, SEEK_CUR) < Int64(payload.count))
+        let info = try abort(harness)
+        #expect(info.code == .extractError)
+        #expect(info.rawCode != "superseded")
+        #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
     @Test("a dial that fails reports the failure instead of retiring the pull quietly")
     func failedDialReportsTheFailure() async throws {
         let harness = TransferHarness()

@@ -361,7 +361,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         do {
             data = try reader.readExactly(declared)
         } catch {
-            throw stop(for: error, shortPayloadFrom: reader)
+            throw stop(for: error, endedOn: reader)
         }
         try reader.drain(allowance: 0)
         try verify(reader.trailer(), against: reader)
@@ -397,6 +397,10 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         let refusal = ArchiveRefusalBox()
         let staging = self.staging
         let guarded = refusal.guarding { [self] written in
+            // The extract is the only thing still running once the payload is
+            // arriving, so this is where a cancellation lands: stop here rather
+            // than write another quantum of a tree nobody is waiting for.
+            guard !cancelled else { throw cancellationStop }
             // The decompressor takes a whole block of the archive before it
             // emits any of it, so arriving wire bytes are a poor clock for a
             // bar stated in payload units: report from the output instead, at
@@ -426,15 +430,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         }
         if let failure {
             try? FileManager.default.removeItem(at: destination)
-            // The sender's own reason outranks the truncation it caused: an
-            // archive cut short by a supersession must retire quietly rather
-            // than report a corrupt payload.
-            if let trailer = try? endingAfterFailure(reader),
-                case .aborted(let rawCode) = trailer.ending
-            {
-                throw stop(forAbortedTrailer: rawCode)
-            }
-            throw stop(for: failure)
+            throw stop(for: failure, endedOn: reader)
         }
 
         // One place the extracted tree is disposed of, so every way this
@@ -442,6 +438,10 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         // a payload that does not match the pull, a mapping that failed —
         // leaves the staging volume as it found it.
         do {
+            // A cancellation that landed in the extract's last quantum has no
+            // guard left to stop it, so honor it before the tree is verified
+            // and handed over.
+            guard !cancelled else { throw cancellationStop }
             try reader.drain(allowance: ClipboardStreamTuning.archiveTailAllowance)
             try verify(reader.trailer(), against: reader)
             return try finishStaged(
@@ -450,15 +450,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
-    }
-
-    /// Drains what is left after a failed extract so the sender's trailer can be
-    /// read, if it sent one.
-    private func endingAfterFailure(_ reader: ClipboardPayloadReader) throws
-        -> ClipboardTransferTrailer
-    {
-        try reader.drain(allowance: ClipboardStreamTuning.archiveTailAllowance)
-        return try reader.trailer()
     }
 
     /// Turns the extracted tree into the representation the pull asked for.
@@ -630,13 +621,38 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         ReceiveStop(rawCode: rawCode, message: "The sender ended the transfer")
     }
 
-    /// The stop `error` ends the transfer with, honoring a local cancellation
-    /// over whatever the interrupted read reported.
-    private func stop(for error: Error, shortPayloadFrom reader: ClipboardPayloadReader? = nil)
+    /// What the sender wrote to end the payload, once the consumer has stopped
+    /// taking it — `nil` when it left no well-formed trailer behind.
+    ///
+    /// A peer that streams past the tail allowance has no trailer to read: the
+    /// drain's refusal ends the search there, rather than buffering whatever
+    /// else it sends until the socket's own timeout does.
+    private func senderEnding(_ reader: ClipboardPayloadReader?)
+        -> ClipboardTransferTrailer.Ending?
+    {
+        guard let reader else { return nil }
+        do {
+            try reader.drain(allowance: ClipboardStreamTuning.archiveTailAllowance)
+        } catch {
+            return nil
+        }
+        return (try? reader.trailer())?.ending
+    }
+
+    /// The stop `error` ends the transfer with, given the reader the payload
+    /// ended on.
+    ///
+    /// A local cancellation outranks everything the connection reports: this
+    /// side cut the stream, so the bytes the reader is holding back are payload
+    /// it never finished taking and never a trailer a sender wrote. Short of
+    /// one, the sender's own reason outranks the truncation or the archive
+    /// failure it caused — an archive cut short by a supersession retires
+    /// quietly rather than reporting a corrupt payload.
+    private func stop(for error: Error, endedOn reader: ClipboardPayloadReader? = nil)
         -> ReceiveStop
     {
-        if let stop = error as? ReceiveStop { return stop }
         if cancelled { return cancellationStop }
+        if let stop = error as? ReceiveStop { return stop }
         if case ClipboardArchiveStreamError.outputRefused(let refusal) = error {
             switch refusal {
             case .diskFull:
@@ -652,10 +668,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             case .timedOut:
                 return ReceiveStop(code: .stallTimeout, message: "The sender stopped sending")
             case .truncated:
-                // A sender that gave up mid-payload still wrote its reason, so
-                // read it rather than report the short payload it left behind.
-                let ending = reader.flatMap { try? $0.trailer() }?.ending
-                if case .aborted(let rawCode)? = ending {
+                if case .aborted(let rawCode)? = senderEnding(reader) {
                     return stop(forAbortedTrailer: rawCode)
                 }
                 return ReceiveStop(
@@ -667,6 +680,9 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             default:
                 return ReceiveStop(code: .sizeMismatch, message: "The connection ended early")
             }
+        }
+        if case .aborted(let rawCode)? = senderEnding(reader) {
+            return stop(forAbortedTrailer: rawCode)
         }
         // A volume that filled between the output guard's last check and the
         // extract's own write surfaces from AppleArchive as an archive failure.

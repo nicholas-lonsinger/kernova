@@ -33,18 +33,6 @@ struct ClipboardDirectoryTransferTests {
         return (scratch, source)
     }
 
-    /// A tree holding one incompressible file, so its archive is as big as the
-    /// tree and the wire has something to carry.
-    private func makeBulkyTree(named name: String, byteCount: Int) throws -> (
-        scratch: URL, source: URL
-    ) {
-        let scratch = makeScratch()
-        let source = scratch.appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: byteCount).write(to: source.appendingPathComponent("big.bin"))
-        return (scratch, source)
-    }
-
     /// A folder representation the sender streams as its tree, carrying the
     /// stat-walk estimate the offer would have advertised.
     private func folderRepresentation(_ source: URL, named name: String, estimate: Int? = nil)
@@ -54,16 +42,6 @@ struct ClipboardDirectoryTransferTests {
             directorySourceURL: source,
             estimatedByteCount: estimate ?? ClipboardArchive.estimatedByteCount(at: source),
             filename: name)
-    }
-
-    /// What a pull for a folder registers: the name to unpack under, and the
-    /// size the offer advertised.
-    private func folderPlan(named name: String, advertised: Int)
-        -> ClipboardTransferReceiver.Plan
-    {
-        ClipboardTransferReceiver.Plan(
-            uti: ClipboardArchive.directoryUTI, filename: name, extractsDirectoryNamed: name,
-            advertisedByteCount: advertised)
     }
 
     /// Suspends until the transfer has either delivered a representation or
