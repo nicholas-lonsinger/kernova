@@ -6,7 +6,7 @@ import Foundation
 ///
 /// A synchronous pasteboard promise callback has to occupy its thread until the
 /// bytes exist; this is how it occupies the main thread while the app stays
-/// live (docs/CLIPBOARD.md §8). The loop nests inside whatever is on the stack,
+/// live. The loop nests inside whatever is on the stack,
 /// so anything the app can do can happen inside the wait — including a second
 /// promise callback, whose own wait nests inside this one, and a tracking or
 /// modal loop (a menu, a drag, a sheet) that then holds the callback's return

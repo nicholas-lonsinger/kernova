@@ -6,7 +6,7 @@ import KernovaKit
 ///
 /// Computed from the instances rather than kept in a registry: the report is a
 /// per-VM value, so nothing has to be registered or unregistered as services
-/// come and go (docs/CLIPBOARD.md §13).
+/// come and go.
 @MainActor
 enum AppClipboardReadout {
     /// The report the single app-level bar shows for `instances`: the

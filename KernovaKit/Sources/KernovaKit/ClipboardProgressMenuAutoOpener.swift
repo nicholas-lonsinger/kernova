@@ -16,9 +16,9 @@ public enum ClipboardProgressMenuAction: Equatable, Sendable {
 /// This is the only progress surface that interrupts, so it opens at most once
 /// per operation and only for a gesture someone is waiting on — a peer's paste,
 /// which holds the app it is pasting into, and a drop, whose files are not in
-/// the guest until it lands (docs/CLIPBOARD.md §13). It waits until the transfer
-/// has run for `minimumElapsedToOpen` with at least `minimumRemainingToOpen`
-/// still to go, and it closes only a dropdown it opened itself.
+/// the guest until it lands. It waits until the transfer has run for
+/// `minimumElapsedToOpen` with at least `minimumRemainingToOpen` still to go,
+/// and it closes only a dropdown it opened itself.
 public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
     /// How long a transfer must have been running before it may interrupt.
     public static let defaultMinimumElapsedToOpen: TimeInterval = 2

@@ -4,11 +4,11 @@ import KernovaLogging
 /// What the peer has offered this side, and every pull that materializes it.
 ///
 /// An offer arrives as metadata alone; its bytes cross only when something
-/// consumes them (docs/CLIPBOARD.md §3). So this owns the promise table and its
-/// per-representation cache, the one pull core every gesture runs, the gate
-/// deciding what a paste may ask for, and what a refusal reports — for either
-/// end of either channel. The owners differ only in what they do with a
-/// representation once it lands.
+/// consumes them — docs/CLIPBOARD.md, "Pay on consume". So this owns the
+/// promise table and its per-representation cache, the one pull core every
+/// gesture runs, the gate deciding what a paste may ask for, and what a refusal
+/// reports — for either end of either channel. The owners differ only in what
+/// they do with a representation once it lands.
 @MainActor
 public final class ClipboardInboundOffers {
     // MARK: - Values the owner reads
@@ -96,7 +96,7 @@ public final class ClipboardInboundOffers {
     ///
     /// Held off the main actor deliberately: a blocking fire clears its id from
     /// whichever thread it holds, and the main hop that would cost is the one a
-    /// paste must not pay (docs/CLIPBOARD.md §8).
+    /// paste must not pay.
     nonisolated private let syncPulls = InFlightSyncPulls()
 
     private let clock: any EngineClock
@@ -262,7 +262,7 @@ public final class ClipboardInboundOffers {
             return
         }
         // Ahead of the retraction, whose own report explains this very offer and
-        // must be what stands (docs/CLIPBOARD.md §13).
+        // must be what stands.
         reporter.clearFinished()
         retireCurrentOffer(reason: .superseded(hasSuccessor: true))
         let entry = Entry(
@@ -360,7 +360,7 @@ public final class ClipboardInboundOffers {
     ///
     /// `nonisolated` deliberately: this runs on the thread that read the reply,
     /// because a paste fire parked on the pull it answers can be holding the
-    /// main thread (docs/CLIPBOARD.md §8).
+    /// main thread.
     nonisolated public func adoptDataConnection(
         fd: Int32, reply: Kernova_V1_ClipboardTransferReply
     ) {
@@ -402,9 +402,9 @@ public final class ClipboardInboundOffers {
     /// Drops the live offer and tells the owner what became of it.
     ///
     /// The superseded generation's staged files are NOT swept — they ride the
-    /// `maxGenerations` grace window (docs/CLIPBOARD.md §3), so a paste still
-    /// being copied out, or a re-paste of an already-vended URL, survives the
-    /// peer's next copy.
+    /// `maxGenerations` grace window, so a paste still being copied out, or a
+    /// re-paste of an already-vended URL, survives the peer's next copy —
+    /// docs/CLIPBOARD.md, "Pay on consume".
     private func retireCurrentOffer(reason: RetractReason) {
         let previous = entries[currentGeneration]
         if let previous {
@@ -424,8 +424,9 @@ public final class ClipboardInboundOffers {
     /// A clipboard offer and its materialization cache deliberately stay: a
     /// pasteboard write this side published outlives the session behind it, and
     /// every representation already pulled stays servable from the cache and the
-    /// staged files (docs/CLIPBOARD.md §3). A drop's entries go — nothing on this
-    /// side advertises them, and the jobs they belonged to end with the channel.
+    /// staged files — docs/CLIPBOARD.md, "Pay on consume". A drop's entries go —
+    /// nothing on this side advertises them, and the jobs they belonged to end
+    /// with the channel.
     ///
     /// `nonisolated` so the channel's own end can run it before anything hops to
     /// main — a pull parked on the main thread is what would block that hop. The
@@ -506,7 +507,7 @@ public final class ClipboardInboundOffers {
                 retire: { plan.inbox.cancelAwait(plan.transferID) },
                 start: { self.begin(plan) },
                 // Resumed from whichever thread resolved the pull — never routed
-                // through main, which a paste fire may be holding (§8).
+                // through main, which a paste fire may be holding.
                 onResolve: { continuation.resume(returning: $0) })
             entries[generation]?.joinedWaiters[repIndex] = waiter
         }
@@ -571,7 +572,8 @@ public final class ClipboardInboundOffers {
     /// at paste time: the materialization cache first, else a pull.
     ///
     /// Inline representations are exempt from the paste-budget cap — Kernova
-    /// imposes no size cap on inline content (docs/CLIPBOARD.md §1).
+    /// imposes no size cap on inline content — docs/CLIPBOARD.md, "No
+    /// Kernova-imposed size bound".
     ///
     /// Safe to call on the main thread even though it blocks; where the
     /// event-loop wait is unavailable there it serves nothing rather than
@@ -820,12 +822,12 @@ public final class ClipboardInboundOffers {
     ///
     /// Runs wherever the pull will land on disk (``PullPlan/preflightByteCount``)
     /// and nowhere else: an inline payload a caller only reads reassembles in
-    /// memory, and Kernova caps neither (docs/CLIPBOARD.md §1). Raised as an
-    /// abort so one outcome mapping covers a volume this side found full and one
-    /// the peer did.
+    /// memory, and Kernova caps neither — docs/CLIPBOARD.md, "No Kernova-imposed
+    /// size bound". Raised as an abort so one outcome mapping covers a volume
+    /// this side found full and one the peer did.
     ///
     /// `nonisolated`: it reads the thread-safe staging alone, and the statfs
-    /// behind that has no business on the main thread (docs/CLIPBOARD.md §8).
+    /// behind that has no business on the main thread.
     nonisolated private func preflight(_ plan: PullPlan) -> LazyPullOutcome? {
         guard let needed = plan.preflightByteCount,
             !staging.hasCapacity(forByteCount: needed)
@@ -867,7 +869,7 @@ public final class ClipboardInboundOffers {
                 coordinator.progress(plan.transferID, bytesReceived: bytes, totalBytes: total)
             })
         // Read here rather than snapshotted with the plan: the statfs behind it
-        // belongs off the main thread (docs/CLIPBOARD.md §8).
+        // belongs off the main thread.
         let ceiling =
             staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount

@@ -151,8 +151,13 @@ public final class ClipboardPasteboardPublisher {
             return (types: spec.types, provider: provider)
         }
 
-        // `.currentHostOnly` (docs/CLIPBOARD.md §3, §10) is per-write state, reset
-        // by every `prepareForNewContents`/`clearContents`, so it is applied at
+        // `.currentHostOnly` keeps the write off the continuity advertiser,
+        // which otherwise fetches a promised flavor ~100 ms after the write with
+        // no paste and no Apple Account signed in
+        // (docs/research/2026-08-17-promised-flavor-advertiser-fetch.md), so
+        // nothing reads the bytes until a destination consumes them —
+        // docs/CLIPBOARD.md, "Pay on consume". It is per-write state, reset by
+        // every `prepareForNewContents`/`clearContents`, so it is applied at
         // this single publication choke point rather than once at init.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         let written = pasteboard.writeItems(items)

@@ -334,10 +334,9 @@ struct VsockDropServiceTests {
         #expect(harness.failure == nil)
     }
 
-    /// One gesture is owed one sentence with one number (docs/CLIPBOARD.md §13):
-    /// a skip announced when the offer goes out, ahead of the guest's own
-    /// losses, is a second notice carrying a smaller count than the verdict
-    /// behind it.
+    /// One gesture is owed one sentence with one number: a skip announced when
+    /// the offer goes out, ahead of the guest's own losses, is a second notice
+    /// carrying a smaller count than the verdict behind it.
     @Test("a gather-time skip is announced once, in the drop's own verdict")
     func gatherTimeSkipIsAnnouncedInTheVerdict() async throws {
         let harness = try Harness()

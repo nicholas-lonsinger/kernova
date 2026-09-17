@@ -14,7 +14,7 @@ import KernovaLogging
 ///
 /// Everything runs on the transfer's own serial queue, so the owning actor is
 /// never blocked, and the 33-byte trailer is verified — size and SHA-256 both —
-/// before anything is delivered (docs/CLIPBOARD.md §7).
+/// before anything is delivered.
 final class ClipboardTransferReceiver: @unchecked Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferReceiver")
@@ -498,8 +498,9 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         }
         // An oversize inline rep: serve its bytes back as a resident `.inMemory`
         // payload through a memory-mapped read, so the pasteboard flavor is
-        // unchanged while Kernova's added RAM stays near zero (CLIPBOARD.md
-        // §1/§2/§8). On Darwin a `.mappedIfSafe` mapping stays valid after the
+        // unchanged while Kernova's added RAM stays near zero —
+        // docs/CLIPBOARD.md, "No Kernova-imposed size bound".
+        // On Darwin a `.mappedIfSafe` mapping stays valid after the
         // staged file is unlinked by a later generation sweep, so the mapped rep
         // needs no lifetime tracking.
         let mapped: Data

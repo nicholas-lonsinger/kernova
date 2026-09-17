@@ -112,7 +112,7 @@ struct ClipboardTransferTrailerTests {
         #expect(reader.byteCount == payload.count)
         #expect(released.value == payload.count)
         // The only corruption detector this transport has, taken over exactly
-        // the bytes the consumer got (docs/CLIPBOARD.md §7).
+        // the bytes the consumer got.
         #expect(reader.digest() == sha256(payload))
         #expect(try reader.trailer() == trailer)
     }

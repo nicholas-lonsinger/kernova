@@ -20,14 +20,13 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
 
     /// Whether the user owed the message is on this side.
     ///
-    /// docs/CLIPBOARD.md §13 — report a refusal on the side that made the
-    /// gesture. Everything but `peerPaste`, which refuses the *peer* user's
-    /// paste and is theirs to be told about.
+    /// A refusal is reported on the side that made the gesture, so this is
+    /// everything but `peerPaste`, which refuses the *peer* user's paste and is
+    /// theirs to be told about.
     public var isMadeHere: Bool { self != .peerPaste }
 
     /// Whether someone is waiting in front of a screen for this gesture to end,
-    /// which is what earns its readout the surfaces that interrupt
-    /// (docs/CLIPBOARD.md §13).
+    /// which is what earns its readout the surfaces that interrupt.
     ///
     /// A peer's paste holds the app it is pasting into; a drop leaves the files
     /// out of the guest until it lands. The rest run behind whatever the user is

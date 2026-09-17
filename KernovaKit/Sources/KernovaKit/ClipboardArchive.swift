@@ -31,11 +31,13 @@ public enum ClipboardArchive {
     ///
     /// AppleArchive writes a per-entry digest (`SH2`) into the entry *header*, so
     /// carrying one makes the encoder read and hash each file in full before its
-    /// first payload byte can leave; the transfer's wire-level SHA-256
-    /// (CLIPBOARD.md §7) is the integrity check.
+    /// first payload byte can leave; the transfer's wire-level SHA-256 is the
+    /// integrity check.
     ///
-    /// Extended attributes (`XAT`) are omitted: CLIPBOARD.md §6's accepted gap,
-    /// which this key set is the one place to close.
+    /// Extended attributes (`XAT`) are omitted, so Finder tags,
+    /// `com.apple.quarantine` and `kMDItemWhereFroms` cross on no paste path in
+    /// either direction — a gap uniform by construction, which this key set is
+    /// the one place to close.
     static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM"
 }
 

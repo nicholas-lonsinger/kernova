@@ -455,7 +455,7 @@ struct ClipboardEndpointTests {
 
     // MARK: - Bounding accepted data connections
 
-    /// A wedged or compromised guest is in scope (docs/CLIPBOARD.md §10), and
+    /// A wedged or compromised guest is in scope — the guest is untrusted — and
     /// each accepted connection's opening frame is read on a blocking worker —
     /// so what a peer that connects and then says nothing costs the host is a
     /// constant, not one worker per connection it opens.

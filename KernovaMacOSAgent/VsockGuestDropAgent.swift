@@ -231,7 +231,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private func takeOn(_ offer: ClipboardEndpoint.InboundOffer, on endpoint: ClipboardEndpoint) {
         let generation = offer.generation
         // The whole drop's totals are the floor, so the bar's denominator is
-        // every dropped file rather than each in turn (§13).
+        // every dropped file rather than each in turn.
         let operation = ClipboardTransferOperation(
             gesture: .drop, direction: .inbound, peerName: Self.dropSourceName,
             expectedBytes: offer.reps.reduce(UInt64(0)) { $0 &+ $1.byteCount },

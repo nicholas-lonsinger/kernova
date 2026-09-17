@@ -5,9 +5,10 @@ import Foundation
 ///
 /// Shared by every intake site — the guest agent's pasteboard poll and the host
 /// window's Paste/drag gestures — so both ends apply identical filtering. There
-/// is **no size cap**: every transfer is chunk-streamed to and from disk, so
-/// what the rules cover is identity skips — representation types that must never
-/// be sent or applied — plus the empty-payload skip.
+/// is **no size cap**: a representation past `maxResidentInlineBytes` streams
+/// to a staging file and is served back memory-mapped, so what the rules cover
+/// is identity skips — representation types that must never be sent or applied
+/// — plus the empty-payload skip.
 public enum ClipboardSnapshotPolicy {
     /// Why a representation was excluded from a snapshot.
     public enum SkipReason: Equatable, Sendable {

@@ -267,7 +267,7 @@ struct ClipboardTransferStreamTests {
 
         let representation = try #require(harness.collector.representation(transferID))
         // Residency is an implementation detail: the pasteboard flavor is still
-        // resident bytes (docs/CLIPBOARD.md §1).
+        // resident bytes — docs/CLIPBOARD.md, "No Kernova-imposed size bound".
         #expect(representation.inMemoryData == payload)
         let inbound = try #require(harness.collector.inboundMetrics.first)
         #expect(inbound.inbound?.streamedToDisk == true)
@@ -581,8 +581,7 @@ struct ClipboardTransferStreamTests {
     }
 
     /// The other side of that guard: every ending a peer can still take rides
-    /// the trailer, so skipping one is the stall's exception and not the rule
-    /// (docs/CLIPBOARD.md §9).
+    /// the trailer, so skipping one is the stall's exception and not the rule.
     @Test("a peer that is draining still gets the trailer that ends the payload")
     func aDrainedTransferWritesItsTrailer() async throws {
         let received = Box<ReceivedTransfer?>(nil)

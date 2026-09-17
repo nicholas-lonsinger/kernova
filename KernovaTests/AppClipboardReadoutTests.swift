@@ -8,10 +8,9 @@ import Testing
 /// Unit tests for `AppClipboardReadout` — the one readout the app-level surfaces
 /// render across every VM, and the Cancel routing behind it.
 ///
-/// The routing is what docs/CLIPBOARD.md §13's "a Cancel stops what its own
-/// readout showed" comes down to: the click carries the id the bar was rendered
-/// for, and it has to reach that operation through whichever VM owns it rather
-/// than whatever is newest by the time it lands.
+/// A Cancel stops what its own readout showed: the click carries the id the bar
+/// was rendered for, and it has to reach that operation through whichever VM
+/// owns it rather than whatever is newest by the time it lands.
 @Suite("AppClipboardReadout", .admissionGated)
 @MainActor
 struct AppClipboardReadoutTests {

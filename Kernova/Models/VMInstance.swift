@@ -222,8 +222,7 @@ final class VMInstance {
     /// value below.
     ///
     /// One per VM rather than per connection: a promise a clipboard service
-    /// published outlives that service, so a refusal belongs to the VM
-    /// (docs/CLIPBOARD.md §13).
+    /// published outlives that service, so a refusal belongs to the VM.
     @ObservationIgnored let clipboardTransfers = ClipboardTransferReporter()
 
     /// This VM's clipboard transfer state — running, finished, or idle — which

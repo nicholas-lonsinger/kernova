@@ -9,8 +9,7 @@ import KernovaLogging
 /// operation, else the last one to finish, else nothing. Whatever the readout
 /// leaves out is counted on it as ``ClipboardProgressSnapshot/pendingBehind``,
 /// so work queued behind the bar is legible rather than absent. A refusal
-/// belongs to the *peer*,
-/// not to the connection that raised it (docs/CLIPBOARD.md §13): a service
+/// belongs to the *peer*, not to the connection that raised it: a service
 /// superseded by a reconnect still reports the failures of the pasteboard
 /// promises it published, and they land here.
 ///
@@ -261,9 +260,9 @@ public final class ClipboardTransferReporter {
         }
         if let standing = lastFinish, standing.failure != nil {
             // A gesture the peer made answers the peer's user, so nothing it ends
-            // with disproves what this side's user is owed
-            // (docs/CLIPBOARD.md §13) — including a refusal of its own, which the
-            // surfaces that interrupt would not present here anyway.
+            // with disproves what this side's user is owed — including a refusal
+            // of its own, which the surfaces that interrupt would not present
+            // here anyway.
             let answersTheOtherUser = !finish.gesture.isMadeHere && standing.gesture.isMadeHere
             // Running to the end says nothing about a transfer that failed
             // alongside; a refusal older than the operation is one the operation
@@ -291,8 +290,8 @@ public final class ClipboardTransferReporter {
     ///
     /// Ranked by ``ClipboardTransferGesture/readoutRank`` rather than by which
     /// published last, so work started under a gesture someone is waiting on
-    /// never takes the bar off it (docs/CLIPBOARD.md §13); equal ranks fall back
-    /// to the last to open a bar.
+    /// never takes the bar off it; equal ranks fall back to the last to open a
+    /// bar.
     private func shownReadout() -> (snapshot: ClipboardProgressSnapshot, since: Date)? {
         typealias Candidate = (
             rank: Int, revealOrder: UInt64, snapshot: ClipboardProgressSnapshot, since: Date

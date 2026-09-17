@@ -503,10 +503,10 @@ public final class ClipboardOutboundOffers {
     /// cancelled its readout.
     ///
     /// A clipboard offer survives: the peer can paste again and pull the same
-    /// representations, exactly as it can after any retired transfer
-    /// (docs/CLIPBOARD.md §9) — what it can no longer do is resume the wave the
-    /// user just stopped, so later requests are refused stale. A drop is the
-    /// gesture itself, so cancelling it retires the whole job.
+    /// representations, exactly as it can after any retired transfer — what it
+    /// can no longer do is resume the wave the user just stopped, so later
+    /// requests are refused stale. A drop is the gesture itself, so cancelling
+    /// it retires the whole job.
     public func cancel(generation: UInt64) {
         guard let entry = entries[generation] else { return }
         switch kind {
@@ -748,7 +748,7 @@ public final class ClipboardOutboundOffers {
     }
 
     /// Opens the readout spanning one drop, with the set's totals as the floor so
-    /// the bar's denominator is every dropped file rather than each in turn (§13).
+    /// the bar's denominator is every dropped file rather than each in turn.
     private func makeDropOperation(
         generation: UInt64, content: ClipboardContent
     ) -> ClipboardTransferOperation {

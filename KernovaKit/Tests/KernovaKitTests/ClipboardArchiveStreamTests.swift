@@ -405,8 +405,9 @@ struct ClipboardArchiveStreamTests {
         var paths: Set<String> = []
         while let header = try decode.readHeader() {
             // `SH2` would make the encoder hash each file in full before its
-            // first payload byte could leave; `XAT` is CLIPBOARD.md §6's
-            // accepted gap, which the file above carries one of.
+            // first payload byte could leave; `XAT` is the accepted gap that
+            // keeps extended attributes off every paste path, which the file
+            // above carries one of.
             #expect(header.field(forKey: ArchiveHeader.FieldKey("SH2")) == nil)
             #expect(header.field(forKey: ArchiveHeader.FieldKey("XAT")) == nil)
             if case .string(_, let path)? = header.field(forKey: ArchiveHeader.FieldKey("PAT")) {

@@ -2248,8 +2248,8 @@ struct VsockClipboardServiceTests {
         // and an automatic passthrough publish each read.
         #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
         #expect(reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
-        // The cap governs the file flavor, not the inline one (§1): each rep
-        // still promises, with `.fileURL` withheld from the item it plans.
+        // The cap governs the file flavor, not the inline one: each rep still
+        // promises, with `.fileURL` withheld from the item it plans.
         #expect(items.promised.map(\.repIndex) == [0, 1])
         #expect(items.promised.map(\.withholdsFileURL) == [true, true])
         let specs = HostClipboardPublisher.promisedItemSpecs(for: items.promised, serve: service)
@@ -2455,10 +2455,11 @@ struct VsockClipboardServiceTests {
         #expect(reports.snapshot?.gesture == .paste)
         #expect(reports.snapshot?.isCancellable == false)
 
-        // Releasing the trailer resolves the pull; the terminal clears the readout (§13:
-        // never leave a stuck bar). Gated on the responder having parked the
-        // transfer — the readout above is published host-side at `unitBegan`,
-        // before the request is even sent, so it is no evidence of that.
+        // Releasing the trailer resolves the pull; the terminal clears the
+        // readout, never leaving a stuck bar. Gated on the responder having
+        // parked the transfer — the readout above is published host-side at
+        // `unitBegan`, before the request is even sent, so it is no evidence of
+        // that.
         let heldTransfer = inboundTransferID(generation: 41, repIndex: 0)
         try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
         responder.releaseTrailer()

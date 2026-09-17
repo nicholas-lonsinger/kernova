@@ -70,7 +70,7 @@ struct ClipboardTransferFailureTests {
             #expect(gesture.isMadeHere, "\(gesture) refuses a gesture made on this side")
         }
         // The guest user's own paste refusal — their agent's dropdown reveals it
-        // over there (docs/CLIPBOARD.md §13).
+        // over there.
         #expect(!ClipboardTransferGesture.peerPaste.isMadeHere)
     }
 
