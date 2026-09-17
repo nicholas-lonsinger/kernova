@@ -4,8 +4,10 @@
 // identity outside the Release `-` pin, so Config/Local.xcconfig still reaches
 // the target.
 
-// Embedded at Contents/Helpers/kernova, never Contents/MacOS — docs/BUILD.md
-// "The bundled kernova tool" says what happens there and why.
+// Embedded at Contents/Helpers/kernova, never Contents/MacOS: the volume is
+// case-insensitive, so there `kernova` is the app's own `Kernova` — the copy
+// overwrote the app executable and the app's signing pass gave the tool the
+// full entitlement set (observed 2026-09-05: one inode under both names).
 PRODUCT_NAME = kernova
 PRODUCT_MODULE_NAME = KernovaCLI
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova.cli

@@ -89,7 +89,7 @@ disabled**.
 
 1. **Version.** Decide whether to bump the app's `MARKETING_VERSION`. The guest
    agent has its **own** version — bump it only when agent behavior changed, per
-   the guest-agent versioning conventions in [BUILD.md](BUILD.md).
+   the guest-agent versioning rule in [AGENTS.md](../AGENTS.md) "Build & Test".
    `CFBundleVersion` is derived from git and needs no manual edit.
 2. **Restore image catalog.** Regenerate the snapshot the wizard's version
    picker ships, so the release offers what Apple hosts today:

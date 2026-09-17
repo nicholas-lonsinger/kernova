@@ -26,7 +26,7 @@ Two of these are **restricted** — they must be authorized by the embedded prov
 - `com.apple.vm.networking`, granted by Apple as a managed capability on the App ID.
 - `com.apple.developer.accessory-access.usb`, enabled on the App ID from Xcode's capability catalog without asking Apple.
 
-So the default build signs with `Kernova/Resources/Kernova.Development.entitlements`, the same set minus both, and `Tools/check-entitlements.sh` holds the two files to exactly that difference. A profile-less checkout therefore offers neither bridged networking nor USB accessory passthrough — both degrade by absence through `EntitlementService`, which is also why a machine opting into the full set needs *Claim USB Accessory* enabled on the App ID before it will build. [BUILD.md](BUILD.md) "Signing identity" owns the selection mechanics and the per-machine opt-in.
+So the default build signs with `Kernova/Resources/Kernova.Development.entitlements`, the same set minus both, and `Tools/check-entitlements.sh` holds the two files to exactly that difference. A profile-less checkout therefore offers neither bridged networking nor USB accessory passthrough — both degrade by absence through `EntitlementService`, which is also why a machine opting into the full set needs *Claim USB Accessory* enabled on the App ID before it will build. `Config/Base.xcconfig`'s `KERNOVA_APP_ENTITLEMENTS` selects between them; `Config/Local.xcconfig.example` carries the per-machine opt-in.
 
 The sandbox profile needs nothing further for either: `application.sb` grants the `com.apple.NetworkSharing` mach-lookup exactly when `com.apple.vm.networking` is present, and `frameworks.sb` grants the USB host user clients exactly when `com.apple.developer.accessory-access.usb` is.
 

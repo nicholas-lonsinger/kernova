@@ -1,5 +1,5 @@
 // Template for the gitignored Config/Local.xcconfig — copy it there and set
-// your team. docs/BUILD.md "Signing identity" explains each setting.
+// your team.
 
 // The team ID is the OU of your signing certificate — on an Apple Development
 // certificate the CN parenthetical is a per-developer identifier that looks

@@ -5,8 +5,7 @@
 #
 # Usage: set-build-number.sh <app|agent>
 #
-# The number is squash-merge aware, and app/agent mode scope it differently —
-# docs/BUILD.md "Build version" has the derivation.
+# The number is squash-merge aware, and app/agent mode scope it differently.
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR.
 

@@ -1,8 +1,7 @@
 // The KernovaMacOSAgentTests bundle, both configurations.
 //
 // No signing identity or team is assigned here: a target xcconfig outranks
-// Config/Local.xcconfig, and test bundle and host must sign together —
-// docs/BUILD.md "Signing identity".
+// Config/Local.xcconfig, and test bundle and host must sign together.
 
 PRODUCT_NAME = $(TARGET_NAME)
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.tests

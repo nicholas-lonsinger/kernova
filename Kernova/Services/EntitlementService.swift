@@ -37,8 +37,7 @@ struct ProcessEntitlementReader: EntitlementReading {
 /// gracefully in builds signed without a restricted entitlement.
 ///
 /// The answer is a property of the signature, not the code: the default
-/// signing omits `com.apple.vm.networking` so profile-less builds run — see
-/// docs/BUILD.md "Signing identity".
+/// signing omits `com.apple.vm.networking` so profile-less builds run.
 struct EntitlementService: Sendable {
     /// The process-wide instance over the real signature reader.
     @MainActor static let shared = EntitlementService()

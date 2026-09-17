@@ -3,7 +3,7 @@
 // No signing identity or team is assigned here: a target xcconfig outranks
 // Config/Local.xcconfig, and a team-signed hardened test host rejects an
 // ad-hoc test bundle under library validation, so host and bundle must sign
-// together — docs/BUILD.md "Signing identity".
+// together.
 
 PRODUCT_NAME = $(TARGET_NAME)
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova.tests

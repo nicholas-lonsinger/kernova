@@ -18,8 +18,8 @@
 #     ~/Library location whose recorded source checkout no longer exists —
 #     on default-location machines every checkout the GUI opens leaves a
 #     permanent, LS-registered app copy there that keeps competing in the
-#     version election after the checkout is torn down (docs/BUILD.md
-#     "Derived data and build arenas")
+#     version election after the checkout is torn down
+#     (Tools/derived-data-path.sh)
 #   - Running processes executing from a Kernova path that no longer exists
 #     on disk (the file was deleted out from under a still-running process)
 #   - `git worktree list` entries marked `prunable` (administrative metadata
@@ -27,10 +27,10 @@
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
 #     CFBundleVersion outranks the installed /Applications copy — unlike the
 #     dead-path ghosts above, Launch Services elects these by highest
-#     CFBundleVersion (= squash-aware git commit count, see docs/BUILD.md "Build
-#     version"), so a ghost build can shadow the real app indefinitely even
-#     though version ordering can never favor the installed copy on its own
-#     (#454). Deregistration/eviction is the only lever — and only for a copy
+#     CFBundleVersion (= squash-aware git commit count, see
+#     Tools/set-build-number.sh), so a ghost build can shadow the real app
+#     indefinitely even though version ordering can never favor the installed
+#     copy on its own (#454). Deregistration/eviction is the only lever — and only for a copy
 #     no checkout still builds into: a live checkout's build is reported as
 #     the winner but never evicted, since its next build recreates and
 #     re-registers it, so trashing costs a rebuild and fixes nothing.
@@ -117,7 +117,7 @@ kernova_registered_paths() {
 # preference puts per-path-hashed arenas, every worktree the GUI opens gets a
 # permanent folder there — nothing removes it when the worktree goes away, and
 # the LS-registered app copy inside keeps competing in the CFBundleVersion
-# election (docs/BUILD.md "Derived data and build arenas").
+# election (Tools/derived-data-path.sh).
 #
 # Resolved rather than hardcoded to the default ~/Library path: on a machine
 # pointed at a custom root, hardcoding scanned a directory Xcode never writes
@@ -496,10 +496,10 @@ done < <(kernova_app_copies)
 
 # Unlike the dead-path ghost check above, this reports the LIVE copies — the
 # ones that still exist on disk but sit outside /Applications. Launch Services
-# elects a handler by highest CFBundleVersion (a squash-aware git commit count — see
-# docs/BUILD.md "Build version"), so a ghost build with a higher count can shadow
-# the real app indefinitely; version ordering can never fix this on its own,
-# eviction is the only lever (#454).
+# elects a handler by highest CFBundleVersion (a squash-aware git commit count
+# — see Tools/set-build-number.sh), so a ghost build with a higher count can
+# shadow the real app indefinitely; version ordering can never fix this on its
+# own, eviction is the only lever (#454).
 bundle_version() {
     plutil -extract CFBundleVersion raw -o - "$1/Contents/Info.plist" 2>/dev/null
 }
