@@ -27,8 +27,6 @@ Build and test through the `Makefile` (`make help`); its `xcodebuild` flags are 
 
 Test waits are event-driven; the seams and their contracts are `KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift` and `KernovaTests/TestHelpers.swift` (`waitForChange`).
 
-The test host is `Kernova.app`, so every test-host process shares one app container, and concurrent `make test` runs keep more than one of them live. A test writing under `FileManager.default.temporaryDirectory` stages under a root of its own: the app reclaims its staging roots whole at launch (`DropPromiseStaging`, `ClipboardFileStaging`), and that launch lands while another run's tests are mid-flight.
-
 A change that needs the guest agent reinstalled bumps `MARKETING_VERSION` in `Config/Targets/KernovaMacOSAgent.xcconfig` — the version mismatch is the only thing that offers the update — and each further behavioral revision on the same branch bumps again, since a guest that installed an earlier branch build is offered the update only by a version change (minor for the branch's first bump, patch for later ones).
 
 ## Dependencies
