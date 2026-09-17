@@ -1,6 +1,7 @@
 import CoreServices
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova

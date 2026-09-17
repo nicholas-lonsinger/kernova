@@ -1,3 +1,4 @@
+import KernovaTestSupport
 import SwiftSyntaxMacroExpansion
 import SwiftSyntaxMacros
 import SwiftSyntaxMacrosGenericTestSupport

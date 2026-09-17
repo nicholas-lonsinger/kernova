@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import KernovaKit
 
 @Suite("StreamFrame", .admissionGated)
