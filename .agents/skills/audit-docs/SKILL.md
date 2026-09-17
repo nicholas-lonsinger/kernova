@@ -201,8 +201,13 @@ Two constraints on what gets proposed:
   agrees with. When the code follows the file that does not own the subject
   under the layer table, the owner's rule wins and the code is swept to it.
 - **Dangling references:** for every section the audit deletes, grep the
-  other docs for its anchor and for its name in prose, and for any sentence
-  describing what the audited file contains.
+  other docs for its anchor and for its name in prose, for any sentence
+  describing what the audited file contains, and code comments for the file
+  name and for bare `§N` forms. A code comment cites a doc by heading name,
+  as a trailing clause after a fact the comment states itself —
+  `// Bytes are read only on consume — docs/CLIPBOARD.md, "Pay on consume".`
+  — never by section number, which lint cannot resolve and renumbering
+  strands.
 - **Coverage of the doc rules:** AGENTS.md's "Never kept" list (annotated
   trees, issue-keyed tables, inventories, changelogs, status notes,
   alternatives clauses); `Tools/check-docs.sh` owns the line cap and link
