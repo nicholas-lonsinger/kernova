@@ -147,8 +147,10 @@ struct VMCommandEnvelopeRouter {
                     message: "This transport does not deliver event subscriptions.",
                     recovery: nil))
 
-        case .start(let selector, let recovery, let guestAccount):
-            try await commands.start(selector, recovery: recovery, guestAccount: guestAccount)
+        case .start(let selector, let recovery):
+            // A wire caller has no way to answer for a guest account, so the
+            // refusal naming one is what it gets.
+            try await commands.start(selector, recovery: recovery, guestAccount: nil)
             return .ok
         case .cancelGuestSetup(let selector, let confirmed):
             try commands.cancelGuestSetup(selector, confirmed: confirmed)

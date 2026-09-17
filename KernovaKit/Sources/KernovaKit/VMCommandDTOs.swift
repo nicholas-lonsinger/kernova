@@ -319,8 +319,9 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
 ///
 /// The second thing a verb refuses without and takes as a parameter, beside
 /// ``ConfirmationPrompt``: the core describes what it is asking for and leaves
-/// each surface to gather it — a sheet, a terminal, a flag — then re-issue the
-/// start with a ``GuestAccountAnswer``.
+/// the app to gather it — a sheet, a launch pass — then re-issue the start
+/// with an answer. In-process only: the wire carries no way to answer this, so
+/// every out-of-process caller simply gets the refusal.
 ///
 /// Carries no password and never will: the bundle stores the other four fields
 /// of the account (its name, its username, and what it does on login), and the
@@ -341,30 +342,6 @@ public struct GuestAccountPrompt: Codable, Sendable, Hashable {
         self.username = username
         self.fullName = fullName
         self.message = message
-    }
-}
-
-/// What a start does about the account its VM owes the guest.
-///
-/// Rides the verb the way `confirmed` does, and for the same reason: the core
-/// has no surface to ask on, so the answer arrives as a parameter of the call
-/// it authorises and belongs to that call alone.
-public enum GuestAccountAnswer: Codable, Sendable, Hashable, CustomStringConvertible {
-    /// Create the account, with this password.
-    case password(String)
-    /// Boot without creating it, leaving macOS to ask for an account in Setup
-    /// Assistant. The boot this answers for is the one macOS would have created
-    /// the account on, so coming up is what ends it — a start that never got
-    /// there leaves the account for the next one to ask about.
-    case skip
-
-    /// Redacts the password, so interpolating an answer into a log line or a
-    /// debugger dump cannot spill it.
-    public var description: String {
-        switch self {
-        case .password: "password(<redacted>)"
-        case .skip: "skip"
-        }
     }
 }
 
