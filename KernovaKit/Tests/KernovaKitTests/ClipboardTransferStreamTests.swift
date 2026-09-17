@@ -25,19 +25,6 @@ struct ClipboardTransferStreamTests {
         return url
     }
 
-    /// Suspends until the transfer has either delivered a representation or
-    /// reported an abort.
-    private func settle(_ harness: TransferHarness, _ transferID: UInt64) async throws {
-        try await harness.collector.gate.wait {
-            harness.collector.representation(transferID) != nil || harness.collector.abortCount > 0
-        }
-    }
-
-    /// The single abort a transfer reported.
-    private func abort(_ harness: TransferHarness) throws -> ClipboardStreamAbortInfo {
-        try #require(harness.collector.abortInfos.first)
-    }
-
     /// A tree exercising every shape the archive's key set carries: nesting, an
     /// empty directory, unicode names, a symlink, a package, and the exec bit.
     private func makeFixtureTree(in scratch: URL) throws -> URL {
@@ -519,14 +506,17 @@ struct ClipboardTransferStreamTests {
 
     /// Runs one sender to its terminal and reports what it ended with.
     private func runToCompletion(
-        _ sender: ClipboardTransferSender, representation: ClipboardContent.Representation
+        _ sender: ClipboardTransferSender, representation: ClipboardContent.Representation,
+        isInline: Bool = true, onSourceUnreadable: (@Sendable () -> Void)? = nil
     ) async throws -> Bool {
         let ended = AsyncGate()
         let outcome = Box<Bool?>(nil)
         sender.start(
             representation: representation,
-            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount,
+            isInline: isInline,
             isCurrent: { _ in true },
+            onSourceUnreadable: onSourceUnreadable,
             onComplete: {
                 outcome.value = $0
                 ended.notify()
@@ -555,6 +545,38 @@ struct ClipboardTransferStreamTests {
                 uti: "public.data", data: Data(repeating: 0x5A, count: 4 * 1024 * 1024)))
 
         #expect(succeeded == false)
+        #expect(sender.trailerAttemptsForTesting == 0)
+    }
+
+    /// The same stall one stage further in: the write that reached the bound is
+    /// inside an archive encode, so AppleArchive hands it back rewrapped.
+    /// Believed, the codec's verdict says this side could not read its own
+    /// source — which fires `onSourceUnreadable` and counts the transfer against
+    /// content that was readable all along, over a peer that simply stopped
+    /// draining. Asserted on that callback, since a stalled ending writes no
+    /// trailer to carry its reason across.
+    @Test("a peer that stops draining an archive is a stall, not an unreadable source")
+    func aStalledArchiveWriteIsAStallNotAnUnreadableSource() async throws {
+        let fm = FileManager.default
+        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 4 << 20)
+        defer { try? fm.removeItem(at: treeScratch) }
+        let (near, peer) = try makeRawSocketPair()
+        defer { ClipboardDataConnection.end(fd: peer) }
+        let sender = ClipboardTransferSender(
+            transferID: 0x1C3, generation: 28, link: .accepted(near), socketTimeout: 0.3)
+        let unreadable = Box(false)
+
+        // Past everything the connection can buffer, with nothing reading the
+        // peer end at any point.
+        let succeeded = try await runToCompletion(
+            sender,
+            representation: .init(
+                directorySourceURL: source, estimatedByteCount: 4 << 20, filename: "Project"),
+            isInline: false,
+            onSourceUnreadable: { unreadable.value = true })
+
+        #expect(succeeded == false)
+        #expect(unreadable.value == false)
         #expect(sender.trailerAttemptsForTesting == 0)
     }
 
@@ -678,6 +700,156 @@ struct ClipboardTransferStreamTests {
         // The descriptor the accept handed over is closed on the way out, so the
         // peer sees EOF rather than a connection nothing will ever read.
         #expect(try drainUntilPeerCloses(peer).isEmpty)
+    }
+
+    // MARK: - A connection that failed under the extract
+
+    /// A descriptor over `bytes`, to hand a receiver as its accepted source.
+    ///
+    /// A regular file rather than a socketpair, so the whole payload is there to
+    /// be read whatever the receiver does with it, and a `dup` of the descriptor
+    /// still reports how far it got after the receiver closed its own.
+    private func acceptedFile(_ bytes: Data, in scratch: URL) throws -> Int32 {
+        let url = scratch.appendingPathComponent("payload-\(UUID().uuidString)")
+        try bytes.write(to: url)
+        let fd = Darwin.open(url.path, O_RDONLY)
+        try #require(fd >= 0)
+        return fd
+    }
+
+    /// The reply an accepted archive transfer is adopted with.
+    private func archiveReply(transferID: UInt64) -> Kernova_V1_ClipboardTransferReply {
+        Kernova_V1_ClipboardTransferReply.with {
+            $0.transferID = transferID
+            $0.isArchive = true
+        }
+    }
+
+    /// A read that reached the stall bound fails the extract from underneath,
+    /// and AppleArchive hands it back rewrapped. Believed, the codec names a
+    /// corrupt payload and sends the user off to retry a copy that was never
+    /// corrupt — and searching a peer that has already gone quiet for the
+    /// ending it never wrote spends a second whole `socketTimeout` doing it.
+    @Test(
+        "a peer that goes quiet mid-archive is a stall, not an extract failure, and is not drained for a trailer"
+    )
+    func aQuietPeerMidArchiveIsAStall() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider, socketTimeout: 0.3)
+        defer { harness.tearDown() }
+        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 2 << 20)
+        defer { try? fm.removeItem(at: treeScratch) }
+
+        // The peer end stays open and silent behind a prefix short enough to sit
+        // inside the socket's own send buffer, so nothing here parks: the
+        // extract consumes what arrived, and the read behind it is the one that
+        // reaches the stall bound.
+        let (near, peer) = try makeRawSocketPair()
+        defer { ClipboardDataConnection.end(fd: peer) }
+        let archive = try clipboardArchiveBytes(ofDirectoryAt: source)
+        try ClipboardDataConnection.write(fd: peer, Data(archive.prefix(4096)))
+
+        let transferID: UInt64 = 0x1D5
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 33,
+            plan: folderPlan(named: "Project", advertised: 2 << 20),
+            source: .accepted(fd: near, reply: archiveReply(transferID: transferID)))
+        let collector = harness.collector
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) })
+        try await settle(harness, transferID)
+
+        #expect(try abort(harness).code == .stallTimeout)
+        #expect(receiver.trailerSearchesForTesting == 0)
+        #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    /// The other side of that skip: an extract that failed over a connection
+    /// that stayed healthy is still searched, since the bytes the reader is
+    /// holding back are the ending the sender wrote — which is how a
+    /// supersession retires quietly instead of reporting a corrupt payload.
+    @Test("an extract failure over a healthy connection is searched for the sender's ending")
+    func aHealthyConnectionIsSearchedForItsTrailer() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        // Not an archive at all, ended by an abort trailer naming a code no
+        // build defines: the extract gives up at the first byte, the whole
+        // payload is already in hand, and the reason the sender left is the one
+        // reported.
+        let payload =
+            Data("not a valid archive at all".utf8)
+            + ClipboardTransferTrailer(ending: .aborted(rawCode: "not-a-code")).encoded
+
+        let transferID: UInt64 = 0x1D6
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 34,
+            plan: folderPlan(named: "Project", advertised: 64),
+            source: .accepted(
+                fd: try acceptedFile(payload, in: scratch),
+                reply: archiveReply(transferID: transferID)))
+        let collector = harness.collector
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) })
+        try await settle(harness, transferID)
+
+        #expect(try abort(harness).rawCode == "not-a-code")
+        #expect(receiver.trailerSearchesForTesting == 1)
+        #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    @Test("a sender streaming past the tail allowance is not read to the end for its trailer")
+    func surplusPastTheTailAllowanceIsNotRead() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        // Not an archive at all, so the extract gives up near the front of a
+        // stream with megabytes still to come — and the trailer at the end of
+        // it is past the allowance, so it is not the sender's reason to give.
+        // Reading that far for it is what would pull a peer-controlled stream
+        // into memory whole.
+        let payload =
+            try randomBytes(count: 8 << 20)
+            + ClipboardTransferTrailer(ending: .aborted(rawCode: "superseded")).encoded
+
+        let transferID: UInt64 = 0x1D4
+        let fd = try acceptedFile(payload, in: scratch)
+        // Shares its file offset with the descriptor the receiver is handed, so
+        // it still reports how far the receiver read after that one is closed.
+        let offsetObserver = dup(fd)
+        defer { _ = Darwin.close(offsetObserver) }
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 32,
+            plan: folderPlan(named: "Project", advertised: 8 << 20),
+            source: .accepted(fd: fd, reply: archiveReply(transferID: transferID)))
+        let collector = harness.collector
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) })
+        try await settle(harness, transferID)
+
+        #expect(lseek(offsetObserver, 0, SEEK_CUR) < Int64(payload.count))
+        let info = try abort(harness)
+        #expect(info.code == .extractError)
+        #expect(info.rawCode != "superseded")
+        #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
     }
 
     @Test("a dial that fails reports the failure instead of retiring the pull quietly")
