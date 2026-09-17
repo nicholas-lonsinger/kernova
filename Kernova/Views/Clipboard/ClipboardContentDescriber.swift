@@ -64,8 +64,8 @@ enum ClipboardContentDescriber {
     /// the editor produces.
     ///
     /// The per-keystroke path uses this so the indicator never has to build a
-    /// `ClipboardContent` (and SHA-256 the whole buffer) to render a label
-    /// (CLIPBOARD.md §8).
+    /// `ClipboardContent` (and SHA-256 the whole buffer) on the main actor to
+    /// render a label.
     static func indicatorText(forPlainText text: String) -> String {
         if text.isEmpty { return "Empty" }
         return "Plain text · \(DataFormatters.formatBytes(UInt64(text.utf8.count)))"

@@ -879,7 +879,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.map(\.filename) == ["readable.txt"])
 
         // The host's readout covers what the offer carried, so the item it left
-        // out is named here or nowhere (docs/CLIPBOARD.md §13).
+        // out is named here or nowhere.
         try await notices.changed.wait { notices.value == 1 }
         #expect(
             await MainActor.run { agent.clipboardActivity } == .copyPartlyCarried(skipped: 1))
@@ -1401,7 +1401,7 @@ struct VsockGuestClipboardAgentTests {
         // sync path materializes the whole file. Every promised item — file reps
         // included — must ride the one `.currentHostOnly` write, or the
         // continuity-pasteboard advertiser pulls the bytes at offer time with no
-        // user interaction (docs/CLIPBOARD.md §3).
+        // user interaction — docs/CLIPBOARD.md, "Pay on consume".
         try hostChannel.send(
             makeOfferFrame(
                 generation: 12,

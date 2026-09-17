@@ -7,10 +7,9 @@ import KernovaKit
 /// Passthrough runs only while clipboard sharing carries it
 /// (``VMConfiguration/clipboardPassthroughIsEffective``), so the passthrough
 /// flag alone is not the question — turning sharing on over a flag already set
-/// grants the guest the same continuous read of this Mac's clipboard
-/// (docs/CLIPBOARD.md §10) that an explicit passthrough enable does. Every
-/// surface that writes either flag asks this, so none of them can grant it
-/// silently.
+/// grants the guest the same continuous read of this Mac's clipboard that an
+/// explicit passthrough enable does. Every surface that writes either flag asks
+/// this, so none of them can grant it silently.
 ///
 /// Headless: it holds the prompt's words but presents nothing — the pane raises
 /// an alert with them, and a wire client receives them as a

@@ -59,7 +59,7 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
     /// Runs a payload-scaled folder walk off the main actor and calls back on it.
     ///
     /// A tree of any size would otherwise freeze the app for the length of the
-    /// walk (docs/CLIPBOARD.md §8). Injected so a test can run it inline.
+    /// walk. Injected so a test can run it inline.
     private let runOffMainActor: (@escaping @Sendable () -> Void) -> Void
 
     // `nonisolated` so a log line can be written from any thread; `Logger` is
@@ -254,10 +254,10 @@ final class VsockDropService: VsockFeatureService, VsockDataConnectionAccepting 
     /// on the endpoint, so nothing here handles one.
     ///
     /// `skipped` is handed to the offer rather than announced here: one gesture
-    /// ends once (docs/CLIPBOARD.md §13), and the drop's terminal counts these
-    /// alongside whatever fails once the guest asks — so an interim refusal
-    /// naming only this stage would reach the user as a second notice carrying
-    /// a smaller number than the verdict that follows it.
+    /// ends once, and the drop's terminal counts these alongside whatever fails
+    /// once the guest asks — so an interim refusal naming only this stage would
+    /// reach the user as a second notice carrying a smaller number than the
+    /// verdict that follows it.
     private func offer(
         _ reps: [ClipboardContent.Representation], skipped: Int, stagedIn stagingDirectory: URL?
     ) {

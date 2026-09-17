@@ -9,6 +9,10 @@ public enum ClipboardStreamTuning {
     /// How far an extract can overrun its free-space and payload ceilings
     /// before the next check catches it, which is why it is sized against
     /// `freeSpaceMargin`.
+    ///
+    /// A guard quantum, never a throughput lever. Tie it to
+    /// `dataSendBufferBytes` or any other socket-sizing constant and a
+    /// throughput tuning pass silently coarsens how far an extract overruns.
     public static let extractPacingBytes = 1024 * 1024
 
     /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.
@@ -26,7 +30,8 @@ public enum ClipboardStreamTuning {
     ///
     /// A spill point, not a hard cap: beyond it the rep is not rejected, the
     /// receiver stages it to a file and serves it back memory-mapped, so there is
-    /// **no** Kernova-imposed size cap (CLIPBOARD.md §1).
+    /// **no** Kernova-imposed size cap — docs/CLIPBOARD.md, "No Kernova-imposed
+    /// size bound".
     public static let maxResidentInlineBytes = 256 * 1024 * 1024
 
     /// Floor on how much tree a streamed folder may extract regardless of the

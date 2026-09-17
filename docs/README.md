@@ -6,7 +6,7 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 |----------|--------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Making a structural change — the component map: which type owns a behavior, and the seams between them |
 | [DESIGN.md](DESIGN.md) | Writing UI or making product decisions — design philosophy and GUI guidelines (layout, typography, spacing, colors, controls); the general engineering/product principles are in AGENTS.md |
-| [CLIPBOARD.md](CLIPBOARD.md) | Touching host↔guest copy/paste — the clipboard subsystem's principles and trade-off rules; authoritative for any clipboard work |
+| [CLIPBOARD.md](CLIPBOARD.md) | Designing or extending host↔guest copy/paste — the two rules every clipboard design is held to: no Kernova-imposed size bound, and pay on consume |
 | [NETWORKING.md](NETWORKING.md) | Changing how a guest attaches to a network or is reached from one — exposure, entry-time refusal, IP-display, MAC-uniqueness, and network-membership principles; authoritative for networking work |
 | [TOOLBAR.md](TOOLBAR.md) | Adding or changing a toolbar item — the macOS 26 glass-platter model (capsule clustering, the 36×36 metric), the constraints on view-backed items, and the sidebar section's collapse rules |
 | [SANDBOX.md](SANDBOX.md) | Touching entitlements, or auditing what a build is permitted to do — the Mac App Store readiness story and launch model behind the sandbox rules in AGENTS.md |

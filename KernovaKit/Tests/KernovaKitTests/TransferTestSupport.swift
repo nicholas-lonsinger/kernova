@@ -20,9 +20,8 @@ func writeTransferReply(
 /// on the way.
 ///
 /// The one corruption the transport itself cannot notice: framing, sizes and
-/// the trailer all still line up, so only the end-to-end SHA-256 catches it
-/// (docs/CLIPBOARD.md §7). Buffered whole rather than streamed, so neither end
-/// can park on the other.
+/// the trailer all still line up, so only the end-to-end SHA-256 catches it.
+/// Buffered whole rather than streamed, so neither end can park on the other.
 func relayFlippingOneByte(from source: Int32, to destination: Int32) {
     defer {
         ClipboardDataConnection.end(fd: source)

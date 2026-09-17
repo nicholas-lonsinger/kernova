@@ -301,7 +301,7 @@ struct ClipboardEndpointDropTests {
 
         // Two of the three dragged items were unreadable before the offer, and
         // nothing else announces them: the drop's own terminal is where the
-        // gesture's whole count is said (docs/CLIPBOARD.md §13).
+        // gesture's whole count is said.
         harness.endpoint.offer(
             ClipboardContent(representations: [try dropRep("one.bin", Data("one".utf8))]),
             skippedBeforeOffer: 2)

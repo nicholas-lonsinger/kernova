@@ -264,8 +264,8 @@ public final class ClipboardEndpoint {
     ///
     /// The peer's clipboard offers and their materialization caches deliberately
     /// survive: a pasteboard write this side published outlives the session
-    /// behind it, and every representation already pulled stays servable
-    /// (docs/CLIPBOARD.md §3).
+    /// behind it, and every representation already pulled stays servable —
+    /// docs/CLIPBOARD.md, "Pay on consume".
     public func stop() {
         session.stop()
         inbound?.endSession()
@@ -474,7 +474,7 @@ public final class ClipboardEndpoint {
     /// descriptor — the transfer that adopts it then states its own — and these
     /// reads run under ``dataAccepts``, so a peer that connects and then says
     /// nothing parks a bounded number of workers however many connections it
-    /// opens (docs/CLIPBOARD.md §10).
+    /// opens.
     nonisolated public func acceptDataConnection(fd: Int32) {
         guard isConnected, !session.hasStopped else {
             ClipboardDataConnection.end(fd: fd)

@@ -264,7 +264,7 @@ final class ClipboardTransferSender: @unchecked Sendable {
         // buffer is full and it is not draining, so the reason has nowhere to go
         // and attempting it parks this transfer's queue, its descriptor and its
         // outbox slot for a second whole `socketTimeout`. Every other ending
-        // still rides the payload's own stream (docs/CLIPBOARD.md §9).
+        // still rides the payload's own stream.
         if failure?.stalled != true {
             let trailer =
                 failure.map {

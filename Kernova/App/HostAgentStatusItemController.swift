@@ -194,7 +194,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// dropdown's own line is the fallback, and a refusal replayed later would
     /// interrupt for something the user has moved past. A refusal the *guest*
     /// user's gesture produced is not presented here at all — the guest's own
-    /// dropdown reveals it over there (docs/CLIPBOARD.md §13).
+    /// dropdown reveals it over there.
     private func presentPendingNotices() {
         for instance in viewModel.instances {
             guard case .finished(let finish) = instance.clipboardTransferReport,

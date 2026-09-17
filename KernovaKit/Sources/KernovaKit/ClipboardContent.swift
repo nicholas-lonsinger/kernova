@@ -274,8 +274,8 @@ public struct ClipboardContent: Equatable, Sendable {
     ///
     /// The off-actor twin of `init(text:)` for the editor commit path: a large
     /// pasted-then-edited buffer must not pay the UTF-8 copy *or* the SHA-256 on
-    /// the `@MainActor` per keystroke (CLIPBOARD.md §8). The empty string
-    /// normalizes to `.empty`, identically to `init(text:)`.
+    /// the `@MainActor` per keystroke. The empty string normalizes to `.empty`,
+    /// identically to `init(text:)`.
     public static func makeOffActor(text: String, isConcealed: Bool = false) async -> ClipboardContent {
         guard !text.isEmpty else { return .empty }
         return await makeOffActor(

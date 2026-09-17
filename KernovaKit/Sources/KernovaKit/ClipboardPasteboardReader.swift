@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// display — becomes outbound `ClipboardContent`, on either side of the wire.
 ///
 /// Two stages, because a pasteboard read is cheap and main-thread-bound while
-/// resolving what it named is `stat(2)`-scaled (docs/CLIPBOARD.md §8):
+/// resolving what it named is `stat(2)`-scaled:
 /// ``readSnapshot(from:allowsBinary:)`` classifies the snapshot, and
 /// ``resolve(filesAt:unresolved:sizeOf:)`` reads the files it deferred. Each
 /// caller runs the second stage on whatever hop it already has and reports the
@@ -178,7 +178,7 @@ public enum ClipboardPasteboardReader {
     ///
     /// Synchronous and payload-scaled — every `resourceValues` call is a
     /// `stat(2)` and a folder's estimate walks its whole tree — so the caller
-    /// runs it off the main actor (docs/CLIPBOARD.md §8). A directory,
+    /// runs it off the main actor. A directory,
     /// including an OS package such as `.app`/`.rtfd`, becomes a `.directory`
     /// source representation carrying a stat-walk estimate; no archive is built
     /// until the peer requests the rep. A folder is checked at its root only:

@@ -531,7 +531,7 @@ struct ClipboardTransferReporterTests {
 
         #expect(runningSnapshot(reporter)?.gesture == .drop)
         // The fetch the ranking hides is still counted, so the queue reads as a
-        // queue (docs/CLIPBOARD.md §13).
+        // queue.
         #expect(runningSnapshot(reporter)?.pendingBehind == 1)
     }
 

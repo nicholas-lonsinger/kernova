@@ -70,7 +70,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// Cleared with the connection, but the data providers still on the
     /// pasteboard hold it: a representation already pulled stays pastable after
-    /// the host goes away (docs/CLIPBOARD.md §3).
+    /// the host goes away — docs/CLIPBOARD.md, "Pay on consume".
     private var endpoint: ClipboardEndpoint?
 
     #if DEBUG
@@ -494,8 +494,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         // A copy was made in this guest and none of it could cross. Its own menu
-        // is the only account of that (docs/CLIPBOARD.md §13), and without one
-        // the line still reads as the copy before it, which did.
+        // is the only account of that, and without one the line still reads as
+        // the copy before it, which did.
         #log(
             Self.logger, .notice,
             "Copy left nothing that can be offered to the host (conn=\(self.connectionTag, privacy: .public))"
@@ -509,9 +509,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// its items out.
     ///
     /// The gesture was made in this guest, so a partial loss is accounted for
-    /// here (docs/CLIPBOARD.md §13): the host's readout covers only what the
-    /// offer carried, and nothing else would name the difference. `watchedItArrive`
-    /// is what keeps a re-announced standing snapshot from claiming a gesture.
+    /// here: the host's readout covers only what the offer carried, and nothing
+    /// else would name the difference. `watchedItArrive` is what keeps a
+    /// re-announced standing snapshot from claiming a gesture.
     private func offer(
         _ content: ClipboardContent, skipped: Int, watchedItArrive: Bool, changeCount: Int
     ) {

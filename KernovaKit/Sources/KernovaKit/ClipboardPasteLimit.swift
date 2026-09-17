@@ -5,8 +5,9 @@ import Foundation
 ///
 /// The cap is a **timeout budget**, not a bandwidth or memory guard: a promised
 /// file's bytes pull synchronously inside the consumer's `provideData` callback,
-/// which Finder abandons after ~60 s (generic apps after ~120 s). Both ends of
-/// the wire enforce the same figure, pushed host→guest in `PolicyUpdate`.
+/// which a Finder paste abandons at 60 s and `NSPasteboard.dataForType(_:)` at
+/// 120 s (docs/research/2026-07-27-pasteboard-promise-deadlines.md). Both ends
+/// of the wire enforce the same figure, pushed host→guest in `PolicyUpdate`.
 public enum ClipboardPasteLimit {
     /// Largest total a paste's file reps may sum to when the user has expressed
     /// no preference: 2 GiB.

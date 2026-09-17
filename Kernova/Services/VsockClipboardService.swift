@@ -70,7 +70,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     ///
     /// It outlives this connection deliberately: a promise this service published
     /// outlives it too, so a service superseded by a reconnect still reports the
-    /// failures of those promises (docs/CLIPBOARD.md §13).
+    /// failures of those promises.
     private let reporter: ClipboardTransferReporter
 
     /// Reveal and idle seams handed to every operation this service opens; tests
@@ -100,7 +100,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// next one — so a multi-file operation would resume a beat after Cancel.
     /// The latch is what ends the operation rather than one of its files.
     /// Cleared by the next offer; a later paste or Copy to Mac is a fresh
-    /// gesture and pulls through its own path (docs/CLIPBOARD.md §9).
+    /// gesture and pulls through its own path.
     private var cancelledInboundGeneration: UInt64?
 
     /// Digest of the content `republish` last wrote from the inbound offer.
@@ -274,7 +274,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         isConnected = false
         // Only this service's own operations, never the VM's whole report: a
         // paste fire this teardown cut short still owes the VM its answer, and a
-        // superseded service's later failure belongs to the VM either way (§13).
+        // superseded service's later failure belongs to the VM either way.
         previewOperation?.abandon()
         previewOperation = nil
         #log(
@@ -418,7 +418,7 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     ///
     /// A pulled rep can be a memory-mapped inline payload of any size, and hashing
     /// it for the content digest is `O(payload)` — it must not stall the main
-    /// actor (§8).
+    /// actor.
     private func republishOffActor(_ offer: ClipboardEndpoint.InboundOffer) async {
         let epoch = endpoint.materializationEpoch(generation: offer.generation)
         let reps = rebuiltReps(from: offer)
@@ -531,7 +531,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// exceeds the deadline-safe cap the refusal is per *flavor*: every
     /// `.fileURL`-serving rep reports a `.droppedFile(.overPasteBudget)` — no
     /// paste could ever serve it — while an image file's inline flavor, which the
-    /// cap does not govern (docs/CLIPBOARD.md §1), still promises.
+    /// cap does not govern, still promises — docs/CLIPBOARD.md, "No
+    /// Kernova-imposed size bound".
     func materializeForCopy() -> [CopyToMacItem] {
         // No active offer, or the user replaced the offered content with their
         // own edit: copy what's actually shown, never a stale placeholder.
@@ -633,7 +634,7 @@ extension VsockClipboardService: ClipboardEndpointDelegate {
         cancelledInboundGeneration = nil
         previewMaterializationStarted = 0
         // Byte-less placeholder reps hash trivially; once a pull has materialized
-        // real bytes, `republishOffActor` hashes off the main actor instead (§8).
+        // real bytes, `republishOffActor` hashes off the main actor instead.
         apply(
             ClipboardContent(
                 representations: rebuiltReps(from: offer), isConcealed: offer.isConcealed))

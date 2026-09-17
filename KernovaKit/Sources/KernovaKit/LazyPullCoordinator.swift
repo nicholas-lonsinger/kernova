@@ -15,7 +15,7 @@ public enum LazyPullOutcome: Sendable {
     case cancelled
     /// Nothing waited: the caller holds the main thread somewhere the live
     /// event-loop wait is unavailable, where the only alternative is parking the
-    /// app for the transfer's length (docs/CLIPBOARD.md §8).
+    /// app for the transfer's length.
     case mainThreadUnavailable
 }
 
@@ -183,9 +183,9 @@ final class LazyPullCoordinator: @unchecked Sendable {
         // The main thread is never parked. `current()` declines only inside a
         // tracking or modal loop, which owns the events a nested wait would have
         // to dispatch; the semaphore below is the off-main branch, and taking it
-        // here would freeze the app for the length of the transfer
-        // (docs/CLIPBOARD.md §8). Refusing costs this one fire, which the caller
-        // reports; parking would cost every frame until the pull resolved.
+        // here would freeze the app for the length of the transfer. Refusing
+        // costs this one fire, which the caller reports; parking would cost
+        // every frame until the pull resolved.
         guard eventLoop != nil || !Thread.isMainThread else { return .mainThreadUnavailable }
         let semaphore = DispatchSemaphore(value: 0)
         let waiter = Waiter(

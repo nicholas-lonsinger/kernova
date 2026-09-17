@@ -5,7 +5,7 @@ import KernovaLogging
 ///
 /// Carried on every readout, so a surface's Cancel reaches the operation that
 /// readout was rendered for and no other — the readout is the only handle the
-/// user has on a transfer, and several run at once (docs/CLIPBOARD.md §13).
+/// user has on a transfer, and several run at once.
 ///
 /// A minted counter rather than the object's address: an address is reused once
 /// the operation it named is gone, and a surface holding the readout it last
@@ -234,7 +234,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// does one job at a time. Without this the operation is invisible until its
     /// first byte, and a batch waiting its turn looks like a batch that never
     /// happened. It never becomes the readout itself: nothing has begun, so a bar
-    /// for it would be the frozen one §13 rules out.
+    /// for it would be a frozen one.
     public func markQueued() {
         deliver(
             lock.withLock { () -> Outcome in

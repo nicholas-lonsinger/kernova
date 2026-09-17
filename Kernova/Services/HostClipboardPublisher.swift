@@ -6,11 +6,11 @@ import UniformTypeIdentifiers
 /// Writes a clipboard service's current content to the host `NSPasteboard`,
 /// lazily — the window-independent home of the "Copy to Mac" write-back path.
 ///
-/// The single inbound-publication mechanism (CLIPBOARD.md §4): the clipboard
-/// window's button and the automatic passthrough coordinator both publish through
-/// the same per-VM instance. Each item promises its types through a
-/// `LazyClipboardDataProvider`, handed to the app-scoped provider registry on a
-/// successful write — a paste can land long after the window, or the VM, is gone.
+/// The single inbound-publication mechanism: the clipboard window's button and
+/// the automatic passthrough coordinator both publish through the same per-VM
+/// instance. Each item promises its types through a `LazyClipboardDataProvider`,
+/// handed to the app-scoped provider registry on a successful write — a paste
+/// can land long after the window, or the VM, is gone.
 @MainActor
 final class HostClipboardPublisher {
     /// Label for the host-side clipboard staging root.
@@ -264,7 +264,8 @@ final class HostClipboardPublisher {
     /// read whole so a multi-GB image is never loaded into the heap.
     ///
     /// The caller gates this to image payloads (`shouldInlineOnPasteboard`), so
-    /// there is no size ceiling to apply (CLIPBOARD.md §1).
+    /// there is no size ceiling to apply — docs/CLIPBOARD.md, "No Kernova-imposed
+    /// size bound".
     nonisolated private static func inlineData(
         for representation: ClipboardContent.Representation
     ) -> Data? {

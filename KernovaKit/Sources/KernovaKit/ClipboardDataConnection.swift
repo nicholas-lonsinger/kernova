@@ -288,8 +288,11 @@ extension Frame {
 /// Hashes and writes one transfer's payload bytes onto its data connection.
 ///
 /// The digest is taken over exactly the bytes handed to the socket, which is
-/// what the trailer declares and the receiver checks — the only corruption
-/// detector this transport has (docs/CLIPBOARD.md §7).
+/// what the trailer declares and the receiver checks. It is the only corruption
+/// detector this transport has: virtio-vsock's packet header carries no
+/// checksum — `struct virtio_vsock_hdr` is cids, ports, `len`, `type`, `op`,
+/// `flags`, `buf_alloc` and `fwd_cnt` and nothing else
+/// (`include/uapi/linux/virtio_vsock.h`).
 ///
 /// `beforeWrite` runs on the writing thread ahead of each socket write, so a
 /// supersession or a cancellation is honored between writes rather than only

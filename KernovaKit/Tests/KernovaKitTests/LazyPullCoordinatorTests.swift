@@ -116,8 +116,8 @@ struct LazyPullCoordinatorTests {
         // The seam stands in for the tracking or modal loop this bundle cannot
         // enter, so the answer does not depend on whether the host happens to
         // have an `NSApplication`. Parking here is what used to freeze the main
-        // thread for the length of a transfer (docs/CLIPBOARD.md §8); the
-        // app-hosted counterpart proving the served wait still wins is
+        // thread for the length of a transfer; the app-hosted counterpart
+        // proving the served wait still wins is
         // `LazyPullCoordinatorMainThreadTests`.
         NestedEventLoopWait.declinesForTesting = true
         defer { NestedEventLoopWait.declinesForTesting = false }
@@ -913,8 +913,8 @@ struct LazyPullCoordinatorTests {
         #expect(firstBox.abortInfo == nil)  // #1's own onAbort never fired — it was already retired
 
         // The table is left fully consistent: a THIRD attempt reusing the
-        // identical id — the normal "restart after abort is cheap, no
-        // orphaned state" case (CLIPBOARD.md §9) — completes cleanly.
+        // identical id — restart after abort is cheap, with no orphaned state —
+        // completes cleanly.
         let thirdBox = RepBox()
         let thirdGate = AsyncGate()
         inbox.awaitTransfer(

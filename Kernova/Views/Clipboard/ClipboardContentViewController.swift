@@ -62,8 +62,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Debounced off-actor commit of the editor buffer.
     ///
-    /// `textDidChange` does only cheap, hash-free work per keystroke (CLIPBOARD.md
-    /// §8) and schedules this. `editSeq` bumps per keystroke so an in-flight commit
+    /// `textDidChange` does only cheap, hash-free work per keystroke and
+    /// schedules this. `editSeq` bumps per keystroke so an in-flight commit
     /// can tell it was superseded; `hasPendingEdit` records that a keystroke has
     /// not yet reached the model.
     private var editDebounceTask: Task<Void, Never>?
@@ -92,7 +92,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Queue handed to `NSFilePromiseReceiver` for writing promised files.
     private let promiseQueue = OperationQueue()
 
-    /// Writes the buffer to the host pasteboard for "Copy to Mac" (CLIPBOARD.md §4).
+    /// Writes the buffer to the host pasteboard for "Copy to Mac".
     ///
     /// In production the same per-VM instance is shared with the passthrough
     /// coordinator, so echo suppression sees a manual "Copy to Mac" too.
@@ -303,7 +303,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
             return
         }
-        // Per keystroke: only cheap, hash-free work (CLIPBOARD.md §8).
+        // Per keystroke: only cheap, hash-free work on the main actor.
         let text = textView.string
         editSeq &+= 1
         hasPendingEdit = true
@@ -578,7 +578,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     /// Turning it off is immediate; turning it on confirms first, on this
-    /// window (CLIPBOARD.md §10).
+    /// window.
     @objc private func passthroughToggled() {
         passthroughSetting?.set(.passthrough(passthroughSwitch.state == .on), confirmingIn: view.window)
     }
