@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import KernovaKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 

@@ -1,5 +1,6 @@
 import Testing
 import Cocoa
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("NSImage.systemSymbol Tests", .admissionGated)

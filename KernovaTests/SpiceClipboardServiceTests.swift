@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("SpiceClipboardService Tests", .admissionGated)

@@ -1,4 +1,5 @@
 import KernovaLogging
+import KernovaTestSupport
 import Testing
 
 /// Proves the `LogWire.segment` overload set resolves the way the `#log`

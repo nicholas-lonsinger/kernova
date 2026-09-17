@@ -1,4 +1,5 @@
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @Suite("AgentMenuText", .admissionGated)

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VMInstance Recovery Eligibility", .admissionGated)

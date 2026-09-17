@@ -1,6 +1,7 @@
 import KernovaKit
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VMConfiguration Tests", .admissionGated)
