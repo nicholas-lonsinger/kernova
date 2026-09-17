@@ -66,6 +66,67 @@ struct ClipboardDirectoryTransferTests {
             advertisedByteCount: advertised)
     }
 
+    /// Everything a sending peer puts on the wire for one archived transfer: the
+    /// reply, the payload, and the trailer that ends it.
+    private func wholeStream(
+        transferID: UInt64, payload: Data, ending: ClipboardTransferTrailer.Ending
+    ) throws -> Data {
+        try VsockChannel.serializeFramed(
+            makeTransferReplyFrame(
+                transferID: transferID, isArchive: true, isInline: false, totalBytes: 0))
+            + payload + ClipboardTransferTrailer(ending: ending).encoded
+    }
+
+    /// A receiver dialling a peer that puts `stream` on the wire in one write and
+    /// then parks.
+    ///
+    /// The single write is what makes the interleaving deterministic: the
+    /// receiver's first fill takes the whole stream, so a cancellation fired from
+    /// its first progress report lands with nothing left to arrive. The park
+    /// holds the connection open, so what ends the transfer is the cancellation
+    /// rather than the peer's own end of stream.
+    private func receiverForBufferedStream(
+        _ harness: TransferHarness, transferID: UInt64,
+        plan: ClipboardTransferReceiver.Plan, stream: Data
+    ) -> ClipboardTransferReceiver {
+        harness.makeReceiver(
+            transferID: transferID, generation: 1, plan: plan,
+            source: .dial(
+                {
+                    try dialToPeer { far in
+                        defer { ClipboardDataConnection.end(fd: far) }
+                        guard readTransferRequest(fd: far) != nil else { return }
+                        try? ClipboardDataConnection.write(fd: far, stream)
+                        var parked = [UInt8](repeating: 0, count: 1)
+                        _ = parked.withUnsafeMutableBytes { raw in
+                            try? ClipboardDataConnection.read(fd: far, into: raw)
+                        }
+                    }
+                },
+                request: Kernova_V1_ClipboardTransferRequest.with {
+                    $0.generation = 1
+                    $0.transferID = transferID
+                    $0.uti = ClipboardArchive.directoryUTI
+                    $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
+                }))
+    }
+
+    /// Starts `receiver`, cancelling it from its first progress report of any
+    /// kind.
+    private func startCancellingOnFirstProgress(
+        _ receiver: ClipboardTransferReceiver, _ collector: TransferCollector, _ transferID: UInt64
+    ) {
+        let cancelled = Box(false)
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) },
+            onProgress: { [weak receiver] _, _ in
+                guard !cancelled.value else { return }
+                cancelled.value = true
+                receiver?.cancel()
+            })
+    }
+
     /// Suspends until the transfer has either delivered a representation or
     /// reported an abort.
     private func settle(_ harness: TransferHarness, _ transferID: UInt64) async throws {
@@ -276,6 +337,65 @@ struct ClipboardDirectoryTransferTests {
 
         #expect(try abort(harness).code == .cancelled)
         #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    @Test("a cancellation outranks the abort trailer the sender ended with")
+    func cancellationOutranksTheAbortTrailer() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let (scratch, source) = try makeSourceTree()
+        defer { try? fm.removeItem(at: scratch) }
+        let truncated = Data(try clipboardArchiveBytes(ofDirectoryAt: source).dropLast(64))
+
+        let transferID: UInt64 = 0x4A
+        let receiver = receiverForBufferedStream(
+            harness, transferID: transferID,
+            plan: folderPlan(named: "Project", advertised: truncated.count),
+            stream: try wholeStream(
+                transferID: transferID, payload: truncated,
+                ending: .aborted(rawCode: ClipboardStreamAbortCode.readError.rawValue)))
+        startCancellingOnFirstProgress(receiver, harness.collector, transferID)
+        try await settle(harness, transferID)
+
+        // The cut archive fails the extract and the sender's own reason is right
+        // there to be read, so a pull that gave up retires quietly only if the
+        // cancellation outranks both.
+        let info = try abort(harness)
+        #expect(info.code == .cancelled)
+        #expect(harness.collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
+    }
+
+    @Test("a cancellation that lands with the whole stream already buffered leaves no tree")
+    func cancellationWithTheWholeStreamBufferedLeavesNoTree() async throws {
+        let fm = FileManager.default
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
+        defer { harness.tearDown() }
+        let (scratch, source) = try makeSourceTree()
+        defer { try? fm.removeItem(at: scratch) }
+        let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
+
+        let transferID: UInt64 = 0x4B
+        let receiver = receiverForBufferedStream(
+            harness, transferID: transferID,
+            plan: folderPlan(named: "Project", advertised: bytes.count),
+            stream: try wholeStream(
+                transferID: transferID, payload: bytes, ending: .complete(digest: sha256(bytes))))
+        startCancellingOnFirstProgress(receiver, harness.collector, transferID)
+        try await settle(harness, transferID)
+
+        // A whole archive already in hand unpacks to a whole tree under a trailer
+        // that checks out, so nothing the stream does can stop it: the
+        // cancellation has to be consulted at the ending itself.
+        let info = try abort(harness)
+        #expect(info.code == .cancelled)
+        #expect(harness.collector.representation(transferID) == nil)
         #expect(try probe.stagedFiles().isEmpty)
         withExtendedLifetime(receiver) {}
     }
