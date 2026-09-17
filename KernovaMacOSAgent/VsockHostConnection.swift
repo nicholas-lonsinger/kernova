@@ -301,17 +301,23 @@ final class VsockHostConnection: @unchecked Sendable {
                     try channel.send(frame)
                     lock.withLock { sendFailureAnnounced = false }
                 } catch {
-                    parkDrain(holding: frame, failure: error)
+                    if parkDrain(holding: frame, failure: error) { continue }
                     return
                 }
             }
         }
     }
 
-    /// Ends the drain with `frame` back at the head of the ring, where the next
+    /// Parks the drain with `frame` back at the head of the ring, where the next
     /// connect picks it up — head re-insertion is what keeps the host's view
     /// chronological across a failed send.
-    private func parkDrain(holding frame: Frame, failure: any Error) {
+    ///
+    /// - Returns: `true` when a wake arrived meanwhile and the drain has to go
+    ///   round again: the channel may already be a new one, and the flag stays
+    ///   set so the wake is not lost. The warning below is itself such a wake,
+    ///   so an outage costs one more send on the refusing channel, which fails
+    ///   without announcing and parks for good.
+    private func parkDrain(holding frame: Frame, failure: any Error) -> Bool {
         let (startedDropping, held, announce): (Bool, Int, Bool) = lock.withLock {
             pendingLogs.insert(frame, at: 0)
             let trimmed = trimToLimitLocked()
@@ -319,9 +325,6 @@ final class VsockHostConnection: @unchecked Sendable {
             if firstOfTheOutage { sendFailureAnnounced = true }
             return (trimmed, pendingLogs.count, firstOfTheOutage)
         }
-        // Emitted before `drainScheduled` clears, so the records these lines
-        // forward cannot schedule a drain onto the channel that just refused
-        // this one; they leave with the rest on the next connect.
         if announce {
             #log(
                 Self.logger, .warning,
@@ -329,7 +332,12 @@ final class VsockHostConnection: @unchecked Sendable {
             )
         }
         if startedDropping { reportDroppingStarted() }
-        lock.withLock { drainScheduled = false }
+        return lock.withLock {
+            let woken = wakePending
+            wakePending = false
+            if !woken { drainScheduled = false }
+            return woken
+        }
     }
 
     // MARK: - Per-connection serve
