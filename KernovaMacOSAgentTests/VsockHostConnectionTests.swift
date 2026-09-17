@@ -63,15 +63,13 @@ struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
 
     private func pendingLogCount(_ conn: VsockHostConnection) -> Int {
-        conn.lock.withLock { conn.pendingLogs.count }
+        conn.pendingLogFramesForTesting.count
     }
 
     private func pendingMessages(_ conn: VsockHostConnection) -> [String] {
-        conn.lock.withLock {
-            conn.pendingLogs.compactMap { frame -> String? in
-                guard case .logRecord(let record) = frame.payload else { return nil }
-                return record.segments.map(\.text).joined()
-            }
+        conn.pendingLogFramesForTesting.compactMap { frame -> String? in
+            guard case .logRecord(let record) = frame.payload else { return nil }
+            return record.segments.map(\.text).joined()
         }
     }
 
@@ -87,6 +85,11 @@ struct VsockHostConnectionTests {
         let hostFds: [Int32]
         /// Connect attempts the client has made.
         let dialled: AtomicInt
+        /// The first pair's buffer sizes as the kernel reports them after the
+        /// `setsockopt`, summed — at least what the pair holds in flight, so a
+        /// record sized past it is one the sockets cannot swallow whole
+        /// whatever they rounded the request to.
+        let socketCapacityBytes: Int
     }
 
     /// Builds a connection dialling `attempts` socketpairs.
@@ -95,7 +98,7 @@ struct VsockHostConnectionTests {
     /// can only land inside a test because a policy update woke the loop.
     /// `socketBufferBytes` shrinks both ends' buffers, which is what lets a
     /// handful of frames fill the socket and park the drain worker in
-    /// `write(2)`.
+    /// `write(2)`; `socketCapacityBytes` reports what that actually bought.
     private func makeDialledConnection(
         label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil
     ) throws -> DialledConnection {
@@ -111,6 +114,12 @@ struct VsockHostConnectionTests {
         }
         let agentFds = pairs.map(\.agent)
 
+        var sendBuffer: Int32 = 0
+        var receiveBuffer: Int32 = 0
+        var readSize = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(pairs[0].agent, SOL_SOCKET, SO_SNDBUF, &sendBuffer, &readSize)
+        getsockopt(pairs[0].host, SOL_SOCKET, SO_RCVBUF, &receiveBuffer, &readSize)
+
         let dialled = AtomicInt()
         let client = VsockGuestClient(
             port: KernovaVsockPort.log,
@@ -124,7 +133,8 @@ struct VsockHostConnectionTests {
         }
         return DialledConnection(
             conn: VsockHostConnection(client: client), client: client,
-            hostFds: pairs.map(\.host), dialled: dialled)
+            hostFds: pairs.map(\.host), dialled: dialled,
+            socketCapacityBytes: Int(sendBuffer) + Int(receiveBuffer))
     }
 
     /// Reads one byte off a host end nothing else reads: it returns as soon as
@@ -229,7 +239,7 @@ struct VsockHostConnectionTests {
 
     @Test("forwardLog returns while the host has stopped reading the log channel")
     func forwardLogReturnsWhileHostStalls() async throws {
-        let dialled = try makeDialledConnection(label: "log-stalled-host-test", socketBufferBytes: 8192)
+        let dialled = try makeDialledConnection(label: "log-stalled-host-test", socketBufferBytes: 2048)
         let conn = dialled.conn
         defer { conn.stop() }
         // The host end is never wrapped in a channel and never read, so the
@@ -240,16 +250,22 @@ struct VsockHostConnectionTests {
         sink.install()
         defer { sink.uninstall() }
 
-        conn.start()
         conn.setEnabled(true)
 
+        // One record outgrows everything the pair can hold, so the worker's
+        // first write parks inside it and exactly one record is out of the ring
+        // for the rest of the case.
         let cap = VsockHostConnection.logBufferLimit
-        let payload = String(repeating: "x", count: 4096)
+        let payload = String(repeating: "x", count: dialled.socketCapacityBytes + 1)
         for i in 0..<(cap + 50) {
             conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "stall\(i)-\(payload)")
         }
-        #expect(await firstByteWritten(to: hostFd) == 1)
+        // Flooded before the connect, so no worker has had a channel to hand a
+        // frame to and the ring is exactly what was accepted.
         #expect(pendingLogCount(conn) == cap)
+
+        conn.start()
+        #expect(await firstByteWritten(to: hostFd) == 1)
 
         // The call under test: with the worker parked in the socket, forwarding
         // is still nothing but an append.
@@ -263,10 +279,12 @@ struct VsockHostConnectionTests {
         try await returned.changed.wait { returned.value == 1 }
 
         // Closing the host end wakes the parked write with EPIPE, putting the
-        // frame it was carrying back into a ring already at the cap.
+        // frame it was carrying back into a ring already at the cap. The warning
+        // carries the count production took under the same lock hold as the
+        // re-insertion, which is the only count no concurrent worker can move.
         Darwin.close(hostFd)
         try await sink.changed.wait { sink.count(matching: sendFailedMarker) == 1 }
-        #expect(pendingLogCount(conn) == cap)
+        #expect(sink.count(matching: "holding \(cap) record(s)") == 1)
     }
 
     // MARK: - Overflow accounting

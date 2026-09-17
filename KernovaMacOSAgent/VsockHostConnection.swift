@@ -32,8 +32,8 @@ final class VsockHostConnection: @unchecked Sendable {
     private let drainQueue = DispatchQueue(
         label: "app.kernova.macosagent.log-drain", qos: .utility)
 
-    let lock = NSLock()
-    var pendingLogs: [Frame] = []
+    private let lock = NSLock()
+    private var pendingLogs: [Frame] = []
 
     /// Whether a `drainPending()` run is enqueued or in flight, guarded by
     /// `lock` — one run at a time, however many records arrive.
@@ -213,6 +213,13 @@ final class VsockHostConnection: @unchecked Sendable {
         droppedCount = 0
     }
 
+    #if DEBUG
+    /// The frames the ring holds: accepted, and not yet handed to a send.
+    ///
+    /// Test-only.
+    var pendingLogFramesForTesting: [Frame] { lock.withLock { pendingLogs } }
+    #endif
+
     /// Announces that the ring has started evicting; the count follows from the
     /// drain that empties it.
     ///
@@ -251,10 +258,14 @@ final class VsockHostConnection: @unchecked Sendable {
         case finished
     }
 
-    /// Without a channel to carry a frame the run ends, leaving the ring and
-    /// the overflow tally as they are: nothing is handed out only to be put
-    /// back, so what is buffered is what a reader sees at every instant, and the
-    /// tally still reaches the host alongside the records it describes.
+    /// Decides the run's next step, and with it what the ring holds: `.send`
+    /// takes the head out before the write and `parkDrain` puts it back only if
+    /// that write fails, so while a channel is live the ring is what has been
+    /// accepted less whatever a send is carrying.
+    ///
+    /// Without a channel nothing is handed out and the run ends, leaving the
+    /// ring and the overflow tally as they are, so the tally still reaches the
+    /// host alongside the records it describes.
     private func nextDrainStep(channel: VsockChannel?) -> DrainStep {
         lock.withLock {
             let woken = wakePending
