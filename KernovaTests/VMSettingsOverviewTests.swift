@@ -7,8 +7,7 @@ import Testing
 @Suite("VM Settings Overview Tests", .serialized, .admissionGated)
 @MainActor
 struct VMSettingsOverviewTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmoverview")
+    private let preferences = makeTestPreferences()
 
     // MARK: - Fixtures
 

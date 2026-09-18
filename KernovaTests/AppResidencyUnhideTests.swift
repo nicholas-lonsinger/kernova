@@ -16,8 +16,7 @@ import Testing
 @Suite("AppResidencyController unhide", .serialized, .admissionGated)
 @MainActor
 struct AppResidencyUnhideTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appresidencyunhide")
+    private let preferences = makeTestPreferences()
 
     private func makeController() -> AppResidencyController {
         let viewModel = makeLibraryViewModel(preferences: preferences)

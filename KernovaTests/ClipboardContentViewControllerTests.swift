@@ -45,16 +45,15 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
 }
 
 /// The VM whose clipboard window is under test.
-@MainActor
-/// Builds an instance over an isolated defaults suite.
 ///
-/// Ephemeral preferences, not `.shared`: the messages naming the paste ceiling
+/// Test preferences, not `.shared`: the messages naming the paste ceiling
 /// read it live, so an instance on the real domain makes those assertions depend
 /// on whatever the developer last picked in Settings.
+@MainActor
 private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstance {
     let instance = VMInstanceFixture.make(
         name: "Clipboard VM",
-        preferences: makeEphemeralPreferences(suiteName: "test.kernova.clipboard-vc-instance")
+        preferences: makeTestPreferences()
     ) {
         // The window this controller fills is offered only while sharing is on
         // (``VMInstance/canShowClipboard``), and passthrough rides on it, so every
@@ -80,10 +79,7 @@ private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstan
 @Suite("ClipboardContentViewController Copy-to-Mac retention", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerRetentionTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-retention")
+    private let preferences = makeTestPreferences()
 
     @Test("copyToMac retains a provider per item in the registry and serves its bytes")
     func retainsProviderAndServesBytes() async throws {
@@ -197,10 +193,7 @@ struct ClipboardContentViewControllerRetentionTests {
 @Suite("ClipboardContentViewController editor commit", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerEditTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-edit")
+    private let preferences = makeTestPreferences()
 
     private func makeController(
         service: FakeClipboardService, debounce: Duration
@@ -379,10 +372,7 @@ struct ClipboardContentViewControllerEditTests {
 @Suite("ClipboardContentViewController passthrough chrome", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerPassthroughChromeTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-passthrough-chrome")
+    private let preferences = makeTestPreferences()
 
     private func makeController(instance: VMInstance) -> ClipboardContentViewController {
         ClipboardContentViewController(instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
@@ -556,11 +546,7 @@ private final class CopyOutcomeLatch {
 @Suite("ClipboardContentViewController copy-outcome messages", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerCopyOutcomeTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(
-        suiteName: "test.kernova.clipboard-copy-outcome")
+    private let preferences = makeTestPreferences()
 
     /// Runs one "Copy to Mac" to completion and returns what it left in the
     /// indicator, waiting on the controller's own render event.
@@ -752,9 +738,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
 @Suite("ClipboardContentViewController passthrough switch", .admissionGated)
 @MainActor
 struct ClipboardPassthroughSwitchTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(
-        suiteName: "test.kernova.clipboard-passthrough-switch")
+    private let preferences = makeTestPreferences()
 
     /// The controller and the view model it holds **weakly** — a caller that
     /// drops the view model leaves the write path with nothing to write through.
@@ -847,8 +831,7 @@ struct ClipboardPassthroughSwitchTests {
 @Suite("ClipboardContentViewController content chip", .admissionGated)
 @MainActor
 struct ClipboardContentChipTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-chip")
+    private let preferences = makeTestPreferences()
 
     private func makeController(
         content: ClipboardContent, readPasteboard: NSPasteboard = .general

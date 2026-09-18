@@ -18,7 +18,7 @@ struct RemindersSettingsViewControllerTests {
     private let preferences: AppPreferences
 
     init() {
-        self.preferences = makeEphemeralPreferences(suiteName: "test.kernova.reminders-settings")
+        self.preferences = makeTestPreferences()
     }
 
     private func makeViewModel() -> VMLibraryViewModel {

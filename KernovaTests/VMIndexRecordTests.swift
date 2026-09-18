@@ -11,8 +11,7 @@ import Testing
 struct VMIndexRecordTests {
     @Test("Identifiers written to the record read back as written")
     func identifiersRoundTripThroughDefaults() {
-        let record = DefaultsVMIndexRecord(
-            defaults: makeEphemeralDefaults(suiteName: "test.kernova.indexrecord"))
+        let record = DefaultsVMIndexRecord(defaults: makeTestDefaults())
         let written: Set<UUID> = [UUID(), UUID(), UUID()]
 
         record.indexedVMIDs = written

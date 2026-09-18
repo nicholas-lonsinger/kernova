@@ -13,8 +13,7 @@ import Testing
 @Suite("MainMenuController rebuilds", .serialized, .admissionGated)
 @MainActor
 struct MainMenuRebuildTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.mainmenurebuild")
+    private let preferences = makeTestPreferences()
 
     private struct Fixture {
         let controller: MainMenuController

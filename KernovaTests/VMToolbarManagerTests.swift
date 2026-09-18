@@ -10,7 +10,7 @@ import Testing
 struct VMToolbarManagerTests {
     // MARK: - Factories
 
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmtoolbar")
+    private let preferences = makeTestPreferences()
 
     /// The library behind the capability catalog every manager reads — the
     /// settle checks (`isBusy`) resolve through it and its lifecycle.

@@ -12,7 +12,7 @@ import Testing
 @Suite("VMCommandCore USB Accessory Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCommandCoreUSBAccessoryTests {
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.commandcore.usb")
+    private let preferences = makeTestPreferences()
 
     /// The refusal every verb owes a build that cannot pass accessories
     /// through — the cause is the build, so no VM is named.

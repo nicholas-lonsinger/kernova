@@ -11,10 +11,7 @@ import Virtualization
 @Suite("VM Settings Network Panel Tests", .serialized, .admissionGated)
 @MainActor
 struct VMSettingsNetworkPanelTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmsettings.network")
+    private let preferences = makeTestPreferences()
 
     /// The Network panel, for the seams it owns rather than the shell.
     private func networkPanel(in vc: VMSettingsViewController)

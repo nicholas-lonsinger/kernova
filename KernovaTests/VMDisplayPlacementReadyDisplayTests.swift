@@ -14,9 +14,7 @@ import Testing
 @Suite("VMDisplayPlacementController readying", .serialized, .admissionGated)
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(
-        suiteName: "test.kernova.displayplacementreadying")
+    private let preferences = makeTestPreferences()
 
     /// Answers the placement controller with a fixed posture, standing in for
     /// the residency controller that reads the live one.

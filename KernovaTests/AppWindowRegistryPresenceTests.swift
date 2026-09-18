@@ -16,8 +16,7 @@ import Testing
 @Suite("AppWindowRegistry presence", .serialized, .admissionGated)
 @MainActor
 struct AppWindowRegistryPresenceTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appwindowregistry")
+    private let preferences = makeTestPreferences()
 
     /// Records the residency calls the registry makes, standing in for the
     /// controller that answers them in the resident app.

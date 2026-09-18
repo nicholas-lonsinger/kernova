@@ -138,7 +138,7 @@ struct EphemeralModeConfigurationTests {
 @Suite("Ephemeral Mode Instance Tests", .serialized, .admissionGated)
 @MainActor
 struct EphemeralModeInstanceTests {
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.ephemeral.instance")
+    private let preferences = makeTestPreferences()
 
     private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
         VMInstanceFixture.make(name: "Throwaway", phase: phase, preferences: preferences)

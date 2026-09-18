@@ -30,7 +30,7 @@ private struct TestTransport {
 @Suite("VM Command Envelope Router Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCommandEnvelopeRouterTests {
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.commandrouter")
+    private let preferences = makeTestPreferences()
 
     private struct Harness {
         let transport: TestTransport

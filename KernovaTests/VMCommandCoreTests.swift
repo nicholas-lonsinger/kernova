@@ -12,7 +12,7 @@ import Virtualization
 @Suite("VMCommandCore Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCommandCoreTests {
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.commandcore")
+    private let preferences = makeTestPreferences()
 
     private struct Harness {
         let core: VMCommandCore

@@ -17,8 +17,7 @@ import Testing
 @Suite("AppResidencyController presentation", .serialized, .admissionGated)
 @MainActor
 struct AppResidencyPresentationTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.appresidency")
+    private let preferences = makeTestPreferences()
 
     /// Records the ``AppLaunchHosting/armAutoStartPass()`` seam the launch
     /// cluster owns. Held alongside the controller, which references it weakly.

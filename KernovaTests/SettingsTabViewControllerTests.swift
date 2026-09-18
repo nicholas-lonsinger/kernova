@@ -16,7 +16,7 @@ struct SettingsTabViewControllerTests {
     private let preferences: AppPreferences
 
     init() {
-        self.preferences = makeEphemeralPreferences(suiteName: "test.kernova.settings-tab")
+        self.preferences = makeTestPreferences()
     }
 
     private func makeViewModel(vmCount: Int) -> VMLibraryViewModel {

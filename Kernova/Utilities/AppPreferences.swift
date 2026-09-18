@@ -4,8 +4,7 @@ import KernovaKit
 /// App-wide user preferences backed by `UserDefaults`.
 ///
 /// Distinct from per-VM `VMConfiguration`: this holds settings that apply to the
-/// whole app and live in the standard defaults domain. A thin value type over an
-/// injectable `UserDefaults`, so tests can use an ephemeral suite.
+/// whole app and live in the standard defaults domain.
 struct AppPreferences {
     /// Shared production instance over the standard defaults domain.
     @MainActor static let shared = AppPreferences(defaults: .standard)

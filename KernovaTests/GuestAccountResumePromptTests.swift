@@ -13,8 +13,7 @@ import Testing
 @MainActor
 struct GuestAccountResumePromptTests {
     private let presenter = MockVMLibraryPresenting()
-    private let preferences = makeEphemeralPreferences(
-        suiteName: "test.kernova.guestaccountresume")
+    private let preferences = makeTestPreferences()
 
     private func makeViewModel() -> (
         VMLibraryViewModel, MockVMStorageService, MockVirtualizationService
