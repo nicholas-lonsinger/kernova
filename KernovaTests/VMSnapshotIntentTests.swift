@@ -16,7 +16,7 @@ struct VMSnapshotIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: {}),
-            index: MockVMEntityIndex(), record: MockVMIndexRecord())
+            index: MockVMEntityIndex(), record: makeTestIndexRecord())
     }
 
     /// A library of one VM, seeded with `snapshots`.

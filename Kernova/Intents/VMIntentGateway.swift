@@ -26,7 +26,7 @@ final class VMIntentGateway {
     /// Where the library is written for Spotlight to match a searched name in.
     private let index: any VMEntityIndexing
     /// Holds the identifiers already written to the index.
-    private let record: any VMIndexRecording
+    private let record: VMIndexRecord
     /// Puts the library window in front of the user, for a search with no VM to
     /// reveal.
     private let surfaceLibrary: @MainActor () -> Void
@@ -43,7 +43,7 @@ final class VMIntentGateway {
         commands: any VMCommanding,
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
-        record: any VMIndexRecording = DefaultsVMIndexRecord(),
+        record: VMIndexRecord = VMIndexRecord(),
         surfaceLibrary: @escaping @MainActor () -> Void = {}
     ) {
         self.commands = commands

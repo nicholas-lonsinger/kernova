@@ -25,7 +25,7 @@ struct VMIntentGatewayTests {
     /// A gateway whose library read has already landed, over a seeded mock.
     private func makeGateway(
         _ commands: MockVMCommanding,
-        record: MockVMIndexRecord = MockVMIndexRecord(),
+        record: VMIndexRecord = makeTestIndexRecord(),
         index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
         VMIntentGateway(
@@ -213,7 +213,7 @@ struct VMIntentGatewayTests {
                 entered.continuation.yield(())
                 for await _ in release.stream { break }
             }),
-            index: index, record: MockVMIndexRecord())
+            index: index, record: makeTestIndexRecord())
 
         let read = Task { await gateway.vms() }
         for await _ in entered.stream { break }
@@ -235,7 +235,7 @@ struct VMIntentGatewayTests {
         let awaits = Counter()
         let gateway = VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: { await awaits.increment() }),
-            index: MockVMEntityIndex(), record: MockVMIndexRecord())
+            index: MockVMEntityIndex(), record: makeTestIndexRecord())
 
         _ = await gateway.vms()
         _ = await gateway.vms()
@@ -304,7 +304,7 @@ struct VMIntentGatewayTests {
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: MockVMEntityIndex(),
-            record: MockVMIndexRecord(), surfaceLibrary: surfaced)
+            record: makeTestIndexRecord(), surfaceLibrary: surfaced)
     }
 
     @Test("A search term reveals the first VM whose name carries it")
@@ -500,7 +500,7 @@ struct VMIntentGatewayTests {
         let second = makeSummary(name: "Second")
         commands.library = [first, second]
         let index = MockVMEntityIndex()
-        let record = MockVMIndexRecord()
+        let record = makeTestIndexRecord()
         let gateway = makeGateway(commands, record: record, index: index)
 
         try await index.awaitOperations(Self.syncedOperations)
@@ -516,7 +516,7 @@ struct VMIntentGatewayTests {
         let kept = makeSummary(name: "Kept")
         commands.library = [kept]
         let gone = UUID()
-        let record = MockVMIndexRecord([gone, kept.id])
+        let record = makeTestIndexRecord([gone, kept.id])
         let index = MockVMEntityIndex()
         let gateway = makeGateway(commands, record: record, index: index)
 
@@ -535,7 +535,7 @@ struct VMIntentGatewayTests {
         let vm = makeSummary(name: "Wired")
         commands.library = [vm]
         let stale = UUID()
-        let record = MockVMIndexRecord([stale])
+        let record = makeTestIndexRecord([stale])
         let index = MockVMEntityIndex()
         index.indexError = CocoaError(.fileWriteUnknown)
         let gateway = makeGateway(commands, record: record, index: index)
@@ -561,7 +561,7 @@ struct VMIntentGatewayTests {
         let kept = makeSummary(name: "Kept")
         let gone = makeSummary(name: "Gone")
         commands.library = [kept, gone]
-        let record = MockVMIndexRecord()
+        let record = makeTestIndexRecord()
         let index = MockVMEntityIndex()
         let gateway = makeGateway(commands, record: record, index: index)
 
