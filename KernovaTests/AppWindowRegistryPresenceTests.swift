@@ -17,7 +17,7 @@ import Testing
 @MainActor
 struct AppWindowRegistryPresenceTests {
     private let preferences = makeTestPreferences()
-    private let libraryAutosave = MainWindowAutosaveScope()
+    private let autosave = WindowAutosaveScope.forTest()
 
     /// Records the residency calls the registry makes, standing in for the
     /// controller that answers them in the resident app.
@@ -34,14 +34,15 @@ struct AppWindowRegistryPresenceTests {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         return AppWindowRegistry(
             viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel),
-            libraryAutosaveScope: libraryAutosave.name)
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+            autosaveScope: autosave)
     }
 
-    /// Closes `registry`'s windows and removes what its library window saved.
+    /// Closes `registry`'s windows and removes what they saved.
     private func closeAll(_ registry: AppWindowRegistry) {
+        let windows = [registry.libraryWindow, registry.settingsWindow]
         registry.closeAll()
-        libraryAutosave.removeSavedState(of: registry.libraryWindow)
+        autosave.removeSavedState(of: windows)
     }
 
     /// A VM the clipboard window opens for: sharing on, and a live session, which

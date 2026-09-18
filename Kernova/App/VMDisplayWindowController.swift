@@ -41,7 +41,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
-        onResume: @escaping () -> Void
+        autosaveScope: WindowAutosaveScope, onResume: @escaping () -> Void
     ) {
         self.instance = instance
         self.toolbarManager = VMToolbarManager(
@@ -95,13 +95,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName("VMDisplay-\(instance.instanceID)")
+        window.setFrameAutosaveName(autosaveScope.displayFrame(for: instance.instanceID))
 
-        // RATIONALE: one shared toolbar identifier for every VM's display window,
-        // unlike the per-VM frame autosave name above — AppKit synchronizes
-        // same-identifier toolbars, so a customized layout applies to all display
-        // windows and persists as a single configuration.
-        let toolbar = NSToolbar(identifier: "KernovaVMDisplayToolbar")
+        let toolbar = NSToolbar(identifier: autosaveScope.displayToolbar)
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
         // the window, so every property must be set before the attach below.

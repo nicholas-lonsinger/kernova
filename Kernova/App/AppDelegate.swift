@@ -90,7 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: .app),
+            autosaveScope: .app)
         self.windows = windows
         // The one place the mode is branched on. Everything below takes the
         // residency it produced.

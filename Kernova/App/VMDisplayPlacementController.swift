@@ -87,6 +87,7 @@ final class VMDisplayPlacementController {
     }
 
     private let viewModel: VMLibraryViewModel
+    private let autosaveScope: WindowAutosaveScope
     weak var host: (any VMDisplayPlacementHosting)?
     /// The residency decisions a display window's placement needs but cannot
     /// make.
@@ -98,8 +99,9 @@ final class VMDisplayPlacementController {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
         self.viewModel = viewModel
+        self.autosaveScope = autosaveScope
     }
 
     // MARK: - Deciders
@@ -293,6 +295,7 @@ final class VMDisplayPlacementController {
             instance: instance,
             capabilities: viewModel.capabilities,
             enterFullscreen: enterFullscreen,
+            autosaveScope: autosaveScope,
             onResume: { [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.resume(instance) }

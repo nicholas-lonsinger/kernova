@@ -15,6 +15,7 @@ import Testing
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
     private let preferences = makeTestPreferences()
+    private let autosave = WindowAutosaveScope.forTest()
 
     /// Answers the placement controller with a fixed posture, standing in for
     /// the residency controller that reads the live one.
@@ -36,7 +37,7 @@ struct VMDisplayPlacementReadyDisplayTests {
         -> (VMDisplayPlacementController, StubResidency)
     {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave)
         let residency = StubResidency(posture: posture)
         placement.residency = residency
         return (placement, residency)
@@ -86,11 +87,18 @@ struct VMDisplayPlacementReadyDisplayTests {
 
     // MARK: - The wiring
 
+    /// Closes `placement`'s windows and removes what `instance`'s saved.
+    private func closeAll(_ placement: VMDisplayPlacementController, showing instance: VMInstance) {
+        let window = placement.window(for: instance.instanceID)
+        placement.closeAllForAppDismissal()
+        autosave.removeSavedState(of: [window])
+    }
+
     @Test("A bring-up while the app presents no GUI opens no window")
     func absentOpensNoWindow() {
         let (placement, residency) = makeController(posture: .absent)
-        defer { placement.closeAllForAppDismissal() }
         let instance = makeInstance(preference: .fullscreen)
+        defer { closeAll(placement, showing: instance) }
 
         placement.readyDisplay(for: instance)
 
@@ -105,8 +113,8 @@ struct VMDisplayPlacementReadyDisplayTests {
     @Test("A bring-up from the background puts the window up without taking key")
     func backgroundOpensAnUnkeyWindow() throws {
         let (placement, residency) = makeController(posture: .background)
-        defer { placement.closeAllForAppDismissal() }
         let instance = makeInstance(preference: .fullscreen)
+        defer { closeAll(placement, showing: instance) }
 
         placement.readyDisplay(for: instance)
 

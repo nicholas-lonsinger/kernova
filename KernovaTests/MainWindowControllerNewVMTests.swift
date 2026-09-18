@@ -10,7 +10,7 @@ import Testing
 @Suite("MainWindowController New VM toolbar item", .admissionGated)
 @MainActor
 struct MainWindowControllerNewVMTests {
-    private let autosave = MainWindowAutosaveScope()
+    private let autosave = WindowAutosaveScope.forTest()
     private let preferences = makeTestPreferences()
     private let newVM = "newVM"
 
@@ -28,7 +28,7 @@ struct MainWindowControllerNewVMTests {
     private func makeSubject() throws -> Subject {
         let controller = MainWindowController(
             viewModel: makeLibraryViewModel(preferences: preferences),
-            autosaveScope: autosave.name)
+            autosaveScope: autosave)
         let window = try #require(controller.window)
         hideFromScreen(window)
         let split = try #require(window.contentViewController as? NSSplitViewController)
@@ -41,7 +41,7 @@ struct MainWindowControllerNewVMTests {
 
     private func tearDown(_ subject: Subject) {
         subject.window.close()
-        autosave.removeSavedState(of: subject.window)
+        autosave.removeSavedState(of: [subject.window])
     }
 
     /// Runs `body` on a first launch on this test's scope, closes it, and waits
@@ -68,7 +68,9 @@ struct MainWindowControllerNewVMTests {
             forName: UserDefaults.didChangeNotification, object: nil, queue: nil
         ) { _ in saved.notify() }
         defer { NotificationCenter.default.removeObserver(observer) }
-        try await saved.wait { UserDefaults.standard.object(forKey: autosave.splitKey) != nil }
+        try await saved.wait {
+            UserDefaults.standard.object(forKey: WindowAutosaveScope.splitKey(autosave.mainSplit)) != nil
+        }
 
         // "Toolbars with the same identifier are implicitly synchronized so that
         // they maintain the same state" (NSToolbar.h, `initWithIdentifier:`), so a
@@ -82,7 +84,8 @@ struct MainWindowControllerNewVMTests {
     /// a missing list reads as that set.
     private func savedLayout(of subject: Subject) -> [String] {
         let saved =
-            UserDefaults.standard.dictionary(forKey: autosave.toolbarKey)?["TB Item Identifiers"]
+            UserDefaults.standard.dictionary(forKey: WindowAutosaveScope.toolbarKey(autosave.mainToolbar))?[
+                "TB Item Identifiers"]
             as? [String]
         return saved
             ?? subject.controller.toolbarDefaultItemIdentifiers(subject.toolbar).map(\.rawValue)

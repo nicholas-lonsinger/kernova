@@ -18,6 +18,7 @@ import Testing
 @MainActor
 struct AppResidencyPresentationTests {
     private let preferences = makeTestPreferences()
+    private let autosave = WindowAutosaveScope.forTest()
 
     /// Records the ``AppLaunchHosting/armAutoStartPass()`` seam the launch
     /// cluster owns. Held alongside the controller, which references it weakly.
@@ -36,7 +37,8 @@ struct AppResidencyPresentationTests {
             viewModel: viewModel,
             windows: AppWindowRegistry(
                 viewModel: viewModel,
-                displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
+                displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+                autosaveScope: autosave)
         )
         controller.host = host
         return (controller, host)
