@@ -22,7 +22,6 @@ struct AppResidencyUnhideTests {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         return AppResidencyController(
             viewModel: viewModel,
-            preferences: preferences,
             windows: AppWindowRegistry(
                 viewModel: viewModel,
                 displayPlacement: VMDisplayPlacementController(viewModel: viewModel)))

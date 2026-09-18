@@ -84,8 +84,6 @@ protocol AppLaunchHosting: AnyObject {
 @MainActor
 final class AppResidencyController: AppResidencyHosting {
     private let viewModel: VMLibraryViewModel
-    /// App-wide preferences, handed to the status item.
-    private let preferences: AppPreferences
     /// The one owner of which user-facing windows exist; every presentation and
     /// the window half of every reconcile goes through it.
     private let windows: AppWindowRegistry
@@ -133,13 +131,8 @@ final class AppResidencyController: AppResidencyHosting {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppResidency")
 
-    init(
-        viewModel: VMLibraryViewModel,
-        preferences: AppPreferences,
-        windows: AppWindowRegistry
-    ) {
+    init(viewModel: VMLibraryViewModel, windows: AppWindowRegistry) {
         self.viewModel = viewModel
-        self.preferences = preferences
         self.windows = windows
     }
 
@@ -361,7 +354,6 @@ final class AppResidencyController: AppResidencyHosting {
     private func makeStatusItemController() -> HostAgentStatusItemController {
         HostAgentStatusItemController(
             viewModel: viewModel,
-            preferences: preferences,
             onOpen: { [weak self] vmID in self?.summonStatusItemTarget(for: vmID) },
             onOpenClipboard: { [weak self] vmID in
                 guard let self else { return }

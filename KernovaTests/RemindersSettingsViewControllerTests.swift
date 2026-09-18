@@ -53,8 +53,7 @@ struct RemindersSettingsViewControllerTests {
         for index in 1...vmCount {
             viewModel.instances.append(makeInstance(name: "VM \(index)"))
         }
-        let controller = RemindersSettingsViewController(
-            preferences: preferences, viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
         controller.viewWillAppear()
         controller.view.setFrameSize(controller.preferredContentSize)
@@ -74,8 +73,7 @@ struct RemindersSettingsViewControllerTests {
         for index in 1...vmCount {
             viewModel.instances.append(makeInstance(name: "VM \(index)"))
         }
-        let controller = RemindersSettingsViewController(
-            preferences: preferences, viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
         // Measure while detached, exactly as the pane does before the tab
         // controller sizes the window, then hand the window that measurement.
         controller.viewWillAppear()
@@ -282,8 +280,7 @@ struct RemindersSettingsViewControllerTests {
         for index in 1...9 {
             viewModel.instances.append(makeInstance(name: "VM \(index)"))
         }
-        let controller = RemindersSettingsViewController(
-            preferences: preferences, viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
 
         // Host the pane in an on-screen window first, as the tab view does — and
@@ -315,8 +312,7 @@ struct RemindersSettingsViewControllerTests {
     /// machines yet." reads as a bug.
     @Test("Neither per-VM caption shows when there are no virtual machines")
     func perVMCaptionsHideWithoutVMs() throws {
-        let controller = RemindersSettingsViewController(
-            preferences: preferences, viewModel: makeViewModel())
+        let controller = RemindersSettingsViewController(viewModel: makeViewModel())
         _ = controller.view
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }

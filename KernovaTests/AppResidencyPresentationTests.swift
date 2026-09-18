@@ -34,7 +34,6 @@ struct AppResidencyPresentationTests {
         let host = StubLaunchHost()
         let controller = AppResidencyController(
             viewModel: viewModel,
-            preferences: preferences,
             windows: AppWindowRegistry(
                 viewModel: viewModel,
                 displayPlacement: VMDisplayPlacementController(viewModel: viewModel))

@@ -25,7 +25,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, read for the clone alternate's title.
-    private let preferences: AppPreferences
+    private var preferences: AppPreferences { viewModel.preferences }
     /// Whether a ⌘Q in this process downgrades to a GUI close rather than
     /// terminating — the same predicate
     /// ``AppTerminationController/shouldTerminateOnQuit`` gates on, so the menu
@@ -90,12 +90,10 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     init(
         viewModel: VMLibraryViewModel,
-        preferences: AppPreferences,
         hasSoftQuit: Bool,
         hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
     ) {
         self.viewModel = viewModel
-        self.preferences = preferences
         self.hasSoftQuit = hasSoftQuit
         self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
     }
