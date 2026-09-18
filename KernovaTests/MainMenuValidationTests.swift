@@ -27,8 +27,7 @@ struct MainMenuValidationTests {
     ) -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         let controller = MainMenuController(
-            viewModel: viewModel, hasSoftQuit: true,
-            hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)
+            viewModel: viewModel, hasBundledGuestAgentDisk: hasBundledGuestAgentDisk)
         let host = StubMenuHost(instance: instance)
         controller.host = host
         return Fixture(controller: controller, host: host, viewModel: viewModel)

@@ -25,42 +25,6 @@ protocol WindowResidencyHosting: AnyObject {
     var guiPosture: GUIPosture { get }
 }
 
-/// Everything ``AppDelegate`` asks of the process's residency — what it is
-/// between windows, and what a launch, a reopen and a summon do to it.
-///
-/// The one place the two modes differ: ``AppResidencyController`` is the
-/// resident app, ``TestHostResidencyController`` the plain foreground test host.
-/// The delegate holds one of them and forks nowhere.
-@MainActor
-protocol AppResidencyHosting: WindowResidencyHosting {
-    /// The launch cluster this residency reaches back into.
-    var host: (any AppLaunchHosting)? { get set }
-    /// Where a downgraded quit closes the GUI, or `nil` for a mode with no
-    /// headless state to downgrade into — which is what makes every quit there a
-    /// real one.
-    var softQuit: (any SoftQuitHosting)? { get }
-    /// Opens every automation front door, before any launch presentation, so a
-    /// request delivered during launch is answered rather than dropped.
-    func registerAutomationFrontDoors()
-    /// Answers one `kernova:` link delivered to `application(_:open:)`.
-    func openAutomationLink(_ url: URL)
-    /// The Apple event front door, which every script command reaches through
-    /// the app delegate — Cocoa builds those commands itself and hands them
-    /// nothing.
-    var scriptingGateway: VMScriptingGateway? { get }
-    /// Brings the process up for the launch it was given.
-    func start(provenance: AppResidencyController.LaunchProvenance)
-    /// The unhide leg — every window is back on screen after a ⌘H, so whatever
-    /// the app's windows did meanwhile is now legible to a reconcile.
-    func noteDidUnhide()
-    /// The reopen leg — a Dock click, `open`, a Launch Services self-open.
-    func handleReopen(hasVisibleWindows: Bool)
-    /// Puts the summoned interface on screen, without requesting activation.
-    func presentSummonedInterface()
-    /// Brings the GUI forward, requesting activation.
-    func summonUserInterface()
-}
-
 /// The launch-cluster seam a residency needs but cannot own: the auto-start
 /// pass, the first library read, and the true quit.
 @MainActor
@@ -77,16 +41,13 @@ protocol AppLaunchHosting: AnyObject {
 
 /// The one owner of what the process *is* when no window is on screen: the
 /// activation policy, the status item, and the GUI summon.
-///
-/// Constructed only for the resident app — the test host runs
-/// ``TestHostResidencyController`` instead — so every path here can assume the
-/// resident-app machinery is the one that runs.
 @MainActor
-final class AppResidencyController: AppResidencyHosting {
+final class AppResidencyController: WindowResidencyHosting {
     private let viewModel: VMLibraryViewModel
     /// The one owner of which user-facing windows exist; every presentation and
     /// the window half of every reconcile goes through it.
     private let windows: AppWindowRegistry
+    /// The launch cluster this residency reaches back into.
     weak var host: (any AppLaunchHosting)?
 
     /// The command socket this process bound, held for the life of the process:
@@ -193,6 +154,7 @@ final class AppResidencyController: AppResidencyHosting {
             activate: { [weak self] in self?.activateForExternalRequest() })
     }
 
+    /// Answers one `kernova:` link delivered to `application(_:open:)`.
     func openAutomationLink(_ url: URL) {
         guard let urlGateway else {
             #log(Self.logger, .warning, "A Kernova link arrived before the automation doors opened")
@@ -684,10 +646,6 @@ final class AppResidencyController: AppResidencyHosting {
     }
 
     // MARK: - Soft Quit
-
-    /// The resident app has a headless state to downgrade a quit into, so ⌘Q and
-    /// the Dock's Quit land on ``closeGUIForSoftQuit()`` rather than terminating.
-    var softQuit: (any SoftQuitHosting)? { self }
 
     /// Closes the GUI, drops to the status item, then anchors the soft-quit
     /// reminder — in that order.

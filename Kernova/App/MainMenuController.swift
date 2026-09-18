@@ -26,11 +26,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private let viewModel: VMLibraryViewModel
     /// App-wide preferences, read for the clone alternate's title.
     private var preferences: AppPreferences { viewModel.preferences }
-    /// Whether a ⌘Q in this process downgrades to a GUI close rather than
-    /// terminating — the same predicate
-    /// ``AppTerminationController/shouldTerminateOnQuit`` gates on, so the menu
-    /// can never name a command the gate would not honor.
-    private let hasSoftQuit: Bool
     /// Whether this build carries the guest-agent installer disk image the
     /// guest-agent item mounts.
     private let hasBundledGuestAgentDisk: Bool
@@ -90,11 +85,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     init(
         viewModel: VMLibraryViewModel,
-        hasSoftQuit: Bool,
         hasBundledGuestAgentDisk: Bool = KernovaMacOSAgentInfo.installerDiskImageURL != nil
     ) {
         self.viewModel = viewModel
-        self.hasSoftQuit = hasSoftQuit
         self.hasBundledGuestAgentDisk = hasBundledGuestAgentDisk
     }
 
@@ -269,7 +262,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // The preference is read live here, not captured, so a Settings flip is
         // reflected on the next open.
         let model = Self.appMenuQuitItems(
-            downgradesQuitToGUIClose: hasSoftQuit && viewModel.keepInMenuBarOnQuit)
+            downgradesQuitToGUIClose: viewModel.keepInMenuBarOnQuit)
 
         let sectionStartIndex = appMenu.index(of: sectionStart)
         guard sectionStartIndex >= 0 else {

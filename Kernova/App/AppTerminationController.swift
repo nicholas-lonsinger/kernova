@@ -18,10 +18,8 @@ protocol SoftQuitHosting: AnyObject {
 @MainActor
 final class AppTerminationController: NSObject {
     private let viewModel: VMLibraryViewModel
-    /// Where a downgraded quit closes the GUI. `nil` for the test host, which
-    /// has no headless mode to downgrade into — so every quit there is a real
-    /// one.
-    weak var residency: (any SoftQuitHosting)?
+    /// Where a downgraded quit closes the GUI.
+    private let residency: any SoftQuitHosting
     /// The launch work a quit cancels, handed over by
     /// ``registerLaunchWork(_:)``.
     ///
@@ -70,8 +68,9 @@ final class AppTerminationController: NSObject {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppTermination")
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, residency: any SoftQuitHosting) {
         self.viewModel = viewModel
+        self.residency = residency
     }
 
     /// Takes ownership of a launch task the gate cancels on the way out.
@@ -158,8 +157,7 @@ final class AppTerminationController: NSObject {
     /// "Close All Windows", the Dock's Quit) only close the GUI and leave the app
     /// resident with its VMs running headless.
     var shouldTerminateOnQuit: Bool {
-        guard residency != nil else { return true }
-        return userRequestedAgentQuit || externalQuitRequiresTermination
+        userRequestedAgentQuit || externalQuitRequiresTermination
             || terminationIsTCCRevocation || !viewModel.keepInMenuBarOnQuit
     }
 
@@ -334,11 +332,9 @@ final class AppTerminationController: NSObject {
         case .closeGUI:
             #log(Self.logger, .notice, "GUI-origin quit — closing the GUI; app stays resident")
             // Defer so the close runs after this termination request is fully
-            // cancelled. `.closeGUI` is unreachable with no `residency`, which is
-            // what makes `shouldTerminateOnQuit` unconditionally true there, so
-            // the optional chain skips nothing.
+            // cancelled.
             Task { @MainActor in
-                self.residency?.closeGUIForSoftQuit()
+                self.residency.closeGUIForSoftQuit()
             }
             return .terminateCancel
 
