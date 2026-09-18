@@ -103,7 +103,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = true
+        toolbar.autosavesConfiguration = autosaveScope.savesState
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 

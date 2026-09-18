@@ -17,7 +17,7 @@ import Testing
 @MainActor
 struct AppResidencyUnhideTests {
     private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.forTest()
+    private let autosave = WindowAutosaveScope.unsaved()
 
     private func makeController() -> AppResidencyController {
         let viewModel = makeLibraryViewModel(preferences: preferences)
