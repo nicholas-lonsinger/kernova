@@ -24,22 +24,10 @@ struct SpotlightVMEntityIndex: VMEntityIndexing {
     }
 }
 
-/// Where the identifiers already written to the index are recorded.
+/// Where the identifiers already written to the index are recorded, in
+/// `UserDefaults` so a later launch reads them back.
 @MainActor
-protocol VMIndexRecording: AnyObject {
-    /// Which VMs the index is believed to hold, as of the last write that
-    /// landed.
-    ///
-    /// Persisted because it is what a later launch prunes against: the index
-    /// outlives the process, so a VM deleted while Kernova was not running is
-    /// only findable-but-gone until some run notices it is no longer in the
-    /// library.
-    var indexedVMIDs: Set<UUID> { get set }
-}
-
-/// The record `UserDefaults` holds, which is the one a later launch reads back.
-@MainActor
-final class DefaultsVMIndexRecord: VMIndexRecording {
+final class VMIndexRecord {
     /// The literal `UserDefaults` key the identifiers are stored under.
     private static let key = "SpotlightIndexedVMIDs"
 
@@ -49,6 +37,13 @@ final class DefaultsVMIndexRecord: VMIndexRecording {
         self.defaults = defaults
     }
 
+    /// Which VMs the index is believed to hold, as of the last write that
+    /// landed.
+    ///
+    /// Persisted because it is what a later launch prunes against: the index
+    /// outlives the process, so a VM deleted while Kernova was not running is
+    /// only findable-but-gone until some run notices it is no longer in the
+    /// library.
     var indexedVMIDs: Set<UUID> {
         get {
             Set(

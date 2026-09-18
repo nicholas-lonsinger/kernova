@@ -21,7 +21,7 @@ import Virtualization
 // — the GuestAgent/KernovaKit bundles' predicates read `Sendable` boxes
 // (`AtomicInt`, `PolicyBox`) with no such observable type to track.
 
-// MARK: - In-memory preferences
+// MARK: - In-memory defaults
 
 /// Wraps `makeTestDefaults` (`KernovaTestSupport`) in an `AppPreferences`, for
 /// suites that only need the typed wrapper (e.g. to construct a
@@ -29,6 +29,15 @@ import Virtualization
 /// directly.
 func makeTestPreferences() -> AppPreferences {
     AppPreferences(defaults: makeTestDefaults())
+}
+
+/// A `VMIndexRecord` over an in-memory store, holding `indexed` as an earlier
+/// run's record of what it wrote to Spotlight.
+@MainActor
+func makeTestIndexRecord(_ indexed: Set<UUID> = []) -> VMIndexRecord {
+    let record = VMIndexRecord(defaults: makeTestDefaults())
+    record.indexedVMIDs = indexed
+    return record
 }
 
 // MARK: - VZ error fixtures
