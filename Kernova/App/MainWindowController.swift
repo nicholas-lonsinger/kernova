@@ -39,7 +39,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Init
 
-    init(viewModel: VMLibraryViewModel, preferences: AppPreferences = .shared) {
+    /// `autosaveScope` prefixes the toolbar, window-frame, and split-view
+    /// autosave names, which AppKit keeps in `UserDefaults.standard` whatever
+    /// `preferences` wraps.
+    init(
+        viewModel: VMLibraryViewModel,
+        preferences: AppPreferences = .shared,
+        autosaveScope: String = "KernovaMain"
+    ) {
         self.viewModel = viewModel
         self.preferences = preferences
         self.toolbarManager = VMToolbarManager(
@@ -70,7 +77,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         detailItem.minimumThickness = 400
         splitViewController.addSplitViewItem(detailItem)
 
-        splitViewController.splitView.autosaveName = "KernovaMainSplit"
+        splitViewController.splitView.autosaveName = "\(autosaveScope)Split"
 
         let window = NSWindow.withStableContentSize(
             NSSize(width: 1200, height: 900),
@@ -90,7 +97,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.delegate = self
         self.shouldCascadeWindows = false
 
-        let toolbar = NSToolbar(identifier: "KernovaMainToolbar")
+        let toolbar = NSToolbar(identifier: "\(autosaveScope)Toolbar")
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
         // the window, so every property must be set before the attach below.
@@ -100,7 +107,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        window.setFrameAutosaveName("KernovaMainWindow")
+        window.setFrameAutosaveName("\(autosaveScope)Window")
 
         // Finder-style snap: while dragging the divider, magnetize it to the
         // width that fully shows the longest VM name.
