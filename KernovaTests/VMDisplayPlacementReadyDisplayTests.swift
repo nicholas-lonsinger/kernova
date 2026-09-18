@@ -15,7 +15,7 @@ import Testing
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
     private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.forTest()
+    private let autosave = WindowAutosaveScope.unsaved()
 
     /// Answers the placement controller with a fixed posture, standing in for
     /// the residency controller that reads the live one.
@@ -87,18 +87,11 @@ struct VMDisplayPlacementReadyDisplayTests {
 
     // MARK: - The wiring
 
-    /// Closes `placement`'s windows and removes what `instance`'s saved.
-    private func closeAll(_ placement: VMDisplayPlacementController, showing instance: VMInstance) {
-        let window = placement.window(for: instance.instanceID)
-        placement.closeAllForAppDismissal()
-        autosave.removeSavedState(of: [window])
-    }
-
     @Test("A bring-up while the app presents no GUI opens no window")
     func absentOpensNoWindow() {
         let (placement, residency) = makeController(posture: .absent)
         let instance = makeInstance(preference: .fullscreen)
-        defer { closeAll(placement, showing: instance) }
+        defer { placement.closeAllForAppDismissal() }
 
         placement.readyDisplay(for: instance)
 
@@ -114,7 +107,7 @@ struct VMDisplayPlacementReadyDisplayTests {
     func backgroundOpensAnUnkeyWindow() throws {
         let (placement, residency) = makeController(posture: .background)
         let instance = makeInstance(preference: .fullscreen)
-        defer { closeAll(placement, showing: instance) }
+        defer { placement.closeAllForAppDismissal() }
 
         placement.readyDisplay(for: instance)
 

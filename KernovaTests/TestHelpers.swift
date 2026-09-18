@@ -385,53 +385,6 @@ func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
     return window
 }
 
-// MARK: - Window autosaves
-
-extension WindowAutosaveScope {
-    /// A scope of a test's own. AppKit saves window state in the test host's
-    /// `UserDefaults.standard`, which is the app's own domain.
-    static func forTest() -> WindowAutosaveScope {
-        WindowAutosaveScope(prefix: "test-\(UUID().uuidString)-")
-    }
-
-    /// The `UserDefaults.standard` key AppKit saves a toolbar's layout under.
-    static func toolbarKey(_ identifier: NSToolbar.Identifier) -> String {
-        "NSToolbar Configuration \(identifier)"
-    }
-
-    /// The `UserDefaults.standard` key AppKit saves a window's frame under.
-    static func frameKey(_ name: NSWindow.FrameAutosaveName) -> String { "NSWindow Frame \(name)" }
-
-    /// The `UserDefaults.standard` key AppKit saves a split view's layout under.
-    static func splitKey(_ name: NSSplitView.AutosaveName) -> String {
-        "NSSplitView Subview Frames \(name)"
-    }
-
-    /// Removes everything AppKit saved under this scope, per-VM frames
-    /// included, first switching off the autosaves of `windows`, closed windows
-    /// built on it.
-    @MainActor
-    func removeSavedState(of windows: [NSWindow?] = []) {
-        guard !prefix.isEmpty else {
-            Issue.record("Only a test's own scope has saved state to remove")
-            return
-        }
-        for case let window? in windows {
-            // NSSplitView saves a turn after a change (measured on macOS 27.0
-            // 26A428); with the name cleared, a save still pending cannot write
-            // its key back after the removal below.
-            (window.contentViewController as? NSSplitViewController)?.splitView.autosaveName = nil
-            window.setFrameAutosaveName("")
-            window.toolbar?.autosavesConfiguration = false
-        }
-        let scoped = [Self.toolbarKey(prefix), Self.frameKey(prefix), Self.splitKey(prefix)]
-        for key in UserDefaults.standard.dictionaryRepresentation().keys
-        where scoped.contains(where: { key.hasPrefix($0) }) {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-}
-
 // MARK: - ChannelLostRecorder
 
 /// Counts a vsock feature service's `onChannelLost` invocations, optionally

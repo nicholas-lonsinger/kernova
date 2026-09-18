@@ -17,7 +17,7 @@ import Testing
 @MainActor
 struct AppWindowRegistryPresenceTests {
     private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.forTest()
+    private let autosave = WindowAutosaveScope.unsaved()
 
     /// Records the residency calls the registry makes, standing in for the
     /// controller that answers them in the resident app.
@@ -36,13 +36,6 @@ struct AppWindowRegistryPresenceTests {
             viewModel: viewModel,
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
             autosaveScope: autosave)
-    }
-
-    /// Closes `registry`'s windows and removes what they saved.
-    private func closeAll(_ registry: AppWindowRegistry) {
-        let windows = [registry.libraryWindow, registry.settingsWindow]
-        registry.closeAll()
-        autosave.removeSavedState(of: windows)
     }
 
     /// A VM the clipboard window opens for: sharing on, and a live session, which
@@ -64,7 +57,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("The library window counts, however miniaturized windows are treated")
     func libraryShown() throws {
         let registry = makeRegistry()
-        defer { closeAll(registry) }
+        defer { registry.closeAll() }
         registry.showLibrary(bringToFront: true)
         hideFromScreen(try #require(registry.libraryWindow))
 
@@ -75,7 +68,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("A miniaturized library window counts only when miniaturized windows do")
     func libraryMiniaturized() async throws {
         let registry = makeRegistry()
-        defer { closeAll(registry) }
+        defer { registry.closeAll() }
         registry.showLibrary(bringToFront: true)
         let window = try #require(registry.libraryWindow)
         hideFromScreen(window)
@@ -98,7 +91,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("The Settings window counts on its own")
     func settingsShown() throws {
         let registry = makeRegistry()
-        defer { closeAll(registry) }
+        defer { registry.closeAll() }
         registry.showSettings(nil)
         hideFromScreen(try #require(registry.settingsWindow))
 
@@ -108,7 +101,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("Closing a clipboard window deregisters it")
     func clipboardWindowCloseDeregisters() throws {
         let registry = makeRegistry()
-        defer { closeAll(registry) }
+        defer { registry.closeAll() }
         let instance = makeClipboardEligibleInstance()
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
@@ -125,7 +118,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("Showing a clipboard window asks residency to prepare, and its close deregisters it")
     func clipboardWindowDrivesResidency() throws {
         let registry = makeRegistry()
-        defer { closeAll(registry) }
+        defer { registry.closeAll() }
         let host = StubResidencyHost()
         registry.residency = host
         let instance = makeClipboardEligibleInstance()
@@ -147,7 +140,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("A VM whose state refuses the clipboard opens no window")
     func clipboardRefusedForIneligibleVM() {
         let registry = makeRegistry()
-        defer { closeAll(registry) }
+        defer { registry.closeAll() }
         let instance = VMInstanceFixture.make(name: "Stopped VM")
 
         registry.showClipboard(for: instance)

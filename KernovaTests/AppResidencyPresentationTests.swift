@@ -18,7 +18,7 @@ import Testing
 @MainActor
 struct AppResidencyPresentationTests {
     private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.forTest()
+    private let autosave = WindowAutosaveScope.unsaved()
 
     /// Records the ``AppLaunchHosting/armAutoStartPass()`` seam the launch
     /// cluster owns. Held alongside the controller, which references it weakly.

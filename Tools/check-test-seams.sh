@@ -37,6 +37,20 @@
 # `#if !DEBUG`, `#if DEBUG || X` and the `#else` arm of any `#if` are not —
 # `#if DEBUG` is the one spelling a seam is gated with.
 #
+# The second gate runs over the files the first one skips. AppKit writes a
+# window frame, a split position, and a toolbar configuration to
+# `UserDefaults.standard` with no injection point, and under the app as test
+# host that is the app's own domain — so test code that names the process-wide
+# store reads and writes the state of the app the developer is running. A test's
+# own defaults are a `MemoryUserDefaults`, and a window that should persist
+# nothing takes `WindowAutosaveScope.unsaved()`. Both spellings of the
+# process-wide store are the finding, `UserDefaults.standard` and
+# `UserDefaults()`; `UserDefaults(suiteName:)` names a store of the caller's own
+# and is not one.
+#
+# Line comments are stripped before matching, so prose may name what it forbids.
+# A string literal is not stripped, and reads as a reference.
+#
 # Reports every finding before failing, so one run fixes them all, and fails
 # on a scan that did not complete: a check whose whole value is that it cannot
 # pass in silence must not pass when a file went unread.
@@ -49,8 +63,21 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
+# Test code, by the path convention the header states; each gate takes one side
+# of it.
+test_paths='(^|/)[^/]*(Tests|TestSupport)/'
+
+report() {
+    local summary=$1 text=$2
+    printf '%s\n' "$text" | while IFS= read -r line; do
+        echo "check-test-seams: $line" >&2
+    done
+    echo >&2
+    printf '%s %s\n' "$(printf '%s\n' "$text" | wc -l | tr -d ' ')" "$summary" >&2
+}
+
 findings=$(git ls-files '*.swift' \
-    | grep -vE '(^|/)[^/]*(Tests|TestSupport)/' \
+    | grep -vE "$test_paths" \
     | tr '\n' '\0' \
     | xargs -0 awk '
         function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
@@ -156,22 +183,42 @@ findings=$(git ls-files '*.swift' \
     ')
 scan_status=$?
 
+store_findings=$(git ls-files '*.swift' \
+    | grep -E "$test_paths" \
+    | tr '\n' '\0' \
+    | xargs -0 awk '
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+
+        {
+            code = $0
+            sub(/\/\/.*$/, "", code)
+            if (code ~ /(^|[^A-Za-z0-9_])UserDefaults[[:space:]]*(\.[[:space:]]*standard($|[^A-Za-z0-9_])|\([[:space:]]*\))/) {
+                printf "%s:%d — %s\n", FILENAME, FNR, trim(code)
+            }
+        }
+    ')
+store_scan_status=$?
+
 if [ -n "$findings" ]; then
-    printf '%s\n' "$findings" | while IFS= read -r line; do
-        echo "check-test-seams: $line" >&2
-    done
-    echo >&2
-    printf '%s test-seam finding(s): a ForTesting declaration outside #if DEBUG, or a file whose #if blocks do not close\n' \
-        "$(printf '%s\n' "$findings" | wc -l | tr -d ' ')" >&2
+    report 'test-seam finding(s): a ForTesting declaration outside #if DEBUG, or a file whose #if blocks do not close' \
+        "$findings"
 fi
 
-if [ "$scan_status" -ne 0 ]; then
-    echo "check-test-seams: the scan exited $scan_status — at least one tracked Swift file went unread, so a seam in it would not appear above" >&2
-    exit 1
+if [ -n "$store_findings" ]; then
+    report 'test-store finding(s): test code reaching the process-wide UserDefaults instead of a store of its own' \
+        "$store_findings"
 fi
 
-if [ -n "$findings" ]; then
+for scan in "$scan_status" "$store_scan_status"; do
+    if [ "$scan" -ne 0 ]; then
+        echo "check-test-seams: a scan exited $scan — at least one tracked Swift file went unread, so a finding in it would not appear above" >&2
+        exit 1
+    fi
+done
+
+if [ -n "$findings" ] || [ -n "$store_findings" ]; then
     exit 1
 fi
 
 pass "test seams: every ForTesting declaration is inside #if DEBUG"
+pass "test stores: no test reaches the process-wide UserDefaults"
