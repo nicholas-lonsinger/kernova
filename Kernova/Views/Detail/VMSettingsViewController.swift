@@ -70,8 +70,8 @@ final class VMSettingsViewController: NSViewController {
     /// `activationCenter` is where app activation is observed, by this
     /// controller and by the pane's file monitor alike. A test passes its own
     /// center so the notification reaches only the pane under test — the
-    /// app-wide name is posted process-wide, so a click on the test host's
-    /// window would otherwise re-enter every controller a suite is holding.
+    /// app-wide name is posted process-wide, so any activation of the test host
+    /// would otherwise re-enter every controller a suite is holding.
     init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,

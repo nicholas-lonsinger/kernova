@@ -79,6 +79,8 @@ final class AppWindowRegistry {
 
     // MARK: - Settings
 
+    var settingsWindow: NSWindow? { settingsWindowController?.window }
+
     func showSettings(_ sender: Any?) {
         residency?.prepareToPresentWindow()
         let controller = settingsWindowController ?? SettingsWindowController(viewModel: viewModel)
@@ -130,7 +132,7 @@ final class AppWindowRegistry {
         if onScreen(libraryWindow) { return true }
         if displayPlacement.hasWindow(where: { onScreen($0) }) { return true }
         if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
-        if onScreen(settingsWindowController?.window) { return true }
+        if onScreen(settingsWindow) { return true }
         return false
     }
 
@@ -179,7 +181,7 @@ final class AppWindowRegistry {
     func closeAll() {
         displayPlacement.closeAllForAppDismissal()
         for controller in Array(clipboardWindows.values) { controller.window?.close() }
-        settingsWindowController?.window?.close()
+        settingsWindow?.close()
         mainWindowController?.window?.close()
     }
 }
