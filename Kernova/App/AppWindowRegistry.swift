@@ -21,15 +21,22 @@ final class AppWindowRegistry {
         didSet { displayPlacement.residency = residency }
     }
 
+    private let libraryAutosaveScope: String
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppWindowRegistry")
 
-    init(viewModel: VMLibraryViewModel, displayPlacement: VMDisplayPlacementController) {
+    /// `libraryAutosaveScope` is the library window's `autosaveScope`.
+    init(
+        viewModel: VMLibraryViewModel,
+        displayPlacement: VMDisplayPlacementController,
+        libraryAutosaveScope: String = "KernovaMain"
+    ) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
+        self.libraryAutosaveScope = libraryAutosaveScope
         displayPlacement.host = self
     }
 
@@ -63,7 +70,8 @@ final class AppWindowRegistry {
             }
         } else {
             #log(Self.logger, .notice, "showLibrary: recreating main window controller")
-            let windowController = MainWindowController(viewModel: viewModel)
+            let windowController = MainWindowController(
+                viewModel: viewModel, autosaveScope: libraryAutosaveScope)
             if bringToFront {
                 windowController.showWindow(nil)
             } else {

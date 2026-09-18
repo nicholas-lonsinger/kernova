@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class SidebarViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
-    private let preferences: AppPreferences
+    private var preferences: AppPreferences { viewModel.preferences }
     private let outlineView = SidebarOutlineView()
     private let scrollView = NSScrollView()
     private let sections: [SidebarSection] = [.virtualMachines]
@@ -38,9 +38,8 @@ final class SidebarViewController: NSViewController {
 
     // MARK: - Init
 
-    init(viewModel: VMLibraryViewModel, preferences: AppPreferences = .shared) {
+    init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
-        self.preferences = preferences
         super.init(nibName: nil, bundle: nil)
     }
 

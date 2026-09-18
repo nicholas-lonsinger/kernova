@@ -376,6 +376,36 @@ func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
     return window
 }
 
+// MARK: - Main window autosaves
+
+/// A main-window `autosaveScope` of a test's own: AppKit saves the toolbar,
+/// frame, and split layouts in the test host's `UserDefaults.standard`, which is
+/// the app's own domain.
+struct MainWindowAutosaveScope {
+    let name = "test-\(UUID().uuidString)"
+
+    var toolbarKey: String { "NSToolbar Configuration \(name)Toolbar" }
+    var splitKey: String { "NSSplitView Subview Frames \(name)Split" }
+    private var frameKey: String { "NSWindow Frame \(name)Window" }
+
+    /// Removes what AppKit saved under this scope, first switching off the
+    /// autosaves of `window`, a closed main window built on it.
+    @MainActor
+    func removeSavedState(of window: NSWindow? = nil) {
+        if let window {
+            // NSSplitView saves a turn after a change (measured on macOS 27.0
+            // 26A428); with the name cleared, a save still pending cannot write
+            // its key back after the removal below.
+            (window.contentViewController as? NSSplitViewController)?.splitView.autosaveName = nil
+            window.setFrameAutosaveName("")
+            window.toolbar?.autosavesConfiguration = false
+        }
+        for key in [toolbarKey, frameKey, splitKey] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+}
+
 // MARK: - ChannelLostRecorder
 
 /// Counts a vsock feature service's `onChannelLost` invocations, optionally

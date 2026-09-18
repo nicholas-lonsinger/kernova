@@ -7,19 +7,12 @@ import Testing
 /// Covers how `MainWindowController` takes New VM out of the toolbar while the
 /// sidebar is collapsed and puts it back: in the live toolbar, in the layout
 /// AppKit autosaves, across a relaunch, and around the customize palette.
-///
-/// Each test runs on an autosave scope of its own and removes what AppKit saved
-/// under it, since the test host's `UserDefaults.standard` is the app's own
-/// domain.
 @Suite("MainWindowController New VM toolbar item", .admissionGated)
 @MainActor
 struct MainWindowControllerNewVMTests {
-    private let scope = "test-\(UUID().uuidString)"
+    private let autosave = MainWindowAutosaveScope()
     private let preferences = makeTestPreferences()
     private let newVM = "newVM"
-
-    private var toolbarAutosaveKey: String { "NSToolbar Configuration \(scope)Toolbar" }
-    private var splitAutosaveKey: String { "NSSplitView Subview Frames \(scope)Split" }
 
     /// A controller and the AppKit objects a test drives and reads it through.
     @MainActor
@@ -27,7 +20,6 @@ struct MainWindowControllerNewVMTests {
         let controller: MainWindowController
         let window: NSWindow
         let toolbar: NSToolbar
-        let splitView: NSSplitView
         let sidebar: NSSplitViewItem
 
         var layout: [String] { toolbar.items.map(\.itemIdentifier.rawValue) }
@@ -36,8 +28,7 @@ struct MainWindowControllerNewVMTests {
     private func makeSubject() throws -> Subject {
         let controller = MainWindowController(
             viewModel: makeLibraryViewModel(preferences: preferences),
-            preferences: preferences,
-            autosaveScope: scope)
+            autosaveScope: autosave.name)
         let window = try #require(controller.window)
         hideFromScreen(window)
         let split = try #require(window.contentViewController as? NSSplitViewController)
@@ -45,52 +36,31 @@ struct MainWindowControllerNewVMTests {
             controller: controller,
             window: window,
             toolbar: try #require(window.toolbar),
-            splitView: split.splitView,
             sidebar: try #require(split.splitViewItems.first { $0.behavior == .sidebar }))
     }
 
-    /// Closes `subject`'s window and removes what AppKit saved under this
-    /// test's scope.
     private func tearDown(_ subject: Subject) {
         subject.window.close()
-        // NSSplitView saves a turn after a change (measured on macOS 27.0 26A428);
-        // with the name cleared, a save still pending cannot write its key back
-        // after the removal below.
-        subject.splitView.autosaveName = nil
-        subject.window.setFrameAutosaveName("")
-        subject.toolbar.autosavesConfiguration = false
-        removeAutosavedState()
+        autosave.removeSavedState(of: subject.window)
     }
 
-    private func removeAutosavedState() {
-        for key in [toolbarAutosaveKey, "NSWindow Frame \(scope)Window", splitAutosaveKey] {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-
-    /// Runs a first launch on this test's scope that collapses the sidebar,
-    /// runs `whileCollapsed`, and closes, then waits for its split layout to be
-    /// saved — so the next controller reads what that launch saved, sidebar
-    /// collapsed.
-    ///
-    /// Returns the launch's toolbar layout from before the collapse.
-    private func runCollapsedFirstLaunch(
-        whileCollapsed body: (Subject) throws -> Void = { _ in }
-    ) async throws -> [String] {
+    /// Runs `body` on a first launch on this test's scope, closes it, and waits
+    /// for AppKit to save its split layout — which `body` must change — so the
+    /// next controller reads only what that launch saved.
+    private func runFirstLaunch<Result>(_ body: (Subject) throws -> Result) async throws -> Result {
         weak var firstToolbar: NSToolbar?
-        let canonical = try autoreleasepool {
+        let result = try autoreleasepool {
             let first = try makeSubject()
             firstToolbar = first.toolbar
-            let canonical = first.layout
-            first.sidebar.isCollapsed = true
+            let result: Result
             do {
-                try body(first)
+                result = try body(first)
             } catch {
                 tearDown(first)
                 throw error
             }
             first.window.close()
-            return canonical
+            return result
         }
 
         let saved = AsyncGate()
@@ -98,13 +68,13 @@ struct MainWindowControllerNewVMTests {
             forName: UserDefaults.didChangeNotification, object: nil, queue: nil
         ) { _ in saved.notify() }
         defer { NotificationCenter.default.removeObserver(observer) }
-        try await saved.wait { UserDefaults.standard.object(forKey: splitAutosaveKey) != nil }
+        try await saved.wait { UserDefaults.standard.object(forKey: autosave.splitKey) != nil }
 
         // "Toolbars with the same identifier are implicitly synchronized so that
         // they maintain the same state" (NSToolbar.h, `initWithIdentifier:`), so a
         // live first toolbar would hand the relaunch its layout directly.
         try #require(firstToolbar == nil, "The first launch's toolbar outlived it")
-        return canonical
+        return result
     }
 
     /// The toolbar layout AppKit saved for this scope. A saved configuration
@@ -112,7 +82,7 @@ struct MainWindowControllerNewVMTests {
     /// a missing list reads as that set.
     private func savedLayout(of subject: Subject) -> [String] {
         let saved =
-            UserDefaults.standard.dictionary(forKey: toolbarAutosaveKey)?["TB Item Identifiers"]
+            UserDefaults.standard.dictionary(forKey: autosave.toolbarKey)?["TB Item Identifiers"]
             as? [String]
         return saved
             ?? subject.controller.toolbarDefaultItemIdentifiers(subject.toolbar).map(\.rawValue)
@@ -193,10 +163,13 @@ struct MainWindowControllerNewVMTests {
 
     @Test("A relaunch re-adopts a collapse removal its saved layout kept, and restores New VM on expand")
     func relaunchReadoptsSavedRemoval() async throws {
-        defer { removeAutosavedState() }
-        let canonical = try await runCollapsedFirstLaunch { first in
+        defer { autosave.removeSavedState() }
+        let canonical = try await runFirstLaunch { first in
+            let canonical = first.layout
+            first.sidebar.isCollapsed = true
             first.toolbar.displayMode = .iconAndLabel
             try #require(!savedLayout(of: first).contains(newVM))
+            return canonical
         }
 
         let relaunched = try makeSubject()
@@ -214,8 +187,12 @@ struct MainWindowControllerNewVMTests {
 
     @Test("A relaunch with the sidebar collapsed takes New VM out again, though its saved layout has it")
     func collapsedRelaunchRemovesSavedNewVM() async throws {
-        defer { removeAutosavedState() }
-        let canonical = try await runCollapsedFirstLaunch()
+        defer { autosave.removeSavedState() }
+        let canonical = try await runFirstLaunch { first in
+            let canonical = first.layout
+            first.sidebar.isCollapsed = true
+            return canonical
+        }
 
         let relaunched = try makeSubject()
         defer { tearDown(relaunched) }
@@ -239,6 +216,29 @@ struct MainWindowControllerNewVMTests {
 
         try #require(!subject.sidebar.isCollapsed)
         #expect(subject.layout.contains(newVM))
+        #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
+    }
+
+    @Test("A New VM the user removed stays out through a collapse, an expand, and a relaunch")
+    func customizationRemovalStaysOut() async throws {
+        defer { autosave.removeSavedState() }
+        try await runFirstLaunch { first in
+            let index = try #require(first.layout.firstIndex(of: newVM))
+            first.toolbar.removeItem(at: index)
+            try #require(!savedLayout(of: first).contains(newVM))
+
+            first.sidebar.isCollapsed = true
+            #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
+            first.sidebar.isCollapsed = false
+
+            #expect(!first.layout.contains(newVM))
+            #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
+        }
+
+        let relaunched = try makeSubject()
+        defer { tearDown(relaunched) }
+
+        #expect(!relaunched.layout.contains(newVM))
         #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
     }
 

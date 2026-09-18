@@ -249,7 +249,7 @@ struct SidebarViewControllerTests {
     func appearingReloadsAfterOffScreenChange() {
         let viewModel = makeViewModel()
         viewModel.instances.append(VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())))
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
 
@@ -379,7 +379,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .stopped)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -400,7 +400,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -423,7 +423,7 @@ struct SidebarViewControllerTests {
         defer { task.cancel() }
         copying.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
         viewModel.instances.append(contentsOf: [instance, copying])
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -446,7 +446,7 @@ struct SidebarViewControllerTests {
             atPath: instance.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -465,7 +465,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -482,7 +482,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: UUID()))
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -497,7 +497,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -520,7 +520,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -538,7 +538,7 @@ struct SidebarViewControllerTests {
         // is running the guest.
         let instance = VMInstanceFixture.make(phase: .starting(sessionID: UUID()))
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -554,7 +554,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .capturingAtRest)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menuTitles = titles(of: controller.buildContextMenu(for: instance))
 
@@ -567,7 +567,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .stopped)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -590,7 +590,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .stopped)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -606,7 +606,7 @@ struct SidebarViewControllerTests {
         let instance = VMInstanceFixture.make()
         instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -737,7 +737,7 @@ struct SidebarViewControllerTests {
     @Test("widthToFitLongestRow is nil with no VMs")
     func fitWidthNilWhenEmpty() {
         let viewModel = makeViewModel()
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         #expect(controller.widthToFitLongestRow() == nil)
     }
@@ -746,13 +746,13 @@ struct SidebarViewControllerTests {
     func fitWidthTracksLongestName() {
         let shortModel = makeViewModel()
         shortModel.instances.append(VMInstanceFixture.make(name: "VM"))
-        let shortController = SidebarViewController(viewModel: shortModel, preferences: preferences)
+        let shortController = SidebarViewController(viewModel: shortModel)
         shortController.loadViewIfNeeded()
         shortController.view.layoutSubtreeIfNeeded()
 
         let longModel = makeViewModel()
         longModel.instances.append(VMInstanceFixture.make(name: "An extremely long virtual machine name"))
-        let longController = SidebarViewController(viewModel: longModel, preferences: preferences)
+        let longController = SidebarViewController(viewModel: longModel)
         longController.loadViewIfNeeded()
         longController.view.layoutSubtreeIfNeeded()
 
@@ -772,7 +772,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         viewModel.instances.append(VMInstanceFixture.make(name: "Alpha"))
         viewModel.instances.append(VMInstanceFixture.make(name: "Beta"))
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
 
@@ -800,7 +800,7 @@ struct SidebarViewControllerTests {
         // and reconcile it away, confounding the reload count below.
         storage.bundles[source.bundleURL] = source.configuration
         viewModel.instances.append(source)
-        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
 

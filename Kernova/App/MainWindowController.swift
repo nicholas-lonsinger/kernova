@@ -6,7 +6,7 @@ import KernovaLogging
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let viewModel: VMLibraryViewModel
-    private let preferences: AppPreferences
+    private var preferences: AppPreferences { viewModel.preferences }
     private let toolbarManager: VMToolbarManager
     private let splitViewController = SnapToFitSplitViewController()
     private let sidebarViewController: SidebarViewController
@@ -41,14 +41,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// `autosaveScope` prefixes the toolbar, window-frame, and split-view
     /// autosave names, which AppKit keeps in `UserDefaults.standard` whatever
-    /// `preferences` wraps.
-    init(
-        viewModel: VMLibraryViewModel,
-        preferences: AppPreferences = .shared,
-        autosaveScope: String = "KernovaMain"
-    ) {
+    /// the view model's preferences wrap.
+    init(viewModel: VMLibraryViewModel, autosaveScope: String) {
         self.viewModel = viewModel
-        self.preferences = preferences
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
