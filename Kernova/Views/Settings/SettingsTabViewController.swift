@@ -40,11 +40,9 @@ final class SettingsTabViewController: NSTabViewController {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SettingsTabViewController")
 
     private let viewModel: VMLibraryViewModel
-    private let preferences: AppPreferences
 
-    init(viewModel: VMLibraryViewModel, preferences: AppPreferences = .shared) {
+    init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
-        self.preferences = preferences
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -64,21 +62,19 @@ final class SettingsTabViewController: NSTabViewController {
         addTabViewItem(general)
 
         let reminders = NSTabViewItem(
-            viewController: RemindersSettingsViewController(
-                preferences: preferences, viewModel: viewModel))
+            viewController: RemindersSettingsViewController(viewModel: viewModel))
         reminders.label = "Reminders"
         reminders.image = Self.symbol("bell")
         addTabViewItem(reminders)
 
         let clipboard = NSTabViewItem(
-            viewController: ClipboardSettingsViewController(
-                preferences: preferences, viewModel: viewModel))
+            viewController: ClipboardSettingsViewController(viewModel: viewModel))
         clipboard.label = "Clipboard"
         clipboard.image = Self.symbol("clipboard")
         addTabViewItem(clipboard)
 
         let advanced = NSTabViewItem(
-            viewController: AdvancedSettingsViewController(preferences: preferences))
+            viewController: AdvancedSettingsViewController(preferences: viewModel.preferences))
         advanced.label = "Advanced"
         advanced.image = Self.symbol("gearshape.2")
         addTabViewItem(advanced)

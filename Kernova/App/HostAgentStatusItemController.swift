@@ -40,7 +40,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var isMenuOpen = false
 
     private let viewModel: VMLibraryViewModel
-    private let preferences: AppPreferences
+    private var preferences: AppPreferences { viewModel.preferences }
     /// Summons the GUI — `nil` opens the library, a VM id opens just that VM.
     private let onOpen: (UUID?) -> Void
     /// Opens the clipboard window of the VM a notice names.
@@ -93,14 +93,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     init(
         viewModel: VMLibraryViewModel,
-        preferences: AppPreferences = .shared,
         onOpen: @escaping (UUID?) -> Void,
         onOpenClipboard: @escaping (UUID) -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.viewModel = viewModel
-        self.preferences = preferences
         self.onOpen = onOpen
         self.onOpenClipboard = onOpenClipboard
         self.onQuit = onQuit

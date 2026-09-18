@@ -7,7 +7,7 @@ import AppKit
 /// non-resizable, matching the platform convention for settings.
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    convenience init(viewModel: VMLibraryViewModel) {
+    convenience init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
         // RATIONALE: deliberately *not* `NSWindow.withStableContentSize`, which the
         // main and clipboard windows use. That factory pins a fixed initial content
         // size, and this window has no single correct one — it is non-resizable and
@@ -25,7 +25,7 @@ final class SettingsWindowController: NSWindowController {
         // the moment the pane list or a pane's content changes (observed stretching
         // the first pane's cards over the excess). AppKit has no position-only
         // autosave, so `SettingsTabViewController` re-asserts the height on appear.
-        window.setFrameAutosaveName("KernovaSettings")
+        window.setFrameAutosaveName(autosaveScope.settingsFrame)
         self.init(window: window)
     }
 }

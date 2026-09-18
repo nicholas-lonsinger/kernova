@@ -48,7 +48,8 @@ final class VMLibraryViewModel {
     /// Held rather than read, for the reason ``sleepWake`` is.
     private let usbAccessories: USBAccessoryCoordinator?
 
-    private let preferences: AppPreferences
+    /// The preferences store this library session reads and writes.
+    let preferences: AppPreferences
 
     // MARK: - Library Forwarding
 

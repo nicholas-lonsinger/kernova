@@ -29,8 +29,8 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// long VM list from making the Settings window unreasonably tall.
     private static let maxPaneHeight: CGFloat = 520
 
-    private let preferences: AppPreferences
     private let viewModel: VMLibraryViewModel
+    private var preferences: AppPreferences { viewModel.preferences }
 
     private let menuBarQuitSwitch = NSSwitch()
     private let agentInstallSwitch = NSSwitch()
@@ -58,8 +58,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// Keeps the per-VM rows in sync with the library while the pane is visible.
     private var vmObservation: ObservationLoop?
 
-    init(preferences: AppPreferences = .shared, viewModel: VMLibraryViewModel) {
-        self.preferences = preferences
+    init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
         super.init(nibName: nil, bundle: nil)
         title = "Reminders"

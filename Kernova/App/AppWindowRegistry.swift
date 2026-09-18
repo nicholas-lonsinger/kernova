@@ -21,15 +21,21 @@ final class AppWindowRegistry {
         didSet { displayPlacement.residency = residency }
     }
 
+    private let autosaveScope: WindowAutosaveScope
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppWindowRegistry")
 
-    init(viewModel: VMLibraryViewModel, displayPlacement: VMDisplayPlacementController) {
+    init(
+        viewModel: VMLibraryViewModel,
+        displayPlacement: VMDisplayPlacementController,
+        autosaveScope: WindowAutosaveScope
+    ) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
+        self.autosaveScope = autosaveScope
         displayPlacement.host = self
     }
 
@@ -63,7 +69,8 @@ final class AppWindowRegistry {
             }
         } else {
             #log(Self.logger, .notice, "showLibrary: recreating main window controller")
-            let windowController = MainWindowController(viewModel: viewModel)
+            let windowController = MainWindowController(
+                viewModel: viewModel, autosaveScope: autosaveScope)
             if bringToFront {
                 windowController.showWindow(nil)
             } else {
@@ -83,7 +90,9 @@ final class AppWindowRegistry {
 
     func showSettings(_ sender: Any?) {
         residency?.prepareToPresentWindow()
-        let controller = settingsWindowController ?? SettingsWindowController(viewModel: viewModel)
+        let controller =
+            settingsWindowController
+            ?? SettingsWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
         settingsWindowController = controller
         NSApp.activate()
         controller.showWindow(sender)
@@ -104,7 +113,8 @@ final class AppWindowRegistry {
             return
         }
 
-        let controller = ClipboardWindowController(instance: instance, viewModel: viewModel)
+        let controller = ClipboardWindowController(
+            instance: instance, viewModel: viewModel, autosaveScope: autosaveScope)
         controller.onWillClose = { [weak self] in
             self?.clipboardWindows.removeValue(forKey: vmID)
         }

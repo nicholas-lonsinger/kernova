@@ -20,7 +20,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     /// is typed `NSViewController?`.
     private let clipboardContentVC: ClipboardContentViewController
 
-    init(instance: VMInstance, viewModel: VMLibraryViewModel) {
+    init(instance: VMInstance, viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
         self.instance = instance
 
         // Share the VM's host publisher so a manual "Copy to Mac" and the
@@ -42,7 +42,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         window.minSize = NSSize(width: 380, height: 300)
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName("Clipboard-\(instance.instanceID.uuidString)")
+        window.setFrameAutosaveName(autosaveScope.clipboardFrame(for: instance.instanceID))
         updateWindowTitle()
     }
 

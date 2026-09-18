@@ -80,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.run()
     }
 
-    init(isTestHost: Bool, preferences: AppPreferences = .shared) {
+    init(isTestHost: Bool) {
         // The one place the USB accessory service is built. The test host is
         // still this app, and an `AAUSBAccessoryListener` it registered would
         // take the accessories the user assigned to the copy they are actually
@@ -90,7 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel))
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: .app),
+            autosaveScope: .app)
         self.windows = windows
         // The one place the mode is branched on. Everything below takes the
         // residency it produced.
@@ -98,10 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             isTestHost
             ? TestHostResidencyController()
             : AppResidencyController(
-                viewModel: viewModel, preferences: preferences, windows: windows)
+                viewModel: viewModel, windows: windows)
         self.lifecycle = lifecycle
         self.mainMenu = MainMenuController(
-            viewModel: viewModel, preferences: preferences,
+            viewModel: viewModel,
             hasSoftQuit: lifecycle.softQuit != nil)
         self.termination = AppTerminationController(viewModel: viewModel)
 

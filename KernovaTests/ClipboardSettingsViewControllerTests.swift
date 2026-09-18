@@ -35,8 +35,7 @@ struct ClipboardSettingsViewControllerTests {
     /// Builds the pane and runs the appear-time layout the way
     /// NSTabViewController does at tab-switch time.
     private func makeLaidOutController() -> ClipboardSettingsViewController {
-        let controller = ClipboardSettingsViewController(
-            preferences: preferences, viewModel: makeViewModel())
+        let controller = ClipboardSettingsViewController(viewModel: makeViewModel())
         _ = controller.view
         controller.viewWillAppear()
         controller.view.setFrameSize(controller.preferredContentSize)

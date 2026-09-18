@@ -17,15 +17,16 @@ import Testing
 @MainActor
 struct AppResidencyUnhideTests {
     private let preferences = makeTestPreferences()
+    private let autosave = WindowAutosaveScope.forTest()
 
     private func makeController() -> AppResidencyController {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         return AppResidencyController(
             viewModel: viewModel,
-            preferences: preferences,
             windows: AppWindowRegistry(
                 viewModel: viewModel,
-                displayPlacement: VMDisplayPlacementController(viewModel: viewModel)))
+                displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+                autosaveScope: autosave))
     }
 
     // MARK: - The decision

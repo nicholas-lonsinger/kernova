@@ -24,14 +24,13 @@ final class ClipboardSettingsViewController: NSViewController {
         + "about 60 seconds in Finder, about 120 seconds in other apps. Kernova refuses a larger "
         + "paste up front rather than running out the clock and delivering nothing."
 
-    private let preferences: AppPreferences
     private let viewModel: VMLibraryViewModel
+    private var preferences: AppPreferences { viewModel.preferences }
 
     private let sizePopUp = NSPopUpButton()
     private let estimateCaption = makeGroupedFormCaption("")
 
-    init(preferences: AppPreferences = .shared, viewModel: VMLibraryViewModel) {
-        self.preferences = preferences
+    init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
         super.init(nibName: nil, bundle: nil)
         title = "Clipboard"
