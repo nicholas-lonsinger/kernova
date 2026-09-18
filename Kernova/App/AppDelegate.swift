@@ -15,12 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let mainMenu: MainMenuController
     /// The one owner of what the process is when no window is on screen, and of
     /// what a launch, a reopen and a summon do to it.
-    ///
-    /// The mode's single branch point: assigned once in `init` to the resident
-    /// app's ``AppResidencyController`` or the test host's
-    /// ``TestHostResidencyController``, so nothing downstream forks on which
-    /// process this is.
-    private let lifecycle: any AppResidencyHosting
+    private let lifecycle: AppResidencyController
     /// The one owner of what a quit does: the classification latches, the
     /// termination gate, the save pass, and the TCC relaunch. Strongly held:
     /// `NSAppleEventManager` does not retain the quit-event handler this
@@ -75,41 +70,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
-        let delegate = AppDelegate(isTestHost: isTestHost)
+        let delegate: any NSApplicationDelegate =
+            isTestHost ? TestHostDelegate() : AppDelegate()
         app.delegate = delegate
         app.run()
     }
 
-    init(isTestHost: Bool) {
-        // The one place the USB accessory service is built. The test host is
-        // still this app, and an `AAUSBAccessoryListener` it registered would
-        // take the accessories the user assigned to the copy they are actually
-        // running — so it claims none.
+    override init() {
         let viewModel = VMLibraryViewModel(
-            usbAccessoryService: isTestHost ? nil : USBAccessorySupport.makeService())
+            usbAccessoryService: USBAccessorySupport.makeService())
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: .app),
             autosaveScope: .app)
         self.windows = windows
-        // The one place the mode is branched on. Everything below takes the
-        // residency it produced.
-        let lifecycle: any AppResidencyHosting =
-            isTestHost
-            ? TestHostResidencyController()
-            : AppResidencyController(
-                viewModel: viewModel, windows: windows)
+        let lifecycle = AppResidencyController(viewModel: viewModel, windows: windows)
         self.lifecycle = lifecycle
-        self.mainMenu = MainMenuController(
-            viewModel: viewModel,
-            hasSoftQuit: lifecycle.softQuit != nil)
-        self.termination = AppTerminationController(viewModel: viewModel)
+        self.mainMenu = MainMenuController(viewModel: viewModel)
+        self.termination = AppTerminationController(viewModel: viewModel, residency: lifecycle)
 
         super.init()
 
         lifecycle.host = self
-        termination.residency = lifecycle.softQuit
         windows.residency = lifecycle
         mainMenu.host = self
         viewModel.onSurfaceLibrary = { [weak lifecycle] in
@@ -213,11 +196,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             })
     }
 
-    /// Never, in either mode. The resident app's `willClose` reconcile decides
-    /// between the Dock icon, a headless status-item app, and quitting, on a
-    /// presence answer that counts miniaturized windows and untracked panels
-    /// AppKit's own last-window rule does not — letting AppKit terminate too
-    /// would double-fire on a different predicate. XCTest ends the test host.
+    /// Never. The `willClose` reconcile decides between the Dock icon, a
+    /// headless status-item app, and quitting, on a presence answer that counts
+    /// miniaturized windows and untracked panels AppKit's own last-window rule
+    /// does not — letting AppKit terminate too would double-fire on a different
+    /// predicate.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -593,4 +576,41 @@ extension AppDelegate: DisplayBootGeometryProviding {
         guard pointSize.width > 0, pointSize.height > 0 else { return nil }
         return DisplayBootSurface(pointSize: pointSize, backingScaleFactor: scale)
     }
+}
+
+// MARK: - Test Host
+
+/// The unit-test host's delegate: this bundle's `NSApplication`, with none of
+/// the app behind it.
+///
+/// XCTest owns the process — it starts the tests once the app finishes
+/// launching and ends the process when they finish — and every window, view
+/// model and service a test needs, the test builds itself. So a test run claims
+/// nothing the copy of Kernova the developer is running holds: no library read,
+/// no staging reclaim, no USB accessory, command socket, status item or
+/// Spotlight entry.
+@MainActor
+private final class TestHostDelegate: NSObject, NSApplicationDelegate {
+    /// Takes Launch Services' request for the app's default surface without
+    /// opening anything.
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    /// Never: a test that closes the last window it made leaves the host up for
+    /// the tests after it.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    /// `Kernova.sdef` ships in this bundle, so the process is scriptable however
+    /// it was launched, and Cocoa resolves the application's `virtual machine`
+    /// element through whichever delegate is installed. A key no delegate claims
+    /// reaches `NSApplication`'s own KVC and raises `NSUnknownKeyException`.
+    func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
+        key == AppDelegate.virtualMachinesKey
+    }
+
+    /// No VM: the test host reads no library.
+    @objc var virtualMachines: [VMScriptObject] { [] }
 }

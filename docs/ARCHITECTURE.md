@@ -7,11 +7,11 @@ nothing here restates one.
 
 ## Composition
 
-`AppDelegate.init` (`Kernova/App/`) is the composition root and the one branch
-on process mode. It builds `VMLibraryViewModel`, then `AppWindowRegistry`
-(holding `VMDisplayPlacementController`), one `AppResidencyHosting` —
-`AppResidencyController`, or `TestHostResidencyController` under XCTest —
-`MainMenuController` and `AppTerminationController`.
+`AppDelegate.init` (`Kernova/App/`) is the composition root. It builds
+`VMLibraryViewModel`, then `AppWindowRegistry` (holding
+`VMDisplayPlacementController`), `AppResidencyController`, `MainMenuController`
+and `AppTerminationController`. `AppDelegate.main()` is the one branch on
+process mode, and the unit-test host takes the arm that builds none of it.
 
 `VMLibraryViewModel.init` (`Kernova/ViewModels/`) builds everything beneath the
 UI: `VMLifecycleCoordinator` over the services, `VMLibrary`,

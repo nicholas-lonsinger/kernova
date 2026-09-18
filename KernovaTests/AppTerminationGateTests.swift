@@ -40,9 +40,13 @@ struct AppTerminationGateTests {
         }
     }
 
-    private func makeController() -> (AppTerminationController, VMLibraryViewModel) {
+    private func makeController(
+        residency: any SoftQuitHosting = SoftQuitSpy()
+    ) -> (AppTerminationController, VMLibraryViewModel) {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        return (AppTerminationController(viewModel: viewModel), viewModel)
+        return (
+            AppTerminationController(viewModel: viewModel, residency: residency), viewModel
+        )
     }
 
     /// An Apple event of `eventClass`/`eventID`, as one arrives.
@@ -130,20 +134,10 @@ struct AppTerminationGateTests {
         #expect(spy.endings == [.deferredReply])
     }
 
-    @Test("With nothing to downgrade into, every quit terminates")
-    func noResidencyTerminates() {
-        let (controller, viewModel) = makeController()
-        viewModel.keepInMenuBarOnQuit = true
-
-        #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .terminateNow)
-    }
-
     @Test("A resident app that stays in the status bar downgrades a quit to a GUI close")
     func residentQuitClosesTheGUI() async throws {
-        let (controller, viewModel) = makeController()
         let spy = SoftQuitSpy()
-        controller.residency = spy
+        let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = true
 
         #expect(!controller.shouldTerminateOnQuit)
@@ -156,9 +150,8 @@ struct AppTerminationGateTests {
 
     @Test("A resident app that does not stay in the status bar terminates")
     func residentQuitWithoutStatusBarTerminates() {
-        let (controller, viewModel) = makeController()
         let spy = SoftQuitSpy()
-        controller.residency = spy
+        let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = false
 
         #expect(controller.shouldTerminateOnQuit)
@@ -168,9 +161,8 @@ struct AppTerminationGateTests {
 
     @Test("A quit a script sent terminates and saves, whichever handler delivered it")
     func scriptedQuitTerminates() {
-        let (controller, viewModel) = makeController()
         let spy = SoftQuitSpy()
-        controller.residency = spy
+        let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = true
         // launchd: alive, and no application — the shape of `osascript`'s quit.
         controller.quitSenderPIDForTesting = { 1 }
@@ -182,9 +174,8 @@ struct AppTerminationGateTests {
 
     @Test("A quit the app sent itself stays resident")
     func selfSentQuitStaysResident() async throws {
-        let (controller, viewModel) = makeController()
         let spy = SoftQuitSpy()
-        controller.residency = spy
+        let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = true
         controller.quitSenderPIDForTesting = { getpid() }
 
@@ -203,9 +194,8 @@ struct AppTerminationGateTests {
 
     @Test("A terminate-and-save classification outranks staying in the status bar, and never clears")
     func terminateAndSaveLatches() {
-        let (controller, viewModel) = makeController()
         let spy = SoftQuitSpy()
-        controller.residency = spy
+        let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = true
 
         controller.latchQuitClassification(.terminateAndSave)
@@ -221,9 +211,8 @@ struct AppTerminationGateTests {
 
     @Test("A terminate-and-relaunch classification latches the same way")
     func terminateAndRelaunchLatches() {
-        let (controller, viewModel) = makeController()
         let spy = SoftQuitSpy()
-        controller.residency = spy
+        let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = true
 
         controller.latchQuitClassification(.terminateAndRelaunch)

@@ -26,8 +26,7 @@ struct MainMenuRebuildTests {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         viewModel.keepInMenuBarOnQuit = keepInMenuBar
         let controller = MainMenuController(
-            viewModel: viewModel, hasSoftQuit: true,
-            hasBundledGuestAgentDisk: true)
+            viewModel: viewModel, hasBundledGuestAgentDisk: true)
         let host = StubMenuHost(instance: instance)
         controller.host = host
         return Fixture(
