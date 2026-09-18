@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
-import os
 
 /// Republishes a guest agent's emitted log records into the host's logging
 /// stack so guest log output appears alongside host logs in Console.app.
@@ -162,31 +161,31 @@ protocol GuestLogEmitter: Sendable {
     func emit(_ record: Kernova_V1_LogRecord)
 }
 
-/// Republishes guest log records via `os.Logger`.
+/// Republishes guest log records via `KernovaLogger`.
 ///
 /// Each record is emitted at the closest matching host log level, with the
 /// guest's subsystem and category preserved in the message body.
 struct OSLogGuestLogEmitter: GuestLogEmitter {
-    private let logger: Logger
+    private let logger: KernovaLogger
 
     init(label: String) {
         // Use a distinct subsystem so guest logs are filterable separately
         // from host logs in Console.app and `log stream` queries.
-        self.logger = Logger(subsystem: "app.kernova.guest", category: label)
+        self.logger = KernovaLogger(subsystem: "app.kernova.guest", category: label)
     }
 
     func emit(_ record: Kernova_V1_LogRecord) {
         let composed = Composition(record: record)
-        let level = Self.osLogType(record.level)
+        let level = Self.level(record.level)
         // Two arguments, so the host's `logd` redacts the guest's private values
         // by default and reveals them exactly where it would reveal a host
         // record's own — under Xcode or a logging profile.
         guard !composed.cleartext.isEmpty else {
-            logger.log(level: level, "\(composed.placeholder, privacy: .public)")
+            #log(logger, level, "\(composed.placeholder, privacy: .public)")
             return
         }
-        logger.log(
-            level: level,
+        #log(
+            logger, level,
             "\(composed.placeholder, privacy: .public) \(composed.cleartext, privacy: .private)")
     }
 
@@ -211,14 +210,15 @@ struct OSLogGuestLogEmitter: GuestLogEmitter {
         }
     }
 
-    private static func osLogType(_ level: Kernova_V1_LogRecord.Level) -> OSLogType {
+    private static func level(_ level: Kernova_V1_LogRecord.Level) -> KernovaLogLevel {
         switch level {
         case .debug: .debug
         case .info: .info
-        case .notice: .default
-        case .warning, .error: .error
+        case .notice: .notice
+        case .warning: .warning
+        case .error: .error
         case .fault: .fault
-        case .unspecified, .UNRECOGNIZED: .default
+        case .unspecified, .UNRECOGNIZED: .notice
         }
     }
 }
