@@ -50,12 +50,6 @@ protocol AppResidencyHosting: WindowResidencyHosting {
     var scriptingGateway: VMScriptingGateway? { get }
     /// Brings the process up for the launch it was given.
     func start(provenance: AppResidencyController.LaunchProvenance)
-    /// The answer to `applicationShouldTerminateAfterLastWindowClosed(_:)`.
-    var terminatesAfterLastWindowClosed: Bool { get }
-    /// Records that the app is about to become active, so the reopen that may
-    /// follow can tell a dock click that activated the app from one on an
-    /// already-active app.
-    func noteWillBecomeActive()
     /// The unhide leg — every window is back on screen after a ⌘H, so whatever
     /// the app's windows did meanwhile is now legible to a reconcile.
     func noteDidUnhide()
@@ -703,17 +697,6 @@ final class AppResidencyController: AppResidencyHosting {
     /// the Dock's Quit land on ``closeGUIForSoftQuit()`` rather than terminating.
     var softQuit: (any SoftQuitHosting)? { self }
 
-    /// Never: the global `willClose` observer's reconcile decides between the
-    /// Dock icon, a headless status-item app, and quitting. It keys on
-    /// ``hasVisibleUserWindow``, which counts miniaturized windows and untracked
-    /// panels that AppKit's own last-window rule does not, so letting AppKit
-    /// terminate too would double-fire on a different predicate.
-    var terminatesAfterLastWindowClosed: Bool { false }
-
-    /// Nothing to record: the reopen leg reads the window list, not whether the
-    /// activation that may precede it was the reopen's own.
-    func noteWillBecomeActive() {}
-
     /// Closes the GUI, drops to the status item, then anchors the soft-quit
     /// reminder — in that order.
     ///
@@ -943,20 +926,3 @@ final class AppResidencyController: AppResidencyHosting {
 /// Where a downgraded quit lands: ``closeGUIForSoftQuit()`` is the whole
 /// conformance.
 extension AppResidencyController: SoftQuitHosting {}
-
-/// Observes every instance's ``VMInstance/isKeepingAppAlive`` so the process can
-/// settle when the last one flips inactive.
-@MainActor
-func observeGuestLiveness(
-    of viewModel: VMLibraryViewModel, apply: @escaping () -> Void
-) -> ObservationLoop {
-    observeRecurring(
-        track: { [weak viewModel] in
-            guard let viewModel else { return }
-            for instance in viewModel.instances {
-                _ = instance.isKeepingAppAlive
-            }
-        },
-        apply: apply
-    )
-}

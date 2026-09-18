@@ -96,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // residency it produced.
         let lifecycle: any AppResidencyHosting =
             isTestHost
-            ? TestHostResidencyController(viewModel: viewModel, windows: windows)
+            ? TestHostResidencyController()
             : AppResidencyController(
                 viewModel: viewModel, preferences: preferences, windows: windows)
         self.lifecycle = lifecycle
@@ -212,12 +212,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             })
     }
 
+    /// Never, in either mode. The resident app's `willClose` reconcile decides
+    /// between the Dock icon, a headless status-item app, and quitting, on a
+    /// presence answer that counts miniaturized windows and untracked panels
+    /// AppKit's own last-window rule does not — letting AppKit terminate too
+    /// would double-fire on a different predicate. XCTest ends the test host.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        lifecycle.terminatesAfterLastWindowClosed
-    }
-
-    func applicationWillBecomeActive(_ notification: Notification) {
-        lifecycle.noteWillBecomeActive()
+        false
     }
 
     func applicationDidUnhide(_ notification: Notification) {

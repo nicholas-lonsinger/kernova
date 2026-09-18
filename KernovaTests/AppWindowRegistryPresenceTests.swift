@@ -54,10 +54,11 @@ struct AppWindowRegistryPresenceTests {
     }
 
     @Test("The library window counts, however miniaturized windows are treated")
-    func libraryShown() {
+    func libraryShown() throws {
         let registry = makeRegistry()
         defer { registry.closeAll() }
         registry.showLibrary(bringToFront: true)
+        hideFromScreen(try #require(registry.libraryWindow))
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
@@ -69,6 +70,7 @@ struct AppWindowRegistryPresenceTests {
         defer { registry.closeAll() }
         registry.showLibrary(bringToFront: true)
         let window = try #require(registry.libraryWindow)
+        hideFromScreen(window)
 
         // AppKit reports the miniaturize a runloop turn later — the window is
         // still `isVisible` when `miniaturize(_:)` returns — so the wait is
@@ -86,10 +88,11 @@ struct AppWindowRegistryPresenceTests {
     }
 
     @Test("The Settings window counts on its own")
-    func settingsShown() {
+    func settingsShown() throws {
         let registry = makeRegistry()
         defer { registry.closeAll() }
         registry.showSettings(nil)
+        hideFromScreen(try #require(registry.settingsWindow))
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
     }
@@ -101,6 +104,7 @@ struct AppWindowRegistryPresenceTests {
         let instance = makeClipboardEligibleInstance()
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
+        hideFromScreen(window)
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
 
         // `close()` dispatches `windowWillClose` synchronously, which is what
@@ -120,6 +124,7 @@ struct AppWindowRegistryPresenceTests {
 
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
+        hideFromScreen(window)
 
         #expect(host.prepareCount == 1)
 

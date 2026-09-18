@@ -58,6 +58,15 @@ struct DetailAlertsPresenterTests {
         return (DetailAlertsPresenter(viewModel: viewModel), viewModel)
     }
 
+    /// A window for the presenter to put its sheets on, ordered in: a sheet on
+    /// a window that isn't goes up on the display by itself.
+    private func makeWindow() -> NSWindow {
+        let window = makeTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 480, height: 320))
+        window.orderFront(nil)
+        return window
+    }
+
     /// An attachment-free Linux VM: `externalAttachments` returns `[]` without
     /// the off-main probe, so resolution finishes fast.
     private func makeInstance(name: String = "Test VM", in viewModel: VMLibraryViewModel)
@@ -182,9 +191,7 @@ struct DetailAlertsPresenterTests {
     @Test("A delete gesture while the sheet is shown is ignored, not dropped")
     func ignoreWhileSheetShown() async {
         let (presenter, viewModel) = makePresenter()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-            styleMask: [.titled], backing: .buffered, defer: true)
+        let window = makeWindow()
         presenter.start(window: window)
         let vmA = makeInstance(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
@@ -206,9 +213,7 @@ struct DetailAlertsPresenterTests {
     @Test("A delete after teardown during a shown sheet is accepted, not blocked")
     func deleteAcceptedAfterStopDuringShownSheet() async {
         let (presenter, viewModel) = makePresenter()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-            styleMask: [.titled], backing: .buffered, defer: true)
+        let window = makeWindow()
         presenter.start(window: window)
         let vmA = makeInstance(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
@@ -493,9 +498,7 @@ struct DetailAlertsPresenterTests {
     @Test("Answering one pairing prompt leaves the next one able to be shown")
     func answeringAPairingPromptFreesTheSlot() throws {
         let (presenter, viewModel) = makePresenter()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-            styleMask: [.titled], backing: .buffered, defer: true)
+        let window = makeWindow()
         presenter.start(window: window)
         let instance = makeInstance(name: "Work", in: viewModel)
         let answers = PairingAnswers()
@@ -532,9 +535,7 @@ struct DetailAlertsPresenterTests {
     @Test("A pairing prompt raised while another alert is up is answered as a hold")
     func aPairingPromptBehindAnotherAlertHolds() throws {
         let (presenter, viewModel) = makePresenter()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-            styleMask: [.titled], backing: .buffered, defer: true)
+        let window = makeWindow()
         presenter.start(window: window)
         let instance = makeInstance(name: "Work", in: viewModel)
         let answers = PairingAnswers()
@@ -578,12 +579,6 @@ struct DetailAlertsPresenterTests {
     /// asking twice — which is what the presenter tells apart.
     private static let accountVMID =
         UUID(uuidString: "5E00A1A0-0000-4000-8000-000000000001") ?? UUID()
-
-    private func makeWindow() -> NSWindow {
-        NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-            styleMask: [.titled], backing: .buffered, defer: true)
-    }
 
     @Test("An account prompt with no window to ask in starts nothing")
     func anAccountPromptWithNoWindowIsCancelled() {

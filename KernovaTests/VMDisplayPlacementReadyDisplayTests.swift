@@ -113,6 +113,7 @@ struct VMDisplayPlacementReadyDisplayTests {
         placement.readyDisplay(for: instance)
 
         let window = try #require(placement.window(for: instance.instanceID))
+        hideFromScreen(window)
         #expect(window.isVisible)
         #expect(!window.isKeyWindow)
         #expect(!window.styleMask.contains(.fullScreen))

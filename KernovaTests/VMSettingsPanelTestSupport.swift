@@ -52,7 +52,7 @@ func registerSettingsInstance(_ instance: VMInstance, in viewModel: VMLibraryVie
 /// `NSApplication.didBecomeActiveNotification` is posted process-wide, and a
 /// pane subscribes to it in `viewDidAppear()` — which every fixture runs, while
 /// almost none run the `viewWillDisappear()` that unsubscribes. Defaulting to a
-/// fresh center per pane means a click on the test host's own window reaches no
+/// fresh center per pane means an activation of the test host reaches no
 /// controller a suite is still holding. A test that drives activation itself
 /// passes a center it holds.
 @MainActor

@@ -81,12 +81,8 @@ struct VMToolbarManagerTests {
         let delegate = ToolbarTestDelegate(manager: manager, defaultItems: defaultItems)
         let toolbar = NSToolbar(identifier: "test-\(UUID().uuidString)")
         toolbar.delegate = delegate
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = makeTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 400, height: 300))
         window.toolbar = toolbar
         return (toolbar, window, delegate)
     }

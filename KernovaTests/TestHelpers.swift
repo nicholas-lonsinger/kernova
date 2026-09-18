@@ -282,15 +282,54 @@ func isVisible(_ view: NSView, within root: NSView) -> Bool {
 
 // MARK: - AppKit window factory
 
-/// Builds a plain window with `isReleasedWhenClosed` disarmed.
+/// A window that stays beyond every display however AppKit moves it: the
+/// initializer clamps a titled window's content rect onto one, ordering in runs
+/// `constrainFrameRect(_:to:)`, and a sheet slides its parent into view through
+/// `setFrameOrigin(_:)`. It animates nothing, since AppKit draws a close
+/// animation as a window of its own.
+private final class ParkedTestWindow: NSWindow {
+    /// Right of the bounding box of every display, where no screen reaches.
+    private static var parkedOrigin: NSPoint {
+        let displays = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
+        guard !displays.isNull else { return .zero }
+        return NSPoint(x: displays.maxX + 1_000, y: displays.minY)
+    }
+
+    override init(
+        contentRect: NSRect, styleMask style: NSWindow.StyleMask,
+        backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool
+    ) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
+        setFrameOrigin(Self.parkedOrigin)
+        animationBehavior = .none
+    }
+
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        NSRect(origin: Self.parkedOrigin, size: frameRect.size)
+    }
+
+    override func setFrameOrigin(_ point: NSPoint) {
+        super.setFrameOrigin(Self.parkedOrigin)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(NSRect(origin: Self.parkedOrigin, size: frameRect.size), display: flag)
+    }
+}
+
+/// Builds a window beyond every display — `isVisible` once ordered in, able to
+/// take key and carry a sheet, and never in front of the person at the Mac —
+/// with `isReleasedWhenClosed` disarmed; the one way a test makes a window.
 ///
 /// The default `true` double-releases an ARC-owned `NSWindow` on `close()`
 /// (see `SettingsWindowController`'s own `isReleasedWhenClosed = false` for the
 /// same reason) — fatal under ARC.
 @MainActor
-func makeTestWindow(styleMask: NSWindow.StyleMask) -> NSWindow {
-    let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+func makeTestWindow(
+    styleMask: NSWindow.StyleMask, contentSize: NSSize = NSSize(width: 200, height: 100)
+) -> NSWindow {
+    let window = ParkedTestWindow(
+        contentRect: NSRect(origin: .zero, size: contentSize),
         styleMask: styleMask,
         backing: .buffered,
         defer: false
@@ -299,12 +338,26 @@ func makeTestWindow(styleMask: NSWindow.StyleMask) -> NSWindow {
     return window
 }
 
-/// Hosts `view` as an on-screen window's content view, for behavior that only
-/// runs against one.
+/// Makes a window the app itself put up invisible and click-through, still
+/// `isVisible` to AppKit, for a test that needs one of the app's own windows.
+///
+/// Moving it beyond the displays instead leaves part of it on one: AppKit
+/// keeps a visible titled window's edge on screen. The window server first
+/// draws a window when the main-actor turn that ordered it in ends, so call
+/// this in that turn, with no suspension after the show.
+@MainActor
+func hideFromScreen(_ window: NSWindow) {
+    window.alphaValue = 0
+    window.ignoresMouseEvents = true
+}
+
+/// Hosts `view` as the content view of a window ordered in — beyond every
+/// display, as ``makeTestWindow(styleMask:contentSize:)`` places it — for
+/// behavior that only runs against one.
 ///
 /// `ScrollMoreIndicator` holds its scroller flash until there is a visible
-/// window to animate the fade-in against, so a flash assertion made off screen
-/// asserts the opposite of what the app does.
+/// window to animate the fade-in against, so a flash assertion made against a
+/// window never ordered in asserts the opposite of what the app does.
 ///
 /// `view` becomes the content view rather than a bare subview: a pane root with
 /// `translatesAutoresizingMaskIntoConstraints` off and no pinning constraints

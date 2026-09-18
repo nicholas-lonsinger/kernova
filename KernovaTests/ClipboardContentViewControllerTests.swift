@@ -891,9 +891,8 @@ struct ClipboardContentChipTests {
         let instance = makeClipboardInstance()
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
-            styleMask: [.titled], backing: .buffered, defer: true)
+        let window = makeTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 480, height: 360))
         window.contentViewController = vc
         vc.view.layoutSubtreeIfNeeded()
 
@@ -904,9 +903,8 @@ struct ClipboardContentChipTests {
     @Test("a named content type reserves the chip's band")
     func namedContentTypeReservesTheBand() {
         let (vc, _) = makeController(content: ClipboardContent(text: "buffer text"))
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
-            styleMask: [.titled], backing: .buffered, defer: true)
+        let window = makeTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 480, height: 360))
         window.contentViewController = vc
         vc.view.layoutSubtreeIfNeeded()
 
