@@ -12,8 +12,7 @@ import Testing
 @Suite("MainMenuController validation", .serialized, .admissionGated)
 @MainActor
 struct MainMenuValidationTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.mainmenuvalidation")
+    private let preferences = makeTestPreferences()
 
     /// The controller under test with what it holds weakly — the host — kept
     /// alive alongside it.

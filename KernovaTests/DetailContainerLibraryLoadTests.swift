@@ -10,7 +10,7 @@ import KernovaTestSupport
 @Suite("DetailContainer library-load state", .serialized, .admissionGated)
 @MainActor
 struct DetailContainerLibraryLoadTests {
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.detail-load")
+    private let preferences = makeTestPreferences()
 
     private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
         -> VMLibraryViewModel

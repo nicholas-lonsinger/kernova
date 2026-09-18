@@ -8,8 +8,7 @@ import Testing
 @Suite("VM Overview Resolver Tests", .serialized, .admissionGated)
 @MainActor
 struct VMOverviewResolverTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmoverviewresolver")
+    private let preferences = makeTestPreferences()
 
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
 

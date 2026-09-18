@@ -6,9 +6,6 @@ import Testing
 /// Shared fixtures for the app-level suites: the ``MainMenuController`` ones and
 /// every suite that needs a mocked ``VMLibraryViewModel`` to build an app
 /// component over.
-///
-/// Each suite passes its own `suiteName` for preferences: a defaults domain
-/// shared across suites running in parallel is a flake source.
 
 /// Stands in for `AppDelegate` as the menu's host, answering with one fixed VM.
 ///

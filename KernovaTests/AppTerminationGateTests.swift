@@ -26,8 +26,7 @@ import Testing
 @Suite("AppTerminationController gate", .serialized, .admissionGated)
 @MainActor
 struct AppTerminationGateTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.apptermination")
+    private let preferences = makeTestPreferences()
 
     /// Records the GUI close a downgraded quit asks the residency cluster for.
     @MainActor

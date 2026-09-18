@@ -138,8 +138,7 @@ struct ClipboardPassthroughCoordinatorTests {
             stagingTempRoot: stagingRoot)
         let instance = VMInstanceFixture.make(
             name: "Passthrough VM", guestOS: .macOS,
-            preferences: preferences
-                ?? makeEphemeralPreferences(suiteName: "test.kernova.passthrough-instance"))
+            preferences: preferences ?? makeTestPreferences())
         let service = FakePassthroughService()
         let reports = ClipboardTransferReports()
         service.reporter = reports.reporter
@@ -710,7 +709,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
     @Test("raising the ceiling republishes the offer the old one refused")
     func raisingTheCeilingRepublishes() async throws {
-        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.passthrough-raise")
+        let preferences = makeTestPreferences()
         preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
         let h = try await makeBudgetRefusedHarness(preferences: preferences)
         defer {
@@ -738,7 +737,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
     @Test("a ceiling raised over content the user has since copied leaves their clipboard alone")
     func raisingTheCeilingSparesAUserCopy() async throws {
-        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.passthrough-user-copy")
+        let preferences = makeTestPreferences()
         preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
         let h = try await makeBudgetRefusedHarness(preferences: preferences)
         defer {
@@ -767,7 +766,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
     @Test("a ceiling that did not rise republishes nothing")
     func anUnraisedCeilingRepublishesNothing() async throws {
-        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.passthrough-lower")
+        let preferences = makeTestPreferences()
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
         let h = try await makeBudgetRefusedHarness(preferences: preferences)
         defer {

@@ -11,9 +11,7 @@ struct VMLibraryTests {
     ///
     /// Fresh per test (the struct is re-instantiated).
     private let failures = MockLibraryFailureSink()
-    /// Isolated, pre-cleaned preferences so selection/order persistence never
-    /// touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmlibrary.core")
+    private let preferences = makeTestPreferences()
     /// Records trash/remove requests so nothing ever lands in the user's Trash.
     private let fileSystem = MockFileSystem()
 

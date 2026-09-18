@@ -10,7 +10,7 @@ import Testing
 @MainActor
 struct VMLibraryViewModelEphemeralTests {
     private let presenter = MockVMLibraryPresenting()
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.ephemeral")
+    private let preferences = makeTestPreferences()
 
     private struct Harness {
         let viewModel: VMLibraryViewModel

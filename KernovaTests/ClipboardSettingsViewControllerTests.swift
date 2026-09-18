@@ -17,7 +17,7 @@ struct ClipboardSettingsViewControllerTests {
     private let preferences: AppPreferences
 
     init() {
-        self.preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-settings")
+        self.preferences = makeTestPreferences()
     }
 
     private func makeViewModel() -> VMLibraryViewModel {

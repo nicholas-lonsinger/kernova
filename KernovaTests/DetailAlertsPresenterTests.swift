@@ -33,10 +33,7 @@ import Testing
 @Suite("DetailAlertsPresenter Tests", .serialized, .admissionGated)
 @MainActor
 struct DetailAlertsPresenterTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.detailalerts")
+    private let preferences = makeTestPreferences()
 
     /// A presenter and the library every VM below is listed in.
     ///

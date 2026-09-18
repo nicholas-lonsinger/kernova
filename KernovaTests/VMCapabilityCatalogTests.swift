@@ -10,7 +10,7 @@ import Testing
 @Suite("VMCapabilityCatalog Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCapabilityCatalogTests {
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.capabilities")
+    private let preferences = makeTestPreferences()
 
     private struct Harness {
         let catalog: VMCapabilityCatalog

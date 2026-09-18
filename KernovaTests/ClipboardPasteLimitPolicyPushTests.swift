@@ -53,7 +53,7 @@ struct ClipboardPasteLimitPolicyPushTests {
 
     @Test("changing the ceiling re-pushes policy to a connected guest, without a reconnect")
     func changingTheCeilingRePushes() async throws {
-        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.ceiling-push")
+        let preferences = makeTestPreferences()
         let viewModel = VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),

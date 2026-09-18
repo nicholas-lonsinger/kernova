@@ -6,9 +6,6 @@ import Testing
 
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the
 /// shell's own and the six per-panel ones.
-///
-/// Each suite passes its own `suiteName` for preferences: a defaults domain
-/// shared across suites running in parallel is a flake source.
 
 /// The library the pane reads through. `vmnetNetworks` and `entitled` reach the
 /// slot registry, which is what answers every surface's IP address row.

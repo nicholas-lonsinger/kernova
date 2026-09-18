@@ -10,10 +10,7 @@ import Virtualization
 @Suite("VM Settings Storage Panel Tests", .serialized, .admissionGated)
 @MainActor
 struct VMSettingsStoragePanelTests {
-    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
-    ///
-    /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmsettings.storage")
+    private let preferences = makeTestPreferences()
 
     private func makeViewModel() -> VMLibraryViewModel {
         makeSettingsViewModel(preferences: preferences)

@@ -10,9 +10,9 @@ import Virtualization
 @testable import Kernova
 
 // Bundle-specific test helpers for KernovaTests. The event-driven/poll wait
-// primitives (`AsyncGate`, `waitUntil`, `TestFailure`), the ephemeral-
-// `UserDefaults` helpers (`makeEphemeralDefaults`, `withEphemeralDefaults`),
-// and the blocking-bridge GCD hop (`offCooperativePool`) live in the shared
+// primitives (`AsyncGate`, `waitUntil`, `TestFailure`), the in-memory
+// `UserDefaults` double (`MemoryUserDefaults`, `makeTestDefaults`), and the
+// blocking-bridge GCD hop (`offCooperativePool`) live in the shared
 // `KernovaTestSupport` package product — see its doc comments.
 //
 // `waitForChange` below is KernovaTests-only: it observes `@MainActor`
@@ -21,13 +21,14 @@ import Virtualization
 // — the GuestAgent/KernovaKit bundles' predicates read `Sendable` boxes
 // (`AtomicInt`, `PolicyBox`) with no such observable type to track.
 
-// MARK: - Ephemeral UserDefaults
+// MARK: - In-memory preferences
 
-/// Wraps `makeEphemeralDefaults` (`KernovaTestSupport`) in an `AppPreferences`, for suites that only
-/// need the typed wrapper (e.g. to construct a `VMLibraryViewModel`) and never
-/// inspect the raw `UserDefaults` store directly.
-func makeEphemeralPreferences(suiteName: String) -> AppPreferences {
-    AppPreferences(defaults: makeEphemeralDefaults(suiteName: suiteName))
+/// Wraps `makeTestDefaults` (`KernovaTestSupport`) in an `AppPreferences`, for
+/// suites that only need the typed wrapper (e.g. to construct a
+/// `VMLibraryViewModel`) and never inspect the raw `UserDefaults` store
+/// directly.
+func makeTestPreferences() -> AppPreferences {
+    AppPreferences(defaults: makeTestDefaults())
 }
 
 // MARK: - VZ error fixtures

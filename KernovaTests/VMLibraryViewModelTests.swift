@@ -11,12 +11,9 @@ import Virtualization
 @MainActor
 struct VMLibraryViewModelTests {
     private let presenter = MockVMLibraryPresenting()
-    /// Isolated, pre-cleaned preferences so selection/order persistence never
-    /// touches the real `.standard` domain.
-    ///
     /// Fresh per test (the struct is re-instantiated), so each test starts from
-    /// an empty suite.
-    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmlibrary")
+    /// an empty store.
+    private let preferences = makeTestPreferences()
     /// Fresh per test (the struct is re-instantiated).
     ///
     /// Records trash/remove requests so delete flows are asserted on the
