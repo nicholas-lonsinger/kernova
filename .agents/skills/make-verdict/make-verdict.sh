@@ -14,12 +14,18 @@
 #
 # `--from-log` reports an existing log and runs nothing. Otherwise the target
 # runs synchronously in the foreground with no timeout, poll, or retry of its
-# own. The log lands in artifacts/make-verdict/ (KERNOVA_VERDICT_DIR overrides)
-# beside a copy of the verdict, which a caller that lost the run's completion
-# notification reads instead of starting a second run.
+# own.
+#
+# Under artifacts/make-verdict/ (KERNOVA_VERDICT_DIR overrides), a run writes
+# its log to <target>/<timestamp>-<pid>.log — a path no other process can
+# name, so the result bundle read back out of it is this run's own. Each
+# target's directory keeps the newest 5 logs. The verdict lands at
+# <target>.verdict, a path stable across runs that names that run's own log
+# and bundle, which a caller that lost the run's completion notification reads
+# instead of starting a second run.
 #
 # Output (stdout, nothing else):
-#   make-verdict: target=test suite=- duration=412s log=artifacts/make-verdict/test.log
+#   make-verdict: target=test suite=- duration=412s log=artifacts/make-verdict/test/20260918-143102-51234.log
 #   result=Failed total=3948 passed=3945 failed=3 skipped=0 xfail=0
 #   === VMConfigurationTests/defaultsMatchTemplate()
 #   VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
@@ -34,7 +40,8 @@
 #   3  no-tests-ran  the run passed but executed zero tests: the SUITE= filter
 #                    matched nothing, which xcodebuild reports as a success
 #   4  lint-failed   `make lint` reported findings
-#   5  setup-error   bad usage, xcodebuild missing, or the log or bundle unreadable
+#   5  setup-error   bad usage, xcodebuild missing, or the log or bundle
+#                    unreadable
 
 set -uo pipefail
 
@@ -63,38 +70,19 @@ out_dir="${KERNOVA_VERDICT_DIR:-artifacts/make-verdict}"
 # <target>.verdict is the completion signal for a caller whose shell call
 # outlived its timeout: removed before a run starts, renamed into place whole
 # on every exit — setup errors included — so a wait on it always ends and
-# never reads a partial file.
+# never reads a partial file. Its path is stable across runs; it names the log
+# and bundle of the run that wrote it, which are not.
 verdict_file="$out_dir/${target:-setup}.verdict"
 
-# One run at a time: a second start while one runs is refused here, before it
-# can touch the running run's log or verdict, so a caller never needs to look
-# for a running instance first.
-pid_file="$out_dir/make-verdict.pid"
 body="$(mktemp)"
-# Set only once this process holds the lock, so a --from-log report — which
-# takes no lock and may run while a real run is in flight — cannot release one
-# it does not own.
-owned_pid_file=
-trap 'rm -f "$body" "$body.out"; [ -z "$owned_pid_file" ] || rm -f "$owned_pid_file"' EXIT
-
-if [ -z "$from_log" ]; then
-    mkdir -p "$out_dir" 2>/dev/null || true
-    if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
-        echo "make-verdict.sh: a run is already in progress (pid $(cat "$pid_file"))" >&2
-        printf 'make-verdict: verdict=setup-error reason=already-running target=%s suite=%s\n' "${target:--}" "${suite:--}"
-        exit 5
-    fi
-    printf '%s\n' "$$" >"$pid_file"
-    owned_pid_file="$pid_file"
-    rm -f "$verdict_file"
-fi
+trap 'rm -f "$body" "$body.out"' EXIT
 
 setup_error() {
     echo "make-verdict.sh: $1" >&2
     _line="$(printf 'make-verdict: verdict=setup-error reason=%s target=%s suite=%s' "$2" "${target:--}" "${suite:--}")"
     printf '%s\n' "$_line"
     if [ -z "$from_log" ] && mkdir -p "$out_dir" 2>/dev/null; then
-        printf '%s\n' "$_line" >"$verdict_file"
+        printf '%s\n' "$_line" >"$body.out" && mv "$body.out" "$verdict_file"
     fi
     exit 5
 }
@@ -111,7 +99,32 @@ elif [ -n "$suite" ]; then
 fi
 [ $# -le 2 ] || setup_error "too many arguments" usage
 
+[ -n "$from_log" ] || rm -f "$verdict_file"
+
 # ---- run ------------------------------------------------------------------
+
+# One `make test` log is large and nothing else ever removes one, so a target's
+# directory keeps only the newest few runs, this one included. A log whose pid
+# still names a live process belongs to a run in flight, which reads its own
+# log back by path once make returns, so it is spared however old it is; a
+# reused pid at worst spares a dead run's log one more round.
+log_retention=5
+prune_logs() {
+    local logs=() f base pid kept=1
+    for f in "$run_dir"/*.log; do [ -f "$f" ] && logs+=("$f"); done
+    [ "${#logs[@]}" -ge "$log_retention" ] || return 0
+    while IFS= read -r f; do
+        kept=$((kept + 1))
+        [ "$kept" -le "$log_retention" ] && continue
+        pid="${f##*-}"
+        kill -0 "${pid%.log}" 2>/dev/null || rm -f "$f"
+    done < <(
+        # Ordered newest first on the timestamp alone: it is fixed-width while
+        # $$ is not, so whole-filename order ranks …-999.log above …-1002.log.
+        for f in "${logs[@]}"; do base="${f##*/}"; printf '%s\t%s\n' "${base%-*}" "$f"; done \
+            | sort -r -k1,1 | cut -f2
+    )
+}
 
 if [ -n "$from_log" ]; then
     [ -r "$from_log" ] || setup_error "cannot read log '$from_log'" no-log
@@ -123,8 +136,13 @@ else
     if [ "$target" != lint ] && ! command -v xcodebuild >/dev/null 2>&1; then
         setup_error "xcodebuild not found — install Xcode and run \`make doctor\`" xcodebuild-missing
     fi
-    mkdir -p "$out_dir" || setup_error "cannot create '$out_dir'" no-out-dir
-    log="$out_dir/$target.log"
+    # One directory per target — target names prefix-collide (test, test-suite,
+    # test-without-building) — holding one log per run. No other process can
+    # name this run's log, so the bundle read back out of it is this run's own.
+    run_dir="$out_dir/$target"
+    mkdir -p "$run_dir" || setup_error "cannot create '$run_dir'" no-out-dir
+    prune_logs
+    log="$run_dir/$(date +%Y%m%d-%H%M%S)-$$.log"
     start="$(date +%s)"
     if [ -n "$suite" ]; then
         make "$target" "SUITE=$suite" >"$log" 2>&1
@@ -228,8 +246,12 @@ case "$target" in
                 2)
                     if [ "$make_status" -eq 0 ]; then
                         reason="$(sed -n 's/.* reason=\([^ ]*\).*/\1/p' <<<"$last")"
+                        # Read before the removal: this is the path that
+                        # reports an unreadable bundle, and its one diagnostic
+                        # is what xcresult-report.sh wrote to stderr.
+                        why="$(cat "$report.err" 2>/dev/null || true)"
                         rm -f "$report" "$report.err"
-                        setup_error "$(cat "$report.err" 2>/dev/null || true)" "${reason:-no-result-bundle}"
+                        setup_error "$why" "${reason:-no-result-bundle}"
                     fi
                     verdict=test-failed status=1
                     extra=" reason=no-result-bundle"
@@ -267,11 +289,11 @@ esac
     printf 'make-verdict: verdict=%s target=%s suite=%s%s log=%s xcresult=%s\n' \
         "$verdict" "$target" "${suite:--}" "$extra" "$log" "$xcresult"
 } >"$body.out"
-if [ -z "$from_log" ]; then
-    # Renamed into place so the file exists only once it is complete.
-    mv "$body.out" "$verdict_file"
-    cp "$verdict_file" "$body.out"
-fi
 cat "$body.out"
-rm -f "$body.out"
+if [ -z "$from_log" ]; then
+    # Renamed into place so the file exists only once it is complete. Printed
+    # first, and never read back: <target>.verdict is a shared path, so a
+    # concurrent run of this target can own it by the time this one looks.
+    mv "$body.out" "$verdict_file"
+fi
 exit "$status"
