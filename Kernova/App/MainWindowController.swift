@@ -324,7 +324,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     func windowWillBeginSheet(_ notification: Notification) {
         // The window hosts other sheets too (alerts, the creation wizard), so the
-        // recreate in `windowDidEndSheet` must only run for the palette.
+        // New VM restore/re-apply pair must only run for the palette.
         sheetIsCustomizationPalette = window?.toolbar?.customizationPaletteIsRunning ?? false
         // The palette must present the user's canonical layout, so a
         // collapse-removed New VM is restored for the sheet's duration.
@@ -334,14 +334,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
     }
 
-    /// Re-applies toolbar enablement after any sheet, and recreates the app's
-    /// custom toolbar items when the closing sheet is the customize palette.
-    ///
-    /// AppKit bakes the section-specific glass treatment into a bordered item's
-    /// view at creation, and a customization drag across the sidebar tracking
-    /// separator reuses the existing instance without firing toolbarWillAddItem
-    /// or toolbarDidRemoveItem, so a moved item keeps the wrong treatment.
-    /// Reinserting at the same index routes through the delegate factory.
+    /// Re-applies toolbar enablement after any sheet, and after the customize
+    /// palette re-applies the collapse-driven New VM removal.
     func windowDidEndSheet(_ notification: Notification) {
         // Every sheet, not just the palette: item enablement is applied from the
         // observation with `autovalidates` off, so a refresh that lands while a
@@ -350,26 +344,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
         sheetIsCustomizationPalette = false
 
-        let customIdentifiers = Set(
-            [
-                Self.toolbarNewVM,
-                Self.toolbarClone,
-                Self.toolbarShowInFinder,
-                Self.toolbarMoveToTrash,
-            ] + toolbarManager.sharedItemIdentifiers)
-        let identifiers = toolbar.items.map(\.itemIdentifier)
-        for (index, identifier) in identifiers.enumerated() where customIdentifiers.contains(identifier) {
-            // The snapshot indices stay valid only while every removal is paired
-            // with a successful reinsert; bail out if the toolbar ever disagrees.
-            guard index < toolbar.items.count else {
-                #log(Self.logger, .fault, "windowDidEndSheet: toolbar item count drifted during recreate")
-                assertionFailure("Toolbar item count drifted during recreate")
-                break
-            }
-            toolbar.removeItem(at: index)
-            toolbar.insertItem(withItemIdentifier: identifier, at: index)
-        }
-        updateToolbarItems()
         // Re-apply the collapse-driven New VM removal that `windowWillBeginSheet`
         // undid for the palette.
         applyNewVMVisibility(in: toolbar)
