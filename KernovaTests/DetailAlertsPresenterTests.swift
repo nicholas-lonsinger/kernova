@@ -390,6 +390,97 @@ struct DetailAlertsPresenterTests {
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
     }
 
+    // MARK: - The start-failed removal offer
+
+    private func makeStartFailure(
+        _ reason: StartFailedAttachment.Reason, message: String, verb: VMVerb = .start
+    ) -> StartFailedAttachment {
+        StartFailedAttachment(
+            verb: verb, kind: .storageDisk, reason: reason, id: UUID(), label: "Archive",
+            message: message)
+    }
+
+    /// The removal edits the configuration and, for a VM holding one, destroys a
+    /// saved state — so no keystroke performs it. Same layout the core's own
+    /// destructive confirmations get.
+    @Test("The removal offer puts its destructive action off Return, with Cancel on Escape")
+    func startFailedAlertKeepsTheRemovalOffReturn() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
+        let failure = makeStartFailure(.notFound, message: "Storage disk 'Archive' not found.")
+
+        let alert = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+
+        #expect(alert.buttons.map(\.title) == ["Remove and Start", "Cancel"])
+        #expect(alert.buttons.map(\.role) == [.destructive, .cancel])
+        #expect(!alert.buttons.contains { $0.role == .default })
+    }
+
+    @Test("The offer heads itself with the bring-up the user asked for")
+    func startFailedAlertNamesTheBringUp() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(name: "Builder", in: viewModel)
+
+        let started = presenter.startFailedAttachmentAlertForTesting(
+            makeStartFailure(.notFound, message: "gone"), on: vm)
+        let resumed = presenter.startFailedAttachmentAlertForTesting(
+            makeStartFailure(.notFound, message: "gone", verb: .resume), on: vm)
+
+        #expect(started.title == "Couldn't Start “Builder”")
+        #expect(resumed.title == "Couldn't Resume “Builder”")
+    }
+
+    /// A retry is named only where the code knows the state it fixes. Nothing
+    /// here can tell a deleted file from one on a volume that is not mounted, so
+    /// the copy names reconnecting as a condition to check, never as the cause.
+    @Test("A file that isn't there names reconnecting, and claims no cause")
+    func startFailedAlertOnAMissingFileNamesTheRetry() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notFound, message: "Storage disk 'Archive' not found at /Volumes/Ext/a.img."),
+            discardsSavedState: false)
+
+        #expect(message.hasPrefix("Storage disk 'Archive' not found at /Volumes/Ext/a.img."))
+        // Conditional, so the copy carries no claim about why the file is not
+        // at that path.
+        #expect(message.contains("If it’s on a disk that isn’t connected, connect it and try again."))
+        #expect(!message.contains("was deleted"))
+        #expect(!message.contains("may have been"))
+        #expect(message.contains("You can also remove “Archive”"))
+        #expect(message.contains("re-attach it later in Settings"))
+    }
+
+    @Test("A file the VM may not write names the one fix that needs no Settings")
+    func startFailedAlertOnAnUnwritableFileNamesTheRetry() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notWritable, message: "Storage disk 'Archive' is not writable: /tmp/a.img."),
+            discardsSavedState: true)
+
+        #expect(message.contains("Make the file writable and try again."))
+        // A VM holding a saved state cannot reach its settings until that state
+        // is discarded, so nothing sends the user there.
+        #expect(!message.contains("read-only"))
+        #expect(
+            message.contains(
+                "Removing it also discards this virtual machine's saved state"))
+    }
+
+    /// Fixing either means editing the entry, which a VM holding a saved state
+    /// cannot do — so the alert states what was found and offers the removal,
+    /// and invents no step.
+    @Test(
+        "A folder and a refused attach name no retry",
+        arguments: [StartFailedAttachment.Reason.pathIsDirectory, .attachRefused])
+    func startFailedAlertNamesNoRetryWhereNoneIsCertain(reason: StartFailedAttachment.Reason) {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(reason, message: "Storage disk 'Archive' is a directory."),
+            discardsSavedState: false)
+
+        #expect(message.contains("You can remove “Archive”"), "\(reason)")
+        #expect(!message.contains("try again."), "\(reason)")
+    }
+
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()

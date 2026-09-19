@@ -80,7 +80,8 @@ struct VMCommandingInProcessTests {
     func recoveryCarriesItsAttachment() async throws {
         let (commands, mock, vm) = makeFacade()
         let failure = StartFailedAttachment(
-            verb: .start, kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open")
+            verb: .start, kind: .removableMedia, reason: .attachRefused, id: UUID(),
+            label: "Installer", message: "could not open")
 
         try await commands.removeStartFailedAttachment(.id(vm.id), attachment: failure)
 

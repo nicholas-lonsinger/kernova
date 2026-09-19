@@ -117,6 +117,13 @@ final class MockVirtualizationService: VirtualizationProviding {
             instance.discardSavedState()
             return
         }
+        // The real service's gate, mirrored: VZ takes a termination only from
+        // the phases `canForceStop` admits, so a test driving a VM through this
+        // from any other one must not read as a success.
+        guard instance.canForceStop else {
+            throw VirtualizationError.invalidStateTransition(
+                from: instance.status, action: "force stop")
+        }
         instance.restAfterPowerOff()
     }
 

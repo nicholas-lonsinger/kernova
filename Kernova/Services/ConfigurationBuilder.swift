@@ -1010,7 +1010,7 @@ enum ConfigurationBuilderError: LocalizedError {
         case .storageDiskPathIsDirectory(_, let path, let label):
             "Storage disk '\(label)' path is a directory, not a file: \(path)."
         case .storageDiskNotWritable(_, let path, let label):
-            "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+            "Storage disk '\(label)' is not writable: \(path)."
         case .storageDiskAttachFailed(_, let path, let label, let underlying):
             "Couldn't open storage disk '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .removableMediaNotFound(_, let path, let label):
@@ -1018,7 +1018,7 @@ enum ConfigurationBuilderError: LocalizedError {
         case .removableMediaPathIsDirectory(_, let path, let label):
             "Removable media '\(label)' path is a directory, not a file: \(path)."
         case .removableMediaNotWritable(_, let path, let label):
-            "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+            "Removable media '\(label)' is not writable: \(path)."
         case .removableMediaAttachFailed(_, let path, let label, let underlying):
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .bridgedNetworkingNotEntitled:
@@ -1033,6 +1033,27 @@ enum ConfigurationBuilderError: LocalizedError {
             "Shared directory is not readable: \(path)."
         case .sharedDirectoryNotWritable(let path):
             "Shared directory is not writable: \(path)."
+        }
+    }
+
+    /// What was wrong with the one attachment this names, or `nil` for a
+    /// failure that names none.
+    ///
+    /// The whole of the case analysis the bring-up's recovery needs, so a new
+    /// per-attachment case is answered here rather than falling silently
+    /// through to the bare alert.
+    var attachmentReason: StartFailedAttachment.Reason? {
+        switch self {
+        case .storageDiskNotFound, .removableMediaNotFound: .notFound
+        case .storageDiskPathIsDirectory, .removableMediaPathIsDirectory: .pathIsDirectory
+        case .storageDiskNotWritable, .removableMediaNotWritable: .notWritable
+        case .storageDiskAttachFailed, .removableMediaAttachFailed: .attachRefused
+        case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
+            .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,
+            .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled,
+            .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
+            .sharedDirectoryNotReadable, .sharedDirectoryNotWritable:
+            nil
         }
     }
 

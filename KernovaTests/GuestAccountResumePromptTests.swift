@@ -261,7 +261,8 @@ struct GuestAccountResumePromptTests {
 
         await viewModel.removeStartFailedAttachmentAndStart(
             StartFailedAttachment(
-                verb: .start, kind: .storageDisk, id: disk.id, label: "Scratch",
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                label: "Scratch",
                 message: "It would not open."),
             on: instance)
 
@@ -286,7 +287,8 @@ struct GuestAccountResumePromptTests {
         // A VM keeps at least one storage disk, so the removal is refused.
         await viewModel.removeStartFailedAttachmentAndStart(
             StartFailedAttachment(
-                verb: .start, kind: .storageDisk, id: sole.id, label: "Scratch",
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: sole.id,
+                label: "Scratch",
                 message: "It would not open."),
             on: instance)
 
@@ -307,7 +309,8 @@ struct GuestAccountResumePromptTests {
 
         await viewModel.removeStartFailedAttachmentAndStart(
             StartFailedAttachment(
-                verb: .start, kind: .storageDisk, id: UUID(), label: "Scratch",
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: UUID(),
+                label: "Scratch",
                 message: "It would not open."),
             on: instance)
 

@@ -285,10 +285,9 @@ final class VirtualizationService {
 
     /// Terminates the guest where it stands.
     ///
-    /// The state gate is VZ's, not a convenience: a termination is taken only
-    /// from the states `VZVirtualMachine.stopWithCompletionHandler:` documents
-    /// (``VMLifecyclePhase/canForceStop``), so a machine VZ would refuse is
-    /// turned back here rather than handed the framework's own rejection.
+    /// The service holds ``VMLifecyclePhase/canForceStop`` too, so a machine no
+    /// door should have offered this for is turned back here rather than handed
+    /// to VZ.
     func forceStop(_ instance: VMInstance) async throws {
         #log(
             Self.logger, .debug,
@@ -485,12 +484,15 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            // Before the rest, so no observer sees a truncated slot offered as
-            // a resumable session.
+            // Drops the slot this attempt's own throw left part-written, before
+            // the rest, so no observer sees a truncated one offered as a
+            // resumable session. A no-op when the guest went away mid-write
+            // instead: `didStopWithError` fires while the phase is still
+            // `.saving` and drops it there.
             instance.dropTruncatedSaveFile()
-            // The guest going away mid-write is the interrupt this operation
-            // meets: it rests the VM itself, and a failure banner written over
-            // the top would report a state this attempt did not produce.
+            // That same event is the interrupt this operation meets, and it
+            // rests the VM itself — so a failure written over the top would
+            // report a state this attempt did not produce.
             if !Self.tearDownIfStillOwned(
                 instance, actingFor: sessionID,
                 restingAt: .failed(message: error.localizedDescription))

@@ -252,9 +252,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
         }
     }
 
-    /// Whether the VM is eligible for forceful termination — the same phases a
-    /// graceful stop is offered for, because VZ admits a termination from
-    /// exactly the states it admits a shutdown request from.
+    /// Whether the VM is eligible for forceful termination.
     ///
     /// `VZVirtualMachine.stopWithCompletionHandler:` (macOS 27.0 SDK) "stop[s] a
     /// virtual machine that is in either Running or Paused state", and VZ's own

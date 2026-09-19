@@ -12,16 +12,36 @@ enum GuestAgentInstallerPurpose: Equatable {
     case manage
 }
 
-/// A bring-up that failed because one attachment couldn't be opened, where
+/// A bring-up that failed because one attachment couldn't be used, where
 /// removing that attachment (detach only — the file is untouched) is a valid
 /// way to get the VM running again.
 ///
-/// Never built for the disk the guest boots from — a VM can't meaningfully
-/// start without it.
+/// Never built for a bundle-internal storage disk: no verb re-creates an
+/// internal entry — ``VMCommanding/attachStorageDisks(_:paths:)`` adds external
+/// paths and ``VMCommanding/createStorageDisk(_:sizeInGB:)`` writes a new file
+/// under a new identity — so removing one cannot be undone, whatever the user
+/// does with the file afterwards.
 struct StartFailedAttachment: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case storageDisk
         case removableMedia
+    }
+
+    /// What was wrong with the attachment, for the one sentence the alert can
+    /// add about getting it working again.
+    ///
+    /// A retry is named only where the state that retry fixes is certain.
+    /// ``notFound`` is the one that is not: `PathValidation.resolveFile` throws
+    /// it from a `fileExists` miss, which a deleted file and an unmounted
+    /// volume reach alike — so its copy names reconnecting as a condition the
+    /// user can check, never as the cause.
+    enum Reason: Equatable, Sendable {
+        case notFound
+        case pathIsDirectory
+        case notWritable
+        /// The file is there and `VZDiskImageStorageDeviceAttachment` refused
+        /// it; its own description carries what little is known.
+        case attachRefused
     }
 
     /// The bring-up the user asked for — ``VMVerb/start`` or ``VMVerb/resume``
@@ -30,11 +50,12 @@ struct StartFailedAttachment: Equatable, Sendable {
     /// restored.
     let verb: VMVerb
     let kind: Kind
+    let reason: Reason
     /// The failing item's ID in the VM's configuration, so the removal targets
     /// exactly the entry that failed even if the list changed since.
     let id: UUID
     let label: String
-    /// The full user-facing error description (item, path, likely cause).
+    /// The builder error's own description — what was found, and where.
     let message: String
 }
 

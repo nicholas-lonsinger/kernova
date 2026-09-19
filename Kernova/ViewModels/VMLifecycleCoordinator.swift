@@ -250,11 +250,11 @@ final class VMLifecycleCoordinator {
 
     /// Immediately terminates the VM.
     ///
-    /// Bypasses serialization so a termination lands during another in-flight
-    /// operation — a pause or a resume, which hold the claim without moving the
-    /// VM out of the phases ``VMLifecyclePhase/canForceStop`` admits — clearing
-    /// the active-operation token *before* calling the service to invalidate
-    /// that operation's defer guard.
+    /// Bypasses serialization so a termination lands during any operation that
+    /// holds the claim without moving the VM out of the phases
+    /// ``VMLifecyclePhase/canForceStop`` admits, clearing the active-operation
+    /// token *before* calling the service to invalidate that operation's defer
+    /// guard.
     func forceStop(_ instance: VMInstance) async throws {
         activeOperations.removeValue(forKey: instance.id)
         try await virtualizationService.forceStop(instance)

@@ -1149,7 +1149,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                verb: .start, kind: .storageDisk, id: disk.id, label: "Scratch",
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                label: "Scratch",
                 message: "could not open"))
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
@@ -1178,7 +1179,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                verb: .start, kind: .storageDisk, id: disk.id, label: "Scratch",
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                label: "Scratch",
                 message: "could not open"))
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
@@ -1197,7 +1199,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                verb: .start, kind: .removableMedia, id: UUID(), label: "Installer",
+                verb: .start, kind: .removableMedia, reason: .attachRefused, id: UUID(),
+                label: "Installer",
                 message: "could not open"))
 
         // What the recovery was for already holds, so it is a quiet no-op — and
@@ -1218,7 +1221,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                verb: .resume, kind: .removableMedia, id: UUID(), label: "Installer",
+                verb: .resume, kind: .removableMedia, reason: .attachRefused, id: UUID(),
+                label: "Installer",
                 message: "could not open"))
 
         // A confirmation can land long after the fact, and the slot on disk may
@@ -1243,7 +1247,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                label: "Scratch",
                 message: "could not open"))
 
         // A save file restores only into the device set it was saved with, so it
@@ -1269,7 +1274,8 @@ struct VMCommandCoreAttachmentTests {
             try await harness.core.removeStartFailedAttachment(
                 .id(instance.id),
                 attachment: StartFailedAttachment(
-                    verb: .resume, kind: .storageDisk, id: sole.id, label: "Scratch",
+                    verb: .resume, kind: .storageDisk, reason: .attachRefused, id: sole.id,
+                    label: "Scratch",
                     message: "could not open"))
         }
 
@@ -1306,7 +1312,8 @@ struct VMCommandCoreAttachmentTests {
             try await harness.core.removeStartFailedAttachment(
                 .id(instance.id),
                 attachment: StartFailedAttachment(
-                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                    label: "Scratch",
                     message: "could not open"))
         }
 
@@ -1333,7 +1340,8 @@ struct VMCommandCoreAttachmentTests {
             try await harness.core.removeStartFailedAttachment(
                 .id(instance.id),
                 attachment: StartFailedAttachment(
-                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                    label: "Scratch",
                     message: "could not open"))
         }
 
@@ -1362,7 +1370,8 @@ struct VMCommandCoreAttachmentTests {
             try await harness.core.removeStartFailedAttachment(
                 .id(instance.id),
                 attachment: StartFailedAttachment(
-                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+                    label: "Scratch",
                     message: "could not open"))
         }
 

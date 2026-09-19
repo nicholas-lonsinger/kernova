@@ -2155,7 +2155,8 @@ struct VMLibraryViewModelTests {
         instance.enter(.failed(message: "Test failure"))  // where a failed start leaves the VM
 
         let failure = StartFailedAttachment(
-            verb: .start, kind: .removableMedia, id: item.id, label: item.label, message: "test")
+            verb: .start, kind: .removableMedia, reason: .attachRefused, id: item.id,
+            label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         #expect(instance.configuration.removableMedia == nil)
@@ -2182,7 +2183,8 @@ struct VMLibraryViewModelTests {
             contents: Data("fake save".utf8))
 
         let failure = StartFailedAttachment(
-            verb: .start, kind: .removableMedia, id: item.id, label: item.label, message: "test")
+            verb: .start, kind: .removableMedia, reason: .attachRefused, id: item.id,
+            label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         // The save restores only into the saved device set, so the confirmed
@@ -2212,8 +2214,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
-    @Test("start offers removal when Disk.asif fails to attach and the VM has a sibling disk")
-    func startOffersRemovalOnMainDiskAttachFailureWithASibling() async {
+    @Test("Disk.asif failing to attach keeps the bare alert even when the VM has a sibling disk")
+    func mainDiskAttachFailureWithASiblingIsNotOffered() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = VMInstanceFixture.make()
@@ -2229,10 +2231,10 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(instance)
 
-        #expect(presenter.startFailedAttachments.count == 1)
-        #expect(presenter.startFailedAttachments.first?.kind == .storageDisk)
-        #expect(presenter.startFailedAttachments.first?.id == mainDisk.id)
-        #expect(presenter.errors.isEmpty)
+        // The sibling clears the sole-disk rule, and the internal rule is what
+        // turns the offer back: nothing re-creates `Disk.asif`'s entry.
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
     }
 
     @Test("start offers removal when an external storage disk attach fails")
@@ -2353,6 +2355,68 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty, "\(way)")
     }
 
+    /// The removal is irreversible for a bundle-internal entry: nothing
+    /// re-creates one, so a Return on "Remove and Start" would cost the user the
+    /// disk's entry for good — and an EFI VM built from a local ISO carries
+    /// `Disk.asif` beside its installer, so the sole-disk rule does not cover it.
+    @Test(
+        "An internal disk is never offered for removal, sibling or not",
+        arguments: UnusableAttachment.allCases, [VMVerb.start, .resume])
+    func internalDiskWithASiblingIsNeverOffered(
+        way: UnusableAttachment, verb: VMVerb
+    ) async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make(phase: verb == .resume ? .suspended : .stopped)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        if verb == .resume { try VMInstanceFixture.writeSaveFile(for: instance) }
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let mainDisk = StorageDisk.mainDisk(layout: layout)
+        let installer = StorageDisk(
+            id: UUID(), path: "/tmp/ubuntu.iso", readOnly: true, label: "ubuntu",
+            isInternal: false, kind: .virtio)
+        instance.configuration.storageDisks = [installer, mainDisk]
+        viewModel.instances.append(instance)
+        let failure = way.storageDisk(
+            id: mainDisk.id, path: mainDisk.path, label: mainDisk.label)
+
+        if verb == .resume {
+            virtService.resumeError = failure
+            await viewModel.resume(instance)
+        } else {
+            virtService.startError = failure
+            await viewModel.start(instance)
+        }
+
+        #expect(presenter.startFailedAttachments.isEmpty, "\(way) / \(verb)")
+        #expect(presenter.showError == true, "\(way) / \(verb)")
+        // The entry the user would have lost is still there.
+        #expect(instance.configuration.storageDisks?.contains { $0.id == mainDisk.id } == true)
+    }
+
+    /// The same rule reaches an in-bundle disk the user created: `createStorageDisk`
+    /// writes a new file under a new identity rather than re-adopting this one,
+    /// so its entry is no more recoverable than `Disk.asif`'s.
+    @Test("An internal disk the user added is not offered either")
+    func internalAdditionalDiskIsNotOffered() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make()
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let extra = StorageDisk(
+            id: UUID(), path: "AdditionalDisks/\(UUID().uuidString).asif", readOnly: false,
+            label: "20 GB Disk", isInternal: true, kind: .virtio)
+        instance.configuration.storageDisks = [StorageDisk.mainDisk(layout: layout), extra]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.storageDiskNotFound(
+            id: extra.id, path: extra.path, label: extra.label)
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
+    }
+
     @Test("A missing sole disk keeps the bare alert — removing it leaves nothing to start")
     func startSoleDiskNotFoundStaysGeneric() async {
         let virtService = MockVirtualizationService()
@@ -2423,7 +2487,8 @@ struct VMLibraryViewModelTests {
         // alert sat queued behind another sheet.
 
         let failure = StartFailedAttachment(
-            verb: .start, kind: .removableMedia, id: item.id, label: item.label, message: "test")
+            verb: .start, kind: .removableMedia, reason: .attachRefused, id: item.id,
+            label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         // No config write to a deleted bundle, and no boot.
@@ -2442,7 +2507,8 @@ struct VMLibraryViewModelTests {
         // The user removed it in Settings before confirming the alert, so what
         // the recovery was for already holds and the click is the Start.
         let failure = StartFailedAttachment(
-            verb: .start, kind: .removableMedia, id: UUID(), label: "Stale ISO", message: "test")
+            verb: .start, kind: .removableMedia, reason: .attachRefused, id: UUID(),
+            label: "Stale ISO", message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         #expect(virtService.startCallCount == 1)

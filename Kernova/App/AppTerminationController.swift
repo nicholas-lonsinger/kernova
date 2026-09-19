@@ -501,6 +501,18 @@ final class AppTerminationController: NSObject {
         return hasUnsettledOperation ? .waitForOperation : .save
     }
 
+    /// Whether a save that failed still leaves a guest for the pass to
+    /// terminate.
+    ///
+    /// A save that failed on its own terms tore its session down on the way out
+    /// (``VirtualizationService/tearDownIfStillOwned(_:actingFor:restingAt:)``),
+    /// so there is nothing left to stop and asking would only be refused; the
+    /// termination is owed to the VM something else overtook and handed back
+    /// live.
+    nonisolated static func terminatesAfterFailedSave(canForceStop: Bool) -> Bool {
+        canForceStop
+    }
+
     /// Waits out every in-flight save and revert, then save-suspends whatever is
     /// still live.
     ///
@@ -605,13 +617,9 @@ final class AppTerminationController: NSObject {
     }
 
     /// Save-suspends one VM for termination, force-stopping it when the save
-    /// fails and left a guest still live, so a half-live VM can't outlive the
-    /// process.
-    ///
-    /// A save that failed on its own terms has already torn its session down
-    /// (``VirtualizationService/tearDownIfStillOwned(_:actingFor:restingAt:)``),
-    /// so the termination is owed only when something else overtook it and
-    /// handed the VM back live.
+    /// fails and left a guest still live
+    /// (``terminatesAfterFailedSave(canForceStop:)``), so a half-live VM can't
+    /// outlive the process.
     ///
     /// The pass waits an in-flight lifecycle operation out before calling this,
     /// so a rejection here is the residual race where a user-initiated operation
@@ -637,7 +645,9 @@ final class AppTerminationController: NSObject {
                 Self.logger, .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
-            guard instance.canForceStop else { return false }
+            guard Self.terminatesAfterFailedSave(canForceStop: instance.canForceStop) else {
+                return false
+            }
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {

@@ -194,6 +194,14 @@ final class DetailAlertsPresenter: NSObject {
         forceStopConfig(instance)
     }
 
+    /// The start-failed removal offer's rendered copy and buttons, so a test can
+    /// assert what each case states and that nothing destructive takes Return.
+    func startFailedAttachmentAlertForTesting(
+        _ failure: StartFailedAttachment, on instance: VMInstance
+    ) -> AlertConfiguration {
+        startFailedAttachmentConfig(failure, instance)
+    }
+
     /// The VM whose delete is in flight, or `nil` if none.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
 
@@ -711,32 +719,64 @@ final class DetailAlertsPresenter: NSObject {
     private func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
-        // Only an external file can be picked again: no verb attaches an entry
-        // at a bundle-internal path, so the re-attach clause is true for
-        // external disks and removable media alone.
-        let isInternal =
-            failure.kind == .storageDisk
-            && vm.effectiveStorageDisks.first { $0.id == failure.id }?.isInternal == true
-        var message =
-            "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted"
-        message += isInternal ? "." : ", and you can re-attach it later in Settings."
-        if vm.hasSaveFile {
-            message +=
-                " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
-        }
         // The heading names the bring-up that failed; the button names what the
         // recovery does, which is a start either way — a resume's saved state is
         // discarded along with the attachment.
-        return AlertConfiguration(
+        //
+        // Laid out as ``AlertConfiguration/init(confirming:confirm:alternative:dismiss:)``
+        // lays a destructive confirmation out: the action on the trailing edge
+        // taking no Return, the dismiss on Escape. The removal edits the
+        // configuration and, for a VM holding one, destroys a saved state — so
+        // no keystroke performs it.
+        AlertConfiguration(
             title: "Couldn't \(failure.verb == .resume ? "Resume" : "Start") “\(vm.name)”",
-            message: message,
+            message: Self.startFailedAttachmentMessage(
+                failure, discardsSavedState: vm.hasSaveFile),
             buttons: [
-                AlertButton("Remove and Start", role: .default) { [weak self] in
+                AlertButton("Remove and Start", role: .destructive) { [weak self] in
                     guard let self else { return }
                     Task { await self.viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
                 },
                 AlertButton("Cancel", role: .cancel),
             ])
+    }
+
+    /// What the start-failed alert says: what was found, the one retry that is
+    /// certain to apply, and what the removal costs.
+    ///
+    /// The retry is per ``StartFailedAttachment/Reason``, and only where the
+    /// code knows the state it fixes. A path that is a folder and a file the
+    /// framework refused get none: fixing either means editing the entry, which
+    /// a VM holding a saved state cannot do until that state is discarded — and
+    /// advice nobody in that state can follow is worse than none.
+    ///
+    /// Every entry this alert is built for is external
+    /// (``StartFailedAttachment``), so re-attaching it later is always true.
+    static func startFailedAttachmentMessage(
+        _ failure: StartFailedAttachment, discardsSavedState: Bool
+    ) -> String {
+        let retry: String
+        switch failure.reason {
+        case .notFound:
+            // Stated as a condition to check, never as the cause: nothing here
+            // can tell a deleted file from one on a volume that is not mounted.
+            retry = "If it’s on a disk that isn’t connected, connect it and try again. "
+        case .notWritable:
+            retry = "Make the file writable and try again. "
+        case .pathIsDirectory, .attachRefused:
+            retry = ""
+        }
+        // "also" only where something was offered before it.
+        let offer = retry.isEmpty ? "You can remove" : "You can also remove"
+        var message =
+            "\(failure.message)\n\n\(retry)\(offer) “\(failure.label)” from this virtual "
+            + "machine and start without it — the file itself is not deleted, and you can "
+            + "re-attach it later in Settings."
+        if discardsSavedState {
+            message +=
+                " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
+        }
+        return message
     }
 
     private func installerMountedConfig(

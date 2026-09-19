@@ -253,6 +253,18 @@ struct VMLifecyclePhaseTests {
         }
     }
 
+    /// Load-bearing, not a coincidence to note: the sidebar renders Force Stop
+    /// only as the ⌥-alternate of Stop, so a `canStop` narrowed on its own would
+    /// take Force Stop off a live VM's context menu with nothing failing. If
+    /// this ever has to diverge, that menu needs its standalone Force Stop arm
+    /// back.
+    @Test("A graceful stop and a forceful one are offered in exactly the same phases")
+    func canStopAndCanForceStopCoincide() {
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(phase.canStop == phase.canForceStop, "\(phase)")
+        }
+    }
+
     @Test("hasActiveDisplay covers every phase whose backing view has something to show")
     func hasActiveDisplay() {
         for phase in [

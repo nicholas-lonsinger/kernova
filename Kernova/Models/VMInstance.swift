@@ -1251,8 +1251,8 @@ final class VMInstance {
     /// nothing else.
     ///
     /// `VZVirtualMachine.saveMachineStateTo` writes the slot in place
-    /// (``VMLifecyclePhase/terminationMustWaitOut``), so a save that threw, was
-    /// terminated, or lost its guest left a truncated file behind — and
+    /// (``VMLifecyclePhase/terminationMustWaitOut``), so a save that threw or
+    /// lost its guest left a truncated file behind — and
     /// ``VMLibrary/initialPhase(for:layout:)`` would offer it after a relaunch
     /// as a resumable session that cannot restore.
     ///

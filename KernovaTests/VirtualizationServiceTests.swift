@@ -762,8 +762,13 @@ struct VirtualizationServiceTests {
     /// The service holds the gate too, not only the verb: nothing asks a
     /// `VZVirtualMachine` for a transition `stopWithCompletionHandler:` does not
     /// accept.
+    ///
+    /// The refusal's *case* is the assertion. A fixture opens no session, so a
+    /// test that only checked the error's type would pass on the
+    /// `noVirtualMachine` guard below the gate and go on passing with the gate
+    /// deleted.
     @Test(
-        "forceStop refuses a machine Virtualization would not stop",
+        "forceStop refuses a machine Virtualization would not stop, before it looks for a session",
         arguments: [
             VMLifecyclePhase.saving(sessionID: UUID()),
             .restoringSavedState(sessionID: UUID()), .starting(sessionID: UUID()),
@@ -772,9 +777,16 @@ struct VirtualizationServiceTests {
     func forceStopRefusesAnUnstoppableMachine(phase: VMLifecyclePhase) async {
         let instance = VMInstanceFixture.make(phase: phase)
 
-        await #expect(throws: VirtualizationError.self) {
+        let raised = await #expect(throws: VirtualizationError.self) {
             try await service.forceStop(instance)
         }
+
+        guard case .invalidStateTransition(let status, let action)? = raised else {
+            Issue.record("Expected an invalid-state refusal, got \(String(describing: raised))")
+            return
+        }
+        #expect(action == "force stop")
+        #expect(status == instance.status)
         // Refused, not acted on: the phase it was found in is the phase it keeps.
         #expect(instance.phase == phase)
     }

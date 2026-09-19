@@ -384,18 +384,21 @@ extension VMCommandCore {
     /// Every way one entry can be unusable, not only the refused attach: a file
     /// that is gone, a path that turned out to be a folder and one the VM may
     /// no longer write all leave the same VM, with the same one entry to remove.
-    /// The message is each error's own description, so the alert states what was
-    /// found rather than guessing at a cause.
     ///
-    /// Two exclusions where removal is the wrong advice: a VM's only disk, since
-    /// removing it leaves nothing to start (and an empty list would re-synthesize
-    /// `Disk.asif`), and file-lock contention — the file is fine and the lock
-    /// holder is a VM still tearing down, so the fix is to wait and retry.
+    /// Three exclusions where removal is the wrong advice. A bundle-internal
+    /// disk, because nothing re-creates its entry
+    /// (``StartFailedAttachment``) — which covers `Disk.asif`, the disk a
+    /// path-traversing entry is refused as, and an in-bundle disk the user
+    /// created. A VM's only disk, since removing it leaves nothing to start and
+    /// an empty list would re-synthesize `Disk.asif`. And file-lock contention —
+    /// the file is fine and the lock holder is a VM still tearing down, so the
+    /// fix is to wait and retry.
     private func bringUpFailedAttachment(
         from error: Error, verb: VMVerb, on instance: VMInstance
     ) -> StartFailedAttachment? {
         guard let builderError = error as? ConfigurationBuilderError,
-            !VirtualizationService.isFileLockContention(builderError)
+            !VirtualizationService.isFileLockContention(builderError),
+            let reason = builderError.attachmentReason
         else { return nil }
         switch builderError {
         case .storageDiskNotFound(let id, _, let label),
@@ -403,10 +406,10 @@ extension VMCommandCore {
             .storageDiskNotWritable(let id, _, let label),
             .storageDiskAttachFailed(let id, _, let label, _):
             guard let disk = storageDisk(id: id, on: instance),
-                !instance.isSoleStorageDisk(disk)
+                !disk.isInternal, !instance.isSoleStorageDisk(disk)
             else { return nil }
             return StartFailedAttachment(
-                verb: verb, kind: .storageDisk, id: id, label: label,
+                verb: verb, kind: .storageDisk, reason: reason, id: id, label: label,
                 message: builderError.localizedDescription)
         case .removableMediaNotFound(let id, _, let label),
             .removableMediaPathIsDirectory(let id, _, let label),
@@ -414,10 +417,9 @@ extension VMCommandCore {
             .removableMediaAttachFailed(let id, _, let label, _):
             // Confirm the entry is really in the list: an offer whose action could
             // only no-op leaves a button that appears to do nothing.
-            guard (instance.configuration.removableMedia ?? []).contains(where: { $0.id == id })
-            else { return nil }
+            guard removableMediaItem(id: id, on: instance) != nil else { return nil }
             return StartFailedAttachment(
-                verb: verb, kind: .removableMedia, id: id, label: label,
+                verb: verb, kind: .removableMedia, reason: reason, id: id, label: label,
                 message: builderError.localizedDescription)
         default:
             return nil
@@ -724,8 +726,10 @@ extension VMCommandCore {
             }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
+                // The service writes the record, because only it knows which of
+                // the two outcomes happened — a termination, or the discard a
+                // VM resting on a slot gets.
                 try await lifecycle.forceStop(instance)
-                #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
@@ -783,15 +787,18 @@ extension VMCommandCore {
         // the button names that outcome rather than the deletion it isn't.
         let discardsSavedState = instance.holdsSuspendedSession
         let revertsInsteadOfTerminating = discardsSavedState && ephemeralBaseline != nil
+        // The file, not an inference from the phase: a live guest normally
+        // holds no slot, because a start that finds one restores it rather than
+        // booting over it and the restore consumes the file — but
+        // ``VMInstance/removeSaveFile()`` reports a refusal by logging it, so a
+        // slot can outlive the restore that meant to spend it, and the VM does
+        // come back on it (``VMInstance/restAfterPowerOff()``).
+        let keepsSuspendedSession = instance.hasSaveFile
         let suspendedSessionLost =
             "The suspended session, and everything changed inside the guest during it, are discarded."
         let guestDataLost = "Any unsaved data inside the guest will be lost."
         let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
 
-        // A VM with a live guest to terminate holds no suspend slot: a start
-        // finding one restores it rather than booting over it
-        // (``GuestStartRoute/init(startOf:bootIntoRecovery:)``), and the restore
-        // consumes it. So the terminating branches speak only of guest memory.
         let message: String
         switch (discardsSavedState, ephemeralBaseline) {
         case (true, let baseline?):
@@ -802,12 +809,18 @@ extension VMCommandCore {
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
         case (false, let baseline?):
-            // The power-off the termination causes rolls the disks back too.
+            // The power-off the termination causes rolls the disks back too, so
+            // a slot it would otherwise have left in place is replaced by the
+            // baseline's rather than resumed.
             message =
                 "\(terminated) It is ephemeral, so it returns to "
-                + "\u{201C}\(baseline.name)\u{201D}. \(guestDataLost)"
+                + "\u{201C}\(baseline.name)\u{201D}. "
+                + (keepsSuspendedSession ? suspendedSessionLost : guestDataLost)
         case (false, nil):
-            message = "\(terminated) \(guestDataLost)"
+            message =
+                keepsSuspendedSession
+                ? "\(terminated) Its saved state is kept, so it returns to being suspended."
+                : "\(terminated) \(guestDataLost)"
         }
 
         let confirmTitle: String
