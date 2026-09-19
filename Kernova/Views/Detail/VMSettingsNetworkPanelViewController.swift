@@ -275,11 +275,17 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         return row
     }
 
+    /// Whether this VM's port-forwarding rules take an edit right now.
+    private var canEditPortForwarding: Bool {
+        viewModel.capabilities.isAvailable(.editPortForwarding, on: instance)
+    }
+
     /// Rebuilds the rule rows when the rules — or the lock state their controls
     /// carry — changed.
     private func refreshPortForwardingRows() {
         let rendered = RenderedPortForwardingRows(
-            rules: instance.configuration.portForwardingRules, controlsEnabled: !isReadOnly)
+            rules: instance.configuration.portForwardingRules,
+            controlsEnabled: canEditPortForwarding)
         guard rendered != renderedPortForwardingRows else { return }
         renderedPortForwardingRows = rendered
         clearGroupedFormStack(portForwardingListStack)
@@ -572,7 +578,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     @objc private func addPortForwardingRuleTapped() {
-        guard !isReadOnly, let window = view.window, !portForwardingSheetPresenter.isShown else {
+        guard canEditPortForwarding, let window = view.window,
+            !portForwardingSheetPresenter.isShown
+        else {
             return
         }
         let sheet = PortForwardingRuleSheetContentViewController(
@@ -582,7 +590,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     @objc private func removePortForwardingRuleTapped(_ sender: NSButton) {
-        guard !isReadOnly else { return }
+        guard canEditPortForwarding else { return }
         let rules = instance.configuration.portForwardingRules
         guard rules.indices.contains(sender.tag) else { return }
         viewModel.removePortForwardingRule(rules[sender.tag].hostClaim, from: instance)

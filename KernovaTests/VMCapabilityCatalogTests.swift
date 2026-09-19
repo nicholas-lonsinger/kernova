@@ -513,6 +513,27 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.canDeleteSnapshot(snapshot, on: instance))
     }
 
+    /// A row renders its Delete's enablement and its explanation from this one
+    /// answer, so the baseline's bar has to be distinguishable from every other
+    /// reason the delete is off.
+    @Test("The delete offer names the baseline bar apart from an unavailable manifest")
+    func snapshotDeleteOfferNamesWhatBarsIt() {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install")
+        let later = VMSnapshot(name: "Configured")
+        let instance = makeInstance(in: harness, snapshots: [baseline, later])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+
+        #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .barredAsBaseline)
+        #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .offered)
+
+        // A state the manifest cannot be edited in takes both rows, and says so
+        // as the state rather than as the mode.
+        instance.enter(.revertingToSnapshot)
+        #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .unavailable)
+        #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .unavailable)
+    }
+
     @Test("A USB accessory edit exists only in a build that can pass one through")
     func usbAccessoryEditFollowsTheCapability() {
         let without = makeHarness()
@@ -541,6 +562,82 @@ struct VMCapabilityCatalogTests {
 
         instance.configuration.clipboardSharingEnabled = true
         #expect(harness.catalog.isApplicable(.showClipboard, to: instance))
+    }
+
+    // MARK: - Reveal surface
+
+    /// Which window a `reveal` — from the CLI, a `kernova:` link, AppleScript,
+    /// the Open intent, or a click in the status-item dropdown — brings forward.
+    ///
+    /// The gate is ``VMCapability/open``'s, so a phase with a display to show
+    /// opens the window showing it whatever that display currently holds: the
+    /// paused poster of a suspended VM and the transition label of a VM being
+    /// captured, as much as the live guest of a running one.
+    @Test("The reveal surface follows the display a VM has and where that display lives")
+    func revealSurfaceByPreferenceAndPhase() {
+        let live = VMLifecyclePhaseFixtures.session
+        // Where a pop-out or fullscreen VM reveals to, per phase. An inline VM
+        // reveals into the library in every one of them, which the loop asserts
+        // alongside.
+        let cases: [(phase: VMLifecyclePhase, detached: VMCapabilityCatalog.RevealSurface)] = [
+            (.stopped, .library),
+            (.initialBoot, .library),
+            (.failed(message: "Boot failed."), .library),
+            (.starting(sessionID: nil), .library),
+            (.starting(sessionID: live), .library),
+            (.installing(sessionID: nil), .library),
+            (.installing(sessionID: live), .library),
+            (.running(sessionID: live), .displayWindow),
+            (.livePaused(sessionID: live), .displayWindow),
+            (.suspended, .displayWindow),
+            (.saving(sessionID: live), .displayWindow),
+            (.capturingLive(sessionID: live), .displayWindow),
+            (.capturingAtRest, .displayWindow),
+            (.restoringSavedState(sessionID: nil), .displayWindow),
+            (.restoringSavedState(sessionID: live), .displayWindow),
+            (.revertingToSnapshot, .displayWindow),
+        ]
+
+        for (index, expected) in cases.enumerated() {
+            let harness = makeHarness()
+            for preference in [VMDisplayPreference.popOut, .fullscreen] {
+                let instance = makeInstance(
+                    in: harness, name: "VM \(index) \(preference)", phase: expected.phase)
+                instance.configuration.displayPreference = preference
+                #expect(
+                    harness.catalog.revealSurface(for: instance) == expected.detached,
+                    "\(expected.phase) \(preference)")
+            }
+            let inline = makeInstance(
+                in: harness, name: "VM \(index) inline", phase: expected.phase)
+            #expect(
+                harness.catalog.revealSurface(for: inline) == .library, "\(expected.phase) inline")
+        }
+
+        // Completeness by containment plus a count, for the reason
+        // `applicabilityByPhase` states: `VMLifecyclePhase` is `Equatable` but
+        // not `Hashable`.
+        #expect(cases.count == VMLifecyclePhaseFixtures.all.count)
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(cases.contains { $0.phase == phase }, "\(phase)")
+        }
+    }
+
+    /// The phantom row of an import still copying rests `.paused` and reads as
+    /// having a display, which is the one VM whose display window is not the
+    /// right thing to open.
+    @Test("A VM whose bundle is still being written reveals in the library")
+    func revealSurfaceOfAPreparingVMIsTheLibrary() {
+        let harness = makeHarness()
+        let phantom = makeInstance(in: harness, phase: .suspended)
+        phantom.configuration.displayPreference = .popOut
+        let task = Task {}
+        defer { task.cancel() }
+
+        #expect(harness.catalog.revealSurface(for: phantom) == .displayWindow)
+
+        phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+        #expect(harness.catalog.revealSurface(for: phantom) == .library)
     }
 
     // MARK: - Bring-up

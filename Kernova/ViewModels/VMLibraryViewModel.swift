@@ -661,25 +661,21 @@ final class VMLibraryViewModel {
 
     // MARK: - Lifecycle
 
-    /// Surfaces a VM's display: the detached window for pop-out/fullscreen VMs,
-    /// else keyboard focus in the inline guest display, with the library window
-    /// that carries it brought forward.
+    /// Puts the surface ``VMCapabilityCatalog/revealSurface(for:)`` names on
+    /// screen, and adds the inline keyboard focus the library case owes.
+    ///
+    /// The library is asked for whether or not a window already exists: the
+    /// inline display *is* part of the library window, so one buried behind
+    /// another app, miniaturized, or never created has surfaced nothing — and
+    /// `focusGuestDisplay` only moves the first responder, which nobody can see.
     private func surfaceDisplay(for instance: VMInstance) {
-        guard instance.configuration.displayPreference == .inline else {
+        switch capabilities.revealSurface(for: instance) {
+        case .displayWindow:
             onOpenDisplayWindow?(instance)
-            return
+        case .library:
+            revealInLibrary(instance)
+            focusInlineDisplay(for: instance)
         }
-        // The inline display renders whichever VM is selected, so selecting is
-        // what surfacing *is* here — `focusGuestDisplay` on an unselected VM
-        // only arms a focus that the next display-state pass clears.
-        selectedID = instance.id
-        // Whether or not a window already exists, exactly as `revealInLibrary`
-        // asks: the inline display *is* part of the library window, so one
-        // buried behind another app, miniaturized, or never created has
-        // surfaced nothing — and `focusGuestDisplay` only moves the first
-        // responder, which nobody can see.
-        onSurfaceLibrary?()
-        deliverInlineFocus(to: instance)
     }
 
     /// Selects the VM and puts the keyboard in its inline guest display — what

@@ -62,7 +62,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         // Carry a user edit to the guest before the window goes away
-        if instance.status == .running || instance.status == .paused {
+        if instance.hasLiveSession {
             clipboardContentVC.flushAndAnnounceEdit()
         }
         statusObservation?.cancel()

@@ -100,10 +100,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     /// Whether this VM's shared-directory list takes an edit right now.
-    ///
-    /// The model gate, not the route's `isReadOnly`: a second surface asking
-    /// the same question has to get the same answer, and the verb behind every
-    /// control here refuses on exactly this.
     private var canEditSharedDirectories: Bool {
         viewModel.capabilities.isAvailable(.editSharedDirectories, on: instance)
     }

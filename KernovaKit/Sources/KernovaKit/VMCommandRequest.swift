@@ -109,30 +109,9 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// running and paused VMs on the way out.
         case quit
 
-        /// Whether answering this request puts something on screen.
-        ///
-        /// A door outside the app has to bring the app forward before it does —
-        /// a window ordered front behind the terminal that asked for it has not
-        /// answered anybody. Only the two verbs whose whole purpose is to show
-        /// something qualify: bringing a guest up is not a request to look at
-        /// it, and `open` is the verb that asks for that.
-        public var surfacesInterface: Bool {
-            switch self {
-            case .open, .reveal:
-                true
-            case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
-                .portForwardingRules, .usbAccessories, .availableUSBAccessories, .usbPairings,
-                .forgetUSBPairing, .editUSBAccessory,
-                .events,
-                .start, .resume, .restart,
-                .cancelGuestSetup, .stop, .pause, .suspend, .showInFinder, .takeSnapshot,
-                .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .clone,
-                .rename, .delete, .importVM, .cancelPreparing, .awaitPreparing, .editStorageDisk,
-                .editRemovableMedia, .editSharedDirectory, .editPortForwarding, .guestAgentDisk,
-                .configurationKeys, .configuration, .setConfiguration, .quit:
-                false
-            }
-        }
+        /// Whether answering this request puts something on screen — see
+        /// ``VMVerb/surfacesInterface``.
+        public var surfacesInterface: Bool { verb.surfacesInterface }
 
         /// Which verb this is, for a transport mapping onto its own naming.
         public var verb: VMVerb {

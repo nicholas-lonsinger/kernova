@@ -212,6 +212,9 @@ struct VMCommandEnvelopeTests {
 
     @Test("Only the verbs that put something on screen ask the app forward")
     func surfacingVerbsAreNamedExhaustively() {
+        // The whole vocabulary, so a new verb has to answer the question rather
+        // than inherit a `false` nobody looked at.
+        #expect(Set(VMVerb.allCases.filter(\.surfacesInterface)) == [.open, .reveal])
         let surfacing: [VMCommandRequest.Verb] = [
             .open(selector),
             .reveal(selector),

@@ -314,10 +314,56 @@ struct VMCapabilityCatalog {
         return !(capability.waitsForSettle && library.isBusy(instance))
     }
 
-    /// Whether `snapshot` may be deleted: the manifest has to be editable, and
-    /// a VM's Ephemeral baseline is the restore point its every power-off needs.
+    /// Whether one snapshot's delete is offered, and what bars it when it is
+    /// not.
+    enum SnapshotDeleteOffer: Equatable {
+        /// The delete is taken now.
+        case offered
+        /// The VM's Ephemeral baseline — the restore point its every power-off
+        /// needs, so the mode bars deleting it.
+        case barredAsBaseline
+        /// The VM's state, or an operation still settling, holds the manifest.
+        case unavailable
+    }
+
+    /// What `snapshot`'s delete is offered as — the one derivation a row renders
+    /// both its enablement and the reason behind it from.
+    func snapshotDeleteOffer(
+        _ snapshot: VMSnapshot, on instance: VMInstance
+    ) -> SnapshotDeleteOffer {
+        guard isAvailable(.deleteSnapshot, on: instance) else { return .unavailable }
+        return instance.isEphemeralBaseline(snapshot) ? .barredAsBaseline : .offered
+    }
+
+    /// Whether `snapshot` may be deleted.
     func canDeleteSnapshot(_ snapshot: VMSnapshot, on instance: VMInstance) -> Bool {
-        isAvailable(.deleteSnapshot, on: instance) && !instance.isEphemeralBaseline(snapshot)
+        snapshotDeleteOffer(snapshot, on: instance) == .offered
+    }
+
+    /// Where bringing one VM in front of the user lands.
+    enum RevealSurface: Equatable {
+        /// The VM's own display window — the pop-out or fullscreen host.
+        case displayWindow
+        /// The library window, selected on the VM — which is also where an
+        /// inline display lives.
+        case library
+    }
+
+    /// Which window a request to bring `instance` in front of the user puts on
+    /// screen — the derivation ``VMCommandCore/reveal(_:)``'s surfacing and the
+    /// status item's per-VM command both read.
+    ///
+    /// Two terms. The ``VMCapability/open`` gate decides whether a display is
+    /// the right thing to surface at all, so the one VM whose display is not —
+    /// the phantom of an import still copying, resting `.paused` — lands on its
+    /// library row. The display preference decides where that display lives: an
+    /// inline one *is* part of the library window, so the library is what comes
+    /// forward for it.
+    func revealSurface(for instance: VMInstance) -> RevealSurface {
+        guard accepts(.open, on: instance),
+            instance.configuration.displayPreference != .inline
+        else { return .library }
+        return .displayWindow
     }
 
     /// What this VM's stop slot performs — the derivation every surface sharing

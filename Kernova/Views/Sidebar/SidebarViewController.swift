@@ -737,8 +737,9 @@ extension SidebarViewController {
             // Listed whatever its state, disabled when there is nothing behind
             // it: an Ephemeral VM already resting on its baseline would revert
             // to what it is already holding, and the greying is what tells the
-            // user so.
-            let discard = item(stopAction.menuTitle, #selector(menuForceStop(_:)), instance)
+            // user so. The stop slot's own selector, so the title and the
+            // command come from `stopAction` together.
+            let discard = item(stopAction.menuTitle, #selector(menuStop(_:)), instance)
             discard.isEnabled = capabilities.isStopActionAvailable(on: instance)
             menu.addItem(discard)
         } else if capabilities.isApplicable(.forceStop, to: instance) && !canStop {
