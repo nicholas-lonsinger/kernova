@@ -33,7 +33,7 @@ final class VsockHostConnection: @unchecked Sendable {
         label: "app.kernova.macosagent.log-drain", qos: .utility)
 
     let lock = NSLock()
-    var pendingLogs: [Frame] = []
+    private(set) var pendingLogs: [Frame] = []
 
     /// Whether a `drainPending()` run is enqueued or in flight, guarded by
     /// `lock` — one run at a time, however many records arrive.
@@ -185,19 +185,31 @@ final class VsockHostConnection: @unchecked Sendable {
         }
     }
 
-    /// Appends `frame` to the ring unless host policy has meanwhile gone
-    /// explicitly `.disabled`.
-    ///
-    /// `forwardLog` samples the policy before building the frame, so re-checking
-    /// under the same lock hold as the append is what keeps a concurrent
-    /// `setEnabled(false)` from leaving this frame behind its own buffer clear.
+    /// Appends `frame` to the ring through `admitLocked`.
     func bufferFrameUnlessDisabled(_ frame: Frame) {
-        let startedDropping: Bool = lock.withLock {
-            guard policy != .disabled else { return false }
-            pendingLogs.append(frame)
-            return trimToLimitLocked()
+        let startedDropping = lock.withLock { admitLocked(frame, at: .tail) }
+        if startedDropping == true { reportDroppingStarted() }
+    }
+
+    private enum RingEnd { case tail, head }
+
+    /// The one way into the ring, which keeps anything from entering it while
+    /// host policy is `.disabled`.
+    ///
+    /// The policy check shares this lock hold with the insert because every
+    /// caller decided to buffer before it: `forwardLog` sampled the policy
+    /// before building its frame, and a failed send's frame can arrive after
+    /// the `setEnabled(false)` whose pause failed it has cleared the ring.
+    ///
+    /// - Returns: `nil` when policy dropped the frame; otherwise whether this
+    ///   insert's trim started dropping.
+    private func admitLocked(_ frame: Frame, at end: RingEnd) -> Bool? {
+        guard policy != .disabled else { return nil }
+        switch end {
+        case .tail: pendingLogs.append(frame)
+        case .head: pendingLogs.insert(frame, at: 0)
         }
-        if startedDropping { reportDroppingStarted() }
+        return trimToLimitLocked()
     }
 
     /// Trims the ring to `logBufferLimit`, charging what it evicts to
@@ -286,7 +298,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Sends the ring to the host until it empties or the channel goes away.
     ///
     /// The one place a log frame reaches the wire, so records arrive in ring
-    /// order and the frame a failed send was carrying goes back to the head.
+    /// order.
     private func drainPending() {
         var held: VsockChannel?
         while true {
@@ -313,21 +325,20 @@ final class VsockHostConnection: @unchecked Sendable {
         }
     }
 
-    /// Puts `frame` back at the head of the ring, where the next connection
-    /// picks it up — head re-insertion is what keeps the host's view
-    /// chronological across a failed send — and retires `channel` if it is
-    /// still the installed one, so this run's next step and every run a record
-    /// schedules before the loop notices find nothing to send on rather than
-    /// the same refusing channel.
-    private func holdForNextConnection(
+    /// Puts `frame` back at the head of the ring through `admitLocked`, where
+    /// the next connection picks it up — head re-insertion is what keeps the
+    /// host's view chronological across a failed send — and retires `channel`
+    /// if it is still the installed one, so this run's next step and every run
+    /// a record schedules before the loop notices find nothing to send on
+    /// rather than the same refusing channel.
+    func holdForNextConnection(
         _ frame: Frame, failedOn channel: VsockChannel, failure: any Error
     ) {
         let (startedDropping, held, announce): (Bool, Int, Bool) = lock.withLock {
-            pendingLogs.insert(frame, at: 0)
-            let trimmed = trimToLimitLocked()
+            if self.channel === channel { self.channel = nil }
+            guard let trimmed = admitLocked(frame, at: .head) else { return (false, 0, false) }
             let firstOfTheOutage = !sendFailureAnnounced
             if firstOfTheOutage { sendFailureAnnounced = true }
-            if self.channel === channel { self.channel = nil }
             return (trimmed, pendingLogs.count, firstOfTheOutage)
         }
         if announce {
