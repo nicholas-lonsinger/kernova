@@ -185,7 +185,7 @@ struct VMNetworkSlotRegistryTests {
         vmnet.knownAddressingKinds = []
         // The materialized network carries none of what it should — the state a
         // re-grabbed subnet, or a spent attempt limit, leaves behind.
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         roster.instances = []
 
@@ -212,7 +212,7 @@ struct VMNetworkSlotRegistryTests {
         // An invalidation drops the network that contradicted a slot taken
         // after its creation, so the address it withheld derives now.
         let beforeRecreate = registry.addressingGeneration
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
         registry.rebuildNetworksIfIdle()
         #expect(vmnet.invalidatedKinds == [.shared])
         #expect(registry.addressingGeneration > beforeRecreate)
@@ -514,7 +514,7 @@ struct VMNetworkSlotRegistryTests {
         let (reporter, device, coordinator) = makeHostOnlyReporter(named: "Detached", vmnet: vmnet)
         roster.instances = [reporter]
         coordinator.activate()
-        vmnet.scriptedPendingKinds = [.hostOnly]
+        vmnet.scriptedRecreationReasons = [.hostOnly: .declarationsPending]
         vmnet.materializeFails = false
         device.refusedPlans = []
 
@@ -553,5 +553,156 @@ struct VMNetworkSlotRegistryTests {
         #expect(vmnet.invalidatedKinds == [.hostOnly])
         await coordinator.vmnetMaterializationTaskForTesting?.value
         coordinator.stop()
+    }
+
+    @Test("A download in flight does not keep pending declarations from installing while idle")
+    func aDownloadDoesNotHoldOffThePendingRecreate() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = [makeDownloading(named: "Downloading")]
+
+        registry.rebuildNetworksIfIdle()
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    // MARK: - Replacing a Served Network at the Next Join
+
+    /// A registry over the real service, its networks created by a scripted
+    /// operator — for following one network object across a stop and the
+    /// next join.
+    private func makeRegistryOverService() -> (
+        VMNetworkSlotRegistry, VmnetNetworkService, MockVmnetNetworkOperator
+    ) {
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: nil)
+        let registry = VMNetworkSlotRegistry(vmnetNetworks: service, isVMNetworkingEntitled: true)
+        registry.roster = roster
+        return (registry, service, operations)
+    }
+
+    /// A Shared VM fetching its installer image: a transitioning phase with no
+    /// session context, so no configuration build behind it.
+    private func makeDownloading(named name: String) -> VMInstance {
+        let instance = VMInstanceFixture.make(name: name, phase: .installing(sessionID: nil))
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        return instance
+    }
+
+    @Test("An idle pass keeps a served network, its subnet held")
+    func anIdlePassKeepsAServedNetwork() throws {
+        let (registry, service, operations) = makeRegistryOverService()
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        _ = try service.attachment(for: .shared)
+        let released = operations.releasedNetworks
+        roster.instances = [VMInstanceFixture.make(name: "Stopped")]
+
+        registry.rebuildNetworksIfIdle()
+
+        #expect(operations.releasedNetworks == released)
+        #expect(!service.isPinnedOnlyForTesting(.shared))
+        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+    }
+
+    @Test("A VM joining a served network nobody else holds replaces it, and readers are told to ask again")
+    func aJoinReplacesAnUnheldServedNetwork() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let joiner = VMInstanceFixture.make(name: "Joiner")
+        roster.instances = [VMInstanceFixture.make(name: "Stopped"), joiner]
+        let before = registry.addressingGeneration
+
+        registry.prepareNetwork(.shared, forJoining: joiner)
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+        #expect(registry.addressingGeneration > before)
+    }
+
+    @Test("A VM joining a served network a running VM is on reuses it: that run has not ended")
+    func aJoinReusesANetworkARunningVMHolds() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let joiner = VMInstanceFixture.make(name: "Joiner")
+        roster.instances = [makeHolder(named: "Running", on: .shared), joiner]
+
+        registry.prepareNetwork(.shared, forJoining: joiner)
+
+        #expect(vmnet.invalidatedKinds.isEmpty)
+    }
+
+    @Test("A VM joining a served network another VM's build has taken reuses it")
+    func aJoinReusesANetworkABuildHolds() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let building = VMInstanceFixture.make(name: "Building", phase: .starting(sessionID: nil))
+        building.configuration.networkEnabled = true
+        building.configuration.networkMode = .shared
+        building.beginSessionContext()
+        let joiner = VMInstanceFixture.make(name: "Joiner")
+        roster.instances = [building, joiner]
+
+        registry.prepareNetwork(.shared, forJoining: joiner)
+
+        // Its configuration build hands out an attachment on whatever network
+        // stands, so pulling this one away would split the two VMs.
+        #expect(vmnet.invalidatedKinds.isEmpty)
+        building.tearDownSession(restingAt: .stopped)
+    }
+
+    @Test("A download in flight does not keep a served network from being replaced at the next join")
+    func aDownloadDoesNotHoldAServedNetwork() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        let joiner = VMInstanceFixture.make(name: "Joiner")
+        roster.instances = [makeDownloading(named: "Downloading"), joiner]
+
+        registry.prepareNetwork(.shared, forJoining: joiner)
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("A served network is kept across a stop and replaced as the next VM joins, its addresses never pending")
+    func aServedNetworkIsReplacedAtTheNextJoin() throws {
+        let (registry, service, operations) = makeRegistryOverService()
+        let macs = ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"]
+        for mac in macs { service.reserveAddressIfNeeded(for: mac, kind: .shared) }
+        // The addressing learn: a network no VM has joined yet.
+        _ = try service.network(for: .shared)
+        let first = VMInstanceFixture.make(name: "First")
+        let second = VMInstanceFixture.make(name: "Second")
+        roster.instances = [first, second]
+        let addresses = { macs.map { service.reservedAddress(for: $0, kind: .shared) } }
+        let reserved = ["192.168.213.2", "192.168.213.3"]
+        #expect(addresses() == reserved)
+
+        registry.prepareNetwork(.shared, forJoining: first)
+        _ = try service.attachment(for: .shared)
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(addresses() == reserved)
+
+        // The first VM has stopped: nobody holds the network, and it stays.
+        registry.rebuildNetworksIfIdle()
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(addresses() == reserved)
+
+        registry.prepareNetwork(.shared, forJoining: second)
+        #expect(addresses() == reserved)
+        _ = try service.attachment(for: .shared)
+        #expect(addresses() == reserved)
+
+        // The second VM joins a new network carrying every reservation, pinned
+        // to the same subnet, and the first one's network is what was released.
+        let attached = operations.attachedNetworks
+        try #require(attached.count == 2)
+        #expect(attached[1] != attached[0])
+        #expect(operations.releasedNetworks.last == attached[0])
+        #expect(operations.pinnedAddressings.last == operations.freshAddressing)
+        #expect(operations.installedReservations.last?.map(\.mac) == macs)
     }
 }

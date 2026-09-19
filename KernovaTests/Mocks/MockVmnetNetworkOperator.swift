@@ -40,6 +40,8 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     /// The forwarding rules each create was handed, in call order.
     private(set) var installedForwardingRules: [RecordedForwardingRules] = []
     private(set) var releasedNetworks: [OpaquePointer] = []
+    /// The network each attachment was built to join, in call order.
+    private(set) var attachedNetworks: [OpaquePointer] = []
 
     /// Runs inside each create, before it returns, with the 1-based number of
     /// the call — the seam for a test that has to change service state while a
@@ -68,6 +70,13 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 
     func releaseNetwork(_ handle: VmnetNetworkHandle) {
         releasedNetworks.append(handle.network)
+    }
+
+    /// A NAT attachment standing in for the vmnet one, which would retain the
+    /// fabricated pointer as a real network.
+    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
+        attachedNetworks.append(handle.network)
+        return VZNATNetworkDeviceAttachment()
     }
 
     /// A handle over a one-byte allocation standing in for the vmnet ref:
@@ -184,8 +193,8 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
 
     /// The rules last declared per lowercased MAC, in declaration order.
     private(set) var declaredForwardingRules: [(mac: String, rules: [PortForwardingRule])] = []
-    /// Scripted answer for `networkConfigurationIsPending(for:)`.
-    var scriptedPendingKinds: Set<VmnetNetworkKind> = []
+    /// Scripted answer for `recreationReason(for:)`.
+    var scriptedRecreationReasons: [VmnetNetworkKind: VmnetNetworkRecreationReason] = [:]
 
     func setPortForwardingRules(
         _ rules: [PortForwardingRule], for mac: String, kind: VmnetNetworkKind
@@ -193,10 +202,11 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
         declaredForwardingRules.append((mac: mac.lowercased(), rules: rules))
     }
 
-    func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool {
-        // Mirrors the service: nothing pends against a network that is not
+    func recreationReason(for kind: VmnetNetworkKind) -> VmnetNetworkRecreationReason? {
+        // Mirrors the service: no reason stands against a network that is not
         // materialized — its next materialization installs what is declared then.
-        materializedKinds.contains(kind) && scriptedPendingKinds.contains(kind)
+        guard materializedKinds.contains(kind) else { return nil }
+        return scriptedRecreationReasons[kind]
     }
 
     func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {

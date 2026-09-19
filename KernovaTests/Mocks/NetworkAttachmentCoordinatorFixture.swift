@@ -4,9 +4,10 @@ import Foundation
 
 /// Wires a mock-backed `NetworkAttachmentCoordinator` onto `instance`, mirroring
 /// `VMInstance.setupNetworkAttachmentCoordinator`: it reads the instance's live
-/// configuration, publishes pending state onto the session context, and routes
+/// configuration, publishes pending state onto the session context, routes
 /// both arbitration triggers — a suspected-defective network, and going pending
-/// — to `instance.onNetworkArbitrationNeeded`.
+/// — to `instance.onNetworkArbitrationNeeded`, and a join to
+/// `instance.onJoiningVmnetNetwork`.
 ///
 /// Shared by every suite that needs an instance whose coordinator answers
 /// `mayHoldAttachment(on:)` and `suspectsDefectiveNetwork(on:)` for real, rather
@@ -45,6 +46,9 @@ func attachNetworkCoordinator(
         },
         onNetworkDefectSuspected: { [weak instance] in
             instance?.onNetworkArbitrationNeeded?()
+        },
+        onJoiningVmnetNetwork: { [weak instance] kind in
+            instance?.onJoiningVmnetNetwork?(kind)
         })
     let context = instance.sessionContext ?? instance.beginSessionContext()
     context.networkAttachmentCoordinator = coordinator

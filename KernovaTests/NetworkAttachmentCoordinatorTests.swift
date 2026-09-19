@@ -36,6 +36,18 @@ struct NetworkAttachmentCoordinatorTests {
         let choiceBox: ChoiceBox
         let pendingChanges: PendingRecorder
         let defectReports: DefectReportRecorder
+        let joins: JoinRecorder
+    }
+
+    /// Records each network the session asked to join, and how many plans the
+    /// device had applied at that moment — standing in for the library's
+    /// replace-before-join the real wiring runs.
+    @MainActor
+    private final class JoinRecorder {
+        private(set) var joins: [(kind: VmnetNetworkKind, appliedBefore: Int)] = []
+        func record(_ kind: VmnetNetworkKind, appliedBefore: Int) {
+            joins.append((kind: kind, appliedBefore: appliedBefore))
+        }
     }
 
     /// Records every pending-state callback, standing in for
@@ -77,6 +89,7 @@ struct NetworkAttachmentCoordinatorTests {
         let choiceBox = ChoiceBox(choice)
         let pendingChanges = PendingRecorder()
         let defectReports = DefectReportRecorder()
+        let joins = JoinRecorder()
         let coordinator = NetworkAttachmentCoordinator(
             vmName: "Test VM",
             device: device,
@@ -89,12 +102,13 @@ struct NetworkAttachmentCoordinatorTests {
             isEligible: { eligibility.isEligible },
             choice: { choiceBox.choice },
             onPendingChange: { pendingChanges.record($0) },
-            onNetworkDefectSuspected: { defectReports.record() })
+            onNetworkDefectSuspected: { defectReports.record() },
+            onJoiningVmnetNetwork: { joins.record($0, appliedBefore: device.appliedPlans.count) })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
             vmnet: vmnet, observer: observer, clock: clock, eligibility: eligibility,
             choiceBox: choiceBox, pendingChanges: pendingChanges,
-            defectReports: defectReports)
+            defectReports: defectReports, joins: joins)
     }
 
     // MARK: - Session start
@@ -712,6 +726,51 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.configurationChanged()
         #expect(h.device.appliedPlans == [.hostOnly, .nat])
         #expect(!h.coordinator.isPending)
+    }
+
+    @Test("A live switch onto another app-managed network asks to join it before attaching")
+    func liveSwitchAsksToJoinBeforeAttaching() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .sharedVmnet, entitled: true)
+        h.coordinator.activate()
+        // Already on the network its mode resolves to, so there is nothing to join.
+        #expect(h.joins.joins.isEmpty)
+
+        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+
+        #expect(h.joins.joins.map { $0.kind } == [.hostOnly, .shared])
+        #expect(h.joins.joins.map { $0.appliedBefore } == [0, 1])
+        #expect(h.device.appliedPlans == [.hostOnly, .sharedVmnet])
+    }
+
+    @Test("A reattach to the network the session was on never asks to join, so a rejected one stays on the ladder")
+    func reattachToTheSameNetworkNeverAsksToJoin() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            devicePlan: .hostOnly,
+            retryDelays: [1, 2])
+        h.coordinator.activate()
+
+        h.device.plan = nil
+        h.coordinator.attachmentWasDisconnected(error: TestFailure("link down"))
+        for rung in 1...2 {
+            h.device.plan = nil
+            h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
+            guard let retry = h.coordinator.retryTaskForTesting else {
+                Issue.record("Expected a scheduled retry on rung \(rung)")
+                return
+            }
+            await retry.value
+            #expect(h.device.appliedPlans.count == rung + 1)
+        }
+
+        // A join could replace the network under every rejected attach and
+        // reset the ladder each time; the reattaches walk it instead.
+        #expect(h.joins.joins.isEmpty)
     }
 
     @Test("Switching to a Host Only network that won't materialize detaches rather than staying Shared")

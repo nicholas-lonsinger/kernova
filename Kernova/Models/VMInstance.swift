@@ -328,6 +328,14 @@ final class VMInstance {
     /// can see every VM sharing the network.
     @ObservationIgnored var onNetworkArbitrationNeeded: (@MainActor () -> Void)?
 
+    /// Fired just before this VM takes an attachment on the app-managed network
+    /// of `kind`: a session's configuration build, or its attachment recovery
+    /// moving it onto that network.
+    ///
+    /// Wired by `VMLibrary.wirePersistence(for:)`, which replaces the network
+    /// first when it needs replacing and nobody else is on it.
+    @ObservationIgnored var onJoiningVmnetNetwork: (@MainActor (VmnetNetworkKind) -> Void)?
+
     /// Applies a configuration mutation, routing it through the persistence
     /// pipeline when `onUpdateConfiguration` is wired.
     ///
@@ -670,10 +678,11 @@ final class VMInstance {
     ///
     /// Without one — a VM with no session or no network device, and a session
     /// between its creation and its coordinator being built — the configuration
-    /// decides, and only while a session could be forming or settling: the
-    /// configuration build attaches the VM to the network before this instance
-    /// holds anything that can be read back, and off-main configuration
-    /// assembly can already hold a handle this VM has not been given yet.
+    /// decides, and only while a `VZVirtualMachine` is live or a session
+    /// context is open: the configuration build attaches the VM to the network
+    /// before this instance holds anything that can be read back. A phase
+    /// alone holds nothing — a download runs in a transitioning phase with no
+    /// build behind it.
     func mayHoldAttachment(on kind: VmnetNetworkKind) -> Bool {
         if let networkAttachmentCoordinator {
             return networkAttachmentCoordinator.appliedVmnetKind == kind
@@ -681,7 +690,7 @@ final class VMInstance {
         guard configuration.networkEnabled,
             VmnetNetworkKind(mode: configuration.networkMode) == kind
         else { return false }
-        return phase.isTransitioning || hasLiveVirtualMachine
+        return hasLiveVirtualMachine || sessionContext != nil
     }
 
     /// Whether this VM's attachment recovery believes the app-managed network
@@ -1007,6 +1016,9 @@ final class VMInstance {
                 dropDataSink: dropDataSink))
         openRuntimeFileAccess(into: context.fileAccess)
         sessionContext = context
+        if configuration.networkEnabled, let kind = VmnetNetworkKind(mode: configuration.networkMode) {
+            onJoiningVmnetNetwork?(kind)
+        }
         return context
     }
 
@@ -1154,6 +1166,9 @@ final class VMInstance {
             },
             onNetworkDefectSuspected: { [weak self] in
                 self?.onNetworkArbitrationNeeded?()
+            },
+            onJoiningVmnetNetwork: { [weak self] kind in
+                self?.onJoiningVmnetNetwork?(kind)
             })
     }
 

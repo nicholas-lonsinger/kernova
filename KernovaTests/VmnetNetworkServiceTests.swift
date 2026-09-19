@@ -459,7 +459,7 @@ struct VmnetNetworkServiceTests {
         // fresh network without reservations. The mode beats the IP display.
         #expect(try #require(operations.pinnedAddressings.last) == nil)
         #expect(operations.installedReservations.last?.isEmpty == true)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
         // Three attempts of discovery, failed pinned recreate and fallback,
         // plus the failed pinned create opening attempts two and three.
         #expect(operations.createdKinds.count == 11)
@@ -490,7 +490,7 @@ struct VmnetNetworkServiceTests {
         #expect(installed.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
         #expect(installed.map(\.address) == ["192.168.213.2"])
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == "192.168.213.2")
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("Slots past the subnet's capacity are dropped from the installed reservations")
@@ -541,7 +541,7 @@ struct VmnetNetworkServiceTests {
         // The guest takes its deterministic reservation, and the address shows
         // rather than reading as pending.
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.77.3")
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A slot freed while the network is being created is gone from the published network")
@@ -559,7 +559,7 @@ struct VmnetNetworkServiceTests {
 
         #expect(operations.installedReservations.last?.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
         #expect(operations.releasedNetworks.count == 1)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A slot that moves while the network is being created publishes at its new address")
@@ -588,7 +588,7 @@ struct VmnetNetworkServiceTests {
         #expect(operations.installedReservations.last?.map(\.address) == ["192.168.77.2"])
         #expect(operations.releasedNetworks.count == 1)
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.77.2")
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A reservation declared during the discovery create is installed before the network publishes")
@@ -612,7 +612,7 @@ struct VmnetNetworkServiceTests {
         let installed = try #require(operations.installedReservations.last)
         #expect(installed.map(\.mac) == ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
         #expect(installed.map(\.address) == ["192.168.213.2", "192.168.213.3"])
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("Reservations that keep changing publish a network anyway, still reading as pending")
@@ -632,7 +632,7 @@ struct VmnetNetworkServiceTests {
         // the rest at the next recreate.
         #expect(operations.createdKinds.count == 3)
         #expect(operations.releasedNetworks.count == 2)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
     }
 
     // MARK: - Installed vs pending reservations
@@ -670,17 +670,17 @@ struct VmnetNetworkServiceTests {
         // Nothing is materialized, so the next materialization installs the
         // slots as they stand — there is nothing to recreate.
         service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
 
         _ = try service.network(for: .shared)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
 
         service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:03", kind: .shared)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
 
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:03", kind: .shared) == "192.168.77.4")
     }
 
@@ -696,10 +696,10 @@ struct VmnetNetworkServiceTests {
 
         // The live network keeps honoring the freed reservation, so what pends
         // is the whole set differing — not only an addition to it.
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A refilled slot pends, and rematerializing moves no other VM's address")
@@ -712,7 +712,7 @@ struct VmnetNetworkServiceTests {
 
         service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:01", kind: .shared)
         service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:04", kind: .shared)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
 
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
@@ -722,7 +722,7 @@ struct VmnetNetworkServiceTests {
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:04", kind: .shared) == "192.168.77.2")
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.77.3")
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:03", kind: .shared) == "192.168.77.4")
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A slot past the subnet's capacity never reads as pending")
@@ -744,7 +744,7 @@ struct VmnetNetworkServiceTests {
 
         // The slot can never install, so reading it as pending would drive an
         // endless recreate.
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("One MAC holding two slots installs both and never reads as pending")
@@ -765,7 +765,7 @@ struct VmnetNetworkServiceTests {
             operations.installedReservations.last?.map(\.address) == [
                 "192.168.77.2", "192.168.77.3",
             ])
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
         let cached = try service.network(for: .shared)
         #expect(cached.network == handle.network)
         #expect(operations.createdKinds.count == 1)
@@ -792,7 +792,7 @@ struct VmnetNetworkServiceTests {
         // none of them holds on the adjusted network — nor do the rules
         // forwarding to them, which is what leaves them pending.
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == nil)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
         // Nothing was declared during the create, so the rewritten addressing
         // alone must not read as a mid-create change and recreate the network.
         #expect(operations.createdKinds.count == 1)
@@ -862,7 +862,7 @@ struct VmnetNetworkServiceTests {
         #expect(operations.installedForwardingRules.first?.isEmpty == true)
         // An uninstallable rule must not read as pending, or it would drive an
         // endless recreate.
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A host port claimed twice across VMs installs once, in slot order")
@@ -892,7 +892,7 @@ struct VmnetNetworkServiceTests {
         _ = try service.network(for: .shared)
 
         service.setPortForwardingRules([], for: "aa:bb:cc:dd:ee:01", kind: .shared)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
 
@@ -910,7 +910,7 @@ struct VmnetNetworkServiceTests {
         _ = try service.network(for: .shared)
 
         #expect(operations.installedForwardingRules.first?.isEmpty == true)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("A rule declared while the network is being created lands in the published network")
@@ -933,7 +933,7 @@ struct VmnetNetworkServiceTests {
         #expect(operations.installedForwardingRules.last?.map(\.rule) == [Self.webRule, Self.sshRule])
         #expect(operations.releasedNetworks.count == 1)
         #expect(operations.releasedNetworks.first != handle.network)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("Rules that keep changing publish a network anyway, still reading as pending")
@@ -957,7 +957,7 @@ struct VmnetNetworkServiceTests {
         // rest at the next recreate.
         #expect(operations.createdKinds.count == 3)
         #expect(operations.releasedNetworks.count == 2)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
     }
 
     @Test("Rules pend only after the network they would change is materialized")
@@ -969,18 +969,18 @@ struct VmnetNetworkServiceTests {
 
         // Nothing is materialized, so the next materialization installs the
         // rules as they stand — there is nothing to recreate.
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
 
         _ = try service.network(for: .shared)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
 
         service.setPortForwardingRules(
             [Self.webRule, Self.sshRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
-        #expect(service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
 
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
-        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
     @Test("An unparseable MAC is refused a reservation slot")
@@ -1022,6 +1022,104 @@ struct VmnetNetworkServiceTests {
         operations.pinnedCreateError = nil
         _ = try service.network(for: .shared)
         #expect(operations.pinnedAddressings.last == operations.freshAddressing)
+    }
+
+    @Test("A recreate after invalidation that vmnet grants another subnet fails rather than moving every address")
+    func invalidationRecreateRefusesAMovedSubnet() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let mac = "aa:bb:cc:dd:ee:01"
+        let (service, operations) = try makeSeededSharedService(macs: [mac], at: location)
+        _ = try service.network(for: .shared)
+        service.invalidateNetwork(for: .shared)
+        let released = operations.releasedNetworks.count
+        operations.reservedAddressingOverride = operations.freshAddressing
+
+        #expect(throws: VmnetOperationError.self) {
+            try service.network(for: .shared)
+        }
+
+        // The granted network is let go, nothing falls back to a fresh subnet,
+        // and the stored addressing — every reserved address — stays put.
+        #expect(operations.releasedNetworks.count == released + 1)
+        #expect(!operations.pinnedAddressings.contains(nil))
+        let store = try readStore(at: location.storeURL, from: service)
+        #expect(store?[.shared]?.addressing == Self.storedAddressing)
+        #expect(service.reservedAddress(for: mac, kind: .shared) == "192.168.77.2")
+        #expect(service.isPinnedOnlyForTesting(.shared))
+
+        // Once vmnet grants the stored subnet again, the retry lands on it.
+        operations.reservedAddressingOverride = nil
+        _ = try service.network(for: .shared)
+        #expect(operations.pinnedAddressings.last == Self.storedAddressing)
+        #expect(!service.isPinnedOnlyForTesting(.shared))
+        #expect(service.recreationReason(for: .shared) == nil)
+        #expect(service.reservedAddress(for: mac, kind: .shared) == "192.168.77.2")
+    }
+
+    // MARK: - Served networks
+
+    @Test("A network that built an attachment for a boot reports it served, its declarations unchanged")
+    func bootAttachmentMarksTheNetworkServed() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+
+        _ = try service.attachment(for: .shared)
+
+        // Its reservations lapse when that run ends, so the network is retired
+        // even though nothing was declared since it was created.
+        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+        #expect(operations.attachedNetworks.count == 1)
+    }
+
+    @Test("A second attachment joins the network the first one did")
+    func secondAttachmentJoinsTheSameNetwork() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], at: location)
+
+        _ = try service.attachment(for: .shared)
+        _ = try service.attachment(for: .shared)
+
+        // Being served is a reason the arbiter weighs, never one the service
+        // acts on by itself: VMs sharing a run share the network.
+        #expect(operations.createdKinds.count == 1)
+        #expect(operations.releasedNetworks.isEmpty)
+        let attached = operations.attachedNetworks
+        try #require(attached.count == 2)
+        #expect(attached[0] == attached[1])
+    }
+
+    @Test("A network that built a live attachment reports it served")
+    func liveAttachmentMarksTheNetworkServed() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, _) = try makeSeededSharedService(macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        _ = try service.network(for: .shared)
+        #expect(service.recreationReason(for: .shared) == nil)
+
+        #expect(service.attachmentIfMaterialized(for: .shared) != nil)
+
+        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+    }
+
+    @Test("A network materialized only to learn its addressing is never retired as served")
+    func learnedNetworkIsNotServed() async throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+
+        #expect(await service.materializeNetwork(for: .shared))
+
+        // No attachment ever joined it, so its reservations have not had a run
+        // to lapse in — recreating it would only cost another create.
+        #expect(service.recreationReason(for: .shared) == nil)
+        #expect(operations.attachedNetworks.isEmpty)
     }
 
     // MARK: - Network identity

@@ -710,6 +710,55 @@ struct VMInstanceTests {
         #expect(!instance.mayHoldAttachment(on: .hostOnly))
     }
 
+    @Test(
+        "A sessionless phase holds its network only while a session context is open",
+        arguments: [
+            VMLifecyclePhase.installing(sessionID: nil),
+            VMLifecyclePhase.starting(sessionID: nil),
+            VMLifecyclePhase.restoringSavedState(sessionID: nil),
+        ])
+    func mayHoldAttachmentNeedsASessionContext(phase: VMLifecyclePhase) {
+        let instance = VMInstanceFixture.make(phase: phase)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+
+        // A download, or a lock-contention retry's backoff: transitioning,
+        // with no build behind it.
+        #expect(!instance.mayHoldAttachment(on: .shared))
+
+        // The configuration build runs inside the context, and takes the
+        // attachment before anything can be read back.
+        instance.beginSessionContext()
+        #expect(instance.mayHoldAttachment(on: .shared))
+        #expect(!instance.mayHoldAttachment(on: .hostOnly))
+
+        instance.tearDownSession(restingAt: .stopped)
+        #expect(!instance.mayHoldAttachment(on: .shared))
+    }
+
+    @Test(
+        "Opening a session context asks to join the app-managed network the configuration names",
+        arguments: [
+            (VMNetworkMode.shared, true, [VmnetNetworkKind.shared]),
+            (VMNetworkMode.hostOnly, true, [VmnetNetworkKind.hostOnly]),
+            (VMNetworkMode.bridged, true, []),
+            (VMNetworkMode.shared, false, []),
+        ])
+    func beginSessionContextAsksToJoin(
+        mode: VMNetworkMode, networkEnabled: Bool, joined expected: [VmnetNetworkKind]
+    ) {
+        let instance = VMInstanceFixture.make(phase: .starting(sessionID: nil))
+        instance.configuration.networkEnabled = networkEnabled
+        instance.configuration.networkMode = mode
+        var joined: [VmnetNetworkKind] = []
+        instance.onJoiningVmnetNetwork = { joined.append($0) }
+
+        instance.beginSessionContext()
+
+        #expect(joined == expected)
+        instance.tearDownSession(restingAt: .stopped)
+    }
+
     @Test("A live session with networking off holds nothing")
     func mayHoldAttachmentWithNetworkingOff() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
