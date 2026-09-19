@@ -428,8 +428,10 @@ struct VMToolbarManagerTests {
     }
 
     @Test("A preparing VM's lifecycle labels name what its own state admits")
-    func preparingKeepsTheLabelsItsStateAdmits() {
+    func preparingKeepsTheLabelsItsStateAdmits() throws {
         let instance = makeInstance(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
@@ -464,9 +466,11 @@ struct VMToolbarManagerTests {
         #expect(playItem?.label == "Start")
     }
 
-    @Test("Play button shows 'Resume' when status is paused")
-    func playLabelResumeWhenPaused() {
+    @Test("Play button shows 'Resume' for a VM holding a saved state")
+    func playLabelResumeWhenPaused() throws {
         let instance = makeInstance(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -508,8 +512,10 @@ struct VMToolbarManagerTests {
     }
 
     @Test("Play (resume) and stop enabled when paused")
-    func resumeStopEnabledWhenPaused() {
+    func resumeStopEnabledWhenPaused() throws {
         let instance = makeInstance(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 

@@ -672,6 +672,17 @@ final class VMInstance {
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool { phase.isColdPaused }
 
+    /// `true` when the bundle holds a saved state and nothing is live — the VM
+    /// a Resume restores and a Discard Saved State empties, whatever phase it
+    /// rests at.
+    ///
+    /// The file rather than the phase, because the two can disagree: a
+    /// bring-up that gives up before the restore leaves the slot exactly as it
+    /// found it, however that failure was classified. A saved state loads back
+    /// only into the configuration it was written under, so this is also what
+    /// pins the VM's settings (``canEditSettings``).
+    var holdsSuspendedSession: Bool { phase.isAtRest && hasSaveFile }
+
     /// `true` when the VM is paused with its `VZVirtualMachine` still live in
     /// memory — the resumable counterpart of ``isColdPaused``.
     var isLivePaused: Bool { phase.isLivePaused }
@@ -690,17 +701,31 @@ final class VMInstance {
     /// ``VMLifecyclePhase/isTransitioning``.
     var isTransitioning: Bool { phase.isTransitioning }
 
-    var canStart: Bool { phase.canStart }
+    /// Whether a bring-up can begin — the state term
+    /// ``VirtualizationService/start(_:bootIntoRecovery:provisioning:)`` guards
+    /// on.
+    ///
+    /// A VM holding a saved state is included: its start restores that state
+    /// rather than booting over it. Which of the two verbs a *surface* offers
+    /// is ``VMCapabilityCatalog``'s question.
+    var canStart: Bool { phase.isAtRest }
 
     var canStop: Bool { phase.canStop }
 
     var canPause: Bool { phase.canPause }
 
-    var canResume: Bool { phase.canResume }
+    /// Whether Resume applies — a hot resume from memory, or a cold one that
+    /// restores the bundle's suspend slot.
+    var canResume: Bool { isLivePaused || holdsSuspendedSession }
 
     var canSave: Bool { phase.canSave }
 
-    var canEditSettings: Bool { phase.canEditSettings }
+    /// Whether the VM's configuration can be edited.
+    ///
+    /// A live VM's hardware is pinned by its `VZVirtualMachine`, and a saved
+    /// state's by the file: VZ restores one only into the configuration it was
+    /// written under, so an edit taken while the slot is on disk strands it.
+    var canEditSettings: Bool { phase.isAtRest && !hasSaveFile }
 
     var canRename: Bool { !isPreparing && phase.canRename }
 
@@ -714,22 +739,17 @@ final class VMInstance {
     /// How a capture started right now would be taken — the one place that
     /// choice is made — or `nil` when the VM is in no state to capture.
     ///
-    /// The other at-rest phases are excluded. `.initialBoot` holds disks with no
-    /// installed guest, so a revert would land the VM stopped over an unbootable
-    /// disk. `.failed` may still hold a suspend slot the VM would resume from
-    /// (see ``VirtualizationService/restingPhaseAfterRestoreFailure(on:)``).
-    /// Every transitional phase (`.starting`, `.saving`, `.capturingLive`, …) is
-    /// excluded too — a capture mid-operation would race the operation itself.
-    ///
-    /// Suspended additionally needs ``hasSaveFile``, unlike the other branches:
-    /// the phase says the guest's memory is on disk, and only the file says it
-    /// is still there — a slot removed underneath the VM leaves a suspension
-    /// with nothing to capture, the same dead end
-    /// ``VirtualizationService/restingPhaseAfterRestoreFailure(on:)`` names.
+    /// The bundle's suspend slot decides the at-rest cases: a VM holding one
+    /// captures it, and disks alone are captured only from a plainly stopped
+    /// VM — `.initialBoot` holds disks with no installed guest, so a revert
+    /// would land the VM stopped over an unbootable one, and `.failed` says the
+    /// last operation did not finish. Every transitional phase (`.starting`,
+    /// `.saving`, `.capturingLive`, …) is excluded too — a capture
+    /// mid-operation would race the operation itself.
     var snapshotCaptureMode: VMSnapshotCaptureMode? {
         if canSave {
             .live
-        } else if isColdPaused && hasSaveFile {
+        } else if holdsSuspendedSession {
             .suspended
         } else if phase == .stopped {
             .stopped
@@ -797,7 +817,7 @@ final class VMInstance {
     /// `phase` through the guard below re-reads this at every moment it can
     /// differ.
     var isRestingAtEphemeralBaseline: Bool {
-        guard isColdPaused, let baseline = ephemeralBaselineSnapshot else { return false }
+        guard holdsSuspendedSession, let baseline = ephemeralBaselineSnapshot else { return false }
         return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
     }
 
@@ -814,10 +834,10 @@ final class VMInstance {
     /// `true` when the VM can be deleted — nothing live in memory, no
     /// transitional phase, and no import or clone writing into the bundle.
     ///
-    /// Suspended VMs are included: the saved state is a file inside the bundle
-    /// and is removed along with it, so no discard step is needed first.
+    /// A saved state is no bar: it is a file inside the bundle and goes with
+    /// it, so no discard step is needed first.
     var canDelete: Bool {
-        !isPreparing && (phase.canEditSettings || isColdPaused)
+        !isPreparing && phase.isAtRest
     }
 
     /// `true` when the VM can be cold-booted into macOS Recovery.
@@ -869,6 +889,7 @@ final class VMInstance {
             resetToStopped()
             #log(Self.logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
+            dropTruncatedSaveFile()
             tearDownSession(restingAt: .failed(message: error.localizedDescription))
             #log(
                 Self.logger, .error,
@@ -1126,6 +1147,34 @@ final class VMInstance {
             onJoiningVmnetNetwork: { [weak self] kind in
                 self?.onJoiningVmnetNetwork?(kind)
             })
+    }
+
+    /// Ends the suspension the bundle holds: the saved state goes, and the VM
+    /// rests where a VM with nothing to restore belongs.
+    ///
+    /// The two are one call because a suspension whose slot is gone is a dead
+    /// end — Resume has nothing to load and the settings stay locked behind a
+    /// file that is not there. A restore *consuming* the slot on its way to
+    /// running calls ``removeSaveFile()`` instead, and leaves the phase to the
+    /// bring-up.
+    func discardSavedState() {
+        removeSaveFile()
+        if phase.isAtRest { enter(.stopped) }
+    }
+
+    /// Drops a suspend slot a save is still part-way through writing, and
+    /// nothing else.
+    ///
+    /// `VZVirtualMachine.saveMachineStateTo` writes the slot in place
+    /// (``VMLifecyclePhase/terminationMustWaitOut``), so a save that threw, was
+    /// terminated, or lost its guest left a truncated file behind — and
+    /// ``VMLibrary/initialPhase(for:layout:)`` would offer it after a relaunch
+    /// as a resumable session that cannot restore. The phase is the whole of
+    /// the test: a write that completed has left ``VMLifecyclePhase/saving``
+    /// behind, so nothing here can take a valid saved state away.
+    func dropTruncatedSaveFile() {
+        guard case .saving = phase else { return }
+        removeSaveFile()
     }
 
     /// Removes the persisted save file from the bundle, if it exists.

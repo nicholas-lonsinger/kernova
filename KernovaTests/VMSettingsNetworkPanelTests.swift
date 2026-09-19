@@ -44,6 +44,7 @@ struct VMSettingsNetworkPanelTests {
         entitled: Bool = true,
         isReadOnly: Bool = false,
         phase: VMLifecyclePhase = .stopped,
+        holdsSavedState: Bool = false,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
@@ -54,6 +55,7 @@ struct VMSettingsNetworkPanelTests {
             $0.macAddress = macAddress
             $0.portForwardingRules = portForwardingRules
         }
+        if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
         // The pane always shows a VM the library holds, and the library's slot
         // declaration is what makes an address derivable — so `vmnetNetworks`
         // reaches the panel through the library, never the panel directly.
@@ -770,10 +772,12 @@ struct VMSettingsNetworkPanelTests {
             VMLifecyclePhase.saving(sessionID: UUID()), .revertingToSnapshot, .suspended,
         ] {
             // Suspended carries no live `VZVirtualMachine` — there is no
-            // session to hot-swap an attachment on.
-            let (vc, _) = makeNetworkController(
+            // session to hot-swap an attachment on — and its saved state pins
+            // the device the picker would change.
+            let (vc, instance) = makeNetworkController(
                 interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
-                isReadOnly: true, phase: phase)
+                isReadOnly: true, phase: phase, holdsSavedState: phase == .suspended)
+            defer { VMInstanceFixture.removeBundle(of: instance) }
             #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == false)
         }
     }

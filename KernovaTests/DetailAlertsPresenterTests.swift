@@ -360,13 +360,10 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
-        // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
-        // needs one on disk, not just the status.
-        try FileManager.default.createDirectory(
-            at: vm.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: vm.bundleURL) }
-        FileManager.default.createFile(
-            atPath: vm.saveFileURL.path(percentEncoded: false), contents: Data("fake save".utf8))
+        // A capturable suspend slot: every predicate a suspended VM is judged
+        // by needs one on disk, not just the status.
+        defer { VMInstanceFixture.removeBundle(of: vm) }
+        try VMInstanceFixture.writeSaveFile(for: vm)
         #expect(vm.isColdPaused)
         let snapshot = VMSnapshot(name: "Before the update")
 
@@ -394,10 +391,12 @@ struct DetailAlertsPresenterTests {
     }
 
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
-    func discardAlertOnAnEphemeralVMNamesTheBaseline() {
+    func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: vm) }
+        try VMInstanceFixture.writeSaveFile(for: vm)
         let baseline = VMSnapshot(name: "Clean install")
         vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
         vm.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -410,10 +409,12 @@ struct DetailAlertsPresenterTests {
     }
 
     @Test("Discarding a suspended VM that isn't ephemeral still names the deletion")
-    func discardAlertOnAPlainVMIsUnchanged() {
+    func discardAlertOnAPlainVMIsUnchanged() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: vm) }
+        try VMInstanceFixture.writeSaveFile(for: vm)
 
         let alert = presenter.forceStopAlertForTesting(vm)
 
@@ -460,10 +461,12 @@ struct DetailAlertsPresenterTests {
     }
 
     @Test("Reverting a suspended VM to a disks-only snapshot says its saved session is discarded")
-    func revertAlertOnAColdTargetFromColdPaused() {
+    func revertAlertOnAColdTargetFromColdPaused() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: vm) }
+        try VMInstanceFixture.writeSaveFile(for: vm)
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)

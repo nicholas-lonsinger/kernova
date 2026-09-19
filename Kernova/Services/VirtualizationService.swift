@@ -245,12 +245,12 @@ final class VirtualizationService {
     func stop(_ instance: VMInstance) async throws {
         #log(
             Self.logger, .debug,
-            "stop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)"
+            "stop: status=\(instance.status.displayName, privacy: .public), holdsSuspendedSession=\(instance.holdsSuspendedSession, privacy: .public)"
         )
-        // Cold-paused: no live VM, just discard the save file
-        if instance.isColdPaused {
-            instance.removeSaveFile()
-            instance.enter(.stopped)
+        // A saved state with nothing live: there is no guest to ask, so the stop
+        // discards the slot.
+        if instance.holdsSuspendedSession {
+            instance.discardSavedState()
             #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
@@ -266,12 +266,12 @@ final class VirtualizationService {
     func forceStop(_ instance: VMInstance) async throws {
         #log(
             Self.logger, .debug,
-            "forceStop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)"
+            "forceStop: status=\(instance.status.displayName, privacy: .public), holdsSuspendedSession=\(instance.holdsSuspendedSession, privacy: .public)"
         )
-        // Cold-paused: no live VM, just discard the save file
-        if instance.isColdPaused {
-            instance.removeSaveFile()
-            instance.enter(.stopped)
+        // A saved state with nothing live: there is no guest to terminate, so
+        // the force stop discards the slot.
+        if instance.holdsSuspendedSession {
+            instance.discardSavedState()
             #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
@@ -281,6 +281,7 @@ final class VirtualizationService {
         }
 
         try await session.stop()
+        instance.dropTruncatedSaveFile()
         instance.resetToStopped()
         #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
     }
@@ -337,21 +338,15 @@ final class VirtualizationService {
             Self.logger, .debug,
             "resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
         )
+        // ``VMInstance/canResume`` reads the suspend slot, so a cold resume
+        // reaching here has one to restore from.
         guard instance.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
-        }
-        // A suspended VM whose slot has gone has nothing to resume from, and no
-        // attempt has touched anything yet — so it rests where a slotless
-        // suspension belongs rather than through the failure path below, which
-        // classifies what an attempt did.
-        let hotResumeSessionID = instance.session?.id
-        if hotResumeSessionID == nil, !instance.hasSaveFile {
-            instance.enter(.stopped)
-            throw VirtualizationError.noSaveFile
         }
 
         // A hot resume acts for the session it already holds; a cold one for
         // whichever session the restore brings up.
+        let hotResumeSessionID = instance.session?.id
         var attemptSessionID = hotResumeSessionID
         do {
             let sessionID: UUID
@@ -446,6 +441,9 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
+            // Before the rest, so no observer sees a truncated slot offered as
+            // a resumable session.
+            instance.dropTruncatedSaveFile()
             // A force stop is the interrupt this operation is most likely to
             // meet — it aborts the write and rests the VM `.stopped`, which a
             // failure banner over the top would misreport as a crash.
@@ -843,7 +841,7 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(Self.restingPhaseAfterRestoreFailure(on: instance))
+            instance.enter(Self.restingPhaseForSuspendSlot(on: instance))
             throw error
         }
 
@@ -975,7 +973,7 @@ final class VirtualizationService {
     /// one. That fallback is sound because a sessionless in-flight phase offers
     /// no interrupt to be overtaken by: ``VMLifecyclePhase/canForceStop``
     /// requires an identity at `.starting` and `.restoringSavedState`, and
-    /// ``VMLifecyclePhase/canStart`` is false at both.
+    /// ``VMLifecyclePhase/isAtRest`` is false at both.
     static func attemptStillOwnsThePhase(
         _ instance: VMInstance, actingFor sessionID: UUID?
     ) -> Bool {
@@ -1002,17 +1000,21 @@ final class VirtualizationService {
     /// Where a failed start or resume leaves `instance`, for the caller to rest
     /// at as it tears the session down.
     ///
-    /// A failed save-file restore goes to
-    /// ``restingPhaseAfterRestoreFailure(on:)``; anything else classifies
-    /// through ``restingPhaseAfterStartFailure(_:transientRestingPhase:)`` when
-    /// `transientRestingPhase` is given (a start), or rests at `.failed`
-    /// carrying the message (a resume).
+    /// A bundle still holding its suspend slot rests suspended, with the file
+    /// untouched: a bring-up that gave up before the restore — over a missing
+    /// disk, an unusable share, an invalid configuration — left the saved state
+    /// exactly as it found it, and that is what the next bring-up loads. No
+    /// message either, because the VM is resumable rather than stuck: the
+    /// failure reaches the user as the thrown error.
+    ///
+    /// Without a slot, a start classifies through
+    /// ``restingPhaseAfterStartFailure(_:transientRestingPhase:)`` (which is
+    /// what `transientRestingPhase` names), and a resume rests at `.failed`
+    /// carrying the message.
     static func restingPhaseAfterLifecycleFailure(
         _ error: Error, on instance: VMInstance, transientRestingPhase: VMLifecyclePhase?
     ) -> VMLifecyclePhase {
-        if isRestoreFailure(error) {
-            return restingPhaseAfterRestoreFailure(on: instance)
-        }
+        if instance.hasSaveFile { return .suspended }
         if let transientRestingPhase {
             return restingPhaseAfterStartFailure(
                 error, transientRestingPhase: transientRestingPhase)
@@ -1020,13 +1022,12 @@ final class VirtualizationService {
         return .failed(message: error.localizedDescription)
     }
 
-    /// Where a failed save-file restore leaves `instance`: back at suspended
-    /// with the save file untouched, so the user can retry the resume or
-    /// explicitly discard the saved state. If the save file is gone — discarded
-    /// while the attempt was in flight — `.stopped` instead: suspended without a
-    /// save file is a dead end. No message — the failure reaches the user as a
-    /// thrown error.
-    static func restingPhaseAfterRestoreFailure(on instance: VMInstance) -> VMLifecyclePhase {
+    /// Where a VM with nothing live belongs, read off its bundle: suspended
+    /// while the suspend slot is on disk, stopped once it is not — a suspension
+    /// with nothing to restore is a dead end.
+    ///
+    /// No message: a VM resting here is one the user can bring back up.
+    static func restingPhaseForSuspendSlot(on instance: VMInstance) -> VMLifecyclePhase {
         instance.hasSaveFile ? .suspended : .stopped
     }
 
@@ -1177,11 +1178,12 @@ enum VirtualizationError: LocalizedError {
         case .noSaveFile:
             "No saved state file found."
         case .restoreFailed(let underlying):
-            // Names no command: which of them this VM offers depends on its own
-            // state, and an Ephemeral VM resting on its baseline is offered
-            // neither the discard nor a force stop.
+            // States what is known and stops. Nothing here can tell whether a
+            // second attempt would fare better — after the device set has
+            // diverged from the one the state was written with, none ever will
+            // — and which commands the VM offers is its own state's answer.
             "Could not restore the saved state: \(underlying.localizedDescription)\n\n"
-                + "The saved state was kept, so Resume can try again."
+                + "The saved state was kept."
         case .revertResumeFailed(let underlying):
             "The virtual machine was reverted to the snapshot, but it could not be "
                 + "resumed: \(underlying.localizedDescription)\n\n"

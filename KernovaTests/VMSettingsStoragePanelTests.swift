@@ -18,11 +18,11 @@ struct VMSettingsStoragePanelTests {
 
     private func makeController(
         guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = .storage,
-        phase: VMLifecyclePhase = .stopped
+        phase: VMLifecyclePhase = .stopped, holdsSavedState: Bool = false
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category, phase: phase,
-            preferences: preferences)
+            holdsSavedState: holdsSavedState, preferences: preferences)
     }
 
     // MARK: - Live missing-file badge
@@ -98,8 +98,9 @@ struct VMSettingsStoragePanelTests {
         #expect(visibleLockHints(in: running.view) == [groupedFormLockHintText])
 
         // A suspended VM's saved state pins both, so both sections say so.
-        let (suspended, _, _) = makeController(
-            guestOS: .linux, isReadOnly: true, phase: .suspended)
+        let (suspended, suspendedVM, _) = makeController(
+            guestOS: .linux, isReadOnly: true, phase: .suspended, holdsSavedState: true)
+        defer { VMInstanceFixture.removeBundle(of: suspendedVM) }
         #expect(
             Set(visibleLockHints(in: suspended.view)) == [groupedFormLockHintText, hintText])
     }
