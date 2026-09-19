@@ -264,16 +264,17 @@ case "$target" in
                     case "$report_status" in
                         3) verdict=no-tests-ran status=3 ;;
                         1) verdict=test-failed status=1 ;;
-                        0)
-                            if [ "$make_status" -eq 0 ]; then
-                                verdict=green
-                            else
-                                verdict=test-failed status=1
-                                extra="$extra reason=make-exit-$make_status"
-                                tail_section >>"$body"
-                            fi
-                            ;;
+                        0) verdict=green ;;
                     esac
+                    # A bundle reporting zero failures says nothing about make:
+                    # xcodebuild failing before the build writes a zero-test
+                    # error bundle, which would otherwise read as green, or as
+                    # a SUITE= filter that matched nothing.
+                    if [ "$status" -ne 1 ] && [ "$make_status" -ne 0 ]; then
+                        verdict=test-failed status=1
+                        extra="$extra reason=make-exit-$make_status"
+                        tail_section >>"$body"
+                    fi
                     ;;
             esac
             rm -f "$report" "$report.err"

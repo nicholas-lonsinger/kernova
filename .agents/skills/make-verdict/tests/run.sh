@@ -147,6 +147,10 @@ run "suite matched nothing" 3 with_log test-none.log 0 test-suite KernovaTests/N
 expect '^make-verdict: target=test-suite suite=KernovaTests/NoSuchSuite '
 expect_last '^make-verdict: verdict=no-tests-ran target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 '
 
+run "zero tests but make failed" 1 with_log test-none.log 1 test-suite KernovaTests/NoSuchSuite
+expect '^tail:$'
+expect_last '^make-verdict: verdict=test-failed target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 reason=make-exit-1 '
+
 run "test build failed" 2 with_log test-build-failed.log 65 test
 expect '^errors:$'
 expect "^  KernovaTests/VMConfigurationTests\.swift:18:22: error: value of type"
