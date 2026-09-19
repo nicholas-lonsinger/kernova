@@ -79,8 +79,8 @@ final class GuestAccountContentViewController: NSViewController {
                 makeGroupedFormCardRow("Verify", control: verifyField, fillsControl: true),
             ], to: form)
         let caption = makeGroupedFormCaption(
-            "Kernova doesn\u{2019}t save this password. If the installation is interrupted, "
-                + "you\u{2019}ll be asked for it again.")
+            "Kernova doesn\u{2019}t save this password. If Kernova quits before the account is "
+                + "created, you\u{2019}ll be asked for it again.")
         form.addArrangedSubview(caption)
         caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
 
