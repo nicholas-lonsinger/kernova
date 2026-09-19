@@ -872,13 +872,28 @@ struct VMSettingsNetworkPanelTests {
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
     }
 
-    @Test("Unlocking after a session re-enables the rule controls")
-    func unlockingReenablesTheRuleControls() {
+    @Test("A running VM's rule controls stay locked however the route was opened")
+    func runningVMLocksTheRuleControlsWhateverTheRoute() {
+        // The model gate, not the route: the verb behind Add Rule and Remove
+        // refuses on the VM's own state, so the controls must read the same.
+        let (vc, _) = makeNetworkController(
+            portForwardingRules: [Self.webRule], isReadOnly: false,
+            phase: .running(sessionID: UUID()))
+
+        #expect(removeRuleButtons(in: vc.view).allSatisfy { !$0.isEnabled })
+        #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
+    }
+
+    @Test("A VM leaving its session re-enables the rule controls")
+    func leavingTheSessionReenablesTheRuleControls() {
+        let viewModel = makeViewModel()
         let (vc, instance) = makeNetworkController(
-            portForwardingRules: [Self.webRule], isReadOnly: true, phase: .running(sessionID: UUID()))
+            portForwardingRules: [Self.webRule], isReadOnly: true,
+            phase: .running(sessionID: UUID()), viewModel: viewModel)
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
 
-        vc.reconfigure(instance: instance, viewModel: makeViewModel(), isReadOnly: false)
+        instance.enter(.stopped)
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
 
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == true)
         #expect(removeRuleButtons(in: vc.view).allSatisfy { $0.isEnabled })

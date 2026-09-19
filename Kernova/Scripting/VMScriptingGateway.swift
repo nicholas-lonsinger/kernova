@@ -226,7 +226,7 @@ final class VMScriptingGateway {
     // MARK: - Lifecycle
 
     func start(_ selectors: [VMSelector], recoveryMode: Bool) async throws {
-        try await perform(.start, surfacing: false, on: selectors) {
+        try await perform(.start, on: selectors) {
             try await self.commands.start($0, recovery: recoveryMode)
         }
     }
@@ -242,7 +242,7 @@ final class VMScriptingGateway {
         _ selectors: [VMSelector], method: StopDisposition, confirmed: Bool,
         givingUpAfter timeout: TimeInterval?
     ) async throws {
-        try await perform(.stop, surfacing: false, on: selectors) { selector in
+        try await perform(.stop, on: selectors) { selector in
             try await VMConsentPolicy.run(
                 prompting: { prompt in
                     guard confirmed else { throw CommandError.confirmationRequired(prompt) }
@@ -255,31 +255,31 @@ final class VMScriptingGateway {
     }
 
     func restart(_ selectors: [VMSelector], givingUpAfter timeout: TimeInterval?) async throws {
-        try await perform(.restart, surfacing: false, on: selectors) {
+        try await perform(.restart, on: selectors) {
             try await self.commands.restart($0, timeout: timeout)
         }
     }
 
     func pause(_ selectors: [VMSelector]) async throws {
-        try await perform(.pause, surfacing: false, on: selectors) {
+        try await perform(.pause, on: selectors) {
             try await self.commands.pause($0)
         }
     }
 
     func resume(_ selectors: [VMSelector]) async throws {
-        try await perform(.resume, surfacing: false, on: selectors) {
+        try await perform(.resume, on: selectors) {
             try await self.commands.resume($0)
         }
     }
 
     func suspend(_ selectors: [VMSelector]) async throws {
-        try await perform(.suspend, surfacing: false, on: selectors) {
+        try await perform(.suspend, on: selectors) {
             try await self.commands.suspend($0)
         }
     }
 
     func reveal(_ selectors: [VMSelector]) async throws {
-        try await perform(.reveal, surfacing: true, on: selectors) {
+        try await perform(.reveal, on: selectors) {
             try self.commands.reveal($0)
         }
     }
@@ -289,18 +289,18 @@ final class VMScriptingGateway {
     /// Runs `verb` on each VM once the library read has landed, logging and
     /// rethrowing the first refusal.
     ///
-    /// A `surfacing` verb — one whose whole purpose is to show something, which
-    /// a bring-up is not — brings the app forward first, so the window it puts
-    /// up opens in front of the person who ran the script rather than behind
-    /// Script Editor. A refusal stops the run where it happened: an event
-    /// addressing several VMs carries back one error, and finishing the rest
-    /// would leave a script unable to tell how far the verb got.
+    /// A verb that puts something on screen (``VMVerb/surfacesInterface``)
+    /// brings the app forward first, so the window it puts up opens in front of
+    /// the person who ran the script rather than behind Script Editor. A refusal
+    /// stops the run where it happened: an event addressing several VMs carries
+    /// back one error, and finishing the rest would leave a script unable to
+    /// tell how far the verb got.
     private func perform(
-        _ verb: VMVerb, surfacing: Bool, on selectors: [VMSelector],
+        _ verb: VMVerb, on selectors: [VMSelector],
         _ body: (VMSelector) async throws -> Void
     ) async throws {
         await readiness.ready()
-        if surfacing, !selectors.isEmpty { activate() }
+        if verb.surfacesInterface, !selectors.isEmpty { activate() }
         for selector in selectors {
             do {
                 try await body(selector)

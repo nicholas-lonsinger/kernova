@@ -398,14 +398,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         Task { await viewModel.resume(instance) }
     }
 
+    /// One call for every state the stop slot stands for: the consent a
+    /// cold-paused VM's discard needs arrives as the verb's own refusal, which
+    /// raises the sheet.
     @objc func stopVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        // Require explicit confirmation before discarding saved state
-        if instance.isColdPaused {
-            viewModel.requestForceStop(instance)
-        } else {
-            Task { await viewModel.stop(instance) }
-        }
+        Task { await viewModel.stop(instance) }
     }
 
     @objc func forceStopVM(_ sender: Any?) {
@@ -447,7 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func toggleSettingsPane(_ sender: Any?) {
         guard let instance = activeInstance,
-            instance.hasActiveDisplay
+            viewModel.capabilities.isAvailable(.toggleSettingsPane, on: instance)
         else { return }
         instance.detailPaneMode = instance.detailPaneMode == .settings ? .display : .settings
     }

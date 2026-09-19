@@ -136,6 +136,13 @@ extension VMSettingsPanel {
 
     var instance: VMInstance { context.instance }
     var viewModel: VMLibraryViewModel { context.viewModel }
+    /// Whether the *route* opened this pane read-only, which is the pane's
+    /// chrome: the lock hints, the dimming, the captions.
+    ///
+    /// Not a control's gate. What a control may do is the capability its verb
+    /// refuses on (``VMCapabilityCatalog/isAvailable(_:on:)``) — a second
+    /// surface asking the same question has to get the same answer, and only the
+    /// capability is the answer the verb behind the control will honour.
     var isReadOnly: Bool { context.isReadOnly }
     /// The figures this panel shares with the overview's cards, resolved once.
     var resolved: VMOverviewResolved { context.overview.resolved }

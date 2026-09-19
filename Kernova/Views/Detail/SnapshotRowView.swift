@@ -8,7 +8,9 @@ struct SnapshotRowModel: Identifiable, Equatable {
     /// `true` for the snapshot Ephemeral Mode returns this VM to.
     let isBaseline: Bool
     let canRevert: Bool
-    let canDelete: Bool
+    /// What this row's Delete is offered as, which decides both its enablement
+    /// and the tooltip explaining a bar.
+    let deleteOffer: VMCapabilityCatalog.SnapshotDeleteOffer
 
     var id: UUID { snapshot.id }
 

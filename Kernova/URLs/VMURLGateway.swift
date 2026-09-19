@@ -69,7 +69,7 @@ final class VMURLGateway {
             await readiness.ready()
             // Before the verb, so the window it surfaces opens in front of the
             // person who clicked rather than behind whatever they clicked in.
-            activate()
+            if route.verb.surfacesInterface { activate() }
             run(route)
         }
     }

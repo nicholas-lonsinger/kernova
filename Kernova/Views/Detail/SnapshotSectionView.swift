@@ -40,14 +40,15 @@ final class SnapshotSectionView: NSView {
     /// What the rows were last rendered under, so a cancelled edit can
     /// re-render without the settings pane feeding the state in again.
     private var gate = Gate(
-        canTakeSnapshot: false, canRevert: false, canDelete: false, baselineID: nil)
+        canTakeSnapshot: false, canRevert: false, deleteOffers: [:], baselineID: nil)
 
     private struct Gate {
         let canTakeSnapshot: Bool
         let canRevert: Bool
-        /// Whether the ••• menu's Delete is offered.
-        let canDelete: Bool
-        /// The VM's Ephemeral baseline, which the mode bars deleting.
+        /// What each row's ••• menu offers its Delete as, by snapshot id — the
+        /// one term that differs from row to row.
+        let deleteOffers: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]
+        /// The VM's Ephemeral baseline, which the row marks.
         let baselineID: UUID?
     }
 
@@ -183,15 +184,18 @@ final class SnapshotSectionView: NSView {
 
     /// Renders `manifest`, rebuilding the rows only when what they show changed.
     ///
+    /// `deleteOffers` carries an entry per snapshot in `manifest`, because the
+    /// delete is the one row control the VM's state alone does not decide.
     /// `baselineID` names the VM's Ephemeral baseline, or is `nil` when the mode
     /// is off.
     func update(
-        manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool, canDelete: Bool,
+        manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool,
+        deleteOffers: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer],
         baselineID: UUID?
     ) {
         self.manifest = manifest
         gate = Gate(
-            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, canDelete: canDelete,
+            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, deleteOffers: deleteOffers,
             baselineID: baselineID)
         takeSnapshotButton.isEnabled = canTakeSnapshot
 
@@ -199,7 +203,7 @@ final class SnapshotSectionView: NSView {
             SnapshotRowModel(
                 snapshot: snapshot, isCurrent: snapshot.id == manifest.currentID,
                 isBaseline: snapshot.id == baselineID,
-                canRevert: canRevert, canDelete: canDelete)
+                canRevert: canRevert, deleteOffer: Self.deleteOffer(for: snapshot, in: deleteOffers))
         }
         list.update(
             models,
@@ -208,6 +212,21 @@ final class SnapshotSectionView: NSView {
                 row.update(model, subtitle: subtitleText(for: model.snapshot))
             })
         refreshReadout()
+    }
+
+    /// `snapshot`'s entry out of the offers the rows are being rendered under.
+    ///
+    /// The offers are built from the same manifest these rows come from, so a
+    /// snapshot with no entry is a programming error, not a state: the row's
+    /// Delete stays unclickable rather than guessing.
+    private static func deleteOffer(
+        for snapshot: VMSnapshot, in offers: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]
+    ) -> VMCapabilityCatalog.SnapshotDeleteOffer {
+        guard let offer = offers[snapshot.id] else {
+            assertionFailure("No delete offer rendered for snapshot \(snapshot.id)")
+            return .unavailable
+        }
+        return offer
     }
 
     /// Fills in the per-row and header size readouts.
@@ -248,7 +267,7 @@ final class SnapshotSectionView: NSView {
             guard let self else { return }
             self.update(
                 manifest: self.manifest, canTakeSnapshot: self.gate.canTakeSnapshot,
-                canRevert: self.gate.canRevert, canDelete: self.gate.canDelete,
+                canRevert: self.gate.canRevert, deleteOffers: self.gate.deleteOffers,
                 baselineID: self.gate.baselineID)
         }
     }
@@ -260,19 +279,19 @@ final class SnapshotSectionView: NSView {
             let model = list.rendered?.first(where: { $0.id == id })
         else { return nil }
         return makeRowMenu(
-            for: snapshot, canRevert: model.canRevert, canDelete: model.canDelete,
-            isBaseline: model.isBaseline)
+            for: snapshot, canRevert: model.canRevert, deleteOffer: model.deleteOffer)
     }
 
     /// The context menu for one snapshot row — the same menu the ••• button
     /// pops and a right-click surfaces.
     ///
     /// Rename and Edit Notes only wait on `activeEdit`: their writes are
-    /// metadata-only and land regardless of what the VM is doing. Delete
-    /// follows `canDelete`, which is additionally barred on an Ephemeral
-    /// baseline, which the VM needs back at every power-off.
+    /// metadata-only and land regardless of what the VM is doing. Delete follows
+    /// `deleteOffer`, which also says when the Ephemeral baseline is what bars
+    /// it — the one bar a user can lift, and the only one the row explains.
     func makeRowMenu(
-        for snapshot: VMSnapshot, canRevert: Bool, canDelete: Bool, isBaseline: Bool
+        for snapshot: VMSnapshot, canRevert: Bool,
+        deleteOffer: VMCapabilityCatalog.SnapshotDeleteOffer
     ) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -291,8 +310,8 @@ final class SnapshotSectionView: NSView {
         menu.addItem(.separator())
         // Always confirms, and destructively — so it carries the ellipsis.
         let delete = menuItem("Delete\u{2026}", #selector(menuDelete(_:)), snapshot)
-        delete.isEnabled = canDelete && !isBaseline
-        if canDelete && isBaseline {
+        delete.isEnabled = deleteOffer == .offered
+        if deleteOffer == .barredAsBaseline {
             delete.toolTip =
                 "This snapshot is the Ephemeral baseline. Turn off Ephemeral Mode to delete it."
         }

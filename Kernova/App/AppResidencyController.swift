@@ -382,8 +382,13 @@ final class AppResidencyController: WindowResidencyHosting {
         case clipboard(VMInstance)
     }
 
-    /// Summons the surface the status item's per-VM commands land on: the VM's
-    /// own display window when it can present one, else the library.
+    /// Summons the surface the status item's per-VM commands land on — the one
+    /// ``VMCapabilityCatalog/revealSurface(for:)`` names, so a click here and a
+    /// `reveal` from any other door bring the same window forward.
+    ///
+    /// Summons *only* that surface: bringing one VM forward must not drag the
+    /// library or other VMs' windows back on screen, and summoning the library
+    /// ("Open Kernova") must not restore any display windows.
     ///
     /// A `nil` or unknown id opens the library, which is where a VM that has left
     /// the library is looked for.
@@ -397,37 +402,12 @@ final class AppResidencyController: WindowResidencyHosting {
             return
         }
         viewModel.selectedID = instance.instanceID
-        switch Self.statusItemOpenTarget(
-            displayPreference: instance.configuration.displayPreference,
-            canUseExternalDisplay: instance.canUseExternalDisplay)
-        {
+        switch viewModel.capabilities.revealSurface(for: instance) {
         case .displayWindow:
             summonUserInterface(showing: .display(instance))
         case .library:
             summonUserInterface()
         }
-    }
-
-    /// Where the status item's per-VM open command lands, as decided by
-    /// ``statusItemOpenTarget(displayPreference:canUseExternalDisplay:)``.
-    enum StatusItemOpenTarget: Equatable {
-        /// Show the library window, selected on the VM.
-        case library
-        /// Open only the VM's dedicated display window.
-        case displayWindow
-    }
-
-    /// Decides what clicking a VM in the status-item dropdown opens: its own
-    /// display window when the VM's preference is pop-out or fullscreen and it can
-    /// present one, else the library.
-    ///
-    /// Deliberately opens *only* the chosen surface — summoning one VM must not
-    /// drag the library or other VMs' windows back on screen, and summoning the
-    /// library ("Open Kernova") must not restore any display windows.
-    nonisolated static func statusItemOpenTarget(
-        displayPreference: VMDisplayPreference, canUseExternalDisplay: Bool
-    ) -> StatusItemOpenTarget {
-        displayPreference != .inline && canUseExternalDisplay ? .displayWindow : .library
     }
 
     /// What a reopen (Dock click, `open`, our own Launch Services self-open)
@@ -442,8 +422,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// Decides the reopen leg's presentation, so a reopen our own
     /// ``requestSummonActivation()`` self-open triggers can't drag a surface a
     /// per-VM summon didn't ask for back on screen — matching
-    /// ``statusItemOpenTarget(displayPreference:canUseExternalDisplay:)``'s
-    /// "opens only the chosen surface" rule.
+    /// ``summonStatusItemTarget(for:)``'s "opens only the chosen surface" rule.
     ///
     /// The self-open's own reopen always sees its target surface as already
     /// on screen: `summonUserInterface` enqueues the presentation `Task` on

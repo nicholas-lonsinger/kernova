@@ -85,10 +85,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     }
 
     /// Whether this VM's disk list takes an edit right now.
-    ///
-    /// The model gate, not the route's `isReadOnly`: a second surface asking
-    /// the same question has to get the same answer, and the verb behind every
-    /// control here refuses on exactly this.
     private var canEditStorageDisks: Bool {
         viewModel.capabilities.isAvailable(.editStorageDisks, on: instance)
     }
@@ -492,7 +488,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     /// Whether that list has an inline edit open — Rename and Edit Notes on a
     /// row have to wait for it, same hazard
-    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:canDelete:isBaseline:)``
+    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:deleteOffer:)``
     /// guards against.
     private func hasActiveEdit(_ kind: AttachmentKind) -> Bool {
         list(kind)?.activeEdit != nil

@@ -461,6 +461,52 @@ struct SidebarViewControllerTests {
         #expect(menuTitles.contains("Take Snapshot…"))
     }
 
+    /// One slot, one command: the title says what the VM's state makes of a
+    /// stop, and the consent a discard needs is the refusal the verb raises.
+    @Test("The stop slot dispatches the same command under either title")
+    func stopSlotDispatchesOneCommand() {
+        let viewModel = makeViewModel()
+        let running = VMInstanceFixture.make(name: "Running", phase: .running(sessionID: UUID()))
+        let suspended = VMInstanceFixture.make(name: "Suspended", phase: .suspended)
+        viewModel.instances.append(contentsOf: [running, suspended])
+        let controller = SidebarViewController(viewModel: viewModel)
+        let runningMenu = controller.buildContextMenu(for: running)
+
+        let stop = menuItem("Stop", in: runningMenu)
+        let discard = menuItem(
+            "Discard Saved State…", in: controller.buildContextMenu(for: suspended))
+
+        #expect(stop?.action != nil)
+        #expect(discard?.action == stop?.action)
+        // Force Stop is a command of its own, which is why it keeps its own item.
+        #expect(menuItem("Force Stop…", in: runningMenu)?.action != stop?.action)
+    }
+
+    @Test("A cold-paused VM's stop slot raises the discard confirmation once")
+    func stopSlotOnAColdPausedVMAsksOnce() async throws {
+        let viewModel = makeViewModel()
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        let suspended = VMInstanceFixture.make(name: "Suspended", phase: .suspended)
+        viewModel.instances.append(suspended)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let discard = try #require(
+            menuItem("Discard Saved State…", in: controller.buildContextMenu(for: suspended)))
+
+        _ = NSApp.sendAction(try #require(discard.action), to: discard.target, from: discard)
+        // The item's action runs the verb in a task of its own, and a mock
+        // presenter is no observable to await, so the sheet's arrival is polled.
+        try await waitUntil { presenter.forceStopInstances.count == 1 }
+        // Then let whatever is still queued run, so the count below reads
+        // "exactly once" rather than "once so far": a main-queue barrier for
+        // anything dispatched there, and a few cooperative hops for a task
+        // still waiting to be scheduled.
+        await drainMainQueue()
+        for _ in 0..<3 { await Task.yield() }
+
+        #expect(presenter.forceStopInstances.map(\.id) == [suspended.id])
+    }
+
     @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")
     func contextMenuColdPausedEnablesDelete() {
         let viewModel = makeViewModel()

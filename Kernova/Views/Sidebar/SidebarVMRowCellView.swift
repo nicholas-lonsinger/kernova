@@ -421,10 +421,7 @@ final class SidebarVMRowCellView: NSTableCellView {
     ) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.setupState == nil else { return nil }
-        // Live-paused counts: the VM is still in memory and resumable, so the
-        // badge shouldn't blink out and back when the user pauses. Cold-paused
-        // (paused to disk, nothing in memory) does not.
-        guard instance.status == .running || instance.isLivePaused else { return nil }
+        guard instance.hasLiveSession else { return nil }
         let status = instance.agentStatus
         if case .current = status { return nil }
         if case .waiting = status,

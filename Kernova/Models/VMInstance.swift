@@ -816,10 +816,6 @@ final class VMInstance {
     ///
     /// Suspended VMs are included: the saved state is a file inside the bundle
     /// and is removed along with it, so no discard step is needed first.
-    ///
-    /// Enablement only.
-    /// ``VMLibraryViewModel/deleteConfirmed(_:deletingExternalIDs:permanently:)``
-    /// revalidates against the lifecycle lock at confirm time.
     var canDelete: Bool {
         !isPreparing && (phase.canEditSettings || isColdPaused)
     }

@@ -1170,6 +1170,46 @@ struct VMLibraryViewModelTests {
         #expect(libraryRequests == 1)
     }
 
+    /// A suspended VM still has a display — the window shows what its saved
+    /// state left on screen — so the reveal opens the window rather than
+    /// dropping the person on a library row.
+    @Test("Revealing a suspended pop-out VM opens its display window")
+    func revealOfASuspendedPopOutVMOpensItsWindow() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = VMInstanceFixture.make(name: "Wanted")
+        wanted.enter(.suspended)
+        wanted.configuration.displayPreference = .popOut
+        viewModel.instances.append(wanted)
+        var displayWindows: [VMInstance] = []
+        viewModel.onOpenDisplayWindow = { displayWindows.append($0) }
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        try viewModel.commands.reveal(.id(wanted.id))
+
+        #expect(displayWindows.map(\.id) == [wanted.id])
+        #expect(libraryRequests == 0)
+    }
+
+    @Test("Revealing a suspended inline VM lands on its library row and focuses it")
+    func revealOfASuspendedInlineVMLandsInTheLibrary() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wanted = VMInstanceFixture.make(name: "Wanted")
+        wanted.enter(.suspended)
+        viewModel.instances.append(wanted)
+        var displayWindows = 0
+        viewModel.onOpenDisplayWindow = { _ in displayWindows += 1 }
+        var libraryRequests = 0
+        viewModel.onSurfaceLibrary = { libraryRequests += 1 }
+
+        try viewModel.commands.reveal(.id(wanted.id))
+
+        #expect(displayWindows == 0)
+        #expect(libraryRequests == 1)
+        #expect(viewModel.selectedID == wanted.id)
+        #expect(presenter.focusGuestDisplayInstances.last === wanted)
+    }
+
     @Test("A buffered surface request is dropped when its VM leaves before the window arrives")
     func bufferedSurfaceRequestSurvivesAVanishedVM() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
