@@ -28,7 +28,8 @@ struct GuestAccountResumePromptTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         viewModel.presenter = presenter
         return (viewModel, storage, virtualization)

@@ -28,7 +28,8 @@ struct ClipboardSettingsViewControllerTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
     }
 

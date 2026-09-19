@@ -27,7 +27,8 @@ struct SettingsTabViewControllerTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         for index in 1...vmCount {
             viewModel.instances.append(

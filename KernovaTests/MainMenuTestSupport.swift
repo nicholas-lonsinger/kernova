@@ -35,7 +35,8 @@ func makeLibraryViewModel(
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         usbAccessoryService: usbAccessoryService,
-        preferences: preferences
+        preferences: preferences,
+        vmnetNetworks: MockVmnetNetworkProvider()
     )
 }
 

@@ -109,7 +109,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     init(
         session: any NetworkAttachmentInstalling,
         initialPlan: NetworkAttachmentPlan?,
-        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
+        vmnetNetworks: any VmnetNetworkProviding
     ) {
         self.session = session
         self.appliedPlan = initialPlan
@@ -392,7 +392,7 @@ final class NetworkAttachmentCoordinator {
         device: any NetworkDeviceControlling,
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
-        vmnetNetworks: (any VmnetNetworkProviding)? = nil,
+        vmnetNetworks: any VmnetNetworkProviding,
         isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking,
         retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
         disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
@@ -408,7 +408,7 @@ final class NetworkAttachmentCoordinator {
         self.device = device
         self.interfaces = interfaces
         self.linkObserver = linkObserver
-        self.vmnetNetworks = vmnetNetworks ?? VmnetNetworkService.shared
+        self.vmnetNetworks = vmnetNetworks
         self.isVMNetworkingEntitled = isVMNetworkingEntitled
         self.retryDelays = retryDelays
         self.disconnectBurstWindow = disconnectBurstWindow

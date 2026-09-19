@@ -61,7 +61,8 @@ struct ClipboardPasteLimitPolicyPushTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            preferences: preferences)
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider())
 
         let instance = makeInstance(preferences: preferences)
         viewModel.instances.append(instance)

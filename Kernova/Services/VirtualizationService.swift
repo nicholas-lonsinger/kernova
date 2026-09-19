@@ -12,7 +12,11 @@ import Virtualization
 final class VirtualizationService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VirtualizationService")
 
-    private let configBuilder = ConfigurationBuilder()
+    private let configBuilder: ConfigurationBuilder
+
+    init(vmnetNetworks: any VmnetNetworkProviding) {
+        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks)
+    }
 
     // MARK: - Start
 

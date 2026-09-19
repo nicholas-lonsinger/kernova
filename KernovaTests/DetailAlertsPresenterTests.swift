@@ -50,7 +50,8 @@ struct DetailAlertsPresenterTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         return (DetailAlertsPresenter(viewModel: viewModel), viewModel)
     }

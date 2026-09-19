@@ -19,6 +19,10 @@ struct ConfigurationBuilder: Sendable {
         /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so
         /// `instance.liveRemovableMedia` can locate the devices for hot-detach.
         let coldRemovableMedia: [RemovableMediaDeviceInfo]
+        /// The provider whose network a vmnet attachment in `configuration`
+        /// joins — the one the session's attachment recovery must classify and
+        /// re-materialize through.
+        let vmnetNetworks: any VmnetNetworkProviding
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigurationBuilder")
@@ -30,8 +34,8 @@ struct ConfigurationBuilder: Sendable {
     /// Host state behind a bridged attachment's interface choice.
     var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
 
-    /// The app-managed vmnet networks behind a Host Only attachment.
-    var vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
+    /// The app-managed vmnet networks behind a Host Only or Shared attachment.
+    let vmnetNetworks: any VmnetNetworkProviding
 
     /// What this build's signature authorizes; a fresh instance rather than
     /// `.shared`, which is `@MainActor` while assembly runs off the main actor.
@@ -106,7 +110,8 @@ struct ConfigurationBuilder: Sendable {
             serialOutputPipe: outputPipe,
             clipboardInputPipe: clipboardPipes?.input,
             clipboardOutputPipe: clipboardPipes?.output,
-            coldRemovableMedia: coldRemovableMedia
+            coldRemovableMedia: coldRemovableMedia,
+            vmnetNetworks: vmnetNetworks
         )
     }
 
