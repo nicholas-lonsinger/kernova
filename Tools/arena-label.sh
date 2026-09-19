@@ -5,8 +5,9 @@
 # .xcodeproj path — `Kernova-cylpmrailymlsackwzjwvurxnpbj` — which says nothing
 # about whose build it holds. With several worktrees open at once (the normal
 # state here), "which checkout is that one?" is the question every arena line
-# raises, and answering it by hand means dumping info.plist. This resolves the
-# hash back to a human label so the tooling can print it inline.
+# raises, and answering it by hand means digging through the arena's own
+# records. This resolves the hash back to a human label so the tooling can print
+# it inline.
 #
 # Usage: Tools/arena-label.sh [--status] <path>
 #   <path> may be a build arena, anything inside one (a Kernova.app), or a
@@ -20,16 +21,17 @@
 #   other checkout: <dir>, removed  …one that is no longer on disk
 #
 # Both `, removed` forms say the same thing: the arena outlived the checkout it
-# was built from.
+# belongs to.
 #
 # With --status, prints the machine-readable kind instead — one of
 # `worktree-live`, `worktree-removed`, `main`, `other`, `other-removed`. Callers
 # branch on this rather than on the human label: matching the label is a format
 # dependency, and the `, removed` suffix is presentation.
 #
-# Exits 1 printing nothing when the path can't be attributed (no info.plist to
-# read, a path outside every known checkout, not a git repo). Callers append the
-# label only when there is one, so an unattributable path just renders bare.
+# Exits 1 printing nothing when the path can't be attributed (an arena holding
+# neither record of the project it came from, a path outside every known
+# checkout, not a git repo). Callers append the label only when there is one, so
+# an unattributable path just renders bare.
 #
 # Consumed by Tools/ghosts.sh (arena and on-disk-copy lines, plus the orphan
 # scan via --status) and Tools/doctor.sh (the build-arena report).
@@ -96,43 +98,73 @@ label_for_checkout() {
     return 1
 }
 
-# A path already inside a checkout needs no plist lookup — this covers a
+# project_path_of <dir> — the .xcodeproj an arena root records, printed on
+# stdout, or exit 1 when this directory is not an arena root that records one.
+#
+# Xcode writes that path in two independent places, and an arena can hold either
+# one alone. info.plist's WorkspacePath comes with the first build; an arena
+# that has only ever resolved packages never gets one, and then the PIF cache's
+# workspace object is the sole record, naming the .xcodeproj's
+# project.xcworkspace. Reading both is what makes attribution independent of
+# whether a build ever ran in the arena.
+project_path_of() {
+    local dir=$1 ws record
+    if [ -f "$dir/info.plist" ]; then
+        ws=$(plutil -extract WorkspacePath raw "$dir/info.plist" -o - 2>/dev/null) || ws=''
+        if [ -n "$ws" ]; then
+            printf '%s' "$ws"
+            return 0
+        fi
+    fi
+    # The records are keyed by a hash of the same workspace path, so whichever
+    # one reads first answers for all of them.
+    for record in "$dir"/Build/Intermediates.noindex/XCBuildData/PIFCache/workspace/WORKSPACE@*-json; do
+        [ -f "$record" ] || continue
+        ws=$(plutil -extract path raw "$record" -o - 2>/dev/null) || continue
+        [ -n "$ws" ] || continue
+        # A project's workspace is a directory inside the .xcodeproj; the suffix
+        # strip is a no-op on a standalone .xcworkspace, which is already the
+        # path the arena hashes from.
+        printf '%s' "${ws%/project.xcworkspace}"
+        return 0
+    done
+    return 1
+}
+
+# A path already inside a checkout needs no arena lookup — this covers a
 # Relative-mode in-checkout DerivedData/ and a checkout passed directly.
 label_for_checkout "$target" && exit 0
 
-# Otherwise walk up to the arena root, where Xcode records the project it built
-# from. That record is readable after the source worktree is deleted, which is
-# what lets an orphaned arena still name the worktree it came from.
+# Otherwise walk up to the arena root, where Xcode records the project the arena
+# belongs to. That record is readable after the source worktree is deleted, which
+# is what lets an orphaned arena still name the worktree it came from.
 #
-# A plist that exists but carries no WorkspacePath does NOT end the walk. The
-# probe is case-insensitive on a stock APFS volume, so `info.plist` also matches
-# the `Info.plist` of every bundle on the way up; treating that hit as terminal
+# A directory carrying neither record does NOT end the walk. The info.plist
+# probe is case-insensitive on a stock APFS volume, so it also matches the
+# `Info.plist` of every bundle on the way up; treating that hit as terminal
 # drops the label from any path that passes through a bundle's Contents/ before
 # reaching the arena.
 dir=$target
 while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-    if [ -f "$dir/info.plist" ]; then
-        ws=$(plutil -extract WorkspacePath raw "$dir/info.plist" -o - 2>/dev/null) || ws=''
-        if [ -n "$ws" ]; then
-            label_for_checkout "$ws" && exit 0
-            # A checkout outside this repo's layout — another clone, or a copy
-            # staged somewhere temporary: name its directory rather than
-            # guessing at a friendlier label.
-            #
-            # Removed-ness is tested on the recorded .xcodeproj rather than its
-            # directory, because that path is what the arena's identity hashes
-            # from: once it is gone nothing can ever build into this arena
-            # again, whether the whole checkout went with it or only the
-            # project file.
-            removed=''
-            [ -e "$ws" ] || removed=1
-            if [ "$STATUS_ONLY" = 1 ]; then
-                printf 'other%s' "${removed:+-removed}"
-            else
-                printf 'other checkout: %s%s' "$(pretty "${ws%/*}")" "${removed:+, removed}"
-            fi
-            exit 0
+    if ws=$(project_path_of "$dir"); then
+        label_for_checkout "$ws" && exit 0
+        # A checkout outside this repo's layout — another clone, or a copy
+        # staged somewhere temporary: name its directory rather than
+        # guessing at a friendlier label.
+        #
+        # Removed-ness is tested on the recorded .xcodeproj rather than its
+        # directory, because that path is what the arena's identity hashes
+        # from: once it is gone nothing can ever build into this arena
+        # again, whether the whole checkout went with it or only the
+        # project file.
+        removed=''
+        [ -e "$ws" ] || removed=1
+        if [ "$STATUS_ONLY" = 1 ]; then
+            printf 'other%s' "${removed:+-removed}"
+        else
+            printf 'other checkout: %s%s' "$(pretty "${ws%/*}")" "${removed:+, removed}"
         fi
+        exit 0
     fi
     dir=$(dirname "$dir")
 done

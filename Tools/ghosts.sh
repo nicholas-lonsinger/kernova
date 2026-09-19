@@ -129,9 +129,13 @@ XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || X
 
 # Print one arena directory per line whose recorded source checkout is gone.
 # The classification is Tools/arena-label.sh's — this used to re-read each
-# info.plist and re-derive the .claude/worktrees layout itself, which was the
-# same mapping implemented twice. --status is asked for rather than the human
-# label so nothing here depends on that label's wording.
+# arena's own records and re-derive the .claude/worktrees layout itself, which
+# was the same mapping implemented twice. --status is asked for rather than the
+# human label so nothing here depends on that label's wording.
+#
+# Every arena directory is offered to that classifier, which alone decides what
+# is attributable — an arena in which no build has ever run carries no
+# info.plist and still names its checkout.
 #
 # A torn-down worktree is the common case but not the only one: a checkout
 # staged anywhere else — a copy under a temp dir, a clone since deleted —
@@ -143,10 +147,10 @@ XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || X
 # this project's arenas and nobody else's.
 orphaned_dd_arenas() {
     [ -n "$XCODE_DD_ROOT" ] || return 0
-    local info dir
-    for info in "$XCODE_DD_ROOT"/Kernova-*/info.plist; do
-        [ -f "$info" ] || continue
-        dir=${info%/info.plist}
+    local dir
+    for dir in "$XCODE_DD_ROOT"/Kernova-*/; do
+        dir=${dir%/}
+        [ -d "$dir" ] || continue
         case "$("$REPO_ROOT/Tools/arena-label.sh" --status "$dir" 2>/dev/null)" in
             worktree-removed | other-removed) printf '%s\n' "$dir" ;;
         esac
@@ -436,7 +440,7 @@ if [ "${#dd_orphans[@]}" -eq 0 ]; then
 else
     for dir in "${dd_orphans[@]}"; do
         # Resolved once, up front, because the label is read out of the arena's
-        # own info.plist — evicting the arena destroys the evidence, so a
+        # own records — evicting the arena destroys the evidence, so a
         # lookup after the delete falls back to the bare hashed path on the one
         # line where naming the worktree matters most.
         dir_label=$(labeled_path "$dir")
