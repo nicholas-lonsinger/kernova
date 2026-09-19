@@ -334,15 +334,14 @@ final class VMCreationViewModel {
             enablesRemoteLogin: credentials.enablesRemoteLogin)
     }
 
-    /// The answer the start a create chains carries for
-    /// ``unattendedSetupIntent`` — the password, the one part of the account no
-    /// bundle carries.
+    /// The password the create holds for ``unattendedSetupIntent`` — the one
+    /// part of the account no bundle carries.
     ///
-    /// `nil` when the wizard is creating no account: the start has nothing to
-    /// answer for, and answering anything would be about a VM that owes
+    /// `nil` when the wizard is creating no account: there is nothing for a
+    /// password to complete, and supplying one would be about a VM that owes
     /// nothing.
-    var guestAccountForCreate: GuestAccountAnswer? {
-        unattendedSetupActive ? .password(guestAccountPassword) : nil
+    var guestAccountPasswordForCreate: String? {
+        unattendedSetupActive ? guestAccountPassword : nil
     }
 
     /// What stops this account being created, in the order the user meets it —

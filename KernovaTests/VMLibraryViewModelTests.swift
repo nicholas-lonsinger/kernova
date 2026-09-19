@@ -2255,20 +2255,22 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
     }
 
-    @Test("removeStartFailedAttachmentAndStart does not retry when the entry is already gone")
-    func removeStartFailedAttachmentSkipsRetryWhenEntryGone() async {
+    @Test("removeStartFailedAttachmentAndStart starts the VM when the entry is already gone")
+    func removeStartFailedAttachmentStartsWhenEntryGone() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = VMInstanceFixture.make()
         viewModel.instances.append(instance)
+        instance.enter(.failed(message: "Test failure"))
 
-        // The user removed it in Settings before confirming the alert. Retrying
-        // would re-raise the same failure and re-present this alert forever.
+        // The user removed it in Settings before confirming the alert, so what
+        // the recovery was for already holds and the click is the Start.
         let failure = StartFailedAttachment(
             kind: .removableMedia, id: UUID(), label: "Stale ISO", message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
+        #expect(instance.status == .running)
     }
 
     @Test("start keeps the generic error when the failing media is no longer configured")
@@ -3266,9 +3268,10 @@ struct VMLibraryViewModelTests {
         // a start that this create did not chain has a question to ask.
         #expect(created.configuration.pendingGuestAccount?.username == "ada")
         #expect(created.configuration.pendingGuestAccount?.fullName == "Ada Lovelace")
-        #expect(created.startAsksForGuestAccount)
-        // The password went to the verb and nowhere else.
-        #expect(wizard.guestAccountForCreate == .password("analytical-engine"))
+        // The password went to the verb, which holds it apart from the bundle —
+        // so the VM owes no answer even though the account is still unspent.
+        #expect(wizard.guestAccountPasswordForCreate == "analytical-engine")
+        #expect(!viewModel.capabilities.owesGuestAccountAnswer(created))
     }
 
     @Test("createVM answers nothing when the wizard is creating no account")
@@ -3280,8 +3283,8 @@ struct VMLibraryViewModelTests {
 
         let created = try #require(viewModel.instances.first)
         #expect(created.configuration.pendingGuestAccount == nil)
-        #expect(!created.startAsksForGuestAccount)
-        #expect(wizard.guestAccountForCreate == nil)
+        #expect(!viewModel.capabilities.owesGuestAccountAnswer(created))
+        #expect(wizard.guestAccountPasswordForCreate == nil)
     }
 
     @Test("createVM registers a creating phantom row before anything is written")

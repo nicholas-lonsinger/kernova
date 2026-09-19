@@ -25,6 +25,14 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// boot would have carried into VZ.
     private(set) var lastStartProvisioning: GuestProvisioningCredentials?
 
+    /// The route `start` answers with, in place of the one the VM's own state
+    /// implies — for a test that wants a route without arranging the state that
+    /// produces it (a save file on disk, above all).
+    var startRoute: GuestStartRoute?
+
+    /// What the last `start` answered, derived or overridden.
+    private(set) var lastStartRoute: GuestStartRoute?
+
     /// The configuration as it stood when `start` was called, so a caller that
     /// must persist a change *before* the VZ configuration is built can be
     /// asserted on ordering, not just on the final value.
@@ -69,12 +77,15 @@ final class MockVirtualizationService: VirtualizationProviding {
     func start(
         _ instance: VMInstance, bootIntoRecovery: Bool = false,
         provisioning: GuestProvisioningCredentials? = nil
-    ) async throws {
+    ) async throws -> GuestStartRoute {
         startCallCount += 1
         lastStartBootIntoRecovery = bootIntoRecovery
         lastStartProvisioning = provisioning
         configurationAtStart = instance.configuration
         statusAtStart = instance.status
+        let route =
+            startRoute ?? GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
+        lastStartRoute = route
         if let error = startError {
             instance.tearDownSession(
                 restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
@@ -82,6 +93,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             throw error
         }
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
+        return route
     }
 
     func stop(_ instance: VMInstance) async throws {

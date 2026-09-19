@@ -227,9 +227,7 @@ final class VMScriptingGateway {
 
     func start(_ selectors: [VMSelector], recoveryMode: Bool) async throws {
         try await perform(.start, surfacing: false, on: selectors) {
-            // A script has no password to give and no prompt to raise, so a VM
-            // owing an account refuses with what it is waiting for.
-            try await self.commands.start($0, recovery: recoveryMode, guestAccount: nil)
+            try await self.commands.start($0, recovery: recoveryMode)
         }
     }
 

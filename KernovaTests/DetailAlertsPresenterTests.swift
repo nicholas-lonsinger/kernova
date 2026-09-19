@@ -711,7 +711,7 @@ struct DetailAlertsPresenterTests {
 
         // Resuming a checked continuation twice traps, so this is the other
         // half of "exactly once".
-        #expect(answers.answered == [.answered(.skip)])
+        #expect(answers.answered == [.skip])
     }
 
     @Test("Skip Setup answers the waiting start and frees the slot")
@@ -724,7 +724,7 @@ struct DetailAlertsPresenterTests {
 
         #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
 
-        #expect(answers.answered == [.answered(.skip)])
+        #expect(answers.answered == [.skip])
         #expect(!presenter.isShowingAlertForTesting)
     }
 

@@ -586,21 +586,18 @@ extension VMCommandCore {
 
     // MARK: - Start-Failure Recovery
 
-    /// The ``CommandRecovery/removeStartFailedAttachment(_:)`` a failed start
-    /// offered, performed.
+    /// The removal half of the ``CommandRecovery/removeStartFailedAttachment(_:)``
+    /// a failed start offered.
     ///
-    /// No-ops when the VM is gone or the entry has already been removed: alerts
-    /// are serialized, so this confirmation can arrive long after the failed
-    /// start, and retrying after a removal that found nothing would re-raise the
-    /// same failure.
+    /// The entry is checked before the removal verb is asked, so an entry
+    /// somebody removed meanwhile answers as the no-op
+    /// ``VMCommanding/removeStartFailedAttachment(_:attachment:)`` promises
+    /// rather than as that verb's stale-attachment refusal.
     ///
-    /// The removal reports its own trouble and stops there — the attachment is
-    /// still attached, so the start it would retry has nothing new to try. What
-    /// the retried start refuses with is thrown, which is how the door that
-    /// raised this gathers the account that start asks for.
-    func removeStartFailedAttachmentAndStart(
-        _ selector: VMSelector, attachment failure: StartFailedAttachment,
-        guestAccount: GuestAccountAnswer?
+    /// Everything else the removal refuses is thrown: the attachment is still
+    /// attached, so a caller about to start has nothing new to try.
+    func removeStartFailedAttachment(
+        _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
         guard let instance = try? resolve(selector) else {
             #log(
@@ -609,42 +606,46 @@ extension VMCommandCore {
             )
             return
         }
-        // Before the removal, not after it: the door that gathers the answer
-        // re-issues this call, and a removal already done would refuse the
-        // second time round and never reach the start it was meant to retry.
-        try refuseUnansweredGuestAccount(instance, answer: guestAccount)
-        do {
-            switch failure.kind {
-            case .storageDisk:
-                try await removeStorageDisk(
-                    .id(instance.id), disk: failure.id, trashFile: false, confirmed: true)
-            case .removableMedia:
-                try await removeRemovableMedia(
-                    .id(instance.id), item: failure.id, trashFile: false, confirmed: true)
-            }
-        } catch {
+        guard carriesStartFailedAttachment(failure, on: instance) else {
             #log(
-                Self.logger, .notice,
-                "Failed attachment '\(failure.label, privacy: .public)' was not removed from '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public); not retrying start"
+                Self.logger, .debug,
+                "Start-failed attachment '\(failure.label, privacy: .public)' is already off '\(instance.name, privacy: .public)'"
             )
             return
         }
+        switch failure.kind {
+        case .storageDisk:
+            try await removeStorageDisk(
+                .id(instance.id), disk: failure.id, trashFile: false, confirmed: true)
+        case .removableMedia:
+            try await removeRemovableMedia(
+                .id(instance.id), item: failure.id, trashFile: false, confirmed: true)
+        }
         #log(
             Self.logger, .notice,
-            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'; retrying start"
+            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
         )
-        // A save file restores only into the exact device set it was saved
-        // with, so it cannot outlive the removal — the alert disclosed the
-        // discard before the user confirmed.
-        if instance.hasSaveFile {
-            instance.removeSaveFile()
-            #log(
-                Self.logger, .notice,
-                "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
-            )
-            if instance.isColdPaused { instance.enter(.stopped) }
+        // A save file restores only into the exact device set it was saved with,
+        // so it cannot outlive the removal — the alert disclosed the discard
+        // before the user confirmed.
+        guard instance.hasSaveFile else { return }
+        instance.removeSaveFile()
+        #log(
+            Self.logger, .notice,
+            "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
+        )
+    }
+
+    /// Whether `failure`'s entry is still in the list the removal would edit.
+    private func carriesStartFailedAttachment(
+        _ failure: StartFailedAttachment, on instance: VMInstance
+    ) -> Bool {
+        switch failure.kind {
+        case .storageDisk:
+            storageDisk(id: failure.id, on: instance) != nil
+        case .removableMedia:
+            removableMediaItem(id: failure.id, on: instance) != nil
         }
-        try await start(instance, guestAccount: guestAccount)
     }
 
     // MARK: - Consent

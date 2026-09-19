@@ -7,12 +7,12 @@ import KernovaKit
 /// lives here, apart from the framework call each door asks it with, so it is
 /// answerable without an intent session, an alert, or an Apple event.
 ///
-/// Two loops, one shape: run the verb with no answer, turn the refusal it
-/// names into the question that door can ask, run it again carrying the answer.
-/// The answer rides the call rather than the VM in both, because both answer
-/// for one call — a consent is given for the verb the user was shown, and a
-/// guest account is spent by the boot, carried or skipped — so a call that
-/// never ran leaves no answer behind for the next one to act on.
+/// Two loops, one shape: run the verb, turn the refusal it names into the
+/// question that door can ask, run it again. They differ in where the answer
+/// lands. A consent is given for the verb the user was shown, so it rides the
+/// re-issued call and a call that never ran leaves nothing behind; an account
+/// answer is about the VM, so the door supplies it with the verb that holds it
+/// and the re-issued call simply finds it there.
 enum VMConsentPolicy {
     /// Runs a destructive verb, gathering the consent it refuses without.
     ///
@@ -43,27 +43,28 @@ enum VMConsentPolicy {
 
     /// Runs a start, gathering the guest account it refuses without.
     ///
-    /// `body` is called with `nil` first; a
-    /// ``CommandError/guestAccountPasswordRequired(_:)`` back from it goes to
-    /// `prompting`, and the answer that comes back re-runs `body`. Every other
-    /// failure is rethrown untouched — as is whatever `prompting` throws, which
-    /// is how a door with nobody to ask, and a user who walked away from the
-    /// question, both say the start is not happening.
+    /// A ``CommandError/guestAccountPasswordRequired(_:)`` out of `body` goes to
+    /// `prompting`, which both asks and supplies the answer — through
+    /// ``VMCommanding/provideGuestAccountPassword(_:password:)`` or
+    /// ``VMCommanding/skipGuestAccount(_:)`` — and `body` is then run again,
+    /// finding the VM answered for. Every other failure is rethrown untouched —
+    /// as is whatever `prompting` throws, which is how a door with nobody to ask,
+    /// and a user who walked away from the question, both say the start is not
+    /// happening.
     ///
-    /// The answer is per call because the boot is: macOS reads the account on
-    /// the first boot after restore and on no other, so a start that never
-    /// reached a boot has spent nothing and the next one asks again.
+    /// Exactly one re-run. The second refusal is the answer not having taken,
+    /// which is a failure to report rather than a question to ask twice.
     @MainActor
     static func runGatheringGuestAccount(
-        prompting: (GuestAccountPrompt) async throws -> GuestAccountAnswer,
-        _ body: (_ guestAccount: GuestAccountAnswer?) async throws -> Void
+        prompting: (GuestAccountPrompt) async throws -> Void,
+        _ body: () async throws -> Void
     ) async throws {
         do {
-            try await body(nil)
+            try await body()
         } catch let error as CommandError {
             guard let prompt = error.guestAccountPrompt else { throw error }
-            let answer = try await prompting(prompt)
-            try await body(answer)
+            try await prompting(prompt)
+            try await body()
         }
     }
 

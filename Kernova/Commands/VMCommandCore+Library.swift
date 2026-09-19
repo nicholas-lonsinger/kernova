@@ -64,7 +64,7 @@ extension VMCommandCore {
     @discardableResult
     func create(
         configuration: VMConfiguration, startAfterCreate: Bool,
-        guestAccount: GuestAccountAnswer?
+        guestAccountPassword: String?
     ) throws -> VMSummary {
         let bundleURL: URL
         do {
@@ -82,6 +82,14 @@ extension VMCommandCore {
             phase: VMLibrary.initialPhase(
                 for: configuration, layout: VMBundleLayout(bundleURL: bundleURL)),
             preferences: preferences)
+
+        // Before the write, so a password macOS turns down refuses a create that
+        // has put nothing on disk. Held whether or not anything is started: the
+        // account is owed until a boot spends it, and a Start taken later in the
+        // session asks nothing.
+        if let guestAccountPassword {
+            try holdGuestAccountPassword(guestAccountPassword, for: phantom)
+        }
 
         let storage = storageService
         let diskImages = diskImageService
@@ -110,11 +118,7 @@ extension VMCommandCore {
                 Task { [weak self] in
                     guard let self else { return }
                     do {
-                        // The wizard's answer rides this one start — the only
-                        // one the create authorises — and goes no further: a
-                        // bundle on disk holds no password, so the next Start
-                        // asks for one like any other.
-                        try await self.start(phantom, guestAccount: guestAccount)
+                        try await self.start(phantom)
                     } catch let failure as CommandError {
                         self.report(failure, on: phantom)
                     } catch {

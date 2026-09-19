@@ -656,7 +656,7 @@ final class VMLibraryViewModel {
         try commands.create(
             configuration: wizard.buildConfiguration(),
             startAfterCreate: wizard.startAfterCreate,
-            guestAccount: wizard.guestAccountForCreate)
+            guestAccountPassword: wizard.guestAccountPasswordForCreate)
     }
 
     // MARK: - Lifecycle
@@ -723,25 +723,37 @@ final class VMLibraryViewModel {
     /// anywhere else goes through ``VMCommanding`` and moves nothing.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
-        await runGatheringGuestAccount(on: instance) { guestAccount in
-            try await self.commands.start(
-                .id(instance.id), recovery: bootIntoRecovery, guestAccount: guestAccount)
+        await runGatheringGuestAccount(on: instance) {
+            try await self.commands.start(.id(instance.id), recovery: bootIntoRecovery)
         }
     }
 
-    /// Confirmed action of the start-failed alert, performed by the core that
-    /// offered the recovery.
+    /// Confirmed action of the start-failed alert: the removal it offered, then
+    /// the Start the user was reaching for.
     ///
-    /// Through the same loop as an ordinary Start, because it leads to the same
-    /// verb: the removal is consented to, and the start after it can still be
-    /// waiting on an account.
+    /// A refused removal surfaces and ends it there: the click consented to the
+    /// removal alone.
+    ///
+    /// Alerts are serialized, so this click can land long after the VM was
+    /// deleted. Neither half runs then, and nothing is put on screen about it.
     func removeStartFailedAttachmentAndStart(
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
-        await runGatheringGuestAccount(on: instance) { guestAccount in
-            try await self.commands.removeStartFailedAttachmentAndStart(
-                .id(instance.id), attachment: failure, guestAccount: guestAccount)
+        guard instances.contains(where: { $0 === instance }) else {
+            #log(
+                Self.logger, .debug,
+                "Start-failed recovery for '\(instance.name, privacy: .public)' arrived after it left the library"
+            )
+            return
         }
+        do {
+            try await commands.removeStartFailedAttachment(
+                .id(instance.id), attachment: failure)
+        } catch {
+            present(error, for: instance)
+            return
+        }
+        await start(instance)
     }
 
     /// What a user walking away from the account question raises, so the door
@@ -752,16 +764,16 @@ final class VMLibraryViewModel {
     /// raising the sheet for the account it refuses without.
     ///
     /// Asking is the door's job and deciding is the verb's: this presents the
-    /// sheet and hands the answer straight back to the start that asked for it,
-    /// writing nothing itself. A VM with no account outstanding never sees the
-    /// sheet, because the verb never refuses.
+    /// sheet and hands the answer to the verb that holds it, writing nothing
+    /// itself. A VM with no account outstanding never sees the sheet, because the
+    /// verb never refuses.
     ///
     /// A cancelled sheet ends the start with nothing on screen — the user just
     /// said no to it — while every other refusal takes the ordinary error
     /// surface, including the account refusal itself when no window exists to
     /// ask in.
     private func runGatheringGuestAccount(
-        on instance: VMInstance, _ verb: (GuestAccountAnswer?) async throws -> Void
+        on instance: VMInstance, _ verb: () async throws -> Void
     ) async {
         do {
             try await VMConsentPolicy.runGatheringGuestAccount(
@@ -776,15 +788,13 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Puts the account question on screen and waits for the one answer it
-    /// gives.
+    /// Puts the account question on screen and supplies the one answer it gives.
     ///
-    /// - Throws: ``GuestAccountPromptDismissed`` when the user walked away, and
-    ///   the refusal itself when there is no presenter to ask through — a door
-    ///   with nobody to ask says so by not answering.
-    private func askForGuestAccount(
-        _ prompt: GuestAccountPrompt
-    ) async throws -> GuestAccountAnswer {
+    /// - Throws: ``GuestAccountPromptDismissed`` when the user walked away, the
+    ///   refusal itself when there is no presenter to ask through — a door with
+    ///   nobody to ask says so by not answering — and whatever the verb that
+    ///   takes the answer refuses with.
+    private func askForGuestAccount(_ prompt: GuestAccountPrompt) async throws {
         guard let presenter else { throw CommandError.guestAccountPasswordRequired(prompt) }
         let answer = await withCheckedContinuation { continuation in
             presenter.presentGuestAccountPassword(
@@ -792,8 +802,12 @@ final class VMLibraryViewModel {
                     prompt: prompt, answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
-        case .answered(let answer): return answer
-        case .cancelled: throw GuestAccountPromptDismissed()
+        case .password(let password):
+            try commands.provideGuestAccountPassword(.id(prompt.vm.id), password: password)
+        case .skip:
+            try commands.skipGuestAccount(.id(prompt.vm.id))
+        case .cancelled:
+            throw GuestAccountPromptDismissed()
         }
     }
 
@@ -1311,9 +1325,9 @@ final class VMLibraryViewModel {
             // duplicate-identity conflict. The marking is this pass's own
             // criterion; what the VM's state admits is the catalog's.
             guard instance.configuration.startsAutomaticallyOnLaunch,
-                let step = capabilities.unattendedBringUp(for: instance)
+                let step = capabilities.standingBringUp(for: instance)
             else {
-                if instance.startAsksForGuestAccount {
+                if capabilities.owesGuestAccountAnswer(instance) {
                     // A login launch has no window to ask in and leaves no
                     // other trace, so this is the only place the user can find
                     // out why a VM they marked did not come up.
@@ -1334,11 +1348,7 @@ final class VMLibraryViewModel {
             // buffers for the status item, and nothing is selected or focused.
             await run(on: instance) {
                 switch step {
-                // No answer, and none needed: the catalog passed over every VM
-                // whose start would ask for one.
-                case .start:
-                    try await self.commands.start(
-                        .id(instance.id), recovery: false, guestAccount: nil)
+                case .start: try await self.commands.start(.id(instance.id), recovery: false)
                 case .resume: try await self.commands.resume(.id(instance.id))
                 }
             }

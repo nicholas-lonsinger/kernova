@@ -7,8 +7,8 @@ import Virtualization
 ///
 /// The password is absent by construction rather than by omission: a bundle's
 /// `config.json` is plain text beside the disks, and this is the part of an
-/// account that can live there. The secret arrives as a parameter of the start
-/// that spends it — ``GuestAccountAnswer`` — and lives for that call alone.
+/// account that can live there. The secret is held apart from the bundle, as a
+/// ``GuestAccountPassword`` (``GuestAccountPasswordStoring``).
 ///
 /// Persisted as ``VMConfiguration/pendingGuestAccount`` rather than inside the
 /// install context: the install is over when the image lands, while the account
@@ -25,8 +25,8 @@ struct GuestAccountIntent: Codable, Sendable, Equatable {
 ///
 /// Deliberately not `Codable`: that conformance is what would let the password
 /// reach a bundle's `config.json`. The other four values persist as
-/// ``GuestAccountIntent``, and the password arrives with the start that spends
-/// it, travelling as a parameter of the boot rather than as state on the VM.
+/// ``GuestAccountIntent``, and the password is rejoined with them for the boot
+/// that carries it.
 struct GuestProvisioningCredentials: Sendable, CustomStringConvertible {
     var fullName: String
     var username: String

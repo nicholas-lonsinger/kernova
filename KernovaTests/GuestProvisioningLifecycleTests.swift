@@ -5,10 +5,9 @@ import Testing
 
 @testable import Kernova
 
-/// The life of a guest account on the VM that owes it: when a start has a
-/// question to ask, what retraction takes, what an install leaves behind, and
-/// the drop the install owes when the guest it produced turns out unable to act
-/// on the account.
+/// The pieces of a guest account that stand on their own: the three values it is
+/// made of, what each of them says about itself, and what the install leaves
+/// behind for the boot chained after it.
 @Suite("Guest Provisioning Lifecycle", .admissionGated)
 @MainActor
 struct GuestProvisioningLifecycleTests {
@@ -36,7 +35,7 @@ struct GuestProvisioningLifecycleTests {
                 source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
             $0.pendingGuestAccount = intent
         }
-        // Wired as the library wires it, so a retraction reaches the
+        // Wired as the library wires it, so a configuration write reaches the
         // configuration the way it does in the app.
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
@@ -66,52 +65,39 @@ struct GuestProvisioningLifecycleTests {
         #expect(described.contains("ada"))
     }
 
-    @Test("An answer describes itself without the password")
-    func answerRedactsThePassword() {
-        #expect(!String(describing: GuestAccountAnswer.password("analytical-engine")).contains("analytical-engine"))
-        #expect(String(describing: GuestAccountAnswer.skip) == "skip")
+    // MARK: - The Held Password
+
+    @Test("A held password describes itself without spilling itself")
+    func aHeldPasswordRedactsItself() {
+        let password = GuestAccountPassword("analytical-engine")
+
+        #expect(!String(describing: password).contains("analytical-engine"))
+        #expect(!String(reflecting: password).contains("analytical-engine"))
+        // Readable exactly where the account is created.
+        #expect(password.value == "analytical-engine")
     }
 
-    // MARK: - startAsksForGuestAccount
+    @Test("The store answers, replaces and drops one VM's password at a time")
+    func theStoreKeepsOnePasswordPerVM() {
+        let store = InMemoryGuestAccountPasswordStore()
+        let first = UUID()
+        let second = UUID()
 
-    @Test("A VM carrying an intent has a question, wherever the host can deliver one")
-    func intentMeansAQuestion() {
-        // Below the host floor there is no account to create, so there is
-        // nothing to ask for — and nothing for a start to refuse over either.
-        #expect(
-            makeInstance(intent: makeIntent()).startAsksForGuestAccount
-                == MacOSGuestProvisioning.hostSupportsProvisioning)
-    }
+        #expect(store.password(for: first) == nil)
 
-    @Test("A VM carrying no intent has nothing to ask about")
-    func noIntentMeansNoQuestion() {
-        #expect(!makeInstance().startAsksForGuestAccount)
-    }
+        store.set(GuestAccountPassword("first-engine"), for: first)
+        store.set(GuestAccountPassword("second-engine"), for: second)
+        store.set(GuestAccountPassword("replaced-engine"), for: first)
 
-    @Test("Retracting an account leaves nothing to ask about")
-    func retractingLeavesNoQuestion() {
-        let instance = makeInstance(intent: makeIntent())
+        #expect(store.password(for: first)?.value == "replaced-engine")
+        #expect(store.password(for: second)?.value == "second-engine")
 
-        instance.retractGuestAccount()
+        store.remove(for: first)
+        // Holding nothing is not a failure, so a second remove is a no-op.
+        store.remove(for: first)
 
-        // Not "asks again": the window is gone, so the question is gone with it.
-        #expect(instance.configuration.pendingGuestAccount == nil)
-        #expect(!instance.startAsksForGuestAccount)
-    }
-
-    @Test("Retracting an account a VM never owed writes nothing")
-    func retractingWithoutAnAccountWritesNothing() {
-        let instance = makeInstance()
-        var writes = 0
-        instance.onUpdateConfiguration = { mutate in
-            writes += 1
-            mutate(&instance.configuration)
-            return true
-        }
-
-        instance.retractGuestAccount()
-
-        #expect(writes == 0)
+        #expect(store.password(for: first) == nil)
+        #expect(store.password(for: second)?.value == "second-engine")
     }
 
     // MARK: - What an Install Leaves Behind
@@ -131,13 +117,10 @@ struct GuestProvisioningLifecycleTests {
         // leave the next Start something to ask about.
         #expect(instance.configuration.installContext == nil)
         #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(instance.startAsksForGuestAccount)
     }
 
-    // MARK: - The Post-Install Drop
-
-    @Test("An install that produced a pre-27 guest drops the account entirely")
-    func installBelowFloorDropsTheAccount() async throws {
+    @Test("An install below the provisioning floor records the image and leaves the drop to its caller")
+    func installBelowFloorRecordsTheImage() async throws {
         let (coordinator, installService) = makeCoordinator()
         installService.installedImage = .macOSRestoreImage(version: "26.5.2", build: "25F84")
         let instance = makeInstance(intent: makeIntent())
@@ -145,15 +128,11 @@ struct GuestProvisioningLifecycleTests {
 
         try await coordinator.installMacOS(on: instance, context: context)
 
-        // A persisted intent left behind would ask for an account this guest
-        // can never create.
-        #expect(instance.configuration.pendingGuestAccount == nil)
-        #expect(!instance.startAsksForGuestAccount)
-        // Dropped, never refused: the install itself landed and the VM records
-        // the image it came from.
+        // The version the drop is decided from — the first authoritative reading
+        // of what the guest actually is.
         #expect(
             instance.configuration.installedImage
                 == .macOSRestoreImage(version: "26.5.2", build: "25F84"))
-        #expect(instance.configuration.installContext == nil)
+        #expect(!MacOSGuestProvisioning.canProvision(instance.configuration))
     }
 }

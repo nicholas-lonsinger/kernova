@@ -349,6 +349,23 @@ struct VMLibraryTests {
         #expect(library.instances.isEmpty)
     }
 
+    @Test("Evicting a VM whose bundle is gone drops its held guest-account password")
+    func reconcileDropsTheHeldGuestAccountPassword() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = VMInstanceFixture.make(name: "Gone VM")
+        instance.enter(.stopped)
+        library.instances.append(instance)
+        library.holdGuestAccountPassword(
+            GuestAccountPassword("analytical-engine"), for: instance)
+
+        // Storage has no bundles, so the VM is evicted — and eviction is where a
+        // held answer goes, whichever way the VM left the library.
+        library.reconcileWithDisk()
+
+        #expect(library.instances.isEmpty)
+        #expect(library.heldGuestAccountPassword(for: instance) == nil)
+    }
+
     @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
     func reconcilePreservesRunningVMs() {
         let (library, _, _, _) = makeLibrary()

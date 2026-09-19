@@ -86,46 +86,6 @@ final class VMInstance {
     /// gate for offering `.cancelGuestSetup`.
     var setupTask: Task<Void, Never>?
 
-    /// Whether a start of this VM asks its caller about the macOS account the
-    /// VM owes its guest.
-    ///
-    /// macOS reads the account on the first boot after restore and on no
-    /// other, so a boot carrying none does not postpone it — it destroys it.
-    /// The verb reads this to decide whether to refuse an unanswered start, and
-    /// a bring-up nobody is present for reads the same thing to leave the VM
-    /// alone; one predicate, so the two can never disagree about which VMs have
-    /// a question outstanding.
-    ///
-    /// A host whose Virtualization has no provisioning API answers `false`: it
-    /// can deliver no account, so there is nothing to ask about. The boot that
-    /// runs there retracts the intent as any boot does.
-    var startAsksForGuestAccount: Bool {
-        configuration.pendingGuestAccount != nil && MacOSGuestProvisioning.hostSupportsProvisioning
-    }
-
-    /// Retracts the account this VM owes its guest.
-    ///
-    /// The one ending every way of finishing with the account goes through — a
-    /// boot spent the window macOS reads it in, or the guest the install
-    /// produced turned out unable to act on it. Left behind, it would raise a
-    /// question about an account that can never be created.
-    ///
-    /// Answering a start is not one of those endings: an answer is true of the
-    /// call it rode in on, and a call that reached no boot spent nothing.
-    func retractGuestAccount() {
-        guard configuration.pendingGuestAccount != nil else { return }
-        if !performConfigurationMutation({ $0.pendingGuestAccount = nil }) {
-            // Memory and disk now disagree, and disk is what the next launch
-            // reads: the bundle still names an account whose window this boot
-            // spent, so a later start asks for one macOS will no longer create.
-            // The write reported its own failure to the user.
-            #log(
-                Self.logger, .warning,
-                "The guest account for '\(self.name, privacy: .public)' stays in its bundle — the retraction did not reach disk, so a later start asks for an account whose boot window is spent"
-            )
-        }
-    }
-
     // MARK: - Preparing State (Create/Clone/Import)
 
     enum PreparingOperation: Sendable, Equatable {

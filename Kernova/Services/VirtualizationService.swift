@@ -26,23 +26,16 @@ final class VirtualizationService {
     /// applies to a macOS cold boot alone — no effect on Linux guests or on the
     /// restore-from-save path.
     ///
-    /// `provisioning` is the account this boot creates inside the guest, which
-    /// travels with the call rather than on the VM: the password exists for the
-    /// start that supplied it and for nothing else. The same value goes into
-    /// every file-lock retry, each of which is the same boot trying again.
-    ///
-    /// A cold boot that comes up retracts the account whether or not it carried
-    /// one: this is the moment the single post-restore boot macOS reads the
-    /// options on is spent, and nothing after it can create the account. Not
-    /// before, though — a boot that threw never reached the guest, so the
-    /// window is still unspent and the next start must still be able to offer
-    /// it. A recovery boot reads none and retracts none, for the reason
+    /// `provisioning` is the account this boot creates inside the guest. The same
+    /// value goes into every file-lock retry, each of which is the same boot
+    /// trying again. A recovery boot and a restore from a save file both read
+    /// none, for the reason
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
     /// states.
     func start(
         _ instance: VMInstance, bootIntoRecovery: Bool = false,
         provisioning: GuestProvisioningCredentials? = nil
-    ) async throws {
+    ) async throws -> GuestStartRoute {
         #log(
             Self.logger, .debug,
             "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public), bootIntoRecovery=\(bootIntoRecovery, privacy: .public)"
@@ -53,18 +46,21 @@ final class VirtualizationService {
 
         instance.enter(.starting(sessionID: nil))
 
+        // The branch and the answer are one value: the route decides which way
+        // the guest is brought up, and is what the caller is told was done.
+        let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
         var attemptSessionID: UUID?
         do {
             let sessionID: UUID
-            if instance.hasSaveFile {
+            switch route {
+            case .restoredSavedState:
                 sessionID = try await restoreFromSaveFile(
                     instance, attemptSessionID: &attemptSessionID)
-            } else {
+            case .coldBoot, .recoveryBoot:
                 sessionID = try await coldBootRetryingLockContention(
                     instance, bootIntoRecovery: bootIntoRecovery,
-                    provisioning: bootIntoRecovery ? nil : provisioning,
+                    provisioning: route.deliversGuestProvisioning ? provisioning : nil,
                     attemptSessionID: &attemptSessionID)
-                if !bootIntoRecovery { instance.retractGuestAccount() }
             }
 
             guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
@@ -72,12 +68,13 @@ final class VirtualizationService {
                 // reporting the machine up and here — a `didStopWithError`, a
                 // force stop, or a revert. Whatever released it rested the VM,
                 // and reported the failure if there was one, so the start is
-                // over rather than failed.
+                // over rather than failed — and the route still answers, because
+                // the guest did come up.
                 #log(
                     Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' lost its session before the start settled — leaving it \(instance.status.displayName, privacy: .public)"
                 )
-                return
+                return route
             }
             // Activation waits for `.running`: VZ documents runtime attachment
             // swapping for a running VM, and a boot or restore that came up
@@ -88,11 +85,15 @@ final class VirtualizationService {
             // fresh VMs (no `lastSeenAgentVersion`), for Linux, and for recovery
             // boots, which never run the agent.
             instance.startAgentPostStartWatchdog()
-            if bootIntoRecovery {
-                #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)' in recovery mode")
-            } else {
+            switch route {
+            case .recoveryBoot:
+                #log(
+                    Self.logger, .notice,
+                    "Started VM '\(instance.name, privacy: .public)' in recovery mode")
+            case .coldBoot, .restoredSavedState:
                 #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)'")
             }
+            return route
         } catch {
             // A restore failure already logged itself with the full error chain.
             if !Self.isRestoreFailure(error) {
