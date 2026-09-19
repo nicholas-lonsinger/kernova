@@ -192,7 +192,7 @@ struct EphemeralModeInstanceTests {
         var poweredOff = 0
         instance.onPoweredOff = { poweredOff += 1 }
 
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
 
         #expect(poweredOff == 1)
         #expect(instance.status == .stopped)

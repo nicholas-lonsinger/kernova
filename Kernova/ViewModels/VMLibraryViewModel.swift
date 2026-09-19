@@ -411,12 +411,15 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// How a start failed: with an attachment the alert can offer to detach,
+    /// How a bring-up failed: with an attachment the alert can offer to detach,
     /// or with only a message to show.
     ///
-    /// One case for every start failure, so the status item reports each of
-    /// them — a guest cap or a duplicate identity refuses a start as surely as
-    /// a missing disk image, and a headless launch has no other way to say so.
+    /// The attachment case carries either bring-up, because both assemble the
+    /// same configuration — a resume restoring a saved state fails over a
+    /// missing disk exactly as a boot does. The message case is the start's:
+    /// every start failure reaches the status item through it, a guest cap or
+    /// a duplicate identity as surely as a missing disk image, and a headless
+    /// launch has no other way to say so.
     private enum StartFailure {
         case attachment(StartFailedAttachment)
         case message(title: String, message: String)
@@ -1342,11 +1345,24 @@ final class VMLibraryViewModel {
             }
             // Through the verbs rather than the in-app door: a failure still
             // buffers for the status item, and nothing is selected or focused.
-            await run(on: instance) {
+            //
+            // Reported rather than merely presented, because a bring-up that
+            // leaves the VM resting back on its saved state moves no field
+            // ``VMCommandCore/events()`` diffs into a failure — the same reason
+            // a transient one does not. Nobody is at the machine for this pass,
+            // so a client reading the stream is the one surface that can say a
+            // marked VM did not come up.
+            do {
                 switch step {
-                case .start: try await self.commands.start(.id(instance.id), recovery: false)
-                case .resume: try await self.commands.resume(.id(instance.id))
+                case .start: try await commands.start(.id(instance.id), recovery: false)
+                case .resume: try await commands.resume(.id(instance.id))
                 }
+            } catch {
+                let verb: VMVerb = step == .resume ? .resume : .start
+                core.reportUnattendedFailure(
+                    error as? CommandError
+                        ?? .operationFailed(verb: verb, message: error.localizedDescription),
+                    on: instance)
             }
             if instance.isActive {
                 startedCount += 1

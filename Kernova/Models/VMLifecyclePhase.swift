@@ -205,10 +205,21 @@ enum VMLifecyclePhase: Sendable, Equatable {
 
     // MARK: - Command Predicates
 
-    var canStart: Bool {
+    /// Whether the VM is settled with no `VZVirtualMachine` in memory and no
+    /// operation in flight — the phases a bring-up begins from, and the ones an
+    /// edit, a clone or a delete acts in.
+    ///
+    /// What the *bundle* holds decides the rest: a VM whose suspend slot is on
+    /// disk resumes into it and takes no settings edit
+    /// (``VMInstance/holdsSuspendedSession``), whichever of these it rests at.
+    /// Exhaustive rather than `default`, so a new phase has to choose a side.
+    var isAtRest: Bool {
         switch self {
-        case .stopped, .failed, .initialBoot: true
-        default: false
+        case .stopped, .initialBoot, .failed, .suspended:
+            true
+        case .running, .livePaused, .saving, .capturingLive, .starting, .installing,
+            .restoringSavedState, .capturingAtRest, .revertingToSnapshot:
+            false
         }
     }
 
@@ -220,17 +231,18 @@ enum VMLifecyclePhase: Sendable, Equatable {
         return false
     }
 
-    /// Whether Resume applies — a hot resume from memory, or a cold one that
-    /// restores the bundle's suspend slot.
-    var canResume: Bool { isLivePaused || isColdPaused }
-
     /// Whether the guest's memory can be written to the bundle's suspend slot.
     var canSave: Bool { hasLiveSession }
 
-    /// Whether the VM's configuration can be edited — the same at-rest set
-    /// ``canStart`` admits, since a live or suspended VM's hardware is pinned
-    /// by the `VZVirtualMachine` or the saved state it will resume into.
-    var canEditSettings: Bool { canStart }
+    /// Whether the bundle's suspend slot is being written right now.
+    ///
+    /// The window in which a slot on disk is however far VZ has got
+    /// (``terminationMustWaitOut``): a file to drop rather than a session
+    /// anything may offer.
+    var isWritingSuspendSlot: Bool {
+        if case .saving = self { return true }
+        return false
+    }
 
     var canRename: Bool { !isTransitioning }
 

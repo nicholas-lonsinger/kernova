@@ -105,7 +105,7 @@ final class MacOSInstallService {
         // `guestDidStop` ran), tear down explicitly so a later boot doesn't
         // observe a stale attached VM.
         if instance.hasLiveVirtualMachine {
-            instance.resetToStopped()
+            instance.restAfterPowerOff()
         }
 
         instance.setupState?.progress = .fraction(1.0)

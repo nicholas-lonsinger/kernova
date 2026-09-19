@@ -343,6 +343,8 @@ struct VMCommandCoreTests {
     func everyBringUpReadiesTheDisplay() async throws {
         let harness = makeHarness()
         let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: suspended) }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
         let running = makeInstance(
             in: harness, name: "Running", phase: .running(sessionID: UUID()))
         var readied: [UUID] = []
@@ -529,6 +531,8 @@ struct VMCommandCoreTests {
         let harness = makeSuspendingHarness()
         harness.virtualization.shouldSuspendOnResume = true
         let instance = makeInstance(in: harness, name: "Restoring", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         let restore = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
         await harness.virtualization.waitUntilSuspended()
@@ -626,6 +630,8 @@ struct VMCommandCoreTests {
         let harness = makeSuspendingHarness()
         harness.virtualization.shouldSuspendOnResume = true
         let instance = makeInstance(in: harness, name: "Restoring", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         let first = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
         await harness.virtualization.waitUntilSuspended()
@@ -636,6 +642,36 @@ struct VMCommandCoreTests {
         try await first.value
 
         #expect(instance.status == .running)
+    }
+
+    @Test("A failed resume offers the attachment removal a failed start offers")
+    func resumeFailureCarriesTheAttachmentRecovery() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let item = RemovableMediaItem(path: "/tmp/gone.iso", readOnly: true, label: "Installer")
+        instance.configuration.removableMedia = [item]
+        // A restore assembles the same configuration a boot does, so it fails
+        // over an unopenable attachment in the same way.
+        harness.virtualization.resumeError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: item.id, path: item.path, label: item.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT)))
+
+        let error = try #require(await commandError { try await harness.core.resume(.id(instance.id)) })
+
+        guard case .operationFailed(let verb, _, _, let recovery) = error,
+            case .removeStartFailedAttachment(let offered) = recovery
+        else {
+            Issue.record("expected a removable-attachment recovery, got \(error)")
+            return
+        }
+        #expect(verb == .resume)
+        #expect(offered.verb == .resume)
+        #expect(offered.id == item.id)
+        // The saved state is kept, and the VM rests where a Resume is offered.
+        #expect(instance.hasSaveFile)
+        #expect(instance.isColdPaused)
     }
 
     // MARK: - Allowed verbs
@@ -665,21 +701,39 @@ struct VMCommandCoreTests {
             ])
     }
 
-    @Test("A cold-paused VM reports its saved-state discard as the one stop it takes")
-    func allowedVerbsForAColdPausedVM() {
+    @Test("A VM holding a saved state reports the discard as its stop, and no settings edit")
+    func allowedVerbsForAColdPausedVM() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         // No live VM to terminate and no graceful stop, but the discard rides
-        // the same verb — named once, in the same slot.
+        // the same verb — named once, in the same slot. `start` is named too:
+        // it restores the saved state rather than booting over it, and only the
+        // *offer* narrows to Resume.
         #expect(!instance.canStop)
         #expect(!instance.canForceStop)
         #expect(
             harness.core.allowedVerbs(for: instance) == [
-                .info, .ipAddress, .snapshots, .stop, .resume, .open, .reveal, .deleteSnapshot,
-                .renameSnapshot, .setSnapshotNotes, .setConfiguration, .rename, .delete,
-                .showInFinder,
+                .info, .ipAddress, .snapshots, .start, .stop, .resume, .open, .reveal,
+                .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
+                .setConfiguration, .rename, .delete, .showInFinder,
             ])
+    }
+
+    @Test("A suspension whose slot has gone reports the verbs of an ordinary stopped VM")
+    func allowedVerbsForASlotlessSuspension() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended)
+
+        // Nothing is left to resume or discard, and nothing pins the settings.
+        let verbs = harness.core.allowedVerbs(for: instance)
+        #expect(verbs.contains(.start))
+        #expect(!verbs.contains(.resume))
+        #expect(!verbs.contains(.stop))
+        #expect(verbs.contains(.editStorageDisk))
+        #expect(verbs.contains(.clone))
     }
 
     @Test("A preparing VM reports its reads and the cancel that stops the copy")
@@ -696,12 +750,128 @@ struct VMCommandCoreTests {
             ])
     }
 
+    /// Every route out of the force-stop refusal ends in a power-off, and an
+    /// Ephemeral VM's power-off is a revert — so the slot the termination would
+    /// otherwise leave in place is replaced by the baseline's, and the copy has
+    /// to say which of the two happens.
+    @Test(
+        "Force-stopping a restore that is still loading names what becomes of the saved state",
+        arguments: [false, true])
+    func forceStopOfARestoreNamesTheKeptSavedState(ephemeral: Bool) async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Restoring", phase: .restoringSavedState(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let baseline = VMSnapshot(name: "Clean install")
+        if ephemeral {
+            instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+            instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        }
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .force, confirmed: false)
+            })
+
+        let prompt = try #require(error.confirmationPrompt)
+        // The user asked to terminate, not to revert, so the button says so
+        // either way.
+        #expect(prompt.confirmTitle == "Force Stop")
+        #expect(prompt.title == "Force Stop \u{201C}Restoring\u{201D}?")
+        if ephemeral {
+            // The baseline's session replaces the one being loaded, so the copy
+            // must not promise it is kept.
+            #expect(prompt.message.contains("Clean install"))
+            #expect(prompt.message.contains("The suspended session"))
+            #expect(!prompt.message.contains("saved state is kept"))
+        } else {
+            #expect(prompt.message.contains("saved state is kept"))
+            #expect(!prompt.message.contains("unsaved data"))
+        }
+    }
+
+    @Test("A paused Ephemeral VM's stop refusal names the baseline both its routes end at")
+    func stopPausedOnAnEphemeralVMNamesTheBaseline() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .graceful, confirmed: false)
+            })
+
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .stopPaused)
+        // Resume-and-shut-down and force-stop both power the VM off, and a
+        // power-off is the revert.
+        #expect(prompt.message.contains("Clean install"))
+    }
+
+    /// A Recovery boot is a cold boot, and a bundle holding a slot takes the
+    /// restore that slot names instead — so offering Recovery there would name
+    /// an outcome the bring-up will not produce, and would leave the sidebar's
+    /// ⌥-alternate with no primary Start to pair with.
+    @Test("A VM holding a saved state offers neither Start nor Start in Recovery")
+    func recoveryIsWithheldFromAVMHoldingASavedState() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Suspended", phase: .stopped, guestOS: .macOS)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        #expect(harness.core.capabilities.isApplicable(.startInRecovery, to: instance))
+
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        #expect(!harness.core.capabilities.isApplicable(.start, to: instance))
+        #expect(!harness.core.capabilities.isApplicable(.startInRecovery, to: instance))
+        let error = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: true) })
+        guard case .unsupported = error else {
+            Issue.record("expected an unsupported refusal, got \(error)")
+            return
+        }
+        #expect(harness.virtualization.startCallCount == 0)
+        #expect(instance.hasSaveFile)
+    }
+
+    /// Only a cold boot creates the account, so a restore must not be turned
+    /// back for one nobody answered — the session it resumes was set up long
+    /// ago.
+    @Test("A start that restores a saved state asks for no guest account")
+    func aRestoringStartDoesNotAskForTheGuestAccount() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Suspended", phase: .suspended, guestOS: .macOS)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        instance.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+
+        try await harness.core.start(.id(instance.id), recovery: false)
+
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
+        // Nothing was handed over, and the question is still the next cold
+        // boot's to ask.
+        #expect(harness.virtualization.lastStartProvisioning == nil)
+        #expect(instance.configuration.pendingGuestAccount != nil)
+    }
+
     // MARK: - State gates
 
     @Test("A suspended VM's stop passes the gate on discard-saved-state, not on stop")
     func suspendedStopIsAdmittedByTheDiscardCapability() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         // Nothing to shut down gracefully — the discard half of the stop slot's
         // pair is what admits this one.
@@ -949,9 +1119,11 @@ struct VMCommandCoreTests {
         live.configuration.genericMachineIdentifierData = identity
         let twin = makeInstance(in: harness, name: "Twin", phase: .suspended)
         twin.configuration.genericMachineIdentifierData = identity
+        defer { VMInstanceFixture.removeBundle(of: twin) }
+        try VMInstanceFixture.writeSaveFile(for: twin)
 
         // Cold-paused: the resume builds a fresh VM and claims the identity.
-        #expect(twin.isColdPaused)
+        #expect(twin.holdsSuspendedSession)
         let error = try #require(
             await commandError { try await harness.core.resume(.id(twin.id)) })
         #expect(error.isConflict)
@@ -1032,6 +1204,8 @@ struct VMCommandCoreTests {
     func forceStopOfAColdPausedVMIsADiscard() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         let error = try #require(
             await commandError {
@@ -1078,9 +1252,11 @@ struct VMCommandCoreTests {
     func gracefulStopOfAColdPausedVMAsksForConsent() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         // Not a shutdown at heart: `VirtualizationService.stop` discards the
-        // save file for any cold-paused VM, ephemeral or not.
+        // save file of any VM holding one, ephemeral or not.
         let error = try #require(
             await commandError {
                 try await harness.core.stop(
@@ -1100,6 +1276,8 @@ struct VMCommandCoreTests {
     func gracefulStopOfAColdPausedEphemeralVMAsksForConsent() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Ephemeral", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
@@ -1709,6 +1887,8 @@ struct VMCommandCoreTests {
         harness.storage.deleteVMBundleError = VMStorageError.bundleNotFound(
             URL(filePath: "/tmp/Doomed.kernova"))
         let instance = makeInstance(in: harness, name: "Doomed", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         await #expect(throws: CommandError.self) {
             try await harness.core.delete(
@@ -2161,6 +2341,8 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
         let instance = makeInstance(in: harness, name: "Ephemeral", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)

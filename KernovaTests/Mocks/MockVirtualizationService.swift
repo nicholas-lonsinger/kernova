@@ -92,6 +92,8 @@ final class MockVirtualizationService: VirtualizationProviding {
                     error, on: instance, transientRestingPhase: .stopped))
             throw error
         }
+        // A restore consumes the slot it loaded, as the real one does.
+        if route == .restoredSavedState { instance.removeSaveFile() }
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
         return route
     }
@@ -99,14 +101,23 @@ final class MockVirtualizationService: VirtualizationProviding {
     func stop(_ instance: VMInstance) async throws {
         stopCallCount += 1
         if let error = stopError { throw error }
+        // No guest to ask: the stop discards the saved state instead.
+        if instance.holdsSuspendedSession {
+            instance.discardSavedState()
+            return
+        }
         guard !guestIgnoresShutdownRequest else { return }
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func forceStop(_ instance: VMInstance) async throws {
         forceStopCallCount += 1
         if let error = forceStopError { throw error }
-        instance.resetToStopped()
+        if instance.holdsSuspendedSession {
+            instance.discardSavedState()
+            return
+        }
+        instance.restAfterPowerOff()
     }
 
     func pause(_ instance: VMInstance) async throws {
@@ -126,6 +137,9 @@ final class MockVirtualizationService: VirtualizationProviding {
                     error, on: instance, transientRestingPhase: nil))
             throw error
         }
+        // A cold resume consumes the slot it restored; a hot one drops the file
+        // its pause left behind. Either way the guest is live again.
+        instance.removeSaveFile()
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
@@ -136,9 +150,15 @@ final class MockVirtualizationService: VirtualizationProviding {
         // transitioning.
         instance.enter(.saving(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
         if let error = saveError {
+            // A write that threw left a truncated slot, which the real service
+            // drops before it rests the VM.
+            instance.dropTruncatedSaveFile()
             instance.tearDownSession(restingAt: .failed(message: error.localizedDescription))
             throw error
         }
+        // The suspend slot is what makes the VM resumable, so the mock writes a
+        // real one: every predicate a suspended VM is judged by reads the file.
+        try VMInstanceFixture.writeSaveFile(for: instance)
         instance.tearDownSession(restingAt: .suspended)
     }
 
@@ -188,13 +208,21 @@ final class MockVirtualizationService: VirtualizationProviding {
 
         instance.tearDownSession(restingAt: .revertingToSnapshot)
         if let error = revertToSnapshotError {
-            instance.enter(VirtualizationService.restingPhaseAfterRestoreFailure(on: instance))
+            instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
         try store.restore(
             bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
         instance.configuration = restore.configuration
         revertedSnapshots.append(snapshot)
+        // A warm snapshot's own saved state is what the VM comes back on, and a
+        // cold one leaves the bundle without a slot. The store mock copies no
+        // files, so the slot every predicate reads is written here.
+        if plan.kind == .warm {
+            try VMInstanceFixture.writeSaveFile(for: instance)
+        } else {
+            instance.removeSaveFile()
+        }
         instance.enter(plan.kind == .warm ? .suspended : .stopped)
     }
 }

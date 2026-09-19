@@ -1012,6 +1012,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             let currentDiskNames = Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
             reportedFailedBundles.formIntersection(currentDiskNames)
 
+            normalizeEmptiedSuspensions(inBundles: diskIDs)
+
             #log(
                 Self.logger, .debug,
                 "reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
@@ -1019,6 +1021,37 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             #log(
                 Self.logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
             presentError(error)
+        }
+    }
+
+    /// Rests any VM naming a suspend slot its bundle no longer holds.
+    ///
+    /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
+    /// out of band — in the Finder, by another tool — leaves a phase describing
+    /// something that is not there: the row still reads Suspended while every
+    /// predicate that asks the bundle already offers Start and an editable
+    /// configuration.
+    ///
+    /// Re-derived whenever the library reconciles, and no sooner: the watcher
+    /// behind that pass observes the VMs directory, where a bundle is added,
+    /// removed or renamed, so a file deleted *inside* a bundle wakes nothing.
+    /// The phase catches up at the next reconciliation for any reason, and at
+    /// the next launch.
+    ///
+    /// `bundlesOnDisk` bounds it to the VMs this pass actually read: a bundle
+    /// the scan could not see says nothing about the slot inside it, and the
+    /// eviction above deliberately leaves such a VM suspended rather than
+    /// reclaiming it.
+    private func normalizeEmptiedSuspensions(inBundles bundlesOnDisk: Set<UUID>) {
+        for instance in instances
+        where bundlesOnDisk.contains(instance.id) && instance.isColdPaused
+            && !instance.hasSaveFile
+        {
+            #log(
+                Self.logger, .notice,
+                "Resting '\(instance.name, privacy: .public)' stopped: its suspend slot is no longer in the bundle"
+            )
+            instance.enter(.stopped)
         }
     }
 

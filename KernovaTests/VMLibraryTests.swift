@@ -392,6 +392,46 @@ struct VMLibraryTests {
         #expect(library.instances.first?.name == "Paused VM")
     }
 
+    /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
+    /// out of band leaves the phase describing something that is not there —
+    /// every predicate that asks the bundle has already moved on.
+    @Test("reconcileWithDisk rests a suspension whose slot has left the bundle")
+    func reconcileNormalizesAnEmptiedSuspension() throws {
+        let (library, storage, _, _) = makeLibrary()
+        let holding = VMInstanceFixture.make(name: "Still suspended")
+        holding.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: holding) }
+        try VMInstanceFixture.writeSaveFile(for: holding)
+        let emptied = VMInstanceFixture.make(name: "Slot gone")
+        emptied.enter(.suspended)
+        // Both bundles are on disk, so the pass has read them and what it found
+        // inside them stands.
+        storage.bundles[holding.bundleURL] = holding.configuration
+        storage.bundles[emptied.bundleURL] = emptied.configuration
+        library.instances.append(contentsOf: [holding, emptied])
+
+        library.reconcileWithDisk()
+
+        #expect(emptied.phase == .stopped)
+        // The one whose slot is still there is left naming it.
+        #expect(holding.phase == .suspended)
+    }
+
+    @Test("reconcileWithDisk leaves a suspension alone when it could not read the bundle")
+    func reconcileLeavesAnUnreadBundlesSuspensionAlone() {
+        let (library, _, _, _) = makeLibrary()
+        let instance = VMInstanceFixture.make(name: "Bundle out of sight")
+        instance.enter(.suspended)
+        library.instances.append(instance)
+
+        library.reconcileWithDisk()
+
+        // A bundle the scan never saw says nothing about the slot inside it,
+        // and the eviction pass deliberately keeps such a VM.
+        #expect(library.instances.count == 1)
+        #expect(instance.phase == .suspended)
+    }
+
     @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
     func reconcileUpdatesSelection() {
         let (library, storage, _, _) = makeLibrary()

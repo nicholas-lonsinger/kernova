@@ -438,14 +438,10 @@ struct SidebarViewControllerTests {
     func contextMenuColdPaused() throws {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
-        // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
-        // needs one on disk, not just the status.
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        FileManager.default.createFile(
-            atPath: instance.saveFileURL.path(percentEncoded: false),
-            contents: Data("fake save".utf8))
+        // A suspend slot on disk: every predicate a suspended VM is judged by
+        // reads the file, not the status.
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -464,10 +460,12 @@ struct SidebarViewControllerTests {
     /// One slot, one command: the title says what the VM's state makes of a
     /// stop, and the consent a discard needs is the refusal the verb raises.
     @Test("The stop slot dispatches the same command under either title")
-    func stopSlotDispatchesOneCommand() {
+    func stopSlotDispatchesOneCommand() throws {
         let viewModel = makeViewModel()
         let running = VMInstanceFixture.make(name: "Running", phase: .running(sessionID: UUID()))
         let suspended = VMInstanceFixture.make(name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: suspended) }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
         viewModel.instances.append(contentsOf: [running, suspended])
         let controller = SidebarViewController(viewModel: viewModel)
         let runningMenu = controller.buildContextMenu(for: running)
@@ -488,6 +486,8 @@ struct SidebarViewControllerTests {
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
         let suspended = VMInstanceFixture.make(name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: suspended) }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
         viewModel.instances.append(suspended)
         let controller = SidebarViewController(viewModel: viewModel)
         let discard = try #require(
@@ -508,9 +508,11 @@ struct SidebarViewControllerTests {
     }
 
     @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")
-    func contextMenuColdPausedEnablesDelete() {
+    func contextMenuColdPausedEnablesDelete() throws {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -520,7 +522,7 @@ struct SidebarViewControllerTests {
         // Discard Saved State pass first.
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
         #expect(menuItem("Delete Immediately…", in: menu)?.isEnabled == true)
-        // Clone still needs a settled bundle, so it stays on `canEditSettings`.
+        // A clone carries no suspend slot, so the saved state pins it out.
         #expect(menuItem("Clone", in: menu)?.isEnabled == false)
     }
 

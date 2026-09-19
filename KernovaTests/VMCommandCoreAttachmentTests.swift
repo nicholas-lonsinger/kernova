@@ -929,6 +929,8 @@ struct VMCommandCoreAttachmentTests {
     func suspendedVMRefusesBothLists() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Old")
         instance.configuration.removableMedia = [item]
 
@@ -1139,7 +1141,7 @@ struct VMCommandCoreAttachmentTests {
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
         instance.configuration.storageDisks = [disk, keeper]
 
-        // `.failed` satisfies `canEditSettings`, so neither new capability
+        // A VM at rest with no saved state can be edited, so neither capability
         // blocks the recovery a failed start offered.
         #expect(harness.core.capabilities.accepts(.editStorageDisks, on: instance))
         #expect(harness.core.capabilities.accepts(.editRemovableMedia, on: instance))
@@ -1147,7 +1149,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"))
+                verb: .start, kind: .storageDisk, id: disk.id, label: "Scratch",
+                message: "could not open"))
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         // The file the start could not open is left exactly where it is.
@@ -1175,7 +1178,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"))
+                verb: .start, kind: .storageDisk, id: disk.id, label: "Scratch",
+                message: "could not open"))
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.virtualization.startCallCount == 0)
@@ -1193,7 +1197,8 @@ struct VMCommandCoreAttachmentTests {
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open"))
+                verb: .start, kind: .removableMedia, id: UUID(), label: "Installer",
+                message: "could not open"))
 
         // What the recovery was for already holds, so it is a quiet no-op — and
         // the list it would have edited is untouched.
@@ -1201,50 +1206,167 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.status == .error)
     }
 
-    @Test("A start-failed removal discards a saved state the removal would strand")
-    func removeStartFailedAttachmentDiscardsTheSavedState() async throws {
+    @Test("A start-failed removal that finds its entry gone keeps the saved state")
+    func removeStartFailedAttachmentAlreadyGoneKeepsTheSavedState() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .failed(message: "Restore failed."))
-        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        instance.configuration.storageDisks = [disk, keeper]
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        try Data().write(to: instance.saveFileURL)
-        #expect(instance.hasSaveFile)
+        let instance = makeInstance(in: harness, phase: .suspended)
+        let keeper = RemovableMediaItem(path: externalPath("keep.iso"), readOnly: true)
+        instance.configuration.removableMedia = [keeper]
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         try await harness.core.removeStartFailedAttachment(
             .id(instance.id),
             attachment: StartFailedAttachment(
-                kind: .storageDisk, id: disk.id, label: "Scratch", message: "could not open"))
+                verb: .resume, kind: .removableMedia, id: UUID(), label: "Installer",
+                message: "could not open"))
+
+        // A confirmation can land long after the fact, and the slot on disk may
+        // be a newer one this recovery knows nothing about.
+        #expect(instance.hasSaveFile)
+        #expect(instance.isColdPaused)
+    }
+
+    @Test("A resume-failed removal discards the saved state before it edits the device set")
+    func removeStartFailedAttachmentDiscardsTheSavedState() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended)
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        // The saved state pins the device set, so the removal would be refused
+        // until the discard clears it.
+        #expect(!harness.core.capabilities.accepts(.editStorageDisks, on: instance))
+
+        try await harness.core.removeStartFailedAttachment(
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                message: "could not open"))
 
         // A save file restores only into the device set it was saved with, so it
-        // cannot outlive the removal.
+        // cannot outlive the removal — and the VM rests where a VM with nothing
+        // to restore belongs, ready for the start the door runs next.
         #expect(!instance.hasSaveFile)
+        #expect(instance.phase == .stopped)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
+        #expect(harness.virtualization.startCallCount == 0)
     }
 
     @Test("A start-failed removal that refuses leaves the saved state alone")
     func aRefusedStartFailedRemovalKeepsTheSavedState() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .failed(message: "Restore failed."))
+        let instance = makeInstance(in: harness, phase: .suspended)
         let sole = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
         instance.configuration.storageDisks = [sole]
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        try Data().write(to: instance.saveFileURL)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         // A VM keeps at least one storage disk, so this removal is refused.
         await #expect(throws: CommandError.self) {
             try await harness.core.removeStartFailedAttachment(
                 .id(instance.id),
                 attachment: StartFailedAttachment(
-                    kind: .storageDisk, id: sole.id, label: "Scratch", message: "could not open"))
+                    verb: .resume, kind: .storageDisk, id: sole.id, label: "Scratch",
+                    message: "could not open"))
         }
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [sole.id])
-        // Nothing was removed, so nothing stranded the saved state.
+        // The refusal is raised before the discard, so the session survives a
+        // removal that was never going to happen.
         #expect(instance.hasSaveFile)
+        #expect(instance.isColdPaused)
+    }
+
+    /// The alert the recovery is confirmed from is window-modal, so every other
+    /// door stays live behind it: the state the click lands in is not the state
+    /// the offer was made in, and the discard is the one step nothing can undo.
+    @Test(
+        "A start-failed removal the VM can no longer take keeps both the saved state and the entry",
+        arguments: [
+            VMLifecyclePhase.restoringSavedState(sessionID: nil),
+            .starting(sessionID: nil),
+            .running(sessionID: VMLifecyclePhaseFixtures.session),
+        ])
+    func aStartFailedRemovalRefusedByTheVMsStateKeepsEverything(phase: VMLifecyclePhase) async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended)
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        // A bring-up another door issued while the alert was up — the slot is
+        // still on disk, and VZ has not finished loading it.
+        instance.enter(phase)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.removeStartFailedAttachment(
+                .id(instance.id),
+                attachment: StartFailedAttachment(
+                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    message: "could not open"))
+        }
+
+        #expect(instance.hasSaveFile)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
+        #expect(instance.phase == phase)
+    }
+
+    /// The discard is the last thing the recovery does, so everything that can
+    /// still refuse — the configuration write included — refuses with the
+    /// session and the entry both intact.
+    @Test("A start-failed removal whose configuration write fails keeps the saved state")
+    func aStartFailedRemovalWhoseWriteFailsKeepsEverything() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended)
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        harness.storage.saveConfigurationError = VMStorageError.bundleNotFound(instance.bundleURL)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.removeStartFailedAttachment(
+                .id(instance.id),
+                attachment: StartFailedAttachment(
+                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    message: "could not open"))
+        }
+
+        #expect(instance.hasSaveFile)
+        #expect(instance.isColdPaused)
+    }
+
+    @Test("A start-failed removal a clone of the same VM blocks keeps the saved state")
+    func aStartFailedRemovalBlockedByACloneKeepsTheSavedState() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended)
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        // A clone reading this VM's files locks a storage-disk edit, and the
+        // discard cannot clear that.
+        let task = Task {}
+        defer { task.cancel() }
+        let phantom = makeInstance(in: harness, name: "Clone of it")
+        phantom.preparingState = VMInstance.PreparingState(
+            operation: .cloning(sourceID: instance.id), task: task)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.removeStartFailedAttachment(
+                .id(instance.id),
+                attachment: StartFailedAttachment(
+                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    message: "could not open"))
+        }
+
+        #expect(instance.hasSaveFile)
+        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
     }
 }

@@ -114,11 +114,11 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func stop(_ instance: VMInstance) async throws {
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func forceStop(_ instance: VMInstance) async throws {
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func pause(_ instance: VMInstance) async throws {
@@ -132,14 +132,18 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         // A cold resume rebuilds the VM from the save file and stands in
         // `.restoringSavedState` for the whole of that build; a hot one resumes
         // the session it already holds and touches no phase until it settles.
-        if instance.isColdPaused { instance.enter(.restoringSavedState(sessionID: nil)) }
+        if instance.holdsSuspendedSession { instance.enter(.restoringSavedState(sessionID: nil)) }
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
+        instance.removeSaveFile()
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
     func save(_ instance: VMInstance) async throws {
+        // The slot is what makes the VM resumable, so a real one is written:
+        // every predicate a suspended VM is judged by reads the file.
+        try VMInstanceFixture.writeSaveFile(for: instance)
         instance.tearDownSession(restingAt: .suspended)
     }
 
@@ -157,6 +161,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
+        // A warm snapshot's own saved state is what the VM comes back on, and
+        // the store mock copies no files, so the slot is written here.
+        try VMInstanceFixture.writeSaveFile(for: instance)
         instance.tearDownSession(restingAt: .suspended)
     }
 }

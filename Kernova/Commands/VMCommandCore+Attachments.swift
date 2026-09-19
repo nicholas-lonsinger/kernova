@@ -587,15 +587,28 @@ extension VMCommandCore {
     // MARK: - Start-Failure Recovery
 
     /// The removal half of the ``CommandRecovery/removeStartFailedAttachment(_:)``
-    /// a failed start offered.
+    /// a failed bring-up offered: the attachment goes, then the VM's saved
+    /// state, leaving a VM the caller's own Start can boot.
     ///
-    /// The entry is checked before the removal verb is asked, so an entry
-    /// somebody removed meanwhile answers as the no-op
+    /// The entry is checked before anything else, so an entry somebody removed
+    /// meanwhile answers as the no-op
     /// ``VMCommanding/removeStartFailedAttachment(_:attachment:)`` promises
-    /// rather than as that verb's stale-attachment refusal.
+    /// rather than as that verb's stale-attachment refusal — and keeps its
+    /// saved state, which a confirmation landing late must not destroy.
     ///
-    /// Everything else the removal refuses is thrown: the attachment is still
-    /// attached, so a caller about to start has nothing new to try.
+    /// The removal is committed *before* the discard, which is the step nothing
+    /// can undo: the alert is window-modal and every other door stays live
+    /// behind it, so a bring-up, a clone or a copy can take the VM between the
+    /// offer and the click — and the configuration write can refuse or fail to
+    /// reach disk. Every one of those leaves the VM with both its session and
+    /// its attachment, and tells the caller why.
+    ///
+    /// The one thing the discard must precede is the *gate*, which refuses an
+    /// edit while a saved state is on disk. That gate is therefore asked of the
+    /// VM as it will stand once the discard lands, and the removal then goes
+    /// through the same private detach the public verb uses — on these
+    /// arguments (`trashFile: false`, already-confirmed, entry re-checked above)
+    /// that verb adds nothing else.
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -613,26 +626,52 @@ extension VMCommandCore {
             )
             return
         }
+        let capability: VMCapability =
+            switch failure.kind {
+            case .storageDisk: .editStorageDisks
+            case .removableMedia: .editRemovableMedia
+            }
+        // Decided as the VM will stand once the discard lands, so only the term
+        // that discard clears is lifted and every other blocker — a bring-up in
+        // flight, a clone reading this bundle, a copy still writing it —
+        // answers exactly as it will answer the verb.
+        let admitted = instance.answeringAsIfSavedStateDiscarded {
+            capabilities.accepts(capability, on: instance)
+        }
+        // Built outside that window, so the refusal names what this VM really
+        // accepts rather than what it would accept after a discard that is not
+        // going to happen.
+        guard admitted else { throw refusal(for: [capability], on: instance) }
+        if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
+            try refuseSoleStorageDiskRemoval(of: disk, on: instance)
+        }
         switch failure.kind {
-        case .storageDisk:
-            try await removeStorageDisk(
-                .id(instance.id), disk: failure.id, trashFile: false, confirmed: true)
-        case .removableMedia:
-            try await removeRemovableMedia(
-                .id(instance.id), item: failure.id, trashFile: false, confirmed: true)
+        case .storageDisk: try detachStorageDisk(failure.id, from: instance)
+        case .removableMedia: try detachRemovableMedia(failure.id, from: instance)
         }
         #log(
             Self.logger, .notice,
             "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
         )
-        // A save file restores only into the exact device set it was saved with,
-        // so it cannot outlive the removal — the alert disclosed the discard
-        // before the user confirmed.
-        guard instance.hasSaveFile else { return }
-        instance.removeSaveFile()
+        // Only a VM resting on a slot has a suspension to end: a bring-up that
+        // succeeded while the alert was up consumed it, and a live session took
+        // the edit as a hot-plug.
+        guard instance.holdsSuspendedSession else { return }
+        guard instance.discardSavedState() else {
+            // The device set no longer matches the one the state was written
+            // under, so that state cannot be restored — and the discard that
+            // would have cleared it is what just failed. Both facts are known,
+            // so both are stated, and the discard the VM still offers is the
+            // way out.
+            throw CommandError.operationFailed(
+                verb: failure.verb,
+                message:
+                    "\u{201C}\(failure.label)\u{201D} was removed from \u{201C}\(instance.name)\u{201D}, but its saved state could not be deleted. That state can no longer be restored — discard it to start the virtual machine."
+            )
+        }
         #log(
             Self.logger, .notice,
-            "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
+            "Discarded saved state for '\(instance.name, privacy: .public)' along with the attachment its bring-up failed on"
         )
     }
 
