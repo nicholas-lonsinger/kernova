@@ -133,9 +133,9 @@ final class VMLifecycleCoordinator {
     ///
     /// Distinct from ``hasActiveOperation(for:)``, which tracks the claim:
     /// `stop` and `forceStop` release another operation's claim so a user can
-    /// always interrupt, but the interrupted body keeps running. A caller
-    /// deciding whether it may issue its *own* VZ operation therefore asks this,
-    /// not the claim, or it acts while VZ is still busy.
+    /// interrupt one, but the interrupted body keeps running. A caller deciding
+    /// whether it may issue its *own* VZ operation therefore asks this, not the
+    /// claim, or it acts while VZ is still busy.
     ///
     /// Observable, so a `withObservationTracking` wait on it wakes when the
     /// operation ends — which is what lets a caller hold for an operation whose
@@ -250,9 +250,11 @@ final class VMLifecycleCoordinator {
 
     /// Immediately terminates the VM.
     ///
-    /// Bypasses serialization so users can always force-kill, even during
-    /// another in-flight operation, clearing the active-operation token *before*
-    /// calling the service to invalidate that operation's defer guard.
+    /// Bypasses serialization so a termination lands during another in-flight
+    /// operation — a pause or a resume, which hold the claim without moving the
+    /// VM out of the phases ``VMLifecyclePhase/canForceStop`` admits — clearing
+    /// the active-operation token *before* calling the service to invalidate
+    /// that operation's defer guard.
     func forceStop(_ instance: VMInstance) async throws {
         activeOperations.removeValue(forKey: instance.id)
         try await virtualizationService.forceStop(instance)

@@ -381,6 +381,12 @@ extension VMCommandCore {
     /// an attachment the user can remove to get the VM running, or `nil` when
     /// the generic error is the right surface.
     ///
+    /// Every way one entry can be unusable, not only the refused attach: a file
+    /// that is gone, a path that turned out to be a folder and one the VM may
+    /// no longer write all leave the same VM, with the same one entry to remove.
+    /// The message is each error's own description, so the alert states what was
+    /// found rather than guessing at a cause.
+    ///
     /// Two exclusions where removal is the wrong advice: a VM's only disk, since
     /// removing it leaves nothing to start (and an empty list would re-synthesize
     /// `Disk.asif`), and file-lock contention — the file is fine and the lock
@@ -392,14 +398,20 @@ extension VMCommandCore {
             !VirtualizationService.isFileLockContention(builderError)
         else { return nil }
         switch builderError {
-        case .storageDiskAttachFailed(let id, _, let label, _):
+        case .storageDiskNotFound(let id, _, let label),
+            .storageDiskPathIsDirectory(let id, _, let label),
+            .storageDiskNotWritable(let id, _, let label),
+            .storageDiskAttachFailed(let id, _, let label, _):
             guard let disk = storageDisk(id: id, on: instance),
                 !instance.isSoleStorageDisk(disk)
             else { return nil }
             return StartFailedAttachment(
                 verb: verb, kind: .storageDisk, id: id, label: label,
                 message: builderError.localizedDescription)
-        case .removableMediaAttachFailed(let id, _, let label, _):
+        case .removableMediaNotFound(let id, _, let label),
+            .removableMediaPathIsDirectory(let id, _, let label),
+            .removableMediaNotWritable(let id, _, let label),
+            .removableMediaAttachFailed(let id, _, let label, _):
             // Confirm the entry is really in the list: an offer whose action could
             // only no-op leaves a button that appears to do nothing.
             guard (instance.configuration.removableMedia ?? []).contains(where: { $0.id == id })
@@ -701,11 +713,12 @@ extension VMCommandCore {
             try require(.resume, on: instance)
             try await resumeThenShutDown(instance)
         case .force:
-            // No state gate: a force stop is the interrupt of last resort, and
-            // the states it is *most* needed in are the ones no gate would
-            // predict — a VM resting at `.error` with a live `VZVirtualMachine`
-            // still attached is exactly what the termination fallback has to be
-            // able to terminate.
+            // Both capabilities, for the reason the graceful branch states: a
+            // VM resting on a slot has nothing to terminate and this deletes
+            // the suspended session instead. Gated before the consent, so a
+            // machine Virtualization would refuse to stop is turned back
+            // without first taking the user's agreement to terminate it.
+            try require(anyOf: [.forceStop, .discardSavedState], on: instance)
             guard confirmed else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
@@ -770,15 +783,15 @@ extension VMCommandCore {
         // the button names that outcome rather than the deletion it isn't.
         let discardsSavedState = instance.holdsSuspendedSession
         let revertsInsteadOfTerminating = discardsSavedState && ephemeralBaseline != nil
-        // A slot the termination leaves in place is the session the VM would
-        // come back on — unless the baseline's replaces it. A save part-way
-        // through writing leaves none (``VMInstance/dropTruncatedSaveFile()``).
-        let keepsSuspendedSession = instance.hasSaveFile && !instance.phase.isWritingSuspendSlot
         let suspendedSessionLost =
             "The suspended session, and everything changed inside the guest during it, are discarded."
         let guestDataLost = "Any unsaved data inside the guest will be lost."
         let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
 
+        // A VM with a live guest to terminate holds no suspend slot: a start
+        // finding one restores it rather than booting over it
+        // (``GuestStartRoute/init(startOf:bootIntoRecovery:)``), and the restore
+        // consumes it. So the terminating branches speak only of guest memory.
         let message: String
         switch (discardsSavedState, ephemeralBaseline) {
         case (true, let baseline?):
@@ -789,18 +802,12 @@ extension VMCommandCore {
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
         case (false, let baseline?):
-            // The power-off the termination causes rolls the disks back too, so
-            // a slot it would otherwise have left in place is replaced by the
-            // baseline's rather than resumed.
+            // The power-off the termination causes rolls the disks back too.
             message =
                 "\(terminated) It is ephemeral, so it returns to "
-                + "\u{201C}\(baseline.name)\u{201D}. "
-                + (keepsSuspendedSession ? suspendedSessionLost : guestDataLost)
+                + "\u{201C}\(baseline.name)\u{201D}. \(guestDataLost)"
         case (false, nil):
-            message =
-                keepsSuspendedSession
-                ? "\(terminated) Its saved state is kept, so it returns to being suspended."
-                : "\(terminated) \(guestDataLost)"
+            message = "\(terminated) \(guestDataLost)"
         }
 
         let confirmTitle: String

@@ -397,31 +397,6 @@ struct VMInstanceTests {
         #expect(emptied.phase == .stopped)
     }
 
-    /// The order is the point: the truncated slot goes first, and the resting
-    /// phase is then read off whatever survived.
-    @Test("Settling after a termination drops a half-written slot but keeps a loaded one")
-    func settleAfterTerminationDropsOnlyTheHalfWrittenSlot() throws {
-        let saving = VMInstanceFixture.make(phase: .saving(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: saving) }
-        try VMInstanceFixture.writeSaveFile(for: saving)
-
-        VirtualizationService.settleAfterTermination(saving)
-
-        #expect(!saving.hasSaveFile)
-        #expect(saving.phase == .stopped)
-
-        // A Force Stop landing on a restore takes the VZ machine away without
-        // consuming the state it had not finished loading.
-        let restoring = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: restoring) }
-        try VMInstanceFixture.writeSaveFile(for: restoring)
-
-        VirtualizationService.settleAfterTermination(restoring)
-
-        #expect(restoring.hasSaveFile)
-        #expect(restoring.phase == .suspended)
-    }
-
     @Test("A VM answers the capability gate as it will stand once its saved state is discarded")
     func answeringAsIfSavedStateDiscardedLiftsOnlyThatTerm() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
@@ -632,24 +607,23 @@ struct VMInstanceTests {
 
     // MARK: - canForceStop
 
-    @Test("canForceStop is true when running or transitioning with a live VM to terminate")
-    func canForceStopRunningAndTransitions() {
-        for phase in [
-            VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
-            .starting(sessionID: UUID()), .saving(sessionID: UUID()),
-            .capturingLive(sessionID: UUID()), .restoringSavedState(sessionID: UUID()),
-        ] {
+    @Test("canForceStop is true for the live VMs Virtualization takes a stop from")
+    func canForceStopRunningAndPaused() {
+        for phase in [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())] {
             #expect(VMInstanceFixture.make(phase: phase).canForceStop == true, "phase \(phase)")
         }
     }
 
-    @Test("canForceStop needs a live VM, so a session-less transition doesn't offer it")
-    func canForceStopNeedsALiveVirtualMachine() {
-        // A disks-only capture is a file copy with no VM behind it, and a start
-        // still assembling its configuration has yet to create one.
+    @Test("canForceStop is false in every phase whose VZ machine would refuse the stop")
+    func canForceStopNeedsASettledVirtualMachine() {
+        // A start, a suspend, a restore and a live capture each leave VZ in a
+        // state `stopWithCompletionHandler:` does not accept; a disks-only
+        // capture and a revert have no VM behind them at all.
         for phase in [
-            VMLifecyclePhase.capturingAtRest, .starting(sessionID: nil), .revertingToSnapshot,
-            .restoringSavedState(sessionID: nil),
+            VMLifecyclePhase.capturingAtRest, .revertingToSnapshot,
+            .starting(sessionID: nil), .starting(sessionID: UUID()),
+            .restoringSavedState(sessionID: nil), .restoringSavedState(sessionID: UUID()),
+            .saving(sessionID: UUID()), .capturingLive(sessionID: UUID()),
         ] {
             #expect(VMInstanceFixture.make(phase: phase).canForceStop == false, "phase \(phase)")
         }

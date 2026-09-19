@@ -298,7 +298,8 @@ struct ConfigurationBuilder: Sendable {
                     Self.logger, .fault,
                     "Internal storage disk '\(disk.label, privacy: .public)' resolves outside the bundle: \(resolvedPath, privacy: .public)"
                 )
-                throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+                throw ConfigurationBuilderError.storageDiskNotFound(
+                    id: disk.id, path: disk.path, label: disk.label)
             }
             return resolved
         }
@@ -337,15 +338,19 @@ struct ConfigurationBuilder: Sendable {
                         Self.logger, .error,
                         "Storage disk '\(disk.label, privacy: .public)' not found at '\(attachmentURL.path(percentEncoded: false), privacy: .public)'"
                     )
-                    throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+                    throw ConfigurationBuilderError.storageDiskNotFound(
+                        id: disk.id, path: disk.path, label: disk.label)
                 }
             } else {
                 let resolved = try Self.resolveFile(
                     at: disk.path, context: "Storage disk '\(disk.label)'",
                     requireWritable: !disk.readOnly,
-                    notFound: .storageDiskNotFound(disk.path, disk.label),
-                    isDirectory: .storageDiskPathIsDirectory(disk.path, disk.label),
-                    notWritable: .storageDiskNotWritable(disk.path, disk.label))
+                    notFound: .storageDiskNotFound(
+                        id: disk.id, path: disk.path, label: disk.label),
+                    isDirectory: .storageDiskPathIsDirectory(
+                        id: disk.id, path: disk.path, label: disk.label),
+                    notWritable: .storageDiskNotWritable(
+                        id: disk.id, path: disk.path, label: disk.label))
                 attachmentURL = resolved.url
             }
 
@@ -418,8 +423,9 @@ struct ConfigurationBuilder: Sendable {
         do {
             let resolved = try Self.resolveFile(
                 at: disk.path, context: "Guest agent disk",
-                notFound: .storageDiskNotFound(disk.path, disk.label),
-                isDirectory: .storageDiskPathIsDirectory(disk.path, disk.label))
+                notFound: .storageDiskNotFound(id: disk.id, path: disk.path, label: disk.label),
+                isDirectory: .storageDiskPathIsDirectory(
+                    id: disk.id, path: disk.path, label: disk.label))
             let attachment = try VZDiskImageStorageDeviceAttachment(
                 url: resolved.url, readOnly: disk.readOnly)
             let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
@@ -482,9 +488,12 @@ struct ConfigurationBuilder: Sendable {
             let resolved = try Self.resolveFile(
                 at: item.path, context: "Removable media '\(item.label)'",
                 requireWritable: !item.readOnly,
-                notFound: .removableMediaNotFound(item.path, item.label),
-                isDirectory: .removableMediaPathIsDirectory(item.path, item.label),
-                notWritable: .removableMediaNotWritable(item.path, item.label))
+                notFound: .removableMediaNotFound(
+                    id: item.id, path: item.path, label: item.label),
+                isDirectory: .removableMediaPathIsDirectory(
+                    id: item.id, path: item.path, label: item.label),
+                notWritable: .removableMediaNotWritable(
+                    id: item.id, path: item.path, label: item.label))
 
             let attachment: VZDiskImageStorageDeviceAttachment
             do {
@@ -949,9 +958,13 @@ enum ConfigurationBuilderError: LocalizedError {
     case kernelPathIsDirectory(String)
     case initrdNotFound(String)
     case initrdPathIsDirectory(String)
-    case storageDiskNotFound(String, String)
-    case storageDiskPathIsDirectory(String, String)
-    case storageDiskNotWritable(String, String)
+    // Every failure naming one attachment carries that entry's `id`, so a
+    // bring-up can offer to remove the entry it named
+    // (``VMCommandCore/bringUpFailedAttachment(from:verb:on:)``) whichever way
+    // the attachment turned out to be unusable.
+    case storageDiskNotFound(id: UUID, path: String, label: String)
+    case storageDiskPathIsDirectory(id: UUID, path: String, label: String)
+    case storageDiskNotWritable(id: UUID, path: String, label: String)
     /// The disk file exists but `VZDiskImageStorageDeviceAttachment` refused it —
     /// commonly the sandbox denying `open` on a path the app no longer holds a
     /// grant for (surfaced as "Operation not supported"), or an invalid image.
@@ -960,9 +973,9 @@ enum ConfigurationBuilderError: LocalizedError {
     /// start path classifies transient file-lock contention off its NSError
     /// domain/code, so discarding it turns a retryable boot into a hard failure.
     case storageDiskAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
-    case removableMediaNotFound(String, String)
-    case removableMediaPathIsDirectory(String, String)
-    case removableMediaNotWritable(String, String)
+    case removableMediaNotFound(id: UUID, path: String, label: String)
+    case removableMediaPathIsDirectory(id: UUID, path: String, label: String)
+    case removableMediaNotWritable(id: UUID, path: String, label: String)
     /// Removable-media counterpart of `storageDiskAttachFailed`.
     case removableMediaAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
     /// Bridged mode was chosen in a build whose signature omits
@@ -992,19 +1005,19 @@ enum ConfigurationBuilderError: LocalizedError {
             "Initial ramdisk not found at \(path)."
         case .initrdPathIsDirectory(let path):
             "Initial ramdisk path is a directory, not a file: \(path)."
-        case .storageDiskNotFound(let path, let label):
+        case .storageDiskNotFound(_, let path, let label):
             "Storage disk '\(label)' not found at \(path)."
-        case .storageDiskPathIsDirectory(let path, let label):
+        case .storageDiskPathIsDirectory(_, let path, let label):
             "Storage disk '\(label)' path is a directory, not a file: \(path)."
-        case .storageDiskNotWritable(let path, let label):
+        case .storageDiskNotWritable(_, let path, let label):
             "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .storageDiskAttachFailed(_, let path, let label, let underlying):
             "Couldn't open storage disk '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
-        case .removableMediaNotFound(let path, let label):
+        case .removableMediaNotFound(_, let path, let label):
             "Removable media '\(label)' not found at \(path)."
-        case .removableMediaPathIsDirectory(let path, let label):
+        case .removableMediaPathIsDirectory(_, let path, let label):
             "Removable media '\(label)' path is a directory, not a file: \(path)."
-        case .removableMediaNotWritable(let path, let label):
+        case .removableMediaNotWritable(_, let path, let label):
             "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .removableMediaAttachFailed(_, let path, let label, let underlying):
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"

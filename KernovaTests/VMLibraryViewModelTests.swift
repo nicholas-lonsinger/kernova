@@ -2260,6 +2260,132 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
+    /// The ways one entry can be unusable that are not a refused attach. A file
+    /// deleted or a volume ejected is the likeliest of them, and the VM it
+    /// leaves behind is the same one, with the same entry to remove.
+    enum UnusableAttachment: CaseIterable, Sendable {
+        case notFound
+        case pathIsDirectory
+        case notWritable
+
+        func storageDisk(id: UUID, path: String, label: String) -> ConfigurationBuilderError {
+            switch self {
+            case .notFound: .storageDiskNotFound(id: id, path: path, label: label)
+            case .pathIsDirectory: .storageDiskPathIsDirectory(id: id, path: path, label: label)
+            case .notWritable: .storageDiskNotWritable(id: id, path: path, label: label)
+            }
+        }
+
+        func removableMedia(id: UUID, path: String, label: String) -> ConfigurationBuilderError {
+            switch self {
+            case .notFound: .removableMediaNotFound(id: id, path: path, label: label)
+            case .pathIsDirectory:
+                .removableMediaPathIsDirectory(id: id, path: path, label: label)
+            case .notWritable: .removableMediaNotWritable(id: id, path: path, label: label)
+            }
+        }
+
+        /// What the alert says was found, which is each error's own words rather
+        /// than a guess at a cause.
+        var statedInTheMessage: String {
+            switch self {
+            case .notFound: "not found at"
+            case .pathIsDirectory: "is a directory, not a file"
+            case .notWritable: "is not writable"
+            }
+        }
+    }
+
+    @Test(
+        "A start offers the removal however the disk turned out to be unusable",
+        arguments: UnusableAttachment.allCases)
+    func startOffersRemovalForEveryUnusableDisk(way: UnusableAttachment) async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make()
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let external = StorageDisk(
+            id: UUID(), path: "/tmp/gone.img", readOnly: false, label: "External",
+            isInternal: false, kind: .virtio)
+        instance.configuration.storageDisks = [StorageDisk.mainDisk(layout: layout), external]
+        viewModel.instances.append(instance)
+        virtService.startError = way.storageDisk(
+            id: external.id, path: external.path, label: external.label)
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.count == 1, "\(way)")
+        #expect(presenter.startFailedAttachments.first?.kind == .storageDisk, "\(way)")
+        #expect(presenter.startFailedAttachments.first?.id == external.id, "\(way)")
+        #expect(presenter.startFailedAttachments.first?.verb == .start, "\(way)")
+        #expect(
+            presenter.startFailedAttachments.first?.message.contains(way.statedInTheMessage) == true,
+            "\(way)")
+        #expect(presenter.errors.isEmpty, "\(way)")
+    }
+
+    @Test(
+        "A resume offers the removal however the medium turned out to be unusable",
+        arguments: UnusableAttachment.allCases)
+    func resumeOffersRemovalForEveryUnusableMedium(way: UnusableAttachment) async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        // A resume restoring a saved state assembles the same configuration a
+        // boot does, so it fails over the same entry.
+        virtService.resumeError = way.removableMedia(
+            id: item.id, path: item.path, label: item.label)
+
+        await viewModel.resume(instance)
+
+        #expect(presenter.startFailedAttachments.count == 1, "\(way)")
+        #expect(presenter.startFailedAttachments.first?.kind == .removableMedia, "\(way)")
+        #expect(presenter.startFailedAttachments.first?.id == item.id, "\(way)")
+        #expect(presenter.startFailedAttachments.first?.verb == .resume, "\(way)")
+        #expect(
+            presenter.startFailedAttachments.first?.message.contains(way.statedInTheMessage) == true,
+            "\(way)")
+        #expect(presenter.errors.isEmpty, "\(way)")
+    }
+
+    @Test("A missing sole disk keeps the bare alert — removing it leaves nothing to start")
+    func startSoleDiskNotFoundStaysGeneric() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make()
+        viewModel.instances.append(instance)
+        let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
+        virtService.startError = ConfigurationBuilderError.storageDiskNotFound(
+            id: mainDisk.id, path: mainDisk.path, label: mainDisk.label)
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
+    }
+
+    @Test("A builder failure naming an entry the VM no longer carries keeps the bare alert")
+    func startWithoutTheNamedEntryStaysGeneric() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make()
+        viewModel.instances.append(instance)
+        // No removable media on the VM at all: an offer whose removal could
+        // only no-op leaves a button that appears to do nothing.
+        virtService.startError = ConfigurationBuilderError.removableMediaNotFound(
+            id: UUID(), path: "/tmp/gone.iso", label: "Gone")
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
+    }
+
     @Test("start does not offer removal for transient file-lock contention")
     func startDoesNotOfferRemovalForLockContention() async {
         let virtService = MockVirtualizationService()
@@ -2479,7 +2605,9 @@ struct VMLibraryViewModelTests {
     func forceStopFromPausedDispatches() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = VMInstanceFixture.make()
-        instance.enter(.suspended)
+        // The phase the stop-paused sheet's Force Stop alternative fires in:
+        // a guest still in memory, which VZ takes a termination from.
+        instance.enter(.livePaused(sessionID: UUID()))
         viewModel.instances.append(instance)
 
         await viewModel.forceStop(instance)

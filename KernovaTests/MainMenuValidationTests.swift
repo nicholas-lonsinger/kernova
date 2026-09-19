@@ -77,6 +77,30 @@ struct MainMenuValidationTests {
         #expect(item.title == VMInstance.StopAction.discardSavedState.menuTitle)
     }
 
+    /// Menu validation is where a VM mid-operation used to offer a termination
+    /// Virtualization would refuse; the item is greyed for those seconds now,
+    /// as any unavailable command is.
+    @Test(
+        "Force Stop is enabled only where Virtualization takes a termination",
+        arguments: [
+            (VMLifecyclePhase.running(sessionID: UUID()), true),
+            (.livePaused(sessionID: UUID()), true),
+            (.starting(sessionID: UUID()), false),
+            (.saving(sessionID: UUID()), false),
+            (.restoringSavedState(sessionID: UUID()), false),
+            (.capturingLive(sessionID: UUID()), false),
+            (.stopped, false),
+        ])
+    func forceStopValidationFollowsTheStoppableStates(
+        phase: VMLifecyclePhase, isEnabled: Bool
+    ) {
+        let instance = makeMenuInstance(phase: phase)
+        let fixture = makeFixture(instance: instance)
+        let item = makeMenuItem(#selector(AppDelegate.forceStopVM(_:)))
+
+        #expect(fixture.controller.validate(item) == isEnabled, "\(phase)")
+    }
+
     @Test("A build with no bundled guest-agent disk withholds the command")
     func guestAgentDiskWithoutBundledImage() {
         let instance = makeMenuInstance(phase: .running(sessionID: UUID()))

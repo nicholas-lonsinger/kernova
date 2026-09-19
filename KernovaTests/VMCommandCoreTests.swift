@@ -750,24 +750,19 @@ struct VMCommandCoreTests {
             ])
     }
 
-    /// Every route out of the force-stop refusal ends in a power-off, and an
-    /// Ephemeral VM's power-off is a revert — so the slot the termination would
-    /// otherwise leave in place is replaced by the baseline's, and the copy has
-    /// to say which of the two happens.
+    /// Virtualization takes a termination only from a Running or Paused
+    /// machine, so a restore still loading is refused before the destructive
+    /// consent is ever asked for — not after taking it and doing nothing.
     @Test(
-        "Force-stopping a restore that is still loading names what becomes of the saved state",
-        arguments: [false, true])
-    func forceStopOfARestoreNamesTheKeptSavedState(ephemeral: Bool) async throws {
+        "A force stop of a machine Virtualization would refuse asks nothing and terminates nothing",
+        arguments: [
+            VMLifecyclePhase.restoringSavedState(sessionID: UUID()),
+            .saving(sessionID: UUID()), .starting(sessionID: UUID()),
+            .capturingLive(sessionID: UUID()),
+        ])
+    func forceStopRefusesWhereVirtualizationCannotStop(phase: VMLifecyclePhase) async throws {
         let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, name: "Restoring", phase: .restoringSavedState(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        let baseline = VMSnapshot(name: "Clean install")
-        if ephemeral {
-            instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-            instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = makeInstance(in: harness, name: "Busy", phase: phase)
 
         let error = try #require(
             await commandError {
@@ -775,21 +770,33 @@ struct VMCommandCoreTests {
                     .id(instance.id), disposition: .force, confirmed: false)
             })
 
-        let prompt = try #require(error.confirmationPrompt)
-        // The user asked to terminate, not to revert, so the button says so
-        // either way.
-        #expect(prompt.confirmTitle == "Force Stop")
-        #expect(prompt.title == "Force Stop \u{201C}Restoring\u{201D}?")
-        if ephemeral {
-            // The baseline's session replaces the one being loaded, so the copy
-            // must not promise it is kept.
-            #expect(prompt.message.contains("Clean install"))
-            #expect(prompt.message.contains("The suspended session"))
-            #expect(!prompt.message.contains("saved state is kept"))
-        } else {
-            #expect(prompt.message.contains("saved state is kept"))
-            #expect(!prompt.message.contains("unsaved data"))
+        guard case .invalidState(let vm, let current, _) = error else {
+            Issue.record("Expected an invalid-state refusal, got \(error)")
+            return
         }
+        #expect(vm.name == "Busy")
+        #expect(current == instance.status)
+        #expect(error.confirmationPrompt == nil)
+        #expect(harness.virtualization.forceStopCallCount == 0)
+    }
+
+    @Test("A force stop of a VM with nothing to terminate refuses instead of prompting")
+    func forceStopOfAStoppedVMRefuses() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Idle", phase: .stopped)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .force, confirmed: false)
+            })
+
+        guard case .invalidState = error else {
+            Issue.record("Expected an invalid-state refusal, got \(error)")
+            return
+        }
+        #expect(error.confirmationPrompt == nil)
+        #expect(harness.virtualization.forceStopCallCount == 0)
     }
 
     @Test("A paused Ephemeral VM's stop refusal names the baseline both its routes end at")
@@ -1218,6 +1225,12 @@ struct VMCommandCoreTests {
         // A paused VM routes its graceful stop through the stop-paused refusal,
         // so this one offers no shutdown alternative.
         #expect(prompt.alternatives.isEmpty)
+
+        // Nothing is live to terminate, and the verb still performs the discard
+        // the slot admits.
+        try await harness.core.stop(.id(instance.id), disposition: .force, confirmed: true)
+        #expect(harness.virtualization.forceStopCallCount == 1)
+        #expect(!instance.hasSaveFile)
     }
 
     @Test("A graceful stop of a live-paused VM refuses with both ways out")

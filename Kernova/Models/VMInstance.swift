@@ -1123,9 +1123,8 @@ final class VMInstance {
     /// belongs, firing ``onPoweredOff``.
     ///
     /// Stopped for the guest that simply went down, and suspended when the
-    /// bundle still holds a slot — a Force Stop landing on a restore takes the
-    /// `VZVirtualMachine` away without consuming the saved state VZ has not
-    /// finished loading, and that session is still the user's to come back on.
+    /// bundle still holds a slot — a session on disk survives whatever ended
+    /// the live one, and is still the user's to come back on.
     func restAfterPowerOff() {
         tearDownSession(restingAt: restingPhase(withoutSlot: .stopped))
         // Reset so the next start lands on the display rather than inheriting
@@ -1264,7 +1263,7 @@ final class VMInstance {
     /// complete. Losing a session VZ has just finished writing beats offering
     /// one that may be half a session.
     func dropTruncatedSaveFile() {
-        guard phase.isWritingSuspendSlot else { return }
+        guard case .saving = phase else { return }
         removeSaveFile()
     }
 

@@ -254,58 +254,77 @@ final class VirtualizationService {
             Self.logger, .debug,
             "stop: status=\(instance.status.displayName, privacy: .public), holdsSuspendedSession=\(instance.holdsSuspendedSession, privacy: .public)"
         )
-        // A saved state with nothing live: there is no guest to ask, so the stop
-        // discards the slot.
-        if instance.holdsSuspendedSession {
-            guard instance.discardSavedState() else {
-                throw VirtualizationError.savedStateNotDiscarded
+        do {
+            // A saved state with nothing live: there is no guest to ask, so the
+            // stop discards the slot.
+            if instance.holdsSuspendedSession {
+                guard instance.discardSavedState() else {
+                    throw VirtualizationError.savedStateNotDiscarded
+                }
+                #log(
+                    Self.logger, .notice,
+                    "Discarded saved state for VM '\(instance.name, privacy: .public)'")
+                return
             }
-            #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
-            return
-        }
 
-        guard instance.canStop, let session = instance.session else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "stop")
-        }
+            guard instance.canStop, let session = instance.session else {
+                throw VirtualizationError.invalidStateTransition(
+                    from: instance.status, action: "stop")
+            }
 
-        try await session.requestStop()
-        #log(Self.logger, .notice, "Requested stop for VM '\(instance.name, privacy: .public)'")
+            try await session.requestStop()
+            #log(Self.logger, .notice, "Requested stop for VM '\(instance.name, privacy: .public)'")
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to stop VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
     }
 
+    /// Terminates the guest where it stands.
+    ///
+    /// The state gate is VZ's, not a convenience: a termination is taken only
+    /// from the states `VZVirtualMachine.stopWithCompletionHandler:` documents
+    /// (``VMLifecyclePhase/canForceStop``), so a machine VZ would refuse is
+    /// turned back here rather than handed the framework's own rejection.
     func forceStop(_ instance: VMInstance) async throws {
         #log(
             Self.logger, .debug,
             "forceStop: status=\(instance.status.displayName, privacy: .public), holdsSuspendedSession=\(instance.holdsSuspendedSession, privacy: .public)"
         )
-        // A saved state with nothing live: there is no guest to terminate, so
-        // the force stop discards the slot.
-        if instance.holdsSuspendedSession {
-            guard instance.discardSavedState() else {
-                throw VirtualizationError.savedStateNotDiscarded
+        do {
+            // A saved state with nothing live: there is no guest to terminate,
+            // so the force stop discards the slot.
+            if instance.holdsSuspendedSession {
+                guard instance.discardSavedState() else {
+                    throw VirtualizationError.savedStateNotDiscarded
+                }
+                #log(
+                    Self.logger, .notice,
+                    "Discarded saved state for VM '\(instance.name, privacy: .public)'")
+                return
             }
-            #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
-            return
+
+            guard instance.canForceStop else {
+                throw VirtualizationError.invalidStateTransition(
+                    from: instance.status, action: "force stop")
+            }
+            guard let session = instance.session else {
+                throw VirtualizationError.noVirtualMachine
+            }
+
+            try await session.stop()
+            instance.restAfterPowerOff()
+            #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to force-stop VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
         }
-
-        guard let session = instance.session else {
-            throw VirtualizationError.noVirtualMachine
-        }
-
-        try await session.stop()
-        Self.settleAfterTermination(instance)
-        #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
-    }
-
-    /// Puts a VM whose `VZVirtualMachine` has just been terminated where the
-    /// bundle says it belongs.
-    ///
-    /// The two steps are one because their order is the whole point: a save the
-    /// termination cut short leaves a truncated slot, which goes first, and the
-    /// resting phase is then read off what survived — a restore VZ had not
-    /// finished loading still has its session, and the VM comes back on it.
-    static func settleAfterTermination(_ instance: VMInstance) {
-        instance.dropTruncatedSaveFile()
-        instance.restAfterPowerOff()
     }
 
     // MARK: - Pause / Resume
@@ -469,9 +488,9 @@ final class VirtualizationService {
             // Before the rest, so no observer sees a truncated slot offered as
             // a resumable session.
             instance.dropTruncatedSaveFile()
-            // A force stop is the interrupt this operation is most likely to
-            // meet — it aborts the write and rests the VM `.stopped`, which a
-            // failure banner over the top would misreport as a crash.
+            // The guest going away mid-write is the interrupt this operation
+            // meets: it rests the VM itself, and a failure banner written over
+            // the top would report a state this attempt did not produce.
             if !Self.tearDownIfStillOwned(
                 instance, actingFor: sessionID,
                 restingAt: .failed(message: error.localizedDescription))
@@ -998,10 +1017,9 @@ final class VirtualizationService {
     /// `sessionID` names the session the attempt acted for, and is `nil` while
     /// it has yet to create one — recognized instead by the VM still being
     /// mid-operation, since every phase an interruption rests at is a settled
-    /// one. That fallback is sound because a sessionless in-flight phase offers
-    /// no interrupt to be overtaken by: ``VMLifecyclePhase/canForceStop``
-    /// requires an identity at `.starting` and `.restoringSavedState`, and
-    /// ``VMLifecyclePhase/isAtRest`` is false at both.
+    /// one. That fallback is sound because an in-flight phase offers no
+    /// interrupt to be overtaken by: ``VMLifecyclePhase/canForceStop`` admits
+    /// none of them, and ``VMLifecyclePhase/isAtRest`` is false at each.
     static func attemptStillOwnsThePhase(
         _ instance: VMInstance, actingFor sessionID: UUID?
     ) -> Bool {

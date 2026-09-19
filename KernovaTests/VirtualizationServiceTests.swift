@@ -179,19 +179,19 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationService.attemptStillOwnsThePhase(instance, actingFor: sessionID))
     }
 
-    @Test("A force stop landing mid-suspend takes the phase away from the attempt")
-    func forceStopDuringASuspendOvertakesTheAttempt() {
+    @Test("A guest that goes away mid-suspend takes the phase away from the attempt")
+    func guestGoingAwayDuringASuspendOvertakesTheAttempt() {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make(phase: .saving(sessionID: sessionID))
 
-        // What `forceStop` leaves behind: the coordinator releases the suspend's
-        // claim so the user can interrupt, but the suspend's body keeps running
-        // and reaches its `catch` after this.
+        // What the session event leaves behind: the VM is rested where the
+        // bundle says it belongs, while the suspend's body keeps running and
+        // reaches its `catch` after this.
         instance.restAfterPowerOff()
 
         #expect(!VirtualizationService.attemptStillOwnsThePhase(instance, actingFor: sessionID))
-        // The aborted `saveMachineState` must not paint a failure over a
-        // deliberate force stop.
+        // The aborted `saveMachineState` must not paint a failure over a VM
+        // something else already settled.
         #expect(instance.phase == .stopped)
     }
 
@@ -757,6 +757,26 @@ struct VirtualizationServiceTests {
         await #expect(throws: VirtualizationError.self) {
             try await service.forceStop(instance)
         }
+    }
+
+    /// The service holds the gate too, not only the verb: nothing asks a
+    /// `VZVirtualMachine` for a transition `stopWithCompletionHandler:` does not
+    /// accept.
+    @Test(
+        "forceStop refuses a machine Virtualization would not stop",
+        arguments: [
+            VMLifecyclePhase.saving(sessionID: UUID()),
+            .restoringSavedState(sessionID: UUID()), .starting(sessionID: UUID()),
+            .capturingLive(sessionID: UUID()),
+        ])
+    func forceStopRefusesAnUnstoppableMachine(phase: VMLifecyclePhase) async {
+        let instance = VMInstanceFixture.make(phase: phase)
+
+        await #expect(throws: VirtualizationError.self) {
+            try await service.forceStop(instance)
+        }
+        // Refused, not acted on: the phase it was found in is the phase it keeps.
+        #expect(instance.phase == phase)
     }
 
     // MARK: - Transient Start Error Classification
