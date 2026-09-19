@@ -126,9 +126,25 @@ install-lsp: ## Install xcode-build-server and write this checkout's buildServer
 
 build: check-hooks ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
+	$(PRINT_BUILD_BINARY)
 
 build-for-testing: check-hooks ## Compile the app and test bundles without running them
 	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
+	$(PRINT_BUILD_BINARY)
+
+# Query resolved settings after success: an up-to-date build need not log a
+# link or signing command from which a product path could be recovered.
+define PRINT_BUILD_BINARY
+@settings=$$(xcodebuild $(XCODEBUILD_FLAGS) -showBuildSettings) && \
+printf '%s\n' "$$settings" | awk '\
+    /^Build settings for action / { app = ($$0 ~ / and target Kernova:$$/) } \
+    app && /^ *TARGET_BUILD_DIR = / { sub(/^ *TARGET_BUILD_DIR = /, ""); dir = $$0 } \
+    app && /^ *EXECUTABLE_PATH = / { sub(/^ *EXECUTABLE_PATH = /, ""); executable = $$0 } \
+    END { \
+        if (dir == "" || executable == "") { print "error: could not resolve Kernova executable path" > "/dev/stderr"; exit 1 } \
+        print "binary=" dir "/" executable \
+    }'
+endef
 
 # Removes both build arenas this checkout can have: the in-worktree
 # DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and

@@ -3,9 +3,8 @@
 # build-for-testing, test, test-without-building, test-suite, or lint — with
 # the whole xcodebuild stream captured to a file, and prints only the verdict:
 # counts from the result bundle, deduplicated compile errors, failing tests
-# with their messages and source locations, and the log and bundle paths. The
-# make targets themselves stay as they are, streaming everything, for people
-# and CI.
+# with their messages and source locations, and the binary, log and bundle
+# paths. The make targets stream everything for people and CI.
 #
 # Usage:
 #   .agents/skills/make-verdict/make-verdict.sh build | build-for-testing | test | test-without-building | lint
@@ -287,6 +286,9 @@ esac
 {
     printf 'make-verdict: target=%s suite=%s duration=%s log=%s\n' "$target" "${suite:--}" "$duration" "$log"
     cat "$body"
+    if [ "$verdict" = green ] && { [ "$target" = build ] || [ "$target" = build-for-testing ]; }; then
+        clean_log | sed -n '/^binary=\//p'
+    fi
     printf 'make-verdict: verdict=%s target=%s suite=%s%s log=%s xcresult=%s\n' \
         "$verdict" "$target" "${suite:--}" "$extra" "$log" "$xcresult"
 } >"$body.out"
