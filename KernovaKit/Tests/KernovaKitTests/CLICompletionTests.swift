@@ -216,7 +216,7 @@ struct CLICompletionTests {
     func vmNamesComeFromTheLibrary() throws {
         let listener = try TestCommandSocket(tag: "cmp-vms")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .summaries([alpha, beta]))])
+        listener.serve([[VMCommandResponse(result: .summaries([alpha, beta]))]])
 
         let names = CompletionSource.vmNames(byIdentifier: false, in: context(to: listener))
 
@@ -228,7 +228,7 @@ struct CLICompletionTests {
     func vmIdentifiersComeFromTheSameListing() throws {
         let listener = try TestCommandSocket(tag: "cmp-vm-ids")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .summaries([alpha]))])
+        listener.serve([[VMCommandResponse(result: .summaries([alpha]))]])
 
         let names = CompletionSource.vmNames(byIdentifier: true, in: context(to: listener))
 
@@ -239,7 +239,7 @@ struct CLICompletionTests {
     func snapshotNamesComeFromTheMachine() throws {
         let listener = try TestCommandSocket(tag: "cmp-snaps")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .snapshots([checkpoint]))])
+        listener.serve([[VMCommandResponse(result: .snapshots([checkpoint]))]])
 
         let names = CompletionSource.snapshotNames(
             ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
@@ -254,7 +254,7 @@ struct CLICompletionTests {
     func sharedDirectoryPathsComeFromTheMachine() throws {
         let listener = try TestCommandSocket(tag: "cmp-shares")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .sharedDirectories(shares))])
+        listener.serve([[VMCommandResponse(result: .sharedDirectories(shares))]])
 
         let paths = CompletionSource.sharedDirectoryPaths(
             ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
@@ -267,7 +267,7 @@ struct CLICompletionTests {
     func sharedFoldersCarryTheirAccess() throws {
         let listener = try TestCommandSocket(tag: "cmp-shares-zsh")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .sharedDirectories(shares))])
+        listener.serve([[VMCommandResponse(result: .sharedDirectories(shares))]])
 
         let paths = CompletionSource.sharedDirectoryPaths(
             ofVM: "Alpha", byIdentifier: false, in: context(to: listener, asking: .zsh))
@@ -282,7 +282,7 @@ struct CLICompletionTests {
     func portMappingsAreFilteredByTransport() throws {
         let tcp = try TestCommandSocket(tag: "cmp-fwd-tcp")
         defer { tcp.close() }
-        tcp.serve([VMCommandResponse(result: .portForwardingRules(rules))])
+        tcp.serve([[VMCommandResponse(result: .portForwardingRules(rules))]])
         #expect(
             CompletionSource.portMappings(
                 ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: context(to: tcp))
@@ -291,7 +291,7 @@ struct CLICompletionTests {
 
         let udp = try TestCommandSocket(tag: "cmp-fwd-udp")
         defer { udp.close() }
-        udp.serve([VMCommandResponse(result: .portForwardingRules(rules))])
+        udp.serve([[VMCommandResponse(result: .portForwardingRules(rules))]])
         #expect(
             CompletionSource.portMappings(
                 ofVM: "Alpha", byIdentifier: false, transport: .udp, in: context(to: udp))
@@ -302,7 +302,7 @@ struct CLICompletionTests {
     func portMappingsKeepTheirColonForZsh() throws {
         let listener = try TestCommandSocket(tag: "cmp-fwd-zsh")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .portForwardingRules(rules))])
+        listener.serve([[VMCommandResponse(result: .portForwardingRules(rules))]])
 
         let mappings = CompletionSource.portMappings(
             ofVM: "Alpha", byIdentifier: false, transport: .udp,
@@ -315,7 +315,7 @@ struct CLICompletionTests {
     func usbDevicesComeFromTheMachine() throws {
         let listener = try TestCommandSocket(tag: "cmp-usb-held")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .usbAccessories(accessories))])
+        listener.serve([[VMCommandResponse(result: .usbAccessories(accessories))]])
 
         let devices = CompletionSource.usbAccessoryDevices(
             ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
@@ -330,7 +330,7 @@ struct CLICompletionTests {
     func availableUSBAccessoriesComeFromTheHost() throws {
         let listener = try TestCommandSocket(tag: "cmp-usb-free")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .usbAccessories([accessories[1]]))])
+        listener.serve([[VMCommandResponse(result: .usbAccessories([accessories[1]]))]])
 
         let offered = CompletionSource.availableUSBAccessories(
             in: context(to: listener, asking: .zsh))
@@ -346,12 +346,14 @@ struct CLICompletionTests {
         let listener = try TestCommandSocket(tag: "cmp-usb-rules")
         defer { listener.close() }
         listener.serve([
-            VMCommandResponse(
-                result: .usbPairings([
-                    USBPairingSummary(
-                        vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
-                        pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
-                ]))
+            [
+                VMCommandResponse(
+                    result: .usbPairings([
+                        USBPairingSummary(
+                            vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
+                            pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+                    ]))
+            ]
         ])
 
         let keys = CompletionSource.usbPairingKeys(
@@ -394,7 +396,7 @@ struct CLICompletionTests {
 
         let snapshots = try TestCommandSocket(tag: "cmp-refused")
         defer { snapshots.close() }
-        snapshots.serve([refusal])
+        snapshots.serve([[refusal]])
         #expect(
             CompletionSource.snapshotNames(
                 ofVM: "Alpha", byIdentifier: false, in: context(to: snapshots)
@@ -402,7 +404,7 @@ struct CLICompletionTests {
 
         let shares = try TestCommandSocket(tag: "cmp-refused-sh")
         defer { shares.close() }
-        shares.serve([refusal])
+        shares.serve([[refusal]])
         #expect(
             CompletionSource.sharedDirectoryPaths(
                 ofVM: "Alpha", byIdentifier: false, in: context(to: shares)
@@ -410,7 +412,7 @@ struct CLICompletionTests {
 
         let forwards = try TestCommandSocket(tag: "cmp-refused-fw")
         defer { forwards.close() }
-        forwards.serve([refusal])
+        forwards.serve([[refusal]])
         #expect(
             CompletionSource.portMappings(
                 ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: context(to: forwards)
@@ -436,7 +438,7 @@ struct CLICompletionTests {
     func zshGetsDescribedCandidates() throws {
         let listener = try TestCommandSocket(tag: "cmp-zsh")
         defer { listener.close() }
-        listener.serve([VMCommandResponse(result: .summaries([alpha, beta]))])
+        listener.serve([[VMCommandResponse(result: .summaries([alpha, beta]))]])
 
         let names = CompletionSource.vmNames(
             byIdentifier: false, in: context(to: listener, asking: .zsh))
@@ -453,13 +455,13 @@ struct CLICompletionTests {
 
         let plain = try TestCommandSocket(tag: "cmp-keys")
         defer { plain.close() }
-        plain.serve([VMCommandResponse(result: .configurationKeys(keyspace))])
+        plain.serve([[VMCommandResponse(result: .configurationKeys(keyspace))]])
         #expect(CompletionSource.configurationKeys(in: context(to: plain)) == ["cpus"])
         #expect(plain.requests().map(\.verb) == [.configurationKeys])
 
         let assigning = try TestCommandSocket(tag: "cmp-keys-eq")
         defer { assigning.close() }
-        assigning.serve([VMCommandResponse(result: .configurationKeys(keyspace))])
+        assigning.serve([[VMCommandResponse(result: .configurationKeys(keyspace))]])
         #expect(
             CompletionSource.configurationKeys(suffix: "=", in: context(to: assigning))
                 == ["cpus="])
