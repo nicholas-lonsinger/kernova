@@ -476,12 +476,17 @@ final class VMLibraryViewModel {
 
     // MARK: - Initialization
 
+    /// A collaborator over the user's own state — the VMs directory, the
+    /// defaults domain, the host's vmnet networks and their store — takes no
+    /// default: the test host runs as the app, in its container and with its
+    /// entitlements, so a default would hand that state to every test that
+    /// left it out. ``AppDelegate`` supplies each.
     init(
-        storageService: any VMStorageProviding = VMStorageService(),
+        storageService: any VMStorageProviding,
         diskImageService: any DiskImageProviding = DiskImageService(),
         snapshotStore: any VMSnapshotStoring = VMSnapshotStore(),
-        virtualizationService: any VirtualizationProviding = VirtualizationService(),
-        installService: any MacOSInstallProviding = MacOSInstallService(),
+        virtualizationService: any VirtualizationProviding,
+        installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding = IPSWService(),
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
         // Supplied by ``AppDelegate``, the one caller that should claim the
@@ -495,8 +500,8 @@ final class VMLibraryViewModel {
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
-        preferences: AppPreferences = .shared,
-        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating = VmnetNetworkService.shared,
+        preferences: AppPreferences,
+        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
         isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking
     ) {
         self.storageService = storageService

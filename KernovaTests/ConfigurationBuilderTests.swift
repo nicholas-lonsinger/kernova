@@ -21,6 +21,13 @@ struct ConfigurationBuilderTests {
         return tempDir
     }
 
+    /// A builder over a mock vmnet provider.
+    private func makeBuilder(
+        vmnetNetworks: any VmnetNetworkProviding = MockVmnetNetworkProvider()
+    ) -> ConfigurationBuilder {
+        ConfigurationBuilder(vmnetNetworks: vmnetNetworks)
+    }
+
     /// Fails the test when `error` is a path-validation refusal.
     ///
     /// For the happy-path tests, which tolerate any other builder error: VZ
@@ -72,7 +79,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle()
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: makeLinuxConfig(), bundleURL: bundleURL)
         } throws: { error in
@@ -89,7 +96,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -106,7 +113,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect(throws: (any Error).self) {
             try builder.build(from: config, bundleURL: bundleURL)
         }
@@ -123,7 +130,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: "/nonexistent/path/\(UUID().uuidString)")
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -147,7 +154,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: filePath)
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -177,7 +184,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: false)
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -202,7 +209,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: symlinkPath)
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -228,7 +235,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: symlinkPath)
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -255,7 +262,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: symlinkPath, readOnly: true)
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink should be resolved and accepted.
         do {
@@ -277,7 +284,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = "/nonexistent/\(UUID().uuidString)/vmlinuz"
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -301,7 +308,7 @@ struct ConfigurationBuilderTests {
         config.kernelPath = kernelPath
         config.initrdPath = "/nonexistent/\(UUID().uuidString)/initrd.img"
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -324,7 +331,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(path: "/nonexistent/\(UUID().uuidString)/install.iso", readOnly: true)
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -353,7 +360,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(id: itemID, path: isoPath, readOnly: true, label: "Bad ISO")
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -382,7 +389,7 @@ struct ConfigurationBuilderTests {
                 isInternal: false, kind: .virtio),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -404,7 +411,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: true)]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         let vz = result.configuration
 
@@ -429,7 +436,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(id: configuredUUID, path: isoPath, readOnly: true)
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         #expect(result.coldRemovableMedia.count == 1)
@@ -449,7 +456,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         #expect(result.coldRemovableMedia.isEmpty)
     }
@@ -467,7 +474,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: false)]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -486,7 +493,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         #expect(result.configuration.storageDevices.count == 1)
@@ -507,7 +514,7 @@ struct ConfigurationBuilderTests {
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         // Position [0] is the ISO (USB mass storage), [1] is virtio main disk.
@@ -548,7 +555,7 @@ struct ConfigurationBuilderTests {
             ),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -579,7 +586,7 @@ struct ConfigurationBuilderTests {
             ),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -606,7 +613,7 @@ struct ConfigurationBuilderTests {
             StorageDisk(path: diskPath, readOnly: false, label: "Data", isInternal: false, kind: .virtio),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -633,7 +640,7 @@ struct ConfigurationBuilderTests {
             StorageDisk(path: diskPath, readOnly: true, label: "Data", isInternal: false, kind: .virtio),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         do {
             _ = try builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
@@ -662,7 +669,7 @@ struct ConfigurationBuilderTests {
             SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: true)
         ])
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — shared directory validation should pass.
         do {
@@ -689,7 +696,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = symlinkPath
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -717,7 +724,7 @@ struct ConfigurationBuilderTests {
         config.kernelPath = kernelPath
         config.initrdPath = symlinkPath
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -740,7 +747,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.removableMedia = [RemovableMediaItem(path: symlinkPath, readOnly: true)]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -764,7 +771,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = dirPath.path(percentEncoded: false)
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -791,7 +798,7 @@ struct ConfigurationBuilderTests {
         config.kernelPath = kernelPath
         config.initrdPath = dirPath.path(percentEncoded: false)
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -815,7 +822,7 @@ struct ConfigurationBuilderTests {
             RemovableMediaItem(path: dirPath.path(percentEncoded: false), readOnly: true)
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -842,7 +849,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = symlinkPath
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -872,7 +879,7 @@ struct ConfigurationBuilderTests {
         config.kernelPath = kernelPath
         config.initrdPath = symlinkPath
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -897,7 +904,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.removableMedia = [RemovableMediaItem(path: symlinkPath, readOnly: true)]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -924,7 +931,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = symlinkPath
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
         // with a path validation error — symlink to kernel file should be resolved and accepted.
         do {
@@ -946,7 +953,7 @@ struct ConfigurationBuilderTests {
         var config = makeLinuxConfig()
         config.clipboardSharingEnabled = true
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         do {
             let result = try builder.build(from: config, bundleURL: bundleURL)
             #expect(result.clipboardInputPipe != nil)
@@ -971,7 +978,7 @@ struct ConfigurationBuilderTests {
         var config = makeLinuxConfig()
         config.clipboardSharingEnabled = false
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         do {
             let result = try builder.build(from: config, bundleURL: bundleURL)
             #expect(result.clipboardInputPipe == nil)
@@ -1002,7 +1009,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        let result = try ConfigurationBuilder().assemble(from: config, bundleURL: bundleURL, validate: false)
+        let result = try makeBuilder().assemble(from: config, bundleURL: bundleURL, validate: false)
         let streams = result.configuration.audioDevices
             .compactMap { $0 as? VZVirtioSoundDeviceConfiguration }
             .flatMap(\.streams)
@@ -1046,7 +1053,7 @@ struct ConfigurationBuilderTests {
     {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
-        return try ConfigurationBuilder()
+        return try makeBuilder()
             .assemble(from: config, bundleURL: bundleURL, validate: false)
             .configuration.networkDevices
     }
@@ -1067,8 +1074,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = ConfigurationBuilder()
-        builder.vmnetNetworks = networks
+        var builder = makeBuilder(vmnetNetworks: networks)
         builder.entitlements = EntitlementService(reader: MockEntitlementReader())
 
         let devices = try builder.assemble(
@@ -1086,8 +1092,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = ConfigurationBuilder()
-        builder.vmnetNetworks = networks
+        var builder = makeBuilder(vmnetNetworks: networks)
         builder.entitlements = EntitlementService(
             reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
 
@@ -1106,8 +1111,7 @@ struct ConfigurationBuilderTests {
 
         let networks = MockVmnetNetworkProvider()
         networks.attachmentError = TestFailure("vmnet refused")
-        var builder = ConfigurationBuilder()
-        builder.vmnetNetworks = networks
+        var builder = makeBuilder(vmnetNetworks: networks)
         builder.entitlements = EntitlementService(
             reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
 
@@ -1141,7 +1145,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        var builder = ConfigurationBuilder()
+        var builder = makeBuilder()
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
         builder.entitlements = EntitlementService(
             reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
@@ -1160,7 +1164,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        var builder = ConfigurationBuilder()
+        var builder = makeBuilder()
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
         builder.entitlements = EntitlementService(reader: MockEntitlementReader())
 
@@ -1180,8 +1184,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = ConfigurationBuilder()
-        builder.vmnetNetworks = networks
+        var builder = makeBuilder(vmnetNetworks: networks)
         builder.entitlements = EntitlementService(
             reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
 
@@ -1199,8 +1202,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = ConfigurationBuilder()
-        builder.vmnetNetworks = networks
+        var builder = makeBuilder(vmnetNetworks: networks)
         builder.entitlements = EntitlementService(reader: MockEntitlementReader())
 
         #expect {
@@ -1222,8 +1224,7 @@ struct ConfigurationBuilderTests {
 
         let networks = MockVmnetNetworkProvider()
         networks.attachmentError = TestFailure("vmnet refused")
-        var builder = ConfigurationBuilder()
-        builder.vmnetNetworks = networks
+        var builder = makeBuilder(vmnetNetworks: networks)
         builder.entitlements = EntitlementService(
             reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
 
@@ -1246,7 +1247,7 @@ struct ConfigurationBuilderTests {
         let vz = VZVirtualMachineConfiguration()
         var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         config.lastSeenGuestOSVersion = "13.5"
-        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
@@ -1259,7 +1260,7 @@ struct ConfigurationBuilderTests {
         let vz = VZVirtualMachineConfiguration()
         var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
@@ -1271,7 +1272,7 @@ struct ConfigurationBuilderTests {
     func macOSInputDevicesMacPairWhenVersionUnknown() {
         let vz = VZVirtualMachineConfiguration()
         let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
-        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
@@ -1285,7 +1286,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         config.lastSeenGuestOSVersion = "26.0"
         config.inputDeviceMode = .usb
-        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
@@ -1300,7 +1301,7 @@ struct ConfigurationBuilderTests {
         config.displayWidth = 2560
         config.displayHeight = 1600
         config.displayPPI = 220
-        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
         let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
         let display = try #require(graphics.displays.first)
@@ -1321,7 +1322,7 @@ struct ConfigurationBuilderTests {
         config.displayWidth = retina.width
         config.displayHeight = retina.height
         config.displayPPI = retina.ppi
-        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
         let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
         let display = try #require(graphics.displays.first)
@@ -1338,7 +1339,7 @@ struct ConfigurationBuilderTests {
         var config = makeLinuxConfig()
         config.displayWidth = 1680
         config.displayHeight = 1050
-        let result = try ConfigurationBuilder().assemble(
+        let result = try makeBuilder().assemble(
             from: config, bundleURL: bundleURL, validate: false)
 
         let graphics = try #require(
@@ -1353,7 +1354,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        let result = try ConfigurationBuilder().assemble(
+        let result = try makeBuilder().assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
         let vz = result.configuration
 
@@ -1386,7 +1387,7 @@ struct ConfigurationBuilderTests {
             )
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
@@ -1437,7 +1438,7 @@ struct ConfigurationBuilderTests {
                 isInternal: false, kind: .virtio),
         ]
 
-        let builder = ConfigurationBuilder()
+        let builder = makeBuilder()
         // `assemble(validate: false)` skips VZ's "is this a real disk image?"
         // check, which would otherwise reject the tiny stub file.
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
@@ -1488,7 +1489,8 @@ struct ConfigurationBuilderTests {
         let agentURL = try makeAgentDiskImage()
         defer { try? FileManager.default.removeItem(at: agentURL) }
 
-        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        var builder = makeBuilder()
+        builder.guestAgentDiskURL = agentURL
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1514,7 +1516,8 @@ struct ConfigurationBuilderTests {
         let agentURL = try makeAgentDiskImage()
         defer { try? FileManager.default.removeItem(at: agentURL) }
 
-        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        var builder = makeBuilder()
+        builder.guestAgentDiskURL = agentURL
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: installedVersion), bundleURL: bundleURL,
             validate: false)
@@ -1528,7 +1531,8 @@ struct ConfigurationBuilderTests {
         let agentURL = try makeAgentDiskImage()
         defer { try? FileManager.default.removeItem(at: agentURL) }
 
-        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        var builder = makeBuilder()
+        builder.guestAgentDiskURL = agentURL
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: nil), bundleURL: bundleURL, validate: false)
         #expect(result.configuration.storageDevices.count == 1)
@@ -1543,7 +1547,8 @@ struct ConfigurationBuilderTests {
 
         var config = makeLinuxConfig()
         config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        var builder = makeBuilder()
+        builder.guestAgentDiskURL = agentURL
         let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         #expect(result.configuration.storageDevices.count == 1)
     }
@@ -1555,7 +1560,8 @@ struct ConfigurationBuilderTests {
 
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString).dmg")
-        let builder = ConfigurationBuilder(guestAgentDiskURL: missing)
+        var builder = makeBuilder()
+        builder.guestAgentDiskURL = missing
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)
@@ -1567,7 +1573,8 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        let builder = ConfigurationBuilder(guestAgentDiskURL: nil)
+        var builder = makeBuilder()
+        builder.guestAgentDiskURL = nil
         let result = try builder.assemble(
             from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
             validate: false)

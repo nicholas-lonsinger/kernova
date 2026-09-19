@@ -1039,7 +1039,7 @@ final class VMInstance {
     /// caller must not proceed to start anything.
     func bringUpSession(with result: ConfigurationBuilder.BuildResult) async -> VMSession? {
         adoptBuildResult(result)
-        guard let session = await attachSession(from: result.configuration) else { return nil }
+        guard let session = await attachSession(from: result) else { return nil }
         startSerialReading()
         startClipboardService()
         await startVsockServices()
@@ -1095,10 +1095,10 @@ final class VMInstance {
     /// instance does not hold is one nothing can stop, so a caller starting it
     /// would leave the guest running past every liveness predicate, force stop
     /// included.
-    func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession? {
+    func attachSession(from result: ConfigurationBuilder.BuildResult) async -> VMSession? {
         // The configuration was assembled off-main and is handed over whole:
         // nothing touches it after the VM is created from it.
-        nonisolated(unsafe) let vzConfig = vzConfig
+        nonisolated(unsafe) let vzConfig = result.configuration
         let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
         guard let sessionContext else {
             #log(
@@ -1117,20 +1117,21 @@ final class VMInstance {
         }
         sessionContext.session = session
         setPhase(promoted)
-        await setupNetworkAttachmentCoordinator(for: session, in: sessionContext)
+        await setupNetworkAttachmentCoordinator(
+            for: session, in: sessionContext, vmnetNetworks: result.vmnetNetworks)
         return session
     }
 
     /// Builds this session's attachment-recovery coordinator, replacing any
     /// prior one.
     private func setupNetworkAttachmentCoordinator(
-        for session: VMSession, in context: VMSessionContext
+        for session: VMSession, in context: VMSessionContext,
+        vmnetNetworks networks: any VmnetNetworkProviding
     ) async {
         context.networkAttachmentCoordinator?.stop()
         context.networkAttachmentCoordinator = nil
         context.networkAttachmentPending = false
         guard configuration.networkEnabled, session.hasNetworkDevice else { return }
-        let networks = VmnetNetworkService.shared
         let initialPlan = await session.inspectNetworkAttachment { attachment in
             VZNetworkDeviceHandle.plan(of: attachment, in: networks)
         }
@@ -1141,6 +1142,7 @@ final class VMInstance {
                 session: session, initialPlan: initialPlan, vmnetNetworks: networks),
             interfaces: HostBridgedInterfaceProvider(),
             linkObserver: HostNetworkLinkObserver(),
+            vmnetNetworks: networks,
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
             onPendingChange: { [weak self, weak context] pending in

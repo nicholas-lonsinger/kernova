@@ -166,7 +166,8 @@ struct VMSessionContextTests {
             serialOutputPipe: Pipe(),
             clipboardInputPipe: Pipe(),
             clipboardOutputPipe: Pipe(),
-            coldRemovableMedia: [media])
+            coldRemovableMedia: [media],
+            vmnetNetworks: MockVmnetNetworkProvider())
 
         instance.adoptBuildResult(result)
 
@@ -241,7 +242,8 @@ struct VMSessionContextTests {
                 serialOutputPipe: Pipe(),
                 clipboardInputPipe: Pipe(),
                 clipboardOutputPipe: Pipe(),
-                coldRemovableMedia: [coldBooted]))
+                coldRemovableMedia: [coldBooted],
+                vmnetNetworks: MockVmnetNetworkProvider()))
         instance.enter(.running(sessionID: UUID()))
 
         instance.recordAttachedMedia(carried, for: sessionA)

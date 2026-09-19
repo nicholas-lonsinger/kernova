@@ -77,8 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     override init() {
+        let vmnetNetworks = VmnetNetworkService(
+            operations: HostVmnetNetworkOperator(), storeURL: VmnetNetworkService.defaultStoreURL())
         let viewModel = VMLibraryViewModel(
-            usbAccessoryService: USBAccessorySupport.makeService())
+            storageService: VMStorageService(),
+            virtualizationService: VirtualizationService(vmnetNetworks: vmnetNetworks),
+            installService: MacOSInstallService(vmnetNetworks: vmnetNetworks),
+            usbAccessoryService: USBAccessorySupport.makeService(),
+            preferences: .shared,
+            vmnetNetworks: vmnetNetworks)
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,

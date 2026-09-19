@@ -409,9 +409,6 @@ protocol VmnetNetworkRecreating: Sendable {
 final class VmnetNetworkService: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetNetworkService")
 
-    /// The process-wide instance over the real vmnet calls and store location.
-    static let shared = VmnetNetworkService()
-
     private let operations: any VmnetNetworkOperating
     private let storeURL: URL?
     /// Guards `networks`, `records`, `desiredForwardingRules` and
@@ -443,10 +440,7 @@ final class VmnetNetworkService: @unchecked Sendable {
 
     /// `storeURL: nil` disables persistence — networks still materialize, with
     /// addressing and reservations stable only within the session.
-    init(
-        operations: any VmnetNetworkOperating = HostVmnetNetworkOperator(),
-        storeURL: URL? = VmnetNetworkService.defaultStoreURL()
-    ) {
+    init(operations: any VmnetNetworkOperating, storeURL: URL?) {
         self.operations = operations
         self.storeURL = storeURL
         self.records = Self.loadRecords(from: storeURL)

@@ -69,7 +69,8 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         vm.presenter = presenter
         return (vm, suspending)
@@ -671,7 +672,8 @@ struct VMLibraryViewModelTests {
             ipswService: ipswService,
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         vm.presenter = presenter
         return vm
@@ -2318,7 +2320,8 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS)
@@ -3606,7 +3609,8 @@ struct VMLibraryViewModelTests {
             installService: raceInstaller,
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Race VM")
@@ -5427,7 +5431,8 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -5515,7 +5520,8 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -5941,7 +5947,8 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             usbAccessoryService: MockUSBAccessoryService(),
             fileSystem: fileSystem,
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Work")

@@ -7,7 +7,7 @@ import KernovaTestSupport
 @Suite("VirtualizationService Tests", .admissionGated)
 @MainActor
 struct VirtualizationServiceTests {
-    private let service = VirtualizationService()
+    private let service = VirtualizationService(vmnetNetworks: MockVmnetNetworkProvider())
 
     // MARK: - Snapshot capture
 

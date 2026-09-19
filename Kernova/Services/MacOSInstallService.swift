@@ -8,8 +8,12 @@ import Virtualization
 final class MacOSInstallService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MacOSInstallService")
 
-    private let configBuilder = ConfigurationBuilder()
+    private let configBuilder: ConfigurationBuilder
     private let storageService = VMStorageService()
+
+    init(vmnetNetworks: any VmnetNetworkProviding) {
+        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks)
+    }
 
     // MARK: - Installation
 
@@ -68,7 +72,7 @@ final class MacOSInstallService {
         // is CancellationError` tears down. Checking first would leave the
         // open session context — its pipes and its security scopes — with no
         // matching VM.
-        guard let session = await instance.attachSession(from: result.configuration) else {
+        guard let session = await instance.attachSession(from: result) else {
             throw VirtualizationError.noVirtualMachine
         }
         // Deliberately short of `bringUpSession`: an installer boot runs no
