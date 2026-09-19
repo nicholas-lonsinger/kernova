@@ -4561,6 +4561,12 @@ struct VMLibraryViewModelTests {
         let following = markAutoStart(VMInstanceFixture.make(name: "Following"))
         viewModel.instances = [suspended, following]
 
+        // A stream reader is the one surface a login launch has, and a VM left
+        // resting back on its saved state moves no field the event diff turns
+        // into a failure — so the pass reports it explicitly.
+        let events = viewModel.commands.events()
+        var iterator = events.makeAsyncIterator()
+
         await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.resumeCallCount == 1)
@@ -4568,6 +4574,15 @@ struct VMLibraryViewModelTests {
         #expect(suspended.status == .paused)
         #expect(suspended.errorMessage == nil)
         #expect(presenter.showError == true)
+        // Exactly one surfacing, not two: the report routes through the same
+        // presenter path the pass would otherwise have used on its own.
+        #expect(presenter.errors.count == 1)
+        let batch = await iterator.next()
+        let failures = (batch ?? []).compactMap { event -> UUID? in
+            guard case .failure(let id, _, _) = event else { return nil }
+            return id
+        }
+        #expect(failures == [suspended.id])
     }
 
     @Test("startAutomaticVMsForLaunch stops between VMs once cancelled")

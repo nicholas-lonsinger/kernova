@@ -1030,9 +1030,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// out of band — in the Finder, by another tool — leaves a phase describing
     /// something that is not there: the row still reads Suspended while every
     /// predicate that asks the bundle already offers Start and an editable
-    /// configuration. Re-derived here because this is the pass that answers
-    /// "what does disk say now" for the whole library, and only what it
-    /// observes moves anything.
+    /// configuration.
+    ///
+    /// Re-derived whenever the library reconciles, and no sooner: the watcher
+    /// behind that pass observes the VMs directory, where a bundle is added,
+    /// removed or renamed, so a file deleted *inside* a bundle wakes nothing.
+    /// The phase catches up at the next reconciliation for any reason, and at
+    /// the next launch.
     ///
     /// `bundlesOnDisk` bounds it to the VMs this pass actually read: a bundle
     /// the scan could not see says nothing about the slot inside it, and the

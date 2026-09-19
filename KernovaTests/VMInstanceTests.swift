@@ -362,8 +362,8 @@ struct VMInstanceTests {
 
         #expect(instance.phase == .suspended)
         #expect(instance.hasSaveFile)
-        // No banner: the VM is one the user can bring back up, and the failure
-        // reaches them through the event this raised.
+        // No banner: the VM is one the user can bring back up, and the bring-up
+        // this interrupted throws `restoreFailed` to whoever asked for it.
         #expect(instance.errorMessage == nil)
     }
 

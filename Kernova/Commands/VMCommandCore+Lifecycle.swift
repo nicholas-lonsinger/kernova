@@ -737,11 +737,18 @@ extension VMCommandCore {
     /// takes the graceful route the guest can only receive awake, and the
     /// alternative terminates it where it stands.
     static func stopPausedPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
-        ConfirmationPrompt(
+        // Both choices end in a power-off, and an Ephemeral VM's power-off is
+        // a revert, so the outcome the mode produces belongs here as much as in
+        // the force-stop refusal.
+        let ephemeralReturn =
+            instance.ephemeralBaselineSnapshot.map {
+                " Either way it is ephemeral, so it returns to \u{201C}\($0.name)\u{201D}."
+            } ?? ""
+        return ConfirmationPrompt(
             kind: .stopPaused,
             title: "Stop \u{201C}\(instance.name)\u{201D}?",
             message:
-                "\u{201C}\(instance.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).",
+                "\u{201C}\(instance.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).\(ephemeralReturn)",
             confirmTitle: "Resume and Shut Down",
             confirmIsDestructive: false,
             dismissTitle: "Cancel",
@@ -753,34 +760,55 @@ extension VMCommandCore {
 
     /// The refusal a force stop raises, worded for what it actually discards.
     static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
-        // An ephemeral VM's discard is a revert to its baseline, so the button
-        // names that outcome rather than the deletion it isn't.
+        // Read without reference to what the VM is resting on: every route out
+        // of here ends in a power-off, and `onPoweredOff` runs the baseline
+        // revert for a termination exactly as it does for a guest that shut
+        // itself down (``revertToEphemeralBaselineIfNeeded(_:)``).
+        let ephemeralBaseline = instance.ephemeralBaselineSnapshot
+        // A VM resting on a slot is not terminated at all — this deletes the
+        // suspended session, which an Ephemeral VM performs as the revert, so
+        // the button names that outcome rather than the deletion it isn't.
         let discardsSavedState = instance.holdsSuspendedSession
-        let ephemeralBaseline = discardsSavedState ? instance.ephemeralBaselineSnapshot : nil
+        let revertsInsteadOfTerminating = discardsSavedState && ephemeralBaseline != nil
+        // A slot the termination leaves in place is the session the VM would
+        // come back on — unless the baseline's replaces it. A save part-way
+        // through writing leaves none (``VMInstance/dropTruncatedSaveFile()``).
+        let keepsSuspendedSession = instance.hasSaveFile && !instance.phase.isWritingSuspendSlot
+        let suspendedSessionLost =
+            "The suspended session, and everything changed inside the guest during it, are discarded."
+        let guestDataLost = "Any unsaved data inside the guest will be lost."
+        let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
+
         let message: String
-        if let ephemeralBaseline {
+        switch (discardsSavedState, ephemeralBaseline) {
+        case (true, let baseline?):
             message =
                 "\u{201C}\(instance.name)\u{201D} is ephemeral, so it returns to "
-                + "\u{201C}\(ephemeralBaseline.name)\u{201D}. The suspended session, and everything "
-                + "changed inside the guest during it, are discarded."
-        } else if discardsSavedState {
+                + "\u{201C}\(baseline.name)\u{201D}. \(suspendedSessionLost)"
+        case (true, nil):
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
-        } else if instance.hasSaveFile, !instance.phase.isWritingSuspendSlot {
-            // A bring-up terminated before its restore resumed leaves the slot
-            // it was loading, so the VM goes back to the session it was coming
-            // up on. A save is the exception this excludes: the slot it is
-            // part-way through writing goes with the termination.
+        case (false, let baseline?):
+            // The power-off the termination causes rolls the disks back too, so
+            // a slot it would otherwise have left in place is replaced by the
+            // baseline's rather than resumed.
             message =
-                "\u{201C}\(instance.name)\u{201D} will be immediately terminated. Its saved state is kept, so it returns to being suspended."
-        } else {
+                "\(terminated) It is ephemeral, so it returns to "
+                + "\u{201C}\(baseline.name)\u{201D}. "
+                + (keepsSuspendedSession ? suspendedSessionLost : guestDataLost)
+        case (false, nil):
             message =
-                "\u{201C}\(instance.name)\u{201D} will be immediately terminated. Any unsaved data inside the guest will be lost."
+                keepsSuspendedSession
+                ? "\(terminated) Its saved state is kept, so it returns to being suspended."
+                : "\(terminated) \(guestDataLost)"
         }
+
         let confirmTitle: String
         if discardsSavedState {
-            confirmTitle = ephemeralBaseline == nil ? "Discard" : "Revert to Baseline"
+            confirmTitle = revertsInsteadOfTerminating ? "Revert to Baseline" : "Discard"
         } else {
+            // The user asked to terminate, not to revert — the revert is a
+            // consequence the message names rather than the command.
             confirmTitle = "Force Stop"
         }
         // A paused VM routes through the stop-paused refusal instead, so
@@ -790,11 +818,10 @@ extension VMCommandCore {
             ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
             : []
         let title: String
-        if let ephemeralBaseline {
+        if revertsInsteadOfTerminating, let baseline = ephemeralBaseline {
             // The discard *is* a revert to that snapshot, so it asks in the
             // words `revertPrompt` asks in.
-            title =
-                "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(ephemeralBaseline.name)\u{201D}?"
+            title = "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(baseline.name)\u{201D}?"
         } else if discardsSavedState {
             title = "Discard the Saved State of \u{201C}\(instance.name)\u{201D}?"
         } else {

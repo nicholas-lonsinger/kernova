@@ -445,8 +445,18 @@ final class VMInstance {
     /// when either changes.
     ///
     /// `body` cannot suspend, so no other main-actor work observes the VM
-    /// through the window where this answer stands in for the file.
+    /// through the window where this answer stands in for the file. It decides
+    /// and nothing more: an effect taken inside would be taken against a VM
+    /// that is not the one on disk, and a refusal built inside would name what
+    /// the VM would accept rather than what it does.
     func answeringAsIfSavedStateDiscarded<T>(_ body: () throws -> T) rethrows -> T {
+        guard !savedStateReadsAsDiscarded else {
+            #log(
+                Self.logger, .fault,
+                "Nested counterfactual read of the saved state of '\(self.name, privacy: .public)'")
+            assertionFailure("answeringAsIfSavedStateDiscarded(_:) is not re-entrant")
+            return try body()
+        }
         savedStateReadsAsDiscarded = true
         defer { savedStateReadsAsDiscarded = false }
         return try body()
@@ -1218,17 +1228,24 @@ final class VMInstance {
     /// Refuses a VM that is not at rest, rather than deleting a slot a
     /// bring-up already in flight is reading: a caller that means to end a
     /// suspension has to hold a VM that is still resting on it.
-    func discardSavedState() {
+    ///
+    /// - Returns: whether the bundle is now without a saved state. A removal the
+    ///   file system turned down leaves the VM resting on the slot it still
+    ///   holds, so nothing claims a suspension ended that did not — a caller
+    ///   whose own work depended on the discard reads this and says so.
+    @discardableResult
+    func discardSavedState() -> Bool {
         guard isAtRest else {
             #log(
                 Self.logger, .fault,
                 "Refusing to discard the saved state of '\(self.name, privacy: .public)': it is \(self.status.rawValue, privacy: .public), not at rest"
             )
             assertionFailure("discardSavedState() on a VM that is not at rest")
-            return
+            return !hasSaveFile
         }
         removeSaveFile()
-        enter(.stopped)
+        enter(restingPhase(withoutSlot: .stopped))
+        return !hasSaveFile
     }
 
     /// Drops a suspend slot a save is still part-way through writing, and

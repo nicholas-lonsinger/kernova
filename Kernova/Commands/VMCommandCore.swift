@@ -270,7 +270,11 @@ final class VMCommandCore: VMCommanding {
     /// settling is what blocks a settle-gated capability, and saying so names
     /// something the user can wait out rather than a status that reads as
     /// eligible.
-    private func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
+    ///
+    /// Internal because a caller that decided a capability's fate somewhere
+    /// other than ``require(anyOf:on:)`` still owes the user the refusal that
+    /// verb would have raised.
+    func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
         if instance.preparingState == nil, options.contains(where: \.locksWhileCloned),
             library.hasCloneInFlight(from: instance)
         {

@@ -750,13 +750,24 @@ struct VMCommandCoreTests {
             ])
     }
 
-    @Test("Force-stopping a restore that is still loading says the saved state is kept")
-    func forceStopOfARestoreNamesTheKeptSavedState() async throws {
+    /// Every route out of the force-stop refusal ends in a power-off, and an
+    /// Ephemeral VM's power-off is a revert — so the slot the termination would
+    /// otherwise leave in place is replaced by the baseline's, and the copy has
+    /// to say which of the two happens.
+    @Test(
+        "Force-stopping a restore that is still loading names what becomes of the saved state",
+        arguments: [false, true])
+    func forceStopOfARestoreNamesTheKeptSavedState(ephemeral: Bool) async throws {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, name: "Restoring", phase: .restoringSavedState(sessionID: UUID()))
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
+        let baseline = VMSnapshot(name: "Clean install")
+        if ephemeral {
+            instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+            instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        }
 
         let error = try #require(
             await commandError {
@@ -765,9 +776,42 @@ struct VMCommandCoreTests {
             })
 
         let prompt = try #require(error.confirmationPrompt)
+        // The user asked to terminate, not to revert, so the button says so
+        // either way.
         #expect(prompt.confirmTitle == "Force Stop")
-        #expect(prompt.message.contains("saved state is kept"))
-        #expect(!prompt.message.contains("unsaved data"))
+        #expect(prompt.title == "Force Stop \u{201C}Restoring\u{201D}?")
+        if ephemeral {
+            // The baseline's session replaces the one being loaded, so the copy
+            // must not promise it is kept.
+            #expect(prompt.message.contains("Clean install"))
+            #expect(prompt.message.contains("The suspended session"))
+            #expect(!prompt.message.contains("saved state is kept"))
+        } else {
+            #expect(prompt.message.contains("saved state is kept"))
+            #expect(!prompt.message.contains("unsaved data"))
+        }
+    }
+
+    @Test("A paused Ephemeral VM's stop refusal names the baseline both its routes end at")
+    func stopPausedOnAnEphemeralVMNamesTheBaseline() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
+        let baseline = VMSnapshot(name: "Clean install")
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .graceful, confirmed: false)
+            })
+
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .stopPaused)
+        // Resume-and-shut-down and force-stop both power the VM off, and a
+        // power-off is the revert.
+        #expect(prompt.message.contains("Clean install"))
     }
 
     /// A Recovery boot is a cold boot, and a bundle holding a slot takes the

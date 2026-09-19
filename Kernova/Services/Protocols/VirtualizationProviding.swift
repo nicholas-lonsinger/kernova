@@ -23,18 +23,20 @@ enum GuestStartRoute: Equatable, Sendable {
     @MainActor
     init(startOf instance: VMInstance, bootIntoRecovery: Bool) {
         guard !instance.hasSaveFile else {
-            // A saved state names the session the guest comes back on, so no
-            // cold boot happens here — Recovery included.
-            // ``VMInstance/canStartInRecovery`` refuses a VM holding one, so a
-            // request carrying the flag reached this past a gate that should
-            // have turned it back.
-            assert(
-                !bootIntoRecovery, "A Recovery boot was asked of a VM holding a saved state")
             self = .restoredSavedState
             return
         }
         self = bootIntoRecovery ? .recoveryBoot : .coldBoot
     }
+
+    /// Whether this route drops a `bootIntoRecovery` the caller asked for.
+    ///
+    /// A saved state names the session the guest comes back on, so the restore
+    /// performs no cold boot — Recovery included.
+    /// ``VMInstance/canStartInRecovery`` refuses a VM holding one, so a request
+    /// that still carries the flag came past a gate that should have turned it
+    /// back, and the start that reads this says so where it has a logger.
+    var dropsRecoveryBoot: Bool { self == .restoredSavedState }
 
     /// Whether this route carries the guest's provisioning options, which
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``

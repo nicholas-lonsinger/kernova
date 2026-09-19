@@ -1315,6 +1315,32 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase == phase)
     }
 
+    /// The discard is the last thing the recovery does, so everything that can
+    /// still refuse — the configuration write included — refuses with the
+    /// session and the entry both intact.
+    @Test("A start-failed removal whose configuration write fails keeps the saved state")
+    func aStartFailedRemovalWhoseWriteFailsKeepsEverything() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended)
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        instance.configuration.storageDisks = [disk, keeper]
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        harness.storage.saveConfigurationError = VMStorageError.bundleNotFound(instance.bundleURL)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.removeStartFailedAttachment(
+                .id(instance.id),
+                attachment: StartFailedAttachment(
+                    verb: .resume, kind: .storageDisk, id: disk.id, label: "Scratch",
+                    message: "could not open"))
+        }
+
+        #expect(instance.hasSaveFile)
+        #expect(instance.isColdPaused)
+    }
+
     @Test("A start-failed removal a clone of the same VM blocks keeps the saved state")
     func aStartFailedRemovalBlockedByACloneKeepsTheSavedState() async throws {
         let harness = makeHarness()

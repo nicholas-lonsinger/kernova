@@ -1345,11 +1345,24 @@ final class VMLibraryViewModel {
             }
             // Through the verbs rather than the in-app door: a failure still
             // buffers for the status item, and nothing is selected or focused.
-            await run(on: instance) {
+            //
+            // Reported rather than merely presented, because a bring-up that
+            // leaves the VM resting back on its saved state moves no field
+            // ``VMCommandCore/events()`` diffs into a failure — the same reason
+            // a transient one does not. Nobody is at the machine for this pass,
+            // so a client reading the stream is the one surface that can say a
+            // marked VM did not come up.
+            do {
                 switch step {
-                case .start: try await self.commands.start(.id(instance.id), recovery: false)
-                case .resume: try await self.commands.resume(.id(instance.id))
+                case .start: try await commands.start(.id(instance.id), recovery: false)
+                case .resume: try await commands.resume(.id(instance.id))
                 }
+            } catch {
+                let verb: VMVerb = step == .resume ? .resume : .start
+                core.reportUnattendedFailure(
+                    error as? CommandError
+                        ?? .operationFailed(verb: verb, message: error.localizedDescription),
+                    on: instance)
             }
             if instance.isActive {
                 startedCount += 1

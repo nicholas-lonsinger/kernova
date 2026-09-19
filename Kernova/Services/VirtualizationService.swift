@@ -49,6 +49,13 @@ final class VirtualizationService {
         // The branch and the answer are one value: the route decides which way
         // the guest is brought up, and is what the caller is told was done.
         let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
+        if bootIntoRecovery, route.dropsRecoveryBoot {
+            #log(
+                Self.logger, .fault,
+                "Recovery boot of '\(instance.name, privacy: .public)' ignored: it holds a saved state, so the start restores instead"
+            )
+            assertionFailure("A Recovery boot was asked of a VM holding a saved state")
+        }
         var attemptSessionID: UUID?
         do {
             let sessionID: UUID
@@ -250,7 +257,9 @@ final class VirtualizationService {
         // A saved state with nothing live: there is no guest to ask, so the stop
         // discards the slot.
         if instance.holdsSuspendedSession {
-            instance.discardSavedState()
+            guard instance.discardSavedState() else {
+                throw VirtualizationError.savedStateNotDiscarded
+            }
             #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
@@ -271,7 +280,9 @@ final class VirtualizationService {
         // A saved state with nothing live: there is no guest to terminate, so
         // the force stop discards the slot.
         if instance.holdsSuspendedSession {
-            instance.discardSavedState()
+            guard instance.discardSavedState() else {
+                throw VirtualizationError.savedStateNotDiscarded
+            }
             #log(Self.logger, .notice, "Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
@@ -1171,6 +1182,9 @@ enum VirtualizationError: LocalizedError {
     case invalidStateTransition(from: VMStatus, action: String)
     case noVirtualMachine
     case noSaveFile
+    /// The file system turned the removal of the suspend slot down, so the VM
+    /// is still resting on the session the discard was asked to end.
+    case savedStateNotDiscarded
     case restoreFailed(underlying: any Error)
     /// The revert wrote the snapshot back, and bringing the VM up on it failed.
     case revertResumeFailed(underlying: any Error)
@@ -1183,6 +1197,10 @@ enum VirtualizationError: LocalizedError {
             "No virtual machine instance is available."
         case .noSaveFile:
             "No saved state file found."
+        case .savedStateNotDiscarded:
+            // The VM still holds the session, so it is still offered — nothing
+            // was lost, and the same command is the way to try again.
+            "The saved state could not be deleted."
         case .restoreFailed(let underlying):
             // States what is known and stops. Nothing here can tell whether a
             // second attempt would fare better — after the device set has
