@@ -121,9 +121,10 @@ struct VmnetReservation: Equatable, Sendable {
     let address: String
 }
 
-/// The vmnet calls `VmnetNetworkService` makes, abstracted so tests run
-/// without `com.apple.vm.networking` — the real call is an XPC round-trip to
-/// the NetworkSharing daemon that fails unentitled.
+/// The vmnet calls `VmnetNetworkService` makes, and every use of the refs they
+/// return, abstracted so tests run without `com.apple.vm.networking` — the real
+/// call is an XPC round-trip to the NetworkSharing daemon that fails
+/// unentitled.
 protocol VmnetNetworkOperating: Sendable {
     /// Creates a network of `kind` — reserving `addressing` when given, the
     /// system's choice when `nil` — installing the given MAC → IPv4 DHCP
@@ -139,6 +140,8 @@ protocol VmnetNetworkOperating: Sendable {
     ) throws -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing)
     /// Releases `handle`'s network ref, ending its subnet reservation.
     func releaseNetwork(_ handle: VmnetNetworkHandle)
+    /// A VZ attachment joining `handle`'s network.
+    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment
 }
 
 /// Releases a vmnet object Swift imports as a bare `OpaquePointer`. The vmnet
@@ -206,6 +209,10 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
 
     func releaseNetwork(_ handle: VmnetNetworkHandle) {
         releaseVmnetRef(handle.network)
+    }
+
+    func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
+        VZVmnetNetworkDeviceAttachment(network: handle.network)
     }
 
     private func mode(for kind: VmnetNetworkKind) -> operating_modes_t {
@@ -312,7 +319,7 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
 /// recovery consume them.
 protocol VmnetNetworkProviding: Sendable {
     /// A VZ attachment joining the app-managed network of `kind`, materializing
-    /// the network first if this launch hasn't yet. Blocks for the vmnet XPC
+    /// the network first when none is materialized. Blocks for the vmnet XPC
     /// round-trip — never call on the main actor; config assembly runs
     /// off-main. Throws when the network cannot be materialized.
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment
@@ -376,32 +383,43 @@ protocol VmnetNetworkRecreating: Sendable {
     /// materialization creates it anew — pinned to the persisted addressing,
     /// so recovery cannot drift the subnet.
     func invalidateNetwork(for kind: VmnetNetworkKind)
-    /// Whether the materialized network of `kind` carries a different set of
-    /// DHCP reservations or forwarding rules than the ones that would install
-    /// right now — so recreating it would change what guests get. `false`
-    /// while no network of `kind` is materialized.
-    func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool
+    /// Why the materialized network of `kind` should be replaced before a VM
+    /// next joins it, `nil` when it should not — and while none is
+    /// materialized, since the next materialization installs whatever is
+    /// declared then.
+    func recreationReason(for kind: VmnetNetworkKind) -> VmnetNetworkRecreationReason?
+}
+
+/// Why a materialized app-managed network should be replaced before a VM next
+/// joins it.
+enum VmnetNetworkRecreationReason: Equatable, Sendable {
+    /// It carries a different set of DHCP reservations or forwarding rules than
+    /// the ones that would install now.
+    case declarationsPending
+    /// It has handed out an attachment, so once no VM holds one its run has
+    /// ended and its reservations have lapsed (``VmnetNetworkService``).
+    case servedAttachment
 }
 
 /// Owns the app's managed vmnet networks — the Host Only network and the
 /// Shared Network network — and the per-VM DHCP reservations and
 /// port-forwarding rules riding them.
 ///
-/// vmnet networks do not survive the process, so each network's record —
-/// addressing plus reservation slots — is persisted to
-/// `Application Support/Kernova/networks.json`, and the addressing is pinned
-/// onto the recreated network in later launches, keeping guest addressing
-/// stable. A materialization is what establishes a kind's addressing, and the
-/// store keeps it from then on. A materialized network is held until the app
-/// exits: the subnet reservation lives as long as the ref, and every concurrent
-/// VM in the mode shares the one network.
+/// Each network's record — addressing plus reservation slots — is persisted to
+/// `Application Support/Kernova/networks.json`. A materialization is what
+/// establishes a kind's addressing, and each later create is pinned to it, so
+/// neither a recreate nor a relaunch moves a guest's address.
 ///
-/// Reservations and forwarding rules are both fixed at network creation
-/// (vmnet.h: modifying reservations is not allowed while a network is active,
-/// and rules can only be added to a configuration), so either one declared
-/// while its network is materialized takes effect at the next materialization
-/// — the next app launch, or a recreate driven by recovery or by
-/// ``networkConfigurationIsPending(for:)``.
+/// A network serves its DHCP reservations for one run: the system drops them
+/// when the network's last attachment leaves, and a later run of the same
+/// network serves none
+/// (docs/research/2026-09-18-vmnet-dhcp-reservations-lapse-on-network-stop.md).
+/// Reservations and forwarding rules are also fixed at creation (vmnet.h:
+/// modifying reservations is not allowed while a network is active, and rules
+/// can only be added to a configuration). A materialized network is kept, its
+/// ref and with it the subnet held, until it is invalidated;
+/// ``recreationReason(for:)`` names why one should be replaced before a VM
+/// next joins it.
 ///
 /// Lock-guarded `Sendable` rather than `@MainActor`: it never touches
 /// `VZVirtualMachine`, and `ConfigurationBuilder` consumes it during off-main
@@ -545,6 +563,15 @@ final class VmnetNetworkService: @unchecked Sendable {
                     )
                     return MaterializedNetwork(
                         handle: handle, submitted: submitted, submittedAddressing: stored)
+                }
+                if isPinnedOnly(kind) {
+                    // Persisting a moved subnet here would shift every reserved
+                    // address in the mode for good; fail like a refused pin
+                    // (the catch below) and let recovery retry.
+                    operations.releaseNetwork(handle)
+                    let granted = "granted \(reserved.ipv4Subnet) for the stored \(stored.ipv4Subnet)"
+                    throw VmnetOperationError(
+                        operation: "vmnet_network_create (\(granted))", status: nil)
                 }
                 // vmnet accepted the pin but reserved something else; the
                 // store must follow what the network actually is, or every
@@ -690,7 +717,7 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// Resolves every reservation slot in order, without logging — the shared
     /// source of truth for what a network of `addressing` would install, read
     /// both while materializing and while answering
-    /// ``networkConfigurationIsPending(for:)``.
+    /// ``recreationReason(for:)``.
     private static func resolveSlots(
         macs: [String?], addressing: VmnetNetworkAddressing
     ) -> [ResolvedSlot] {
@@ -771,6 +798,8 @@ final class VmnetNetworkService: @unchecked Sendable {
     private struct MaterializedNetworkState {
         let handle: VmnetNetworkHandle
         let installed: InstalledConfiguration
+        /// Whether an attachment joining it has been handed out.
+        var hasServedAttachment = false
     }
 
     /// Pairs each declared rule with the address of the reservation carrying
@@ -918,17 +947,36 @@ final class VmnetNetworkService: @unchecked Sendable {
     func flushPersistsForTesting() {
         persistQueue.sync {}
     }
+
+    /// Whether `kind`'s next materialization must reserve the stored
+    /// addressing or fail, for tests.
+    func isPinnedOnlyForTesting(_ kind: VmnetNetworkKind) -> Bool {
+        isPinnedOnly(kind)
+    }
     #endif
 }
 
 extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
-        VZVmnetNetworkDeviceAttachment(network: try network(for: kind).network)
+        servedAttachment(joining: try network(for: kind), of: kind)
     }
 
     func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment? {
-        guard let handle = cachedHandle(for: kind) else { return nil }
-        return VZVmnetNetworkDeviceAttachment(network: handle.network)
+        cachedHandle(for: kind).map { servedAttachment(joining: $0, of: kind) }
+    }
+
+    /// An attachment joining `handle`, recording that the network of `kind`
+    /// has served one — unless `handle` is no longer the one materialized,
+    /// since an invalidation already retired it.
+    private func servedAttachment(
+        joining handle: VmnetNetworkHandle, of kind: VmnetNetworkKind
+    ) -> VZNetworkDeviceAttachment {
+        stateLock.lock()
+        if networks[kind]?.handle.network == handle.network {
+            networks[kind]?.hasServedAttachment = true
+        }
+        stateLock.unlock()
+        return operations.attachment(joining: handle)
     }
 
     // A nonisolated async method runs off the caller's actor, so the blocking
@@ -1081,22 +1129,23 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         )
     }
 
-    func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool {
+    func recreationReason(for kind: VmnetNetworkKind) -> VmnetNetworkRecreationReason? {
         stateLock.lock()
         defer { stateLock.unlock() }
-        // Nothing pends against a network that does not exist yet: its next
-        // materialization installs whatever is declared then.
-        guard let live = networks[kind] else { return false }
+        guard let live = networks[kind] else { return nil }
         // Both sides are compared as what would *install*, not as everything
         // declared: a slot past the subnet's capacity, a MAC that no longer
         // parses, and a rule whose VM holds no reservation can never install,
-        // and measuring against them would leave the flag stuck true and drive
-        // an endless recreate.
+        // and measuring against them would leave the reason standing forever
+        // and drive an endless recreate.
         //
         // The whole reservation set is compared rather than only its additions,
         // so a slot released by a departed VM also pends — the live network
         // honors its reservation until the recreate.
-        return resolveDeclarationsLocked(for: kind).installable != live.installed
+        if resolveDeclarationsLocked(for: kind).installable != live.installed {
+            return .declarationsPending
+        }
+        return live.hasServedAttachment ? .servedAttachment : nil
     }
 
     func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {

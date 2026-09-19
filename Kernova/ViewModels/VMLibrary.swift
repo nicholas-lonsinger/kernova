@@ -712,8 +712,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // Reservations and forwarding rules are fixed at network creation, so a
         // change made while a VM ran waits for the last session on that network
         // to release it.
-        instance.onSessionTornDown = { [weak self, weak instance] in
-            self?.networkSlots.rebuildNetworksIfIdle(ignoring: instance)
+        instance.onSessionTornDown = { [weak self] in
+            self?.networkSlots.rebuildNetworksIfIdle()
+        }
+        // A network that served a run which has since ended serves no
+        // reservations again, so it is replaced as the next VM joins it.
+        instance.onJoiningVmnetNetwork = { [weak self, weak instance] kind in
+            guard let self, let instance else { return }
+            self.networkSlots.prepareNetwork(kind, forJoining: instance)
         }
         // A session reporting its network defective, or releasing the attachment
         // it held on one, asks for the same pass: the registry is the only place

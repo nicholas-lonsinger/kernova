@@ -2911,7 +2911,7 @@ struct VMLibraryViewModelTests {
     @Test("A pending rule change recreates the shared network once no VM is on it")
     func pendingRulesRecreateTheNetworkWhenIdle() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
         let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
         let instance = VMInstanceFixture.make()
         instance.configuration.networkEnabled = true
@@ -2940,7 +2940,7 @@ struct VMLibraryViewModelTests {
     @Test("A changed MAC recreates the shared network once no VM is on it")
     func macChangeRecreatesTheSharedNetworkWhenIdle() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
         let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
 
         viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
@@ -2951,7 +2951,7 @@ struct VMLibraryViewModelTests {
     @Test("A Host Only VM's changed MAC recreates the Host Only network")
     func macChangeRecreatesTheHostOnlyNetwork() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedPendingKinds = [.hostOnly]
+        vmnet.scriptedRecreationReasons = [.hostOnly: .declarationsPending]
         let (viewModel, instance) = makeNetworkedLibrary(mode: .hostOnly, vmnet: vmnet)
 
         viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
@@ -2962,7 +2962,7 @@ struct VMLibraryViewModelTests {
     @Test("A mode switch recreates both app-managed networks, each once")
     func modeSwitchRecreatesBothNetworks() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedPendingKinds = [.shared, .hostOnly]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending, .hostOnly: .declarationsPending]
         let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
 
         // The slot moves off one network and onto the other, so both carry a
@@ -2976,7 +2976,7 @@ struct VMLibraryViewModelTests {
     @Test("Deleting a VM recreates the network its slot was on")
     func deleteRecreatesTheNetwork() async {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
         let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
 
         await viewModel.delete(instance)
@@ -3012,7 +3012,7 @@ struct VMLibraryViewModelTests {
         let running = try #require(viewModel.instances.first { $0.name == "Running VM" })
         let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
         running.enter(.running(sessionID: UUID()))
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
 
         viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
         #expect(vmnet.invalidatedKinds.isEmpty)
@@ -3032,7 +3032,7 @@ struct VMLibraryViewModelTests {
         let suspending = try #require(viewModel.instances.first { $0.name == "Suspending VM" })
         let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
         suspending.enter(.running(sessionID: UUID()))
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
 
         viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
         #expect(vmnet.invalidatedKinds.isEmpty)
@@ -3051,7 +3051,7 @@ struct VMLibraryViewModelTests {
         let viewModel = await makeSharedNetworkLibrary(named: ["Running VM"], vmnet: vmnet)
         let running = try #require(viewModel.instances.first)
         running.enter(.running(sessionID: UUID()))
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
 
         // The rule sync runs while the VM is still on the shared network; only
         // the mode write that follows frees it.
@@ -3068,7 +3068,7 @@ struct VMLibraryViewModelTests {
     @Test("A VM arriving from the library load recreates its materialized network once")
     func loadedVMRecreatesTheMaterializedNetwork() async {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
 
         _ = await makeSharedNetworkLibrary(named: ["First VM", "Second VM"], vmnet: vmnet)
 
@@ -3085,7 +3085,7 @@ struct VMLibraryViewModelTests {
         let running = try #require(viewModel.instances.first { $0.name == "Running VM" })
         let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
         running.enter(.running(sessionID: UUID()))
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
 
         viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:11" }
         #expect(vmnet.invalidatedKinds.isEmpty)
@@ -3103,7 +3103,7 @@ struct VMLibraryViewModelTests {
         let saving = try #require(viewModel.instances.first { $0.name == "Saving VM" })
         let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
         saving.enter(.running(sessionID: UUID()))
-        vmnet.scriptedPendingKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
 
         viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:11" }
         #expect(vmnet.invalidatedKinds.isEmpty)
@@ -3114,6 +3114,21 @@ struct VMLibraryViewModelTests {
         saving.tearDownSession(restingAt: .suspended)
 
         #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("A session opening on a network that served a finished run replaces it first")
+    func sessionOpeningReplacesALapsedNetwork() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let viewModel = await makeSharedNetworkLibrary(named: ["Joining VM"], vmnet: vmnet)
+        let instance = try #require(viewModel.instances.first)
+        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+
+        // The configuration build that follows would otherwise hand out an
+        // attachment on a network whose reservations have lapsed.
+        instance.beginSessionContext()
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+        instance.tearDownSession(restingAt: .stopped)
     }
 
     @Test("A session's defect report reaches the registry through the library's wiring")

@@ -423,41 +423,58 @@ final class VMNetworkSlotRegistry {
 
     // MARK: - Network Recreation
 
-    /// Recreates every app-managed network that has a reason to be recreated,
-    /// once no VM could be attached to it.
+    /// Recreates every idle app-managed network whose declarations are pending
+    /// or that a session reports defective.
     ///
-    /// Two reasons, both re-derived on every pass: the network's DHCP
-    /// reservations or forwarding rules are no longer the ones that should
-    /// install (both are fixed at creation, so a change reaches guests only
-    /// through a recreate), or a session's attachment recovery reports the
-    /// network defective. The recreate keeps the network's addressing, so no
-    /// guest's address moves.
-    ///
-    /// `tornDown` is the instance whose session just ended, excluded from the
-    /// idle scan: `tearDownSession` fires its hook before the caller settles
-    /// the status, so a VM released from a transitioning one (`.saving` on a
-    /// save-suspend, `.installing` on a cancelled guest setup) would otherwise
-    /// read as still holding the network it just let go of.
-    func rebuildNetworksIfIdle(ignoring tornDown: VMInstance? = nil) {
-        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind, ignoring: tornDown) }
+    /// Both are re-derived on every pass. Pending declarations are installed
+    /// here rather than at the next join so a stopped VM's new address reads as
+    /// reserved now instead of pending until something boots; a defect report
+    /// comes from a detached session that nothing else wakes. A network that
+    /// has only served an attachment is kept, its subnet held:
+    /// ``prepareNetwork(_:forJoining:)`` replaces it.
+    func rebuildNetworksIfIdle() {
+        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind) }
     }
 
-    /// Recreates the app-managed network of `kind` when something asks for it
-    /// and nothing holds it — the only place ``VmnetNetworkRecreating`` is
-    /// called, because a recreate pulls the network out from under every VM
-    /// sharing it and this is the only type that can see them all.
-    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind, ignoring tornDown: VMInstance?) {
-        let others = instances.filter { $0 !== tornDown }
+    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind) {
         let reason: String
-        if vmnetNetworks.networkConfigurationIsPending(for: kind) {
+        if vmnetNetworks.recreationReason(for: kind) == .declarationsPending {
             reason = "to install its pending changes"
-        } else if others.contains(where: { $0.suspectsDefectiveNetwork(on: kind) }) {
+        } else if instances.contains(where: { $0.suspectsDefectiveNetwork(on: kind) }) {
             reason = "after a session reported it defective"
         } else {
             return
         }
-        // The single precondition for dropping shared state: nobody is on it.
-        guard !others.contains(where: { $0.mayHoldAttachment(on: kind) }) else { return }
+        recreateIfUnheld(kind, because: reason, among: instances)
+    }
+
+    /// Replaces the app-managed network of `kind` before `joiner` takes an
+    /// attachment on it, when the network has any reason to be recreated and no
+    /// other VM holds an attachment on it.
+    ///
+    /// The one place a network that served an attachment is replaced: nobody
+    /// else holding it at the moment a VM joins is what says its run has ended.
+    func prepareNetwork(_ kind: VmnetNetworkKind, forJoining joiner: VMInstance) {
+        let reason: String
+        switch vmnetNetworks.recreationReason(for: kind) {
+        case .declarationsPending:
+            reason = "before '\(joiner.name)' joins it, to install its pending changes"
+        case .servedAttachment:
+            reason = "before '\(joiner.name)' joins it, so its next run serves its DHCP reservations"
+        case nil:
+            return
+        }
+        recreateIfUnheld(kind, because: reason, among: instances.filter { $0 !== joiner })
+    }
+
+    /// Recreates the app-managed network of `kind` unless one of `candidates`
+    /// may hold an attachment on it — the only place ``VmnetNetworkRecreating``
+    /// is called, because a recreate pulls the network out from under every VM
+    /// sharing it and this is the only type that can see them all.
+    private func recreateIfUnheld(
+        _ kind: VmnetNetworkKind, because reason: String, among candidates: [VMInstance]
+    ) {
+        guard !candidates.contains(where: { $0.mayHoldAttachment(on: kind) }) else { return }
         #log(
             Self.logger, .notice,
             "Recreating the \(kind.rawValue, privacy: .public) network \(reason, privacy: .public)")
@@ -465,10 +482,10 @@ final class VMNetworkSlotRegistry {
         // The network that contradicted a slot taken after its creation is
         // gone, so an address pending on that contradiction derives now.
         addressingGeneration &+= 1
-        // The network a detached session was waiting on just went away, on both
-        // reasons alike — its retry ladder is spent, so this nudge is the only
-        // wake-up it gets. A no-op for every VM not detached on this kind.
-        for instance in others { instance.vmnetNetworkWasInvalidated(kind) }
+        // The network a detached session was waiting on just went away, for
+        // whichever reason — its retry ladder is spent, so this nudge is the
+        // only wake-up it gets. A no-op for every VM not detached on this kind.
+        for instance in candidates { instance.vmnetNetworkWasInvalidated(kind) }
     }
 
     #if DEBUG

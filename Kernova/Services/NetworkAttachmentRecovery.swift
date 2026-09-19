@@ -332,6 +332,10 @@ final class NetworkAttachmentCoordinator {
     private let choice: @MainActor () -> NetworkChoice?
     private let onPendingChange: @MainActor (Bool) -> Void
     private let onNetworkDefectSuspected: @MainActor () -> Void
+    /// Called just before an attach moves this session onto an app-managed
+    /// network it was not on — never for a reattach to the one it was on, so
+    /// a persistently rejected attach stays paced by the retry ladder.
+    private let onJoiningVmnetNetwork: @MainActor (VmnetNetworkKind) -> Void
 
     /// `true` while the device is detached — no attachment realizes the chosen
     /// mode and recovery is waiting to reattach.
@@ -402,7 +406,8 @@ final class NetworkAttachmentCoordinator {
         isEligible: @escaping @MainActor () -> Bool = { true },
         choice: @escaping @MainActor () -> NetworkChoice?,
         onPendingChange: @escaping @MainActor (Bool) -> Void,
-        onNetworkDefectSuspected: @escaping @MainActor () -> Void
+        onNetworkDefectSuspected: @escaping @MainActor () -> Void,
+        onJoiningVmnetNetwork: @escaping @MainActor (VmnetNetworkKind) -> Void
     ) {
         self.vmName = vmName
         self.device = device
@@ -418,6 +423,7 @@ final class NetworkAttachmentCoordinator {
         self.choice = choice
         self.onPendingChange = onPendingChange
         self.onNetworkDefectSuspected = onNetworkDefectSuspected
+        self.onJoiningVmnetNetwork = onJoiningVmnetNetwork
     }
 
     /// Starts link observation and reconciles once. Idempotent — a hot resume
@@ -501,9 +507,11 @@ final class NetworkAttachmentCoordinator {
         }
 
         let desired = resolvePlan(for: choice)
+        let joining = desired?.vmnetKind.flatMap { $0 == resolvedVmnetKind ? nil : $0 }
         noteResolvedVmnetKind(desired?.vmnetKind)
         if let desired {
             if device.currentPlan != desired {
+                if let joining { onJoiningVmnetNetwork(joining) }
                 lastAttachAttemptAt = clock.now
                 if device.apply(desired) {
                     #log(
@@ -679,10 +687,10 @@ final class NetworkAttachmentCoordinator {
     /// The arbiter dropped the app-managed network of `kind`; take the recreate
     /// this session's suspicion asked for.
     ///
-    /// Both recreate reasons route here — a pending declaration set and a
-    /// suspected defect alike — because a session sitting detached on a network
-    /// that was just dropped has no other wake-up signal: its retry ladder is
-    /// spent and a detached device fires no disconnects.
+    /// Every recreate reason routes here, not only a suspected defect, because
+    /// a session sitting detached on a network that was just dropped has no
+    /// other wake-up signal: its retry ladder is spent and a detached device
+    /// fires no disconnects.
     /// Ineligible sessions drop it like every other trigger: `reconcile`
     /// refuses to run during a save or a restore, so materializing here would
     /// spin a task whose reconcile is discarded, and the activation at the next
