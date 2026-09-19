@@ -202,7 +202,10 @@ struct VMCapabilityCatalog {
             .deleteSnapshot, .renameSnapshot, .setSnapshotNotes:
             true
         case .start:
-            instance.canStart
+            // A VM holding a saved state is offered the Resume that restores
+            // it: a Start names a cold boot, and its bring-up performs none.
+            // Committing one is still taken (``admitsCommit(_:on:)``).
+            instance.canStart && !instance.holdsSuspendedSession
         case .startInRecovery:
             instance.canStartInRecovery
         case .cancelGuestSetup:
@@ -212,7 +215,7 @@ struct VMCapabilityCatalog {
         case .forceStop:
             instance.canForceStop
         case .discardSavedState:
-            instance.isColdPaused
+            instance.holdsSuspendedSession
         case .pause:
             instance.canPause
         case .resume:
@@ -386,11 +389,11 @@ struct VMCapabilityCatalog {
     /// Which verb brings `instance` back up, or `nil` when its state admits
     /// neither.
     ///
-    /// A cold-paused VM is resumed: its memory is in the bundle's suspend slot,
-    /// and a boot would discard it. A live-paused one is neither — its memory
-    /// never left the host, so there is no bring-up owed.
+    /// A VM holding a saved state is resumed: its memory is in the bundle's
+    /// suspend slot, and a boot would discard it. A live-paused one is neither —
+    /// its memory never left the host, so there is no bring-up owed.
     func bringUpVerb(for instance: VMInstance) -> BringUpVerb? {
-        if isAvailable(.resume, on: instance), instance.isColdPaused { return .resume }
+        if isAvailable(.resume, on: instance), instance.holdsSuspendedSession { return .resume }
         return isAvailable(.start, on: instance) ? .start : nil
     }
 
@@ -487,9 +490,13 @@ struct VMCapabilityCatalog {
             // `.restoringSavedState` before its first await, so the restore is
             // the whole of what another caller can observe. Offering it is the
             // separate question ``isAvailable(_:on:)`` answers.
+            //
+            // A VM holding a saved state is the other widening: the start
+            // restores that state rather than booting over it, so a door asking
+            // for the VM to be running gets it — only the offer names Resume.
             switch instance.phase {
             case .starting, .restoringSavedState: return true
-            default: return isApplicable(.start, to: instance)
+            default: return instance.canStart
             }
         case .resume:
             // The same join, for the one bring-up phase a resume of its own

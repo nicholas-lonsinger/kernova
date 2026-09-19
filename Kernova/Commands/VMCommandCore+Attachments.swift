@@ -587,12 +587,14 @@ extension VMCommandCore {
     // MARK: - Start-Failure Recovery
 
     /// The removal half of the ``CommandRecovery/removeStartFailedAttachment(_:)``
-    /// a failed start offered.
+    /// a failed bring-up offered: the VM's saved state goes, then the
+    /// attachment, leaving a VM the caller's own Start can boot.
     ///
-    /// The entry is checked before the removal verb is asked, so an entry
-    /// somebody removed meanwhile answers as the no-op
+    /// The entry is checked before anything else, so an entry somebody removed
+    /// meanwhile answers as the no-op
     /// ``VMCommanding/removeStartFailedAttachment(_:attachment:)`` promises
-    /// rather than as that verb's stale-attachment refusal.
+    /// rather than as that verb's stale-attachment refusal — and keeps its
+    /// saved state, which a confirmation landing late must not destroy.
     ///
     /// Everything else the removal refuses is thrown: the attachment is still
     /// attached, so a caller about to start has nothing new to try.
@@ -613,6 +615,24 @@ extension VMCommandCore {
             )
             return
         }
+        // Asked while the saved state is still on disk, because the discard
+        // below is irreversible: this is the one refusal the removal raises
+        // after its own gate, and a discard it then turned down would have
+        // destroyed the session for nothing.
+        if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
+            try refuseSoleStorageDiskRemoval(of: disk, on: instance)
+        }
+        // Before the removal, not after it: a saved state restores only into the
+        // exact device set it was written with, so the removal verbs refuse
+        // while one is on disk — and the alert disclosed the discard before the
+        // user confirmed.
+        if instance.hasSaveFile {
+            instance.discardSavedState()
+            #log(
+                Self.logger, .notice,
+                "Discarded saved state for '\(instance.name, privacy: .public)' along with the attachment its bring-up failed on"
+            )
+        }
         switch failure.kind {
         case .storageDisk:
             try await removeStorageDisk(
@@ -624,15 +644,6 @@ extension VMCommandCore {
         #log(
             Self.logger, .notice,
             "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
-        )
-        // A save file restores only into the exact device set it was saved with,
-        // so it cannot outlive the removal — the alert disclosed the discard
-        // before the user confirmed.
-        guard instance.hasSaveFile else { return }
-        instance.removeSaveFile()
-        #log(
-            Self.logger, .notice,
-            "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
         )
     }
 

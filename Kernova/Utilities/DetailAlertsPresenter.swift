@@ -724,8 +724,11 @@ final class DetailAlertsPresenter: NSObject {
             message +=
                 " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
         }
+        // The heading names the bring-up that failed; the button names what the
+        // recovery does, which is a start either way — a resume's saved state is
+        // discarded along with the attachment.
         return AlertConfiguration(
-            title: "Couldn't Start “\(vm.name)”",
+            title: "Couldn't \(failure.verb == .resume ? "Resume" : "Start") “\(vm.name)”",
             message: message,
             buttons: [
                 AlertButton("Remove and Start", role: .default) { [weak self] in

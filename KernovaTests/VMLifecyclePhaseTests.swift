@@ -190,32 +190,29 @@ struct VMLifecyclePhaseTests {
 
     // MARK: - Command Predicates
 
-    @Test("canStart covers the at-rest phases a boot can begin from")
-    func canStart() {
-        let startableKinds: Set<VMLifecyclePhaseKind> = [.stopped, .failed, .initialBoot]
+    @Test("isAtRest covers every settled phase, the suspended one included")
+    func isAtRest() {
+        let restingKinds: Set<VMLifecyclePhaseKind> = [.stopped, .failed, .initialBoot, .suspended]
         for phase in VMLifecyclePhaseFixtures.all {
-            #expect(phase.canStart == startableKinds.contains(phase.kind), "\(phase)")
+            #expect(phase.isAtRest == restingKinds.contains(phase.kind), "\(phase)")
         }
-        // A suspended VM resumes rather than starting.
-        #expect(!VMLifecyclePhase.suspended.canStart)
-        #expect(VMLifecyclePhase.suspended.canResume)
+        // Nothing live and nothing in flight is the whole of it.
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(phase.isAtRest == !(phase.isTransitioning || phase.hasLiveSession), "\(phase)")
+        }
     }
 
-    @Test("Stop, Suspend and Pause need a live session; Resume takes either paused meaning")
+    @Test("Stop, Suspend and Pause need a live session")
     func lifecycleCommands() {
         let running = VMLifecyclePhase.running(sessionID: Self.session)
         let livePaused = VMLifecyclePhase.livePaused(sessionID: Self.session)
         #expect(running.canStop && livePaused.canStop)
         #expect(running.canSave && livePaused.canSave)
         #expect(running.canPause && !livePaused.canPause)
-        #expect(!running.canResume && livePaused.canResume)
-        #expect(VMLifecyclePhase.suspended.canResume)
         #expect(!VMLifecyclePhase.suspended.canStop)
         #expect(!VMLifecyclePhase.suspended.canSave)
         for phase in VMLifecyclePhaseFixtures.all where phase.isTransitioning {
-            #expect(
-                !phase.canStop && !phase.canSave && !phase.canPause && !phase.canResume,
-                "\(phase)")
+            #expect(!phase.canStop && !phase.canSave && !phase.canPause, "\(phase)")
         }
     }
 

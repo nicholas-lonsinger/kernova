@@ -22,4 +22,21 @@ enum VMInstanceFixture {
         return VMInstance(
             configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
     }
+
+    /// Puts a suspend slot in `instance`'s bundle, creating the bundle
+    /// directory — what every predicate that follows the file reads
+    /// (``VMInstance/holdsSuspendedSession``).
+    ///
+    /// The bundle is a real directory under the temporary directory, so a test
+    /// that writes one takes it away again with ``removeBundle(of:)``.
+    static func writeSaveFile(for instance: VMInstance) throws {
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        try Data("suspend slot".utf8).write(to: instance.saveFileURL)
+    }
+
+    /// Takes away the bundle directory a fixture wrote into.
+    static func removeBundle(of instance: VMInstance) {
+        try? FileManager.default.removeItem(at: instance.bundleURL)
+    }
 }

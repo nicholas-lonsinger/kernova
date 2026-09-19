@@ -12,9 +12,9 @@ enum GuestAgentInstallerPurpose: Equatable {
     case manage
 }
 
-/// A start attempt that failed because one attachment couldn't be opened,
-/// where removing that attachment (detach only — the file is untouched) is a
-/// valid way to get the VM running again.
+/// A bring-up that failed because one attachment couldn't be opened, where
+/// removing that attachment (detach only — the file is untouched) is a valid
+/// way to get the VM running again.
 ///
 /// Never built for the disk the guest boots from — a VM can't meaningfully
 /// start without it.
@@ -24,6 +24,11 @@ struct StartFailedAttachment: Equatable, Sendable {
         case removableMedia
     }
 
+    /// The bring-up the user asked for — ``VMVerb/start`` or ``VMVerb/resume``
+    /// — which is what the alert heads itself with. The recovery itself always
+    /// ends in a start: it discards the saved state a resume would have
+    /// restored.
+    let verb: VMVerb
     let kind: Kind
     /// The failing item's ID in the VM's configuration, so the removal targets
     /// exactly the entry that failed even if the list changed since.

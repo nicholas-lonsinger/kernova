@@ -62,8 +62,10 @@ struct MainMenuValidationTests {
     }
 
     @Test("A cold-paused VM's stop item discards the saved state")
-    func stopRetitlesForColdPausedVM() {
+    func stopRetitlesForColdPausedVM() throws {
         let instance = makeMenuInstance(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         let fixture = makeFixture(instance: instance)
         let item = makeMenuItem(#selector(AppDelegate.stopVM(_:)))
 

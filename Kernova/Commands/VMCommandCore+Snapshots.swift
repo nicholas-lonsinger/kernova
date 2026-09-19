@@ -170,10 +170,10 @@ extension VMCommandCore {
 
         switch snapshot.kind {
         case .warm:
-            // A cold-paused VM's own suspend slot is the state it would
-            // otherwise resume into, and the revert writes over it.
+            // The VM's own suspend slot is the state it would otherwise resume
+            // into, and the revert writes over it.
             let loss =
-                vm.isColdPaused
+                vm.holdsSuspendedSession
                 ? "The suspended session this VM would resume into is replaced by the snapshot's, "
                     + "and everything changed inside the guest since then will be lost unless you "
                     + "take a snapshot first."
@@ -186,7 +186,7 @@ extension VMCommandCore {
             let session: String
             if vm.hasLiveVirtualMachine {
                 session = "The session it is running now ends. "
-            } else if vm.isColdPaused {
+            } else if vm.holdsSuspendedSession {
                 session = "The suspended session it would resume into is discarded. "
             } else {
                 session = ""
@@ -311,8 +311,8 @@ extension VMCommandCore {
         return startRevert(instance, to: baseline, outcome: outcome)
     }
 
-    /// Routes a cold-paused ephemeral VM's Discard Saved State through the
-    /// baseline revert instead, and reports whether it took the request.
+    /// Routes an ephemeral VM's Discard Saved State through the baseline revert
+    /// instead, and reports whether it took the request.
     ///
     /// Discarding alone would drop the suspended session and leave the guest's
     /// disks as the session left them — the opposite of what the mode promises.
@@ -320,9 +320,8 @@ extension VMCommandCore {
     /// Throws what the revert failed with: the caller asked for a stop, and a
     /// baseline that did not come back is not one.
     func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async throws -> Bool {
-        guard instance.isColdPaused, let baseline = instance.ephemeralBaselineSnapshot else {
-            return false
-        }
+        guard instance.holdsSuspendedSession, let baseline = instance.ephemeralBaselineSnapshot
+        else { return false }
         let outcome = RevertOutcome()
         await revertToEphemeralBaseline(instance, baseline, outcome: outcome).value
         if let failure = outcome.failure { throw failure }
