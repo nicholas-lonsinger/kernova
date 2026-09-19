@@ -61,7 +61,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        try await coordinator.start(instance)
+        _ = try await coordinator.start(instance)
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == false)
@@ -72,7 +72,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        try await coordinator.start(instance, bootIntoRecovery: true)
+        _ = try await coordinator.start(instance, bootIntoRecovery: true)
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == true)
@@ -184,7 +184,7 @@ struct VMLifecycleCoordinatorTests {
 
         // Let the operation complete
         suspendingService.resumeSuspended()
-        try await task.value
+        _ = try await task.value
     }
 
     @Test("an observed wait on hasUnsettledOperation wakes when the operation ends")
@@ -220,7 +220,7 @@ struct VMLifecycleCoordinatorTests {
         Task { @MainActor in suspendingService.resumeSuspended() }
         try await gate.wait { fired.didFire }
         #expect(!coordinator.hasUnsettledOperation(for: instanceID))
-        try await task.value
+        _ = try await task.value
     }
 
     @Test("a stop taking the claim mid-operation leaves the operation unsettled")
@@ -244,7 +244,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(coordinator.hasUnsettledOperation(for: instance.id))
 
         suspendingService.resumeSuspended()
-        try await task.value
+        _ = try await task.value
         #expect(!coordinator.hasUnsettledOperation(for: instance.id))
     }
 
@@ -267,7 +267,7 @@ struct VMLifecycleCoordinatorTests {
 
         // Clean up
         suspendingService.resumeSuspended()
-        try await task.value
+        _ = try await task.value
     }
 
     @Test("a serialized operation waits out an owed removable-media reconcile")
@@ -374,7 +374,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(store.discardedIDs.isEmpty)
 
         suspendingService.resumeSuspended()
-        try await task.value
+        _ = try await task.value
     }
 
     @Test("operations on different VMs are allowed concurrently")
@@ -392,11 +392,11 @@ struct VMLifecycleCoordinatorTests {
 
         // A different VM should still be able to start (uses regular mock behavior for second call)
         suspendingService.shouldSuspendOnStart = false
-        try await coordinator.start(instance2)
+        _ = try await coordinator.start(instance2)
 
         // Clean up
         suspendingService.resumeSuspended()
-        try await task.value
+        _ = try await task.value
     }
 
     @Test("lock is released after operation completes successfully")
@@ -404,7 +404,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        try await coordinator.start(instance)
+        _ = try await coordinator.start(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
 
         // A second operation should succeed
@@ -427,7 +427,7 @@ struct VMLifecycleCoordinatorTests {
 
         // Should be able to retry after failure
         virtService.startError = nil
-        try await coordinator.start(instance)
+        _ = try await coordinator.start(instance)
         #expect(virtService.startCallCount == 2)
     }
 
@@ -503,7 +503,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(!coordinator.hasActiveOperation(for: instance.id))
 
         // Should be able to start after failed stop
-        try await coordinator.start(instance)
+        _ = try await coordinator.start(instance)
         #expect(virtService.startCallCount == 1)
     }
 
@@ -532,7 +532,7 @@ struct VMLifecycleCoordinatorTests {
         // Now start a new operation — this should succeed because
         // the stale defer didn't clobber anything
         suspendingService.shouldSuspendOnStart = false
-        try await coordinator.start(instance)
+        _ = try await coordinator.start(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
     }
 

@@ -1835,7 +1835,7 @@ struct VMCreationViewModelTests {
         #expect(intent.username == "ada")
         #expect(intent.logsInAutomatically)
         #expect(intent.enablesRemoteLogin)
-        #expect(vm.guestAccountForCreate == .password("analytical-engine"))
+        #expect(vm.guestAccountPasswordForCreate == "analytical-engine")
     }
 
     @available(macOS 27.0, *)
@@ -1857,7 +1857,7 @@ struct VMCreationViewModelTests {
 
         #expect(vm.buildConfiguration().pendingGuestAccount == nil)
         #expect(vm.unattendedSetupIntent == nil)
-        #expect(vm.guestAccountForCreate == nil)
+        #expect(vm.guestAccountPasswordForCreate == nil)
     }
 
     @available(macOS 27.0, *)

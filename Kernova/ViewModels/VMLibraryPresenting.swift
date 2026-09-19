@@ -36,13 +36,14 @@ struct StartFailedAttachment: Equatable, Sendable {
 /// What the user decided about the account their macOS guest still owes a
 /// password.
 ///
-/// The verb's own two answers, plus the one only a sheet has: walking away.
+/// The two answers a verb takes, plus the one only a sheet has: walking away.
 /// Cancelling is not a third thing to tell the core — it is the absence of a
 /// re-issued start.
 enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
-    /// What the start carries — the password to create the account with, or the
-    /// decision to go without it.
-    case answered(GuestAccountAnswer)
+    /// Create the account, with this password.
+    case password(String)
+    /// Create no account, leaving macOS to ask for one in Setup Assistant.
+    case skip
     /// Don't start at all.
     case cancelled
 
@@ -50,7 +51,8 @@ enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
     /// debugger dump cannot spill it.
     var description: String {
         switch self {
-        case .answered(let answer): "answered(\(answer))"
+        case .password: "password(<redacted>)"
+        case .skip: "skip"
         case .cancelled: "cancelled"
         }
     }
@@ -59,8 +61,8 @@ enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
 /// The one thing a macOS guest still needs to create the account its VM was set
 /// up with: the password no bundle carries.
 ///
-/// The answer writes nothing itself — it goes back to the start that raised it,
-/// which is the one path that spends or retracts the account.
+/// The answer writes nothing itself — the door hands it to the verb that holds
+/// it, and starts again.
 struct GuestAccountPasswordRequest {
     /// What the core is asking about: the VM, the account, and the words.
     let prompt: GuestAccountPrompt

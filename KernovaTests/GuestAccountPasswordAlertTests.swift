@@ -95,7 +95,7 @@ struct GuestAccountPasswordAlertTests {
 
         try #require(configuration.buttons.first).action()
 
-        #expect(answers.answered == [.answered(.password("analytical-engine"))])
+        #expect(answers.answered == [.password("analytical-engine")])
         #expect(answers.retries.isEmpty)
     }
 
@@ -107,7 +107,7 @@ struct GuestAccountPasswordAlertTests {
 
         configuration.buttons[1].action()
 
-        #expect(answers.answered == [.answered(.skip)])
+        #expect(answers.answered == [.skip])
     }
 
     @Test("Cancel answers with no start at all")
@@ -188,8 +188,7 @@ struct GuestAccountPasswordAlertTests {
     @Test("Describing an answer redacts the password it carries")
     func describingAnAnswerRedactsThePassword() {
         let description = String(
-            describing: GuestAccountPasswordAnswer.answered(
-                .password("correct-horse-battery-staple")))
+            describing: GuestAccountPasswordAnswer.password("correct-horse-battery-staple"))
         #expect(!description.contains("correct-horse-battery-staple"))
         #expect(description.contains("<redacted>"))
     }

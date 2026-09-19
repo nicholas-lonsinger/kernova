@@ -9,12 +9,14 @@ import KernovaKit
 /// ``VMCommandEnvelopeRouter`` — so each inherits identical addressing, state
 /// gates, and consent semantics.
 ///
-/// What a verb needs from the caller is a parameter, never a presentation: a
-/// destructive verb called without consent refuses with
-/// ``CommandError/confirmationRequired(_:)``, and a start that would spend a
-/// guest's one account-creating boot refuses with
-/// ``CommandError/guestAccountPasswordRequired(_:)`` — each describing what it
-/// is asking for. Implementations present nothing.
+/// A verb refuses what it needs rather than asking for it, and the refusal says
+/// what that is: a destructive verb called without consent refuses with
+/// ``CommandError/confirmationRequired(_:)``, and a start of a VM still owing
+/// its guest the macOS account it was set up with refuses with
+/// ``CommandError/guestAccountPasswordRequired(_:)``. The first is answered by
+/// re-issuing the call with the consent it takes as a parameter, the second by
+/// the verb that supplies the answer and then a plain start. Implementations
+/// present nothing.
 ///
 /// `@MainActor` is a decision, not an accident: library state is UI-adjacent,
 /// all VZ work already runs on per-VM `VMSession` actors, and command traffic is
@@ -77,28 +79,49 @@ protocol VMCommanding: AnyObject {
     /// Puts nothing in front of the user: a bring-up is not a request to look
     /// at the guest, which is what ``open(_:)`` asks for.
     ///
-    /// `guestAccount` answers for the macOS account the VM owes its guest, the
-    /// second thing a verb takes as a parameter rather than gathering. A VM
-    /// that owes one and is answered `nil` refuses with
-    /// ``CommandError/guestAccountPasswordRequired(_:)``, which each door turns
-    /// into the question it can ask (``VMConsentPolicy``).
-    func start(
-        _ selector: VMSelector, recovery: Bool, guestAccount: GuestAccountAnswer?
+    /// A VM still owing its guest the macOS account it was set up with refuses
+    /// with ``CommandError/guestAccountPasswordRequired(_:)``, which each door
+    /// turns into the question it can ask (``VMConsentPolicy``) and answers with
+    /// ``provideGuestAccountPassword(_:password:)`` or
+    /// ``skipGuestAccount(_:)`` before starting again. A recovery boot asks
+    /// nothing: it is not the boot macOS reads an account on.
+    func start(_ selector: VMSelector, recovery: Bool) async throws
+
+    /// Detaches the attachment a failed start named, leaving the file itself
+    /// untouched — the removal half of the start-failed alert's offer.
+    ///
+    /// Starts nothing: a caller that wants the VM running follows this with
+    /// ``start(_:recovery:)``.
+    ///
+    /// A VM that has left the library and an entry already gone are both quiet
+    /// no-ops: what the removal was for is already true, so neither is a failure
+    /// to report.
+    func removeStartFailedAttachment(
+        _ selector: VMSelector, attachment: StartFailedAttachment
     ) async throws
 
-    /// Detaches the attachment a failed start named and starts again — the
-    /// confirmed action of the start-failed alert.
+    /// Holds `password` as the answer for the macOS account the VM owes its
+    /// guest, so the next start creates it.
     ///
-    /// The file behind the attachment is untouched. A VM that has left the
-    /// library and an entry already removed are both no-ops: alerts are
-    /// serialized, so the confirmation can arrive long after the failed start.
+    /// Refuses ``CommandError/invalidArgument(_:)`` with Virtualization's own
+    /// wording for a password macOS will not take, and for a VM that owes no
+    /// account — there is nothing for the password to complete. Sets or
+    /// replaces: an answer lost with the start that failed to spend it is
+    /// supplied again the same way.
     ///
-    /// Throws what the start it chains refuses with, so the door that gathered
-    /// the consent for the removal can gather what that start asks for too.
-    func removeStartFailedAttachmentAndStart(
-        _ selector: VMSelector, attachment: StartFailedAttachment,
-        guestAccount: GuestAccountAnswer?
-    ) async throws
+    /// In process only, as ``skipGuestAccount(_:)`` is: a password crossing a
+    /// transport would be written into whatever the client keeps — a script's
+    /// source, a shortcut's saved parameters, a shell history — so the app's own
+    /// sheet is the one surface that gathers it.
+    func provideGuestAccountPassword(_ selector: VMSelector, password: String) throws
+
+    /// Ends the macOS account the VM owes its guest, so the next start creates
+    /// none and asks nothing.
+    ///
+    /// macOS asks for an account in Setup Assistant instead. Refuses a VM that
+    /// owes none, as ``provideGuestAccountPassword(_:password:)`` does, and is
+    /// in process for the reason stated there: the two are one answer.
+    func skipGuestAccount(_ selector: VMSelector) throws
 
     /// Cancels the guest setup a first start is running — a macOS install, or a
     /// Linux installer image being fetched or verified.
@@ -124,7 +147,7 @@ protocol VMCommanding: AnyObject {
 
     func pause(_ selector: VMSelector) async throws
 
-    /// Resumes the VM, presenting nothing as ``start(_:recovery:guestAccount:)`` does — and
+    /// Resumes the VM, presenting nothing as ``start(_:recovery:)`` does — and
     /// joining a restore already in flight the same way.
     func resume(_ selector: VMSelector) async throws
 
@@ -132,7 +155,7 @@ protocol VMCommanding: AnyObject {
     func suspend(_ selector: VMSelector) async throws
 
     /// Shuts the guest down and starts it again once it has powered off,
-    /// bringing it back up the way ``start(_:recovery:guestAccount:)`` would.
+    /// bringing it back up the way ``start(_:recovery:)`` would.
     ///
     /// `timeout` seconds bounds the shutdown half alone. A guest still up when
     /// it expires refuses with ``CommandError/timedOut(vm:verb:seconds:)`` and
@@ -182,14 +205,20 @@ protocol VMCommanding: AnyObject {
     /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
     /// write starts nothing.
     ///
-    /// `guestAccount` is the answer the chained start carries for the account
-    /// `configuration` names, and is dropped along with the call when nothing
-    /// is started: a bundle on disk holds no secret, and the next Start asks
-    /// for one.
+    /// `guestAccountPassword` answers for the macOS account `configuration`
+    /// names, and is held for the VM as
+    /// ``provideGuestAccountPassword(_:password:)`` holds one — whether or not
+    /// anything is started, so a Start taken later in the session asks nothing
+    /// either. A parameter rather than a call the caller makes afterwards
+    /// because the chained start is this verb's own, and one it refused would
+    /// reach the user as a failure nobody asked for.
+    ///
+    /// Refuses what that verb refuses: a password macOS will not take, and one
+    /// given for a configuration naming no account.
     @discardableResult
     func create(
         configuration: VMConfiguration, startAfterCreate: Bool,
-        guestAccount: GuestAccountAnswer?
+        guestAccountPassword: String?
     ) throws -> VMSummary
 
     /// Copies the VM's bundle into a new one, answering the row the copy fills.

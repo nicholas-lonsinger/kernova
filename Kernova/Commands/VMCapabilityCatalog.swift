@@ -331,29 +331,76 @@ struct VMCapabilityCatalog {
         return instance.ephemeralBaselineSnapshot == nil ? .discardSavedState : .revertToBaseline
     }
 
-    /// The verb a bring-up nobody is present for brings a VM up with.
-    enum UnattendedBringUp: Equatable {
+    /// The verb that brings a VM back up.
+    enum BringUpVerb: Equatable {
         case start
         case resume
     }
 
-    /// What a bring-up nobody is present for may do with this VM, or `nil`.
+    /// Which verb brings `instance` back up, or `nil` when its state admits
+    /// neither.
     ///
-    /// A start that runs guest setup — the macOS install or the Linux image
-    /// download — is refused here: neither may begin unattended. A live-paused
-    /// VM is refused too: it takes a resume, but its memory never left the
-    /// host, so there is no bring-up owed.
-    ///
-    /// So is a VM whose start would ask about the macOS account it owes its
-    /// guest: a start that asks a question is not a bring-up nobody is present
-    /// for. Refused here rather than left to the verb's own refusal, because a
-    /// pass that runs at login has no window for the alert that refusal earns.
-    func unattendedBringUp(for instance: VMInstance) -> UnattendedBringUp? {
-        guard instance.configuration.pendingGuestSetup == nil,
-            !instance.startAsksForGuestAccount
-        else { return nil }
+    /// A cold-paused VM is resumed: its memory is in the bundle's suspend slot,
+    /// and a boot would discard it. A live-paused one is neither — its memory
+    /// never left the host, so there is no bring-up owed.
+    func bringUpVerb(for instance: VMInstance) -> BringUpVerb? {
         if isAvailable(.resume, on: instance), instance.isColdPaused { return .resume }
         return isAvailable(.start, on: instance) ? .start : nil
+    }
+
+    /// What a bring-up taken from a standing preference rather than a command
+    /// may do with this VM, or `nil`.
+    ///
+    /// The launch pass acts on ``VMConfiguration/startsAutomaticallyOnLaunch``,
+    /// so it begins no guest setup and raises no question: a VM with a macOS
+    /// install or a Linux image download still to run is passed over, and so is
+    /// one still owing its guest an account answer
+    /// (``owesGuestAccountAnswer(_:)``). Both are decided here rather than left
+    /// to the verb, because the pass has no window for what either would put on
+    /// screen.
+    func standingBringUp(for instance: VMInstance) -> BringUpVerb? {
+        guard instance.configuration.pendingGuestSetup == nil,
+            !owesGuestAccountAnswer(instance)
+        else { return nil }
+        return bringUpVerb(for: instance)
+    }
+
+    /// Where a VM stands on the macOS account it was set up with.
+    enum GuestAccountState: Equatable {
+        /// Nothing to create: the VM names no account, or this host's
+        /// Virtualization can deliver none.
+        case none
+        /// The account is named and nobody has supplied its password.
+        case owed(GuestAccountIntent)
+        /// The account is named and answered for.
+        case answered(GuestAccountIntent, GuestAccountPassword)
+    }
+
+    /// What `instance` still owes its guest about that account, and what has been
+    /// supplied for it.
+    ///
+    /// The one spelling of the three facts every reader needs some part of: the
+    /// VM names an account, this host's Virtualization can deliver one, and
+    /// somebody has supplied the password. macOS reads the account on the first
+    /// boot after restore and on no other, so a boot carrying none does not
+    /// postpone it — it destroys it, which is why a start refuses
+    /// ``GuestAccountState/owed(_:)`` rather than proceeding
+    /// (``CommandError/guestAccountPasswordRequired(_:)``).
+    func guestAccountState(of instance: VMInstance) -> GuestAccountState {
+        guard MacOSGuestProvisioning.hostSupportsProvisioning,
+            let account = instance.configuration.pendingGuestAccount
+        else { return .none }
+        guard let password = library.heldGuestAccountPassword(for: instance) else {
+            return .owed(account)
+        }
+        return .answered(account, password)
+    }
+
+    /// Whether `instance` has the account question outstanding — what a surface
+    /// deciding whether to raise it reads.
+    func owesGuestAccountAnswer(_ instance: VMInstance) -> Bool {
+        guard case .owed = guestAccountState(of: instance) else { return false }
+        return true
     }
 
     /// Whether the stop slot can be invoked now.
@@ -388,7 +435,7 @@ struct VMCapabilityCatalog {
         case .start:
             // A start committed against a VM already coming up is asking for the
             // state that bring-up is producing, so it joins it
-            // (``VMCommandCore/start(_:recovery:guestAccount:)``) rather than refusing a VM
+            // (``VMCommandCore/start(_:recovery:)``) rather than refusing a VM
             // on its way to running. Both bring-up phases count:
             // a boot with a save file passes through `.starting` into
             // `.restoringSavedState` before its first await, so the restore is

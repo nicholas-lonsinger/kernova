@@ -150,9 +150,7 @@ struct VMCommandEnvelopeRouter {
                     recovery: nil))
 
         case .start(let selector, let recovery):
-            // A wire caller has no way to answer for a guest account, so the
-            // refusal naming one is what it gets.
-            try await commands.start(selector, recovery: recovery, guestAccount: nil)
+            try await commands.start(selector, recovery: recovery)
             return .ok
         case .cancelGuestSetup(let selector, let confirmed):
             try commands.cancelGuestSetup(selector, confirmed: confirmed)

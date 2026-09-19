@@ -1,24 +1,61 @@
 import Foundation
 
+/// How a start reached the guest — decided by the VM's state as the start read
+/// it, and reported so no caller has to predict it.
+///
+/// A restore consumes the save file, so once the start is over nothing
+/// distinguishes the three; the start that took the branch is the only thing
+/// that can say which it was.
+enum GuestStartRoute: Equatable, Sendable {
+    /// Booted the guest from its disks.
+    case coldBoot
+    /// The cold boot a `bootIntoRecovery` start performs, carrying the same
+    /// caveat that flag does: only a macOS guest comes up in Recovery.
+    case recoveryBoot
+    /// Restored the guest from the bundle's suspend slot, continuing the session
+    /// saved there.
+    case restoredSavedState
+
+    /// Which route a start of `instance` takes.
+    ///
+    /// The one derivation: a start branches *on* this rather than deciding the
+    /// same thing twice, so what it answers cannot disagree with what it did.
+    @MainActor
+    init(startOf instance: VMInstance, bootIntoRecovery: Bool) {
+        guard !instance.hasSaveFile else {
+            self = .restoredSavedState
+            return
+        }
+        self = bootIntoRecovery ? .recoveryBoot : .coldBoot
+    }
+
+    /// Whether this route carries the guest's provisioning options, which
+    /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
+    /// states only one of the three can.
+    var deliversGuestProvisioning: Bool { self == .coldBoot }
+}
+
 /// Abstraction for VM lifecycle operations (start, stop, pause, resume, save).
 ///
 /// Restore has no entry point of its own — `start` and `resume` restore from a
 /// save file when one exists.
 @MainActor
 protocol VirtualizationProviding: Sendable {
-    /// Starts a virtual machine.
+    /// Starts a virtual machine, answering how it reached the guest.
     ///
     /// `bootIntoRecovery` cold-boots a macOS guest into Recovery for this launch
     /// only; it is ignored for Linux guests and for restore-from-save paths.
     ///
-    /// `provisioning` is the macOS account this boot creates inside the guest,
-    /// carried by the call rather than held anywhere: the password exists for
-    /// the start that supplied it and for nothing else. Ignored on the same two
-    /// paths, which create no account.
+    /// `provisioning` is the macOS account this boot creates inside the guest.
+    /// Ignored on the same two paths, which create no account.
+    ///
+    /// Answers the route on every start that reached the guest, the one whose
+    /// session was released before it settled included: the guest came up either
+    /// way, and that is what the route reports.
     func start(
         _ instance: VMInstance, bootIntoRecovery: Bool,
         provisioning: GuestProvisioningCredentials?
-    ) async throws
+    ) async throws -> GuestStartRoute
     func stop(_ instance: VMInstance) async throws
     func forceStop(_ instance: VMInstance) async throws
     func pause(_ instance: VMInstance) async throws

@@ -44,7 +44,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     ///
     /// The start that raises one suspends on the answer, so a recorded-and-left
     /// request would hang the call under test rather than fail it.
-    var guestAccountPasswordAnswer: GuestAccountPasswordAnswer = .answered(.skip)
+    var guestAccountPasswordAnswer: GuestAccountPasswordAnswer = .skip
     private(set) var focusGuestDisplayInstances: [VMInstance] = []
 
     func presentError(_ message: String, title: String) {

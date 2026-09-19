@@ -543,26 +543,27 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isApplicable(.showClipboard, to: instance))
     }
 
-    // MARK: - Unattended bring-up
+    // MARK: - Bring-up
 
     @Test(
-        "An unattended bring-up boots a resting VM and restores a suspended one",
+        "The bring-up verb boots a resting VM and restores a suspended one",
         arguments: [
-            (VMLifecyclePhase.stopped, VMCapabilityCatalog.UnattendedBringUp.start),
+            (VMLifecyclePhase.stopped, VMCapabilityCatalog.BringUpVerb.start),
             (.failed(message: "Boot failed."), .start),
             (.suspended, .resume),
-        ] as [(VMLifecyclePhase, VMCapabilityCatalog.UnattendedBringUp)])
-    func unattendedBringUpByPhase(
-        phase: VMLifecyclePhase, expected: VMCapabilityCatalog.UnattendedBringUp
-    ) {
+        ] as [(VMLifecyclePhase, VMCapabilityCatalog.BringUpVerb)])
+    func bringUpVerbByPhase(phase: VMLifecyclePhase, expected: VMCapabilityCatalog.BringUpVerb) {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: phase)
 
-        #expect(harness.catalog.unattendedBringUp(for: instance) == expected)
+        #expect(harness.catalog.bringUpVerb(for: instance) == expected)
+        // The standing pass adds guards on top of this one and changes nothing
+        // else, so a VM with neither of them outstanding answers the same.
+        #expect(harness.catalog.standingBringUp(for: instance) == expected)
     }
 
     @Test(
-        "No phase that is already live, or on its way somewhere, takes an unattended bring-up",
+        "No phase that is already live, or on its way somewhere, has a bring-up owed",
         arguments: [
             VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session),
             // Live-paused: the VZ object is already in memory, so there is
@@ -573,42 +574,72 @@ struct VMCapabilityCatalogTests {
             .revertingToSnapshot,
             .installing(sessionID: VMLifecyclePhaseFixtures.session),
         ])
-    func unattendedBringUpRefusesLivePhases(phase: VMLifecyclePhase) {
+    func bringUpVerbRefusesLivePhases(phase: VMLifecyclePhase) {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: phase)
 
-        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+        #expect(harness.catalog.bringUpVerb(for: instance) == nil)
+        #expect(harness.catalog.standingBringUp(for: instance) == nil)
     }
 
     /// A start here runs the macOS install or the Linux image download, and
-    /// neither may begin with nobody at the machine. The context decides, not
+    /// neither may begin from a standing preference. The context decides, not
     /// the phase: a failed install keeps its context at `.failed`, where the
     /// phase alone reads as an ordinary boot retry.
     @Test(
-        "A VM that has yet to finish guest setup takes no unattended bring-up",
+        "A VM that has yet to finish guest setup takes no standing bring-up",
         arguments: [
             VMLifecyclePhase.initialBoot,
             .failed(message: "Install failed."),
             .stopped,
         ])
-    func unattendedBringUpRefusesPendingSetup(phase: VMLifecyclePhase) {
+    func standingBringUpRefusesPendingSetup(phase: VMLifecyclePhase) {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: phase)
         instance.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
 
         #expect(instance.configuration.pendingGuestSetup != nil)
-        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+        #expect(harness.catalog.standingBringUp(for: instance) == nil)
+        // A commanded bring-up is not blocked by it: the verb runs the setup and
+        // chains the boot.
+        #expect(harness.catalog.bringUpVerb(for: instance) != nil)
     }
 
-    @Test("A bundle still being copied takes no unattended bring-up")
-    func unattendedBringUpRefusesPreparing() {
+    @Test("A bundle still being copied has no bring-up to offer")
+    func bringUpVerbRefusesPreparing() {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .stopped)
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
 
-        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+        #expect(harness.catalog.bringUpVerb(for: instance) == nil)
+        #expect(harness.catalog.standingBringUp(for: instance) == nil)
+    }
+
+    // MARK: - The guest account
+
+    @available(macOS 27.0, *)
+    @Test("The account state walks from nothing, through owed, to answered")
+    func guestAccountStateWalksItsThreeStandings() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
+        let intent = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+
+        #expect(harness.catalog.guestAccountState(of: instance) == .none)
+
+        instance.configuration.pendingGuestAccount = intent
+        #expect(harness.catalog.guestAccountState(of: instance) == .owed(intent))
+        #expect(harness.catalog.owesGuestAccountAnswer(instance))
+
+        harness.library.holdGuestAccountPassword(
+            GuestAccountPassword("analytical-engine"), for: instance)
+        #expect(
+            harness.catalog.guestAccountState(of: instance)
+                == .answered(intent, GuestAccountPassword("analytical-engine")))
+        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
     }
 
     /// The pass reads the same predicate the verb does, so a VM whose start
@@ -616,19 +647,70 @@ struct VMCapabilityCatalogTests {
     /// login with no window to alert in.
     @available(macOS 27.0, *)
     @Test(
-        "A VM whose start would ask about its guest account takes no unattended bring-up",
+        "A VM still owing its guest an account answer takes no standing bring-up",
         arguments: [VMLifecyclePhase.stopped, .suspended, .failed(message: "Boot failed.")])
-    func unattendedBringUpRefusesAnOutstandingAccount(phase: VMLifecyclePhase) {
+    func standingBringUpRefusesAnOwedAccount(phase: VMLifecyclePhase) {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS)
         // Answered first, to show the phase alone would have brought it up.
-        #expect(harness.catalog.unattendedBringUp(for: instance) != nil)
+        #expect(harness.catalog.standingBringUp(for: instance) != nil)
 
         instance.configuration.pendingGuestAccount = GuestAccountIntent(
             fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
             enablesRemoteLogin: false)
 
-        #expect(instance.startAsksForGuestAccount)
-        #expect(harness.catalog.unattendedBringUp(for: instance) == nil)
+        #expect(harness.catalog.owesGuestAccountAnswer(instance))
+        #expect(harness.catalog.standingBringUp(for: instance) == nil)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A VM whose account answer is held owes nothing, and takes the standing bring-up")
+    func standingBringUpAdmitsAnAnsweredAccount() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
+        instance.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        #expect(harness.catalog.standingBringUp(for: instance) == nil)
+
+        harness.library.holdGuestAccountPassword(
+            GuestAccountPassword("analytical-engine"), for: instance)
+
+        // The intent is still there — the boot has yet to spend it — but there is
+        // no question left to raise, which is the whole of what the pass avoids.
+        #expect(instance.configuration.pendingGuestAccount != nil)
+        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
+        #expect(harness.catalog.standingBringUp(for: instance) == .start)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A retraction leaves nothing owed and nothing held")
+    func retractingEndsBothHalves() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
+        instance.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        harness.library.holdGuestAccountPassword(
+            GuestAccountPassword("analytical-engine"), for: instance)
+
+        harness.library.retractGuestAccount(for: instance)
+
+        // Not "asks again": the window is gone, so the question is gone with it.
+        #expect(instance.configuration.pendingGuestAccount == nil)
+        #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
+        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
+    }
+
+    @available(macOS 27.0, *)
+    @Test("Retracting an account a VM never owed writes nothing")
+    func retractingWithoutAnAccountWritesNothing() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
+        let writesBefore = harness.storage.saveConfigurationCallCount
+
+        harness.library.retractGuestAccount(for: instance)
+
+        #expect(harness.storage.saveConfigurationCallCount == writesBefore)
     }
 }

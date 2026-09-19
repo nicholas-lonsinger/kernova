@@ -91,9 +91,12 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     func start(
         _ instance: VMInstance, bootIntoRecovery: Bool = false,
         provisioning: GuestProvisioningCredentials? = nil
-    ) async throws {
+    ) async throws -> GuestStartRoute {
         startCallCount += 1
         lastStartProvisioning = provisioning
+        // Read before the suspension, as the real service decides it before its
+        // first await.
+        let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
         // Before the suspension, as the real service enters it before its first
         // await: a start in flight is what every other caller reads off the VM.
         instance.enter(.starting(sessionID: nil))
@@ -107,6 +110,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
             throw error
         }
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
+        return route
     }
 
     func stop(_ instance: VMInstance) async throws {

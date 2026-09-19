@@ -30,6 +30,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     private let usbPairingStore: any USBAccessoryPairingStoring
     private let lifecycle: VMLifecycleCoordinator
 
+    /// Where each VM's answer for the account it owes its guest is held — the
+    /// half of that account no bundle carries.
+    private let guestAccountPasswords: any GuestAccountPasswordStoring
+
     private let fileSystem: any FileSystemOperating
 
     private let preferences: AppPreferences
@@ -180,11 +184,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
         isVMNetworkingEntitled: Bool,
-        usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore()
+        usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore(),
+        guestAccountPasswords: any GuestAccountPasswordStoring =
+            InMemoryGuestAccountPasswordStore()
     ) {
         self.storageService = storageService
         self.snapshotStore = snapshotStore
         self.usbPairingStore = usbPairingStore
+        self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.fileSystem = fileSystem
         self.preferences = preferences
@@ -636,6 +643,45 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // address, so the next VM created can be handed both.
         networkSlots.releaseSlots(for: instance.configuration, bundleIsGone: bundleIsGone)
         networkSlots.rebuildNetworksIfIdle()
+        // Nothing left can ask for the account, so nothing may still hold the
+        // answer — whichever way the VM left, and whether or not its bundle
+        // survived the departure.
+        guestAccountPasswords.remove(for: instance.id)
+    }
+
+    // MARK: - Guest Account
+
+    /// The password held for the account `instance` owes its guest, or `nil`
+    /// when nobody has answered for it yet.
+    func heldGuestAccountPassword(for instance: VMInstance) -> GuestAccountPassword? {
+        guestAccountPasswords.password(for: instance.id)
+    }
+
+    /// Holds `password` as the answer for the account `instance` owes its
+    /// guest, replacing whatever was held.
+    func holdGuestAccountPassword(_ password: GuestAccountPassword, for instance: VMInstance) {
+        guestAccountPasswords.set(password, for: instance.id)
+    }
+
+    /// Ends the account `instance` owes its guest: the persisted intent and the
+    /// held password, together.
+    ///
+    /// One call for both halves, because either left behind outlives the account
+    /// it describes — the intent as a question about an account that can never be
+    /// created, the password as a secret nothing will ever spend.
+    func retractGuestAccount(for instance: VMInstance) {
+        guestAccountPasswords.remove(for: instance.id)
+        guard instance.configuration.pendingGuestAccount != nil else { return }
+        if !updateConfiguration(of: instance, mutate: { $0.pendingGuestAccount = nil }) {
+            // Memory and disk now disagree, and disk is what the next launch
+            // reads: the bundle still names an account whose window this boot
+            // spent, so a later start asks for one macOS will no longer create.
+            // The write reported its own failure to the user.
+            #log(
+                Self.logger, .warning,
+                "The guest account for '\(instance.name, privacy: .public)' stays in its bundle — the retraction did not reach disk, so a later start asks for an account whose boot window is spent"
+            )
+        }
     }
 
     // MARK: - Reorder

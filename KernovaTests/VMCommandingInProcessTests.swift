@@ -76,18 +76,31 @@ struct VMCommandingInProcessTests {
         }
     }
 
-    @Test("removeStartFailedAttachmentAndStart carries the attachment its selector names")
+    @Test("removeStartFailedAttachment carries the attachment its selector names")
     func recoveryCarriesItsAttachment() async throws {
         let (commands, mock, vm) = makeFacade()
         let failure = StartFailedAttachment(
             kind: .removableMedia, id: UUID(), label: "Installer", message: "could not open")
 
-        try await commands.removeStartFailedAttachmentAndStart(
-            .id(vm.id), attachment: failure, guestAccount: .skip)
+        try await commands.removeStartFailedAttachment(.id(vm.id), attachment: failure)
 
         let call = try #require(mock.removeStartFailedAttachmentCalls.first)
         #expect(call.selector == .id(vm.id))
         #expect(call.attachment == failure)
-        #expect(call.guestAccount == .skip)
+        // The removal is the whole verb — nothing was started.
+        #expect(mock.startCalls.isEmpty)
+    }
+
+    @Test("The two account-answering verbs reach the facade with what they carry")
+    func accountAnsweringVerbsReachTheFacade() throws {
+        let (commands, mock, vm) = makeFacade()
+
+        try commands.provideGuestAccountPassword(.id(vm.id), password: "analytical-engine")
+        try commands.skipGuestAccount(.id(vm.id))
+
+        let provided = try #require(mock.provideGuestAccountPasswordCalls.first)
+        #expect(provided.selector == .id(vm.id))
+        #expect(provided.password == "analytical-engine")
+        #expect(mock.skipGuestAccountSelectors == [.id(vm.id)])
     }
 }

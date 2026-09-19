@@ -120,10 +120,10 @@ final class MockVMCommanding: VMCommanding {
     private(set) var externalAttachmentsSelectors: [VMSelector] = []
     private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
         []
-    private(set) var removeStartFailedAttachmentCalls:
-        [(selector: VMSelector, attachment: StartFailedAttachment, guestAccount: GuestAccountAnswer?)] =
-            []
-    private(set) var startCalls: [(selector: VMSelector, recovery: Bool, guestAccount: GuestAccountAnswer?)] = []
+    private(set) var removeStartFailedAttachmentCalls: [(selector: VMSelector, attachment: StartFailedAttachment)] = []
+    private(set) var startCalls: [(selector: VMSelector, recovery: Bool)] = []
+    private(set) var provideGuestAccountPasswordCalls: [(selector: VMSelector, password: String)] = []
+    private(set) var skipGuestAccountSelectors: [VMSelector] = []
     private(set) var stopCalls:
         [(
             selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
@@ -146,7 +146,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var setSnapshotNotesCalls: [(selector: VMSelector, snapshot: UUID, notes: String)] =
         []
     private(set) var createCalls:
-        [(configuration: VMConfiguration, startAfterCreate: Bool, guestAccount: GuestAccountAnswer?)] =
+        [(configuration: VMConfiguration, startAfterCreate: Bool, guestAccountPassword: String?)] =
             []
     private(set) var cloneCalls: [(selector: VMSelector, machineIdentity: CloneMachineIdentity)] = []
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
@@ -207,9 +207,16 @@ final class MockVMCommanding: VMCommanding {
     var externalAttachmentsError: (any Error)?
     var sharingVMNamesError: (any Error)?
     var startError: (any Error)?
-    /// What an unanswered start refuses with, mirroring the core's own gate;
-    /// `nil` leaves the account out of the picture entirely.
+    /// What a start of a VM still owing an account answer refuses with,
+    /// mirroring the core's own gate; `nil` leaves the account out of the
+    /// picture entirely. Cleared by either answering verb, so the loop's second
+    /// pass gets through exactly as it does against the core.
     var guestAccountPrompt: GuestAccountPrompt?
+    /// What ``provideGuestAccountPassword(_:password:)`` refuses with — the
+    /// password macOS turned down, for a door that has no validator of its own.
+    var provideGuestAccountPasswordError: (any Error)?
+    var skipGuestAccountError: (any Error)?
+    var removeStartFailedAttachmentError: (any Error)?
     var stopError: (any Error)?
     var pauseError: (any Error)?
     var resumeError: (any Error)?
@@ -374,24 +381,31 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Lifecycle
 
-    func start(
-        _ selector: VMSelector, recovery: Bool, guestAccount: GuestAccountAnswer?
-    ) async throws {
-        startCalls.append((selector, recovery, guestAccount))
-        if let guestAccountPrompt, guestAccount == nil, !recovery {
+    func start(_ selector: VMSelector, recovery: Bool) async throws {
+        startCalls.append((selector, recovery))
+        if let guestAccountPrompt, !recovery {
             throw CommandError.guestAccountPasswordRequired(guestAccountPrompt)
         }
         if let startError { throw startError }
     }
 
-    func removeStartFailedAttachmentAndStart(
-        _ selector: VMSelector, attachment: StartFailedAttachment,
-        guestAccount: GuestAccountAnswer?
+    func removeStartFailedAttachment(
+        _ selector: VMSelector, attachment: StartFailedAttachment
     ) async throws {
-        removeStartFailedAttachmentCalls.append((selector, attachment, guestAccount))
-        if let guestAccountPrompt, guestAccount == nil {
-            throw CommandError.guestAccountPasswordRequired(guestAccountPrompt)
-        }
+        removeStartFailedAttachmentCalls.append((selector, attachment))
+        if let removeStartFailedAttachmentError { throw removeStartFailedAttachmentError }
+    }
+
+    func provideGuestAccountPassword(_ selector: VMSelector, password: String) throws {
+        provideGuestAccountPasswordCalls.append((selector, password))
+        if let provideGuestAccountPasswordError { throw provideGuestAccountPasswordError }
+        guestAccountPrompt = nil
+    }
+
+    func skipGuestAccount(_ selector: VMSelector) throws {
+        skipGuestAccountSelectors.append(selector)
+        if let skipGuestAccountError { throw skipGuestAccountError }
+        guestAccountPrompt = nil
     }
 
     func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
@@ -494,9 +508,9 @@ final class MockVMCommanding: VMCommanding {
 
     func create(
         configuration: VMConfiguration, startAfterCreate: Bool,
-        guestAccount: GuestAccountAnswer?
+        guestAccountPassword: String?
     ) throws -> VMSummary {
-        createCalls.append((configuration, startAfterCreate, guestAccount))
+        createCalls.append((configuration, startAfterCreate, guestAccountPassword))
         if let createError { throw createError }
         // The core registers the new VM's phantom row before answering, so a
         // caller that reads it back on the same turn finds it.

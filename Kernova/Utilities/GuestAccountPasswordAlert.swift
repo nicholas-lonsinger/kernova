@@ -154,9 +154,9 @@ enum GuestAccountPasswordAlert {
                         retry(refusal)
                         return
                     }
-                    answer(.answered(.password(fields.password)))
+                    answer(.password(fields.password))
                 },
-                AlertButton("Skip Setup") { answer(.answered(.skip)) },
+                AlertButton("Skip Setup") { answer(.skip) },
                 AlertButton("Cancel", role: .cancel) { answer(.cancelled) },
             ],
             accessoryView: fields,
