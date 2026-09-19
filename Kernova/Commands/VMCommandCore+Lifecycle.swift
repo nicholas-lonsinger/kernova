@@ -159,12 +159,16 @@ extension VMCommandCore {
     /// that came up, so a start that fails before one leaves both halves where
     /// they were and its retry neither asks again nor has to.
     ///
-    /// A recovery boot carries no account and spends no window, so it reads
-    /// nothing.
+    /// Only the cold boot ``GuestStartRoute/deliversGuestProvisioning`` names
+    /// reads anything: a recovery boot and a restore both carry no account and
+    /// spend no window, so neither asks for one — and the question is put to
+    /// the same route derivation the start itself branches on, so what is read
+    /// here and what the boot does cannot disagree.
     private func guestProvisioning(
         for instance: VMInstance, recovery: Bool
     ) throws -> GuestProvisioningCredentials? {
-        guard !recovery else { return nil }
+        let route = GuestStartRoute(startOf: instance, bootIntoRecovery: recovery)
+        guard route.deliversGuestProvisioning else { return nil }
         switch capabilities.guestAccountState(of: instance) {
         case .none:
             return nil
@@ -762,6 +766,13 @@ extension VMCommandCore {
         } else if discardsSavedState {
             message =
                 "\u{201C}\(instance.name)\u{201D} has its state saved to disk. Discarding will permanently delete the saved state."
+        } else if instance.hasSaveFile, !instance.phase.isWritingSuspendSlot {
+            // A bring-up terminated before its restore resumed leaves the slot
+            // it was loading, so the VM goes back to the session it was coming
+            // up on. A save is the exception this excludes: the slot it is
+            // part-way through writing goes with the termination.
+            message =
+                "\u{201C}\(instance.name)\u{201D} will be immediately terminated. Its saved state is kept, so it returns to being suspended."
         } else {
             message =
                 "\u{201C}\(instance.name)\u{201D} will be immediately terminated. Any unsaved data inside the guest will be lost."
@@ -869,7 +880,7 @@ extension VMCommandCore {
     /// power-off is what a `timeout` bounds; without one it is unbounded,
     /// matching what a graceful shutdown means — a guest that will not go down
     /// is neither restarted nor terminated behind the user's back. The settle
-    /// after it is always unbounded: `resetToStopped()` fires the power-off hook
+    /// after it is always unbounded: `restAfterPowerOff()` fires the power-off hook
     /// a turn after the status, so an Ephemeral VM's baseline revert registers
     /// there, and bringing the VM up mid-revert would either be refused as busy
     /// or boot off disks the revert is still overwriting. No guest can withhold

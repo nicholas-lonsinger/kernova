@@ -23,6 +23,13 @@ enum GuestStartRoute: Equatable, Sendable {
     @MainActor
     init(startOf instance: VMInstance, bootIntoRecovery: Bool) {
         guard !instance.hasSaveFile else {
+            // A saved state names the session the guest comes back on, so no
+            // cold boot happens here — Recovery included.
+            // ``VMInstance/canStartInRecovery`` refuses a VM holding one, so a
+            // request carrying the flag reached this past a gate that should
+            // have turned it back.
+            assert(
+                !bootIntoRecovery, "A Recovery boot was asked of a VM holding a saved state")
             self = .restoredSavedState
             return
         }

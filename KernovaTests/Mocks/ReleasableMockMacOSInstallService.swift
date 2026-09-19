@@ -56,7 +56,7 @@ final class ReleasableMockMacOSInstallService: MacOSInstallProviding {
         }
         // Mirrors `MockMacOSInstallService`: the real service leaves the VM
         // released and stopped before the caller chains its auto-boot.
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
         return installedImage
     }
 }

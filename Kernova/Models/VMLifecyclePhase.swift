@@ -234,6 +234,16 @@ enum VMLifecyclePhase: Sendable, Equatable {
     /// Whether the guest's memory can be written to the bundle's suspend slot.
     var canSave: Bool { hasLiveSession }
 
+    /// Whether the bundle's suspend slot is being written right now.
+    ///
+    /// The window in which a slot on disk is however far VZ has got
+    /// (``terminationMustWaitOut``): a file to drop rather than a session
+    /// anything may offer.
+    var isWritingSuspendSlot: Bool {
+        if case .saving = self { return true }
+        return false
+    }
+
     var canRename: Bool { !isTransitioning }
 
     /// Whether a rename committed in this phase survives.

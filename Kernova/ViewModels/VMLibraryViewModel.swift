@@ -411,12 +411,15 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// How a start failed: with an attachment the alert can offer to detach,
+    /// How a bring-up failed: with an attachment the alert can offer to detach,
     /// or with only a message to show.
     ///
-    /// One case for every start failure, so the status item reports each of
-    /// them — a guest cap or a duplicate identity refuses a start as surely as
-    /// a missing disk image, and a headless launch has no other way to say so.
+    /// The attachment case carries either bring-up, because both assemble the
+    /// same configuration — a resume restoring a saved state fails over a
+    /// missing disk exactly as a boot does. The message case is the start's:
+    /// every start failure reaches the status item through it, a guest cap or
+    /// a duplicate identity as surely as a missing disk image, and a headless
+    /// launch has no other way to say so.
     private enum StartFailure {
         case attachment(StartFailedAttachment)
         case message(title: String, message: String)

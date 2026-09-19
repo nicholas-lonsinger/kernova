@@ -259,7 +259,7 @@ final class VMInstance {
     /// that can only run while no VM holds the resource it touches.
     @ObservationIgnored var onSessionTornDown: (@MainActor () -> Void)?
 
-    /// Fired from ``resetToStopped()`` — the guest powering off, however it got
+    /// Fired from ``restAfterPowerOff()`` — the guest powering off, however it got
     /// there: a graceful shutdown from inside, Stop, or Force Stop.
     ///
     /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler reverts an
@@ -425,8 +425,32 @@ final class VMInstance {
     var hardwareModelURL: URL { bundleLayout.hardwareModelURL }
     var machineIdentifierURL: URL { bundleLayout.machineIdentifierURL }
     var saveFileURL: URL { bundleLayout.saveFileURL }
-    var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
+
+    /// `true` while `savedStateReadsAsDiscarded` is standing in for the file —
+    /// see ``answeringAsIfSavedStateDiscarded(_:)``.
+    @ObservationIgnored private var savedStateReadsAsDiscarded = false
+
+    /// Whether the bundle holds a suspend slot.
+    ///
+    /// Reads the file, except inside ``answeringAsIfSavedStateDiscarded(_:)``.
+    var hasSaveFile: Bool { !savedStateReadsAsDiscarded && bundleLayout.hasSaveFile }
+
+    /// Answers `body` as this VM will stand once its saved state is discarded.
+    ///
+    /// What a caller about to discard one asks the ordinary capability gate
+    /// inside, so the work that follows the discard is known to be admitted
+    /// before the irreversible step is taken. Asking the real gate — rather
+    /// than a second spelling of its terms — is what keeps the two in step
+    /// when either changes.
+    ///
+    /// `body` cannot suspend, so no other main-actor work observes the VM
+    /// through the window where this answer stands in for the file.
+    func answeringAsIfSavedStateDiscarded<T>(_ body: () throws -> T) rethrows -> T {
+        savedStateReadsAsDiscarded = true
+        defer { savedStateReadsAsDiscarded = false }
+        return try body()
+    }
 
     // MARK: - Machine Identity
 
@@ -681,11 +705,31 @@ final class VMInstance {
     /// found it, however that failure was classified. A saved state loads back
     /// only into the configuration it was written under, so this is also what
     /// pins the VM's settings (``canEditSettings``).
-    var holdsSuspendedSession: Bool { phase.isAtRest && hasSaveFile }
+    var holdsSuspendedSession: Bool { isAtRest && hasSaveFile }
+
+    /// Where this VM rests once nothing is live: suspended while its suspend
+    /// slot is on disk, `fallback` once it is not.
+    ///
+    /// The one derivation every teardown and every failure classification
+    /// reads, so "at rest holding a slot" and ``VMLifecyclePhase/suspended``
+    /// cannot come apart — whatever ended the live session, a saved session
+    /// that survived it is what the VM comes back on.
+    ///
+    /// ``VMLifecyclePhase/initialBoot`` is the one at-rest phase chosen without
+    /// it: a VM that has never finished its guest setup names that setup rather
+    /// than a session, which is the order ``VMLibrary/initialPhase(for:layout:)``
+    /// reads the bundle in too.
+    func restingPhase(withoutSlot fallback: VMLifecyclePhase) -> VMLifecyclePhase {
+        hasSaveFile ? .suspended : fallback
+    }
 
     /// `true` when the VM is paused with its `VZVirtualMachine` still live in
-    /// memory — the resumable counterpart of ``isColdPaused``.
+    /// memory — the in-memory counterpart of a suspension on disk.
     var isLivePaused: Bool { phase.isLivePaused }
+
+    /// `true` when the VM is settled with nothing live and no operation in
+    /// flight — see ``VMLifecyclePhase/isAtRest``.
+    var isAtRest: Bool { phase.isAtRest }
 
     /// `true` while the VM is in an active lifecycle phase — see
     /// ``VMLifecyclePhase/isActive``.
@@ -708,7 +752,7 @@ final class VMInstance {
     /// A VM holding a saved state is included: its start restores that state
     /// rather than booting over it. Which of the two verbs a *surface* offers
     /// is ``VMCapabilityCatalog``'s question.
-    var canStart: Bool { phase.isAtRest }
+    var canStart: Bool { isAtRest }
 
     var canStop: Bool { phase.canStop }
 
@@ -725,7 +769,7 @@ final class VMInstance {
     /// A live VM's hardware is pinned by its `VZVirtualMachine`, and a saved
     /// state's by the file: VZ restores one only into the configuration it was
     /// written under, so an edit taken while the slot is on disk strands it.
-    var canEditSettings: Bool { phase.isAtRest && !hasSaveFile }
+    var canEditSettings: Bool { isAtRest && !hasSaveFile }
 
     var canRename: Bool { !isPreparing && phase.canRename }
 
@@ -837,15 +881,17 @@ final class VMInstance {
     /// A saved state is no bar: it is a file inside the bundle and goes with
     /// it, so no discard step is needed first.
     var canDelete: Bool {
-        !isPreparing && phase.isAtRest
+        !isPreparing && isAtRest
     }
 
     /// `true` when the VM can be cold-booted into macOS Recovery.
     ///
     /// Stopped macOS guests only — Virtualization.framework has no recovery
-    /// start option for Linux/EFI guests.
+    /// start option for Linux/EFI guests, and a bundle holding a suspend slot
+    /// takes the restore that slot names rather than any cold boot, Recovery
+    /// included (``GuestStartRoute/init(startOf:bootIntoRecovery:)``).
     var canStartInRecovery: Bool {
-        phase == .stopped && configuration.guestOS == .macOS
+        phase == .stopped && !hasSaveFile && configuration.guestOS == .macOS
     }
 
     var canUseExternalDisplay: Bool { hasLiveSession }
@@ -886,11 +932,15 @@ final class VMInstance {
     func handleSessionEvent(_ event: VMSessionEvent) {
         switch event {
         case .guestDidStop:
-            resetToStopped()
+            restAfterPowerOff()
             #log(Self.logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
             dropTruncatedSaveFile()
-            tearDownSession(restingAt: .failed(message: error.localizedDescription))
+            // A slot that survived carries a session the user can still come
+            // back on, so the VM is resumable rather than stuck and takes no
+            // message — the failure reaches the user as the event this raises.
+            tearDownSession(
+                restingAt: restingPhase(withoutSlot: .failed(message: error.localizedDescription)))
             #log(
                 Self.logger, .error,
                 "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
@@ -1059,8 +1109,15 @@ final class VMInstance {
         onSessionTornDown?()
     }
 
-    func resetToStopped() {
-        tearDownSession(restingAt: .stopped)
+    /// Releases the live session and rests the VM where one with nothing live
+    /// belongs, firing ``onPoweredOff``.
+    ///
+    /// Stopped for the guest that simply went down, and suspended when the
+    /// bundle still holds a slot — a Force Stop landing on a restore takes the
+    /// `VZVirtualMachine` away without consuming the saved state VZ has not
+    /// finished loading, and that session is still the user's to come back on.
+    func restAfterPowerOff() {
+        tearDownSession(restingAt: restingPhase(withoutSlot: .stopped))
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
@@ -1150,16 +1207,28 @@ final class VMInstance {
     }
 
     /// Ends the suspension the bundle holds: the saved state goes, and the VM
-    /// rests where a VM with nothing to restore belongs.
+    /// rests stopped.
     ///
     /// The two are one call because a suspension whose slot is gone is a dead
     /// end — Resume has nothing to load and the settings stay locked behind a
     /// file that is not there. A restore *consuming* the slot on its way to
     /// running calls ``removeSaveFile()`` instead, and leaves the phase to the
     /// bring-up.
+    ///
+    /// Refuses a VM that is not at rest, rather than deleting a slot a
+    /// bring-up already in flight is reading: a caller that means to end a
+    /// suspension has to hold a VM that is still resting on it.
     func discardSavedState() {
+        guard isAtRest else {
+            #log(
+                Self.logger, .fault,
+                "Refusing to discard the saved state of '\(self.name, privacy: .public)': it is \(self.status.rawValue, privacy: .public), not at rest"
+            )
+            assertionFailure("discardSavedState() on a VM that is not at rest")
+            return
+        }
         removeSaveFile()
-        if phase.isAtRest { enter(.stopped) }
+        enter(.stopped)
     }
 
     /// Drops a suspend slot a save is still part-way through writing, and
@@ -1169,11 +1238,16 @@ final class VMInstance {
     /// (``VMLifecyclePhase/terminationMustWaitOut``), so a save that threw, was
     /// terminated, or lost its guest left a truncated file behind — and
     /// ``VMLibrary/initialPhase(for:layout:)`` would offer it after a relaunch
-    /// as a resumable session that cannot restore. The phase is the whole of
-    /// the test: a write that completed has left ``VMLifecyclePhase/saving``
-    /// behind, so nothing here can take a valid saved state away.
+    /// as a resumable session that cannot restore.
+    ///
+    /// The phase is the whole of the test, and it is the save's own window:
+    /// the slot is written under ``VMLifecyclePhase/saving`` and the VM leaves
+    /// that phase only once the write has returned, so a guest failure
+    /// delivered in the gap between the two drops a slot that was in fact
+    /// complete. Losing a session VZ has just finished writing beats offering
+    /// one that may be half a session.
     func dropTruncatedSaveFile() {
-        guard case .saving = phase else { return }
+        guard phase.isWritingSuspendSlot else { return }
         removeSaveFile()
     }
 

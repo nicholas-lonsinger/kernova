@@ -2565,6 +2565,27 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorMessage != nil)
     }
 
+    /// `saveMachineStateTo` writes the slot in place, so a suspend that threw
+    /// left however far VZ got — and a relaunch would offer that as a resumable
+    /// session.
+    @Test("A suspend that failed leaves no half-written slot behind")
+    func aFailedSuspendLeavesNoSlot() async throws {
+        let virtService = MockVirtualizationService()
+        virtService.saveError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = VMInstanceFixture.make()
+        instance.enter(.running(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        viewModel.instances.append(instance)
+
+        await viewModel.save(instance)
+
+        #expect(!instance.hasSaveFile)
+        #expect(instance.status == .error)
+        #expect(!instance.canResume)
+    }
+
     // MARK: - Address Reservation Release
 
     /// A VM in the library already holding a reservation slot on its mode's

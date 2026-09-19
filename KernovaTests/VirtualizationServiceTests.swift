@@ -187,7 +187,7 @@ struct VirtualizationServiceTests {
         // What `forceStop` leaves behind: the coordinator releases the suspend's
         // claim so the user can interrupt, but the suspend's body keeps running
         // and reaches its `catch` after this.
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
 
         #expect(!VirtualizationService.attemptStillOwnsThePhase(instance, actingFor: sessionID))
         // The aborted `saveMachineState` must not paint a failure over a
@@ -220,7 +220,7 @@ struct VirtualizationServiceTests {
 
         // Force Stop, then an immediate re-Start, both landing before the
         // aborted start's `session.start()` throws.
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
         instance.enter(.starting(sessionID: nil))
         let successor = instance.beginSessionContext()
 
@@ -529,6 +529,32 @@ struct VirtualizationServiceTests {
         // The bundle's own slot is untouched — a suspended capture consumes nothing.
         let bundleSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
         #expect(String(decoding: bundleSlot, as: UTF8.self) == "bundle-suspend-slot")
+        #expect(fixture.instance.phase == .suspended)
+    }
+
+    /// The capture is offered by ``VMInstance/snapshotCaptureMode``, which reads
+    /// the slot rather than the phase, so the capture itself has to take every
+    /// VM that offer admits — otherwise Take Snapshot is offered, confirmed and
+    /// then refused for the state it was offered in.
+    @Test(
+        "A suspended-state capture takes any VM resting on a slot, whatever phase it rests at",
+        arguments: [VMLifecyclePhase.stopped, .failed(message: "Restore failed.")])
+    func suspendedCaptureFollowsTheSlotNotThePhase(phase: VMLifecyclePhase) async throws {
+        let fixture = try makeRevertFixture(phase: phase)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
+        #expect(fixture.instance.snapshotCaptureMode == .suspended)
+        let snapshot = VMSnapshot(name: "Suspended", kind: .warm)
+
+        try await service.takeSnapshot(
+            fixture.instance, snapshot: snapshot, store: fixture.store)
+
+        let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
+        let capturedSlot = try Data(contentsOf: snapshotLayout.saveFileURL)
+        #expect(String(decoding: capturedSlot, as: UTF8.self) == "bundle-suspend-slot")
+        // The slot is still there, so the VM keeps offering the session it
+        // names — the capture consumed nothing and moved nothing.
+        #expect(fixture.instance.hasSaveFile)
         #expect(fixture.instance.phase == .suspended)
     }
 
@@ -946,7 +972,7 @@ struct VirtualizationServiceTests {
         defer { VMInstanceFixture.removeBundle(of: holding) }
 
         holding.tearDownSession(
-            restingAt: VirtualizationService.restingPhaseForSuspendSlot(on: holding))
+            restingAt: holding.restingPhase(withoutSlot: .stopped))
 
         #expect(holding.status == .paused)
         #expect(holding.isColdPaused)
@@ -954,7 +980,7 @@ struct VirtualizationServiceTests {
         #expect(holding.hasSaveFile)
 
         let emptied = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: nil))
-        emptied.enter(VirtualizationService.restingPhaseForSuspendSlot(on: emptied))
+        emptied.enter(emptied.restingPhase(withoutSlot: .stopped))
         #expect(emptied.status == .stopped)
         #expect(emptied.errorMessage == nil)
     }

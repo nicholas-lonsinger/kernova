@@ -128,12 +128,12 @@ struct VMInstanceTests {
         #expect(b.detailPaneMode == .display)
     }
 
-    @Test("resetToStopped clears detailPaneMode back to .display")
+    @Test("restAfterPowerOff clears detailPaneMode back to .display")
     func resetToStoppedClearsDetailPaneMode() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         instance.detailPaneMode = .settings
 
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
 
         #expect(instance.detailPaneMode == .display)
         #expect(instance.status == .stopped)
@@ -216,24 +216,24 @@ struct VMInstanceTests {
         #expect(!instance.hasRemovableMediaReconcileOwed)
     }
 
-    // MARK: - resetToStopped
+    // MARK: - restAfterPowerOff
 
-    @Test("resetToStopped sets status to stopped and clears the session")
-    func resetToStopped() {
+    @Test("restAfterPowerOff sets status to stopped and clears the session")
+    func restAfterPowerOff() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         // Simulate having a VM reference (we can't create a real VZVirtualMachine)
         #expect(instance.status == .running)
 
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
 
         #expect(instance.status == .stopped)
         #expect(instance.session == nil)
     }
 
-    @Test("resetToStopped is idempotent when already stopped")
+    @Test("restAfterPowerOff is idempotent when already stopped")
     func resetToStoppedIdempotent() {
         let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
         #expect(instance.status == .stopped)
         #expect(instance.session == nil)
     }
@@ -344,16 +344,106 @@ struct VMInstanceTests {
         #expect(instance.status == .error)
     }
 
-    @Test("A guest that dies while running leaves a slot it did not write alone")
-    func didStopWithErrorWhileRunningKeepsAnUnrelatedSlot() throws {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+    /// VZ consumes the slot only once a restore has resumed, so a restore that
+    /// died still has the session on disk — and a VM holding one is resumable,
+    /// not stuck, whatever ended the attempt.
+    @Test(
+        "A guest that dies while a restore is loading rests the VM back on its saved state",
+        arguments: [
+            VMLifecyclePhase.restoringSavedState(sessionID: VMLifecyclePhaseFixtures.session),
+            .running(sessionID: VMLifecyclePhaseFixtures.session),
+        ])
+    func didStopWithErrorOverAKeptSlotRestsSuspended(phase: VMLifecyclePhase) throws {
+        let instance = VMInstanceFixture.make(phase: phase)
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
-        instance.handleSessionEvent(
-            .didStopWithError(NSError(domain: "test", code: 1)))
+        instance.handleSessionEvent(.didStopWithError(NSError(domain: "test", code: 1)))
 
+        #expect(instance.phase == .suspended)
         #expect(instance.hasSaveFile)
+        // No banner: the VM is one the user can bring back up, and the failure
+        // reaches them through the event this raised.
+        #expect(instance.errorMessage == nil)
+    }
+
+    @Test("A guest that dies with no slot to come back on rests at the failure")
+    func didStopWithErrorWithoutASlotRestsFailed() {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+
+        instance.handleSessionEvent(
+            .didStopWithError(
+                NSError(
+                    domain: "test", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "The guest panicked."])))
+
+        #expect(instance.status == .error)
+        #expect(instance.errorMessage == "The guest panicked.")
+    }
+
+    @Test("A power-off rests the VM on a slot that survived it, and stopped otherwise")
+    func restAfterPowerOffReadsTheBundle() throws {
+        let holding = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: holding) }
+        try VMInstanceFixture.writeSaveFile(for: holding)
+
+        holding.restAfterPowerOff()
+
+        #expect(holding.phase == .suspended)
+        #expect(holding.hasSaveFile)
+
+        let emptied = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        emptied.restAfterPowerOff()
+        #expect(emptied.phase == .stopped)
+    }
+
+    /// The order is the point: the truncated slot goes first, and the resting
+    /// phase is then read off whatever survived.
+    @Test("Settling after a termination drops a half-written slot but keeps a loaded one")
+    func settleAfterTerminationDropsOnlyTheHalfWrittenSlot() throws {
+        let saving = VMInstanceFixture.make(phase: .saving(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: saving) }
+        try VMInstanceFixture.writeSaveFile(for: saving)
+
+        VirtualizationService.settleAfterTermination(saving)
+
+        #expect(!saving.hasSaveFile)
+        #expect(saving.phase == .stopped)
+
+        // A Force Stop landing on a restore takes the VZ machine away without
+        // consuming the state it had not finished loading.
+        let restoring = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: restoring) }
+        try VMInstanceFixture.writeSaveFile(for: restoring)
+
+        VirtualizationService.settleAfterTermination(restoring)
+
+        #expect(restoring.hasSaveFile)
+        #expect(restoring.phase == .suspended)
+    }
+
+    @Test("A VM answers the capability gate as it will stand once its saved state is discarded")
+    func answeringAsIfSavedStateDiscardedLiftsOnlyThatTerm() throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        #expect(!instance.canEditSettings)
+        instance.answeringAsIfSavedStateDiscarded {
+            #expect(instance.canEditSettings)
+            #expect(!instance.hasSaveFile)
+            #expect(!instance.holdsSuspendedSession)
+        }
+        // The file is untouched, and the answer goes back to reading it.
+        #expect(instance.hasSaveFile)
+        #expect(!instance.canEditSettings)
+
+        // Only that term is lifted: a VM no phase admits an edit in stays
+        // refused inside the window.
+        instance.enter(.running(sessionID: UUID()))
+        instance.answeringAsIfSavedStateDiscarded {
+            #expect(!instance.canEditSettings)
+        }
     }
 
     // MARK: - isColdPaused
@@ -638,14 +728,14 @@ struct VMInstanceTests {
 
     // MARK: - Serial Console
 
-    @Test("resetToStopped clears serial pipes")
+    @Test("restAfterPowerOff clears serial pipes")
     func resetToStoppedClearsSerialPipes() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         let context = instance.beginSessionContext()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
 
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
 
         #expect(instance.sessionContext == nil)
         #expect(context.serialInputPipe == nil)

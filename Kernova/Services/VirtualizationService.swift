@@ -281,9 +281,20 @@ final class VirtualizationService {
         }
 
         try await session.stop()
-        instance.dropTruncatedSaveFile()
-        instance.resetToStopped()
+        Self.settleAfterTermination(instance)
         #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
+    }
+
+    /// Puts a VM whose `VZVirtualMachine` has just been terminated where the
+    /// bundle says it belongs.
+    ///
+    /// The two steps are one because their order is the whole point: a save the
+    /// termination cut short leaves a truncated slot, which goes first, and the
+    /// resting phase is then read off what survived — a restore VZ had not
+    /// finished loading still has its session, and the VM comes back on it.
+    static func settleAfterTermination(_ instance: VMInstance) {
+        instance.dropTruncatedSaveFile()
+        instance.restAfterPowerOff()
     }
 
     // MARK: - Pause / Resume
@@ -424,7 +435,10 @@ final class VirtualizationService {
             // No sidecar metadata is needed beside the save file: removable media
             // carry stable UUIDs and storage disks stable virtio block identifiers
             // in `config`, and VZ matches both on restore.
-            guard Self.tearDownIfStillOwned(instance, actingFor: sessionID, restingAt: .suspended)
+            guard
+                Self.tearDownIfStillOwned(
+                    instance, actingFor: sessionID,
+                    restingAt: instance.restingPhase(withoutSlot: .stopped))
             else {
                 // The guest went away mid-write, so the slot on disk is however
                 // far VZ got. Resting suspended would offer it as resumable;
@@ -611,7 +625,7 @@ final class VirtualizationService {
                     relativePaths: prepared.relativePaths)
             }.value
 
-            instance.enter(.stopped)
+            instance.enter(instance.restingPhase(withoutSlot: .stopped))
             #log(
                 Self.logger, .notice,
                 "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
@@ -624,7 +638,7 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(.stopped)
+            instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
     }
@@ -643,15 +657,18 @@ final class VirtualizationService {
     private func takeSuspendedSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        guard instance.isColdPaused else {
+        // The slot, not the phase: ``VMInstance/snapshotCaptureMode`` offers this
+        // capture to any VM resting on one, and a guard that read the phase
+        // would refuse a capture the surface had already taken consent for.
+        guard instance.holdsSuspendedSession else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
         }
-        guard instance.hasSaveFile else { throw VirtualizationError.noSaveFile }
 
         let bundleURL = instance.bundleURL
         let configuration = instance.configuration
         let snapshotID = snapshot.id
+        let resting = instance.phase
         instance.enter(.capturingAtRest)
 
         do {
@@ -664,7 +681,7 @@ final class VirtualizationService {
                 try store.captureSuspendSlot(bundleURL: bundleURL, snapshotID: snapshotID)
             }.value
 
-            instance.enter(.suspended)
+            instance.enter(instance.restingPhase(withoutSlot: resting))
             #log(
                 Self.logger, .notice,
                 "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
@@ -677,7 +694,7 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(.suspended)
+            instance.enter(instance.restingPhase(withoutSlot: resting))
             throw error
         }
     }
@@ -841,7 +858,7 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(Self.restingPhaseForSuspendSlot(on: instance))
+            instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
 
@@ -849,15 +866,15 @@ final class VirtualizationService {
         // under, so the VM takes the captured settings along with the disks.
         instance.configuration = restore.configuration
 
-        // A warm revert leaves the snapshot's saved state in the bundle, so the
-        // VM is cold-paused: Start and Resume both restore from it. A cold
-        // revert left the bundle with none, so the VM is stopped.
+        // A warm revert leaves the snapshot's saved state in the bundle and a
+        // cold one leaves none, so the write that just landed is what says
+        // where the VM rests.
         //
-        // Entered directly rather than through `resetToStopped()`, whose
+        // Entered directly rather than through `restAfterPowerOff()`, whose
         // `onPoweredOff` hook would re-enter the ephemeral revert this may
         // itself be. The session went with the teardown above, so there is
         // nothing left here to release.
-        instance.enter(plan.kind == .warm ? .suspended : .stopped)
+        instance.enter(instance.restingPhase(withoutSlot: .stopped))
         #log(
             Self.logger, .notice,
             "Reverted VM '\(instance.name, privacy: .public)' to snapshot '\(snapshot.name, privacy: .public)'"
@@ -1014,21 +1031,10 @@ final class VirtualizationService {
     static func restingPhaseAfterLifecycleFailure(
         _ error: Error, on instance: VMInstance, transientRestingPhase: VMLifecyclePhase?
     ) -> VMLifecyclePhase {
-        if instance.hasSaveFile { return .suspended }
-        if let transientRestingPhase {
-            return restingPhaseAfterStartFailure(
-                error, transientRestingPhase: transientRestingPhase)
-        }
-        return .failed(message: error.localizedDescription)
-    }
-
-    /// Where a VM with nothing live belongs, read off its bundle: suspended
-    /// while the suspend slot is on disk, stopped once it is not — a suspension
-    /// with nothing to restore is a dead end.
-    ///
-    /// No message: a VM resting here is one the user can bring back up.
-    static func restingPhaseForSuspendSlot(on instance: VMInstance) -> VMLifecyclePhase {
-        instance.hasSaveFile ? .suspended : .stopped
+        instance.restingPhase(
+            withoutSlot: transientRestingPhase.map {
+                restingPhaseAfterStartFailure(error, transientRestingPhase: $0)
+            } ?? .failed(message: error.localizedDescription))
     }
 
     /// Where a failed start or install leaves the VM: a transient failure at

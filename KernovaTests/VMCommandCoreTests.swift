@@ -750,6 +750,76 @@ struct VMCommandCoreTests {
             ])
     }
 
+    @Test("Force-stopping a restore that is still loading says the saved state is kept")
+    func forceStopOfARestoreNamesTheKeptSavedState() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Restoring", phase: .restoringSavedState(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .force, confirmed: false)
+            })
+
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.confirmTitle == "Force Stop")
+        #expect(prompt.message.contains("saved state is kept"))
+        #expect(!prompt.message.contains("unsaved data"))
+    }
+
+    /// A Recovery boot is a cold boot, and a bundle holding a slot takes the
+    /// restore that slot names instead — so offering Recovery there would name
+    /// an outcome the bring-up will not produce, and would leave the sidebar's
+    /// ⌥-alternate with no primary Start to pair with.
+    @Test("A VM holding a saved state offers neither Start nor Start in Recovery")
+    func recoveryIsWithheldFromAVMHoldingASavedState() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Suspended", phase: .stopped, guestOS: .macOS)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        #expect(harness.core.capabilities.isApplicable(.startInRecovery, to: instance))
+
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        #expect(!harness.core.capabilities.isApplicable(.start, to: instance))
+        #expect(!harness.core.capabilities.isApplicable(.startInRecovery, to: instance))
+        let error = try #require(
+            await commandError { try await harness.core.start(.id(instance.id), recovery: true) })
+        guard case .unsupported = error else {
+            Issue.record("expected an unsupported refusal, got \(error)")
+            return
+        }
+        #expect(harness.virtualization.startCallCount == 0)
+        #expect(instance.hasSaveFile)
+    }
+
+    /// Only a cold boot creates the account, so a restore must not be turned
+    /// back for one nobody answered — the session it resumes was set up long
+    /// ago.
+    @Test("A start that restores a saved state asks for no guest account")
+    func aRestoringStartDoesNotAskForTheGuestAccount() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Suspended", phase: .suspended, guestOS: .macOS)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        instance.configuration.pendingGuestAccount = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+
+        try await harness.core.start(.id(instance.id), recovery: false)
+
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
+        // Nothing was handed over, and the question is still the next cold
+        // boot's to ask.
+        #expect(harness.virtualization.lastStartProvisioning == nil)
+        #expect(instance.configuration.pendingGuestAccount != nil)
+    }
+
     // MARK: - State gates
 
     @Test("A suspended VM's stop passes the gate on discard-saved-state, not on stop")

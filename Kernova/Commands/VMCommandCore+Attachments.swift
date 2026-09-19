@@ -596,8 +596,11 @@ extension VMCommandCore {
     /// rather than as that verb's stale-attachment refusal — and keeps its
     /// saved state, which a confirmation landing late must not destroy.
     ///
-    /// Everything else the removal refuses is thrown: the attachment is still
-    /// attached, so a caller about to start has nothing new to try.
+    /// Everything the removal would refuse is then asked *before* the discard,
+    /// which is the step nothing can undo: the alert is window-modal and every
+    /// other door stays live behind it, so a bring-up, a clone or a copy can
+    /// take the VM between the offer and the click. Refused here, the VM keeps
+    /// both its session and its attachment, and the caller is told why.
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -615,17 +618,13 @@ extension VMCommandCore {
             )
             return
         }
-        // Asked while the saved state is still on disk, because the discard
-        // below is irreversible: this is the one refusal the removal raises
-        // after its own gate, and a discard it then turned down would have
-        // destroyed the session for nothing.
-        if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
-            try refuseSoleStorageDiskRemoval(of: disk, on: instance)
-        }
+        try refuseUnlessRemovableAfterDiscard(failure, on: instance)
         // Before the removal, not after it: a saved state restores only into the
         // exact device set it was written with, so the removal verbs refuse
         // while one is on disk — and the alert disclosed the discard before the
-        // user confirmed.
+        // user confirmed. Nothing suspends between here and the removal, so no
+        // state in which the slot is gone and the attachment is still attached
+        // is ever observable.
         if instance.hasSaveFile {
             instance.discardSavedState()
             #log(
@@ -645,6 +644,32 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
         )
+    }
+
+    /// Refuses unless the removal `failure` names will be taken once the VM's
+    /// saved state is discarded.
+    ///
+    /// The removal's own gate, asked of the VM as it will stand after the
+    /// discard (``VMInstance/answeringAsIfSavedStateDiscarded(_:)``) rather than
+    /// re-spelled here — so a bring-up in flight, a clone reading this bundle
+    /// or a copy still writing it refuses exactly as it will refuse the verb,
+    /// and only the one term the discard itself clears is lifted. The sole-disk
+    /// rule rides along because it is the removal's other refusal, and it too
+    /// has to be answered while the session can still be kept.
+    private func refuseUnlessRemovableAfterDiscard(
+        _ failure: StartFailedAttachment, on instance: VMInstance
+    ) throws {
+        let capability: VMCapability =
+            switch failure.kind {
+            case .storageDisk: .editStorageDisks
+            case .removableMedia: .editRemovableMedia
+            }
+        try instance.answeringAsIfSavedStateDiscarded {
+            try require(capability, on: instance)
+        }
+        if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
+            try refuseSoleStorageDiskRemoval(of: disk, on: instance)
+        }
     }
 
     /// Whether `failure`'s entry is still in the list the removal would edit.

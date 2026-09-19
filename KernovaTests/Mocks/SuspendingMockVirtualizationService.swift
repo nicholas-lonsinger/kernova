@@ -114,11 +114,11 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func stop(_ instance: VMInstance) async throws {
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func forceStop(_ instance: VMInstance) async throws {
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func pause(_ instance: VMInstance) async throws {

@@ -107,7 +107,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             return
         }
         guard !guestIgnoresShutdownRequest else { return }
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func forceStop(_ instance: VMInstance) async throws {
@@ -117,7 +117,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             instance.discardSavedState()
             return
         }
-        instance.resetToStopped()
+        instance.restAfterPowerOff()
     }
 
     func pause(_ instance: VMInstance) async throws {
@@ -208,7 +208,7 @@ final class MockVirtualizationService: VirtualizationProviding {
 
         instance.tearDownSession(restingAt: .revertingToSnapshot)
         if let error = revertToSnapshotError {
-            instance.enter(VirtualizationService.restingPhaseForSuspendSlot(on: instance))
+            instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
         try store.restore(
