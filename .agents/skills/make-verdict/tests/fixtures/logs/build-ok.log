@@ -6,3 +6,4 @@ note: Building targets in dependency order
 SwiftCompile normal arm64 Compiling\ VMSession.swift @ROOT@/Kernova/Services/VMSession.swift (in target 'Kernova' from project 'Kernova')
 @ROOT@/Kernova/Services/VMSession.swift:50:5: warning: variable 'x' was never used; consider replacing with '_' or removing it
 ** BUILD SUCCEEDED **
+binary=@ROOT@/Derived Data/Build/Products/Debug/Kernova.app/Contents/MacOS/Kernova

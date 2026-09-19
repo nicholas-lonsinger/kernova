@@ -33,7 +33,17 @@ for f in "$FIX"/logs/*.log; do
     sed "s#@ROOT@#$ROOT#g; s#@BUNDLE@#$tmp/bundles#g" "$f" >"$tmp/logs/$(basename "$f")"
 done
 
-printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/xcodebuild"
+real_make="$(command -v make)"
+cat >"$tmp/bin/xcodebuild" <<'FAKE'
+#!/bin/sh
+case " $* " in
+    *' -showBuildSettings '*)
+        [ -z "${FAKE_BUILD_SETTINGS:-}" ] || cat "$FAKE_BUILD_SETTINGS"
+        exit "${FAKE_SETTINGS_STATUS:-0}"
+        ;;
+    *) exit "${FAKE_BUILD_STATUS:-0}" ;;
+esac
+FAKE
 cat >"$tmp/bin/make" <<'FAKE'
 #!/bin/sh
 # Replays $FAKE_MAKE_LOG and exits $FAKE_MAKE_STATUS, whatever the target.
@@ -110,7 +120,8 @@ log_named() { sed -n 's/^make-verdict: target=.* log=//p' "${1:-$tmp/last}"; }
 run "build green" 0 with_log build-ok.log 0 build
 expect "^make-verdict: target=build suite=- duration=[0-9]+s log=$tmp/out/build/$RUN_LOG\$"
 expect_last "^make-verdict: verdict=green target=build suite=- log=$tmp/out/build/$RUN_LOG xcresult=-\$"
-expect_lines 2
+expect_lines 3
+expect "^binary=$ROOT/Derived Data/Build/Products/Debug/Kernova.app/Contents/MacOS/Kernova$"
 [ -f "$tmp/out/build.verdict" ] || fail "$name: no verdict file written"
 cmp -s "$tmp/out/build.verdict" "$tmp/last" || fail "$name: verdict file differs from stdout"
 
@@ -124,6 +135,10 @@ expect_last "^make-verdict: verdict=build-failed target=build suite=- log=$tmp/o
 
 run "build-for-testing green" 0 with_log build-ok.log 0 build-for-testing
 expect_last '^make-verdict: verdict=green target=build-for-testing '
+expect_count '^binary=' 1
+
+run "failed build suppresses binary" 2 with_log build-ok.log 2 build
+reject '^binary='
 
 # ---- make-verdict.sh: test --------------------------------------------------------
 
@@ -194,6 +209,7 @@ expect_last '^make-verdict: verdict=build-failed '
 
 run "from-log green" 0 verdict --from-log "$tmp/logs/build-ok.log" build
 expect_last '^make-verdict: verdict=green '
+expect "^binary=$ROOT/Derived Data/Build/Products/Debug/Kernova.app/Contents/MacOS/Kernova$"
 
 run "unknown target" 5 verdict bogus
 expect_last '^make-verdict: verdict=setup-error reason=usage target=bogus suite=-$'
@@ -346,6 +362,33 @@ run "tooling mode on a missing bundle" 2 report --path "$tmp/bundles/nope.xcresu
 expect_lines 0
 
 run "unknown flag" 2 report --bogus
+
+# ---- Makefile: resolved binary path ----------------------------------------
+
+cat >"$tmp/settings" <<'SETTINGS'
+Build settings for action build and target KernovaMacOSAgent:
+    EXECUTABLE_PATH = Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent
+    TARGET_BUILD_DIR = /tmp/Guest
+Build settings for action build and target Kernova:
+    EXECUTABLE_PATH = Kernova.app/Contents/MacOS/Kernova
+    TARGET_BUILD_DIR = /tmp/Custom Build/Products/Release
+Build settings for action build and target KernovaCLI:
+    EXECUTABLE_PATH = kernova
+    TARGET_BUILD_DIR = /tmp/CLI
+SETTINGS
+
+for build_target in build build-for-testing; do
+    run "$build_target resolves main app with spaces" 0 env FAKE_BUILD_SETTINGS="$tmp/settings" "$real_make" -s "$build_target"
+    expect '^binary=/tmp/Custom Build/Products/Release/Kernova.app/Contents/MacOS/Kernova$'
+    expect_count '^binary=' 1
+done
+
+run "failed settings query suppresses binary" 2 env FAKE_BUILD_SETTINGS="$tmp/settings" FAKE_SETTINGS_STATUS=1 "$real_make" -s build
+reject '^binary='
+run "missing settings fails explicitly" 2 "$real_make" -s build
+expect_err 'could not resolve Kernova executable path'
+run "failed compilation suppresses binary" 2 env FAKE_BUILD_SETTINGS="$tmp/settings" FAKE_BUILD_STATUS=1 "$real_make" -s build
+reject '^binary='
 
 # ---- summary ---------------------------------------------------------------
 
