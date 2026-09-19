@@ -478,12 +478,12 @@ extension VMCommandCore {
                         "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
                     )
                 } else if let explained = self.explainedFailure(for: error, on: instance) {
-                    self.report(
+                    self.reportUnattendedFailure(
                         .operationFailed(
                             verb: .start, title: explained.title, message: explained.message),
                         on: instance)
                 } else {
-                    self.report(
+                    self.reportUnattendedFailure(
                         .operationFailed(verb: .start, message: error.localizedDescription),
                         on: instance)
                 }
@@ -507,9 +507,9 @@ extension VMCommandCore {
             do {
                 try await self.start(instance)
             } catch let failure as CommandError {
-                self.report(failure, on: instance)
+                self.reportUnattendedFailure(failure, on: instance)
             } catch {
-                self.report(
+                self.reportUnattendedFailure(
                     .operationFailed(verb: .start, message: error.localizedDescription),
                     on: instance)
             }

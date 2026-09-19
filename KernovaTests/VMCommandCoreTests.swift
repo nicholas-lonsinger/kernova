@@ -2198,6 +2198,139 @@ struct VMCommandCoreTests {
         #expect(reported.first?.isOperationFailure == true)
     }
 
+    // MARK: - Unattended failures on the event stream
+
+    /// An install-pending macOS VM: its start dispatches the setup and returns,
+    /// so whatever happens next has no caller waiting on it.
+    private func makeSetupPendingVM(in harness: Harness) -> VMInstance {
+        let instance = makeInstance(
+            in: harness, name: "Third", phase: .initialBoot, guestOS: .macOS)
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        return instance
+    }
+
+    /// The name a rename gives a VM to mark how far a test reads the stream.
+    private static let readSentinel = "Renamed past the failure"
+
+    /// Every failure `stream` carries for `id`, read up to the rename
+    /// ``readSentinel`` names — so the read is bounded by a change the test
+    /// made rather than by a deadline, and a second failure would still be
+    /// seen.
+    ///
+    /// Takes the stream rather than an iterator: the buffer is unbounded, so
+    /// everything emitted before this starts reading is still there.
+    private func failureMessages(
+        in stream: AsyncStream<[VMLibraryEvent]>, for id: UUID
+    ) async -> [String] {
+        var messages: [String] = []
+        for await batch in stream {
+            for event in batch {
+                switch event {
+                case .renamed(_, _, let to) where to == Self.readSentinel:
+                    return messages
+                case .failure(let failed, _, let message) where failed == id:
+                    messages.append(message)
+                default:
+                    continue
+                }
+            }
+        }
+        return messages
+    }
+
+    @Test("A transient setup failure nobody awaited reaches the stream, carrying its message")
+    func transientSetupFailureReachesTheEventStream() async throws {
+        let install = MockMacOSInstallService()
+        install.installError = makeInstallVMLimitExceededError()
+        let harness = makeHarness(install: install)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let instance = makeSetupPendingVM(in: harness)
+        let events = harness.core.events()
+
+        try await harness.core.start(.id(instance.id), recovery: false)
+        await instance.setupTask?.value
+
+        // Transient: the VM is back where a retry starts, so its phase holds no
+        // message and the diff has nothing to report.
+        #expect(instance.status == .initialBoot)
+        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
+        let messages = await failureMessages(in: events, for: instance.id)
+        #expect(messages.count == 1)
+        // The sentence the alert gets, not the raw error — one failure, worded
+        // once.
+        #expect(messages.first == reported.first?.message)
+        #expect(reported.first?.message.contains("at most two") == true)
+    }
+
+    @Test("A permanent setup failure is still reported exactly once")
+    func permanentSetupFailureIsReportedOnce() async throws {
+        let install = MockMacOSInstallService()
+        let installError = VMStorageError.bundleNotFound(URL(filePath: "/tmp/gone.kernova"))
+        install.installError = installError
+        let harness = makeHarness(install: install)
+        let instance = makeSetupPendingVM(in: harness)
+        let events = harness.core.events()
+
+        try await harness.core.start(.id(instance.id), recovery: false)
+        await instance.setupTask?.value
+
+        // Permanent: the phase carries the message, so the diff reports it and
+        // the failing site must not report it again.
+        #expect(instance.status == .error)
+        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
+        let messages = await failureMessages(in: events, for: instance.id)
+        #expect(messages == [installError.localizedDescription])
+    }
+
+    @Test("A cancelled setup reports nothing — a cancel is somebody's decision, not a failure")
+    func cancelledSetupReportsNothing() async throws {
+        let install = MockMacOSInstallService()
+        install.installError = CancellationError()
+        let harness = makeHarness(install: install)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let instance = makeSetupPendingVM(in: harness)
+        let events = harness.core.events()
+
+        try await harness.core.start(.id(instance.id), recovery: false)
+        await instance.setupTask?.value
+
+        #expect(instance.status == .initialBoot)
+        #expect(reported.isEmpty)
+        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
+        let messages = await failureMessages(in: events, for: instance.id)
+        #expect(messages.isEmpty)
+    }
+
+    @Test("A transient failure on the boot chained after a setup reaches the stream too")
+    func transientChainedBootFailureReachesTheEventStream() async throws {
+        let harness = makeHarness()
+        harness.virtualization.startError = makeVMLimitExceededError()
+        var reported: [CommandError] = []
+        // The chained boot runs after `setupTask` is cleared, so the report is
+        // what says the work is over — and it lands after the event does.
+        let settled = AsyncStream<Void>.makeStream()
+        harness.core.onFailure = { failure, _ in
+            reported.append(failure)
+            settled.continuation.yield()
+        }
+        let instance = makeSetupPendingVM(in: harness)
+        let events = harness.core.events()
+
+        try await harness.core.start(.id(instance.id), recovery: false)
+        for await _ in settled.stream { break }
+
+        // Transient again, and a boot rests where a plain start would.
+        #expect(instance.status == .stopped)
+        let reportedMessage = try #require(reported.first?.message)
+        #expect(reportedMessage.contains("at most two"))
+        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
+        let messages = await failureMessages(in: events, for: instance.id)
+        #expect(messages == [reportedMessage])
+    }
+
     // MARK: - The Guest Account
 
     private func makeAccountIntent() -> GuestAccountIntent {

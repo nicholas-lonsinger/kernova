@@ -541,6 +541,27 @@ final class VMCommandCore: VMCommanding {
         onFailure?(failure, instance)
     }
 
+    /// Reports work the app ran with nobody awaiting it, putting the failure on
+    /// the event stream when the model it left behind cannot.
+    ///
+    /// ``emitLibraryChanges()`` reports a failure for a VM whose new status is
+    /// the error status, reading the message off the phase. A transient failure
+    /// rests the VM where the attempt began instead, carrying no message
+    /// (``VirtualizationService/restingPhaseAfterStartFailure(_:transientRestingPhase:)``),
+    /// so the diff has nothing to report and a subscriber would see only a
+    /// status change back to where it started. One that does rest in the error
+    /// status is left to the diff, so either way exactly one failure is
+    /// reported. A refusal raised before the work ran gets none: nothing about
+    /// the VM moved, and a caller waiting on a state is still owed its wait.
+    func reportUnattendedFailure(_ failure: CommandError, on instance: VMInstance) {
+        if failure.isOperationFailure, instance.status != .error {
+            broadcaster.emit([
+                .failure(id: instance.instanceID, name: instance.name, message: failure.message)
+            ])
+        }
+        report(failure, on: instance)
+    }
+
     /// Reports a create, clone or import that failed after registering its
     /// preparing row.
     ///

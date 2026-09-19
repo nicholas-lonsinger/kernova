@@ -92,12 +92,16 @@ struct CLIWaitTests {
     func anErrorInTheBaselineKeepsTheWaitRunning() throws {
         // The failure behind it happened before this wait, and the virtual
         // machine can be started from there, so nothing here says the state
-        // being waited for is not coming.
+        // being waited for is not coming. Ending on the event *after* that
+        // baseline is what proves the wait read it and went on.
         let ended = try outcome(
-            .running, tag: "wait-resting-error", timeout: 1,
-            answering: [info(status: "error")], holdingOpen: true)
-        #expect(ended.failure?.code == .timedOut)
-        #expect(ended.failure?.message == "\u{201C}Alpha\u{201D} was not running within 1 seconds.")
+            .running, tag: "wait-resting-error",
+            answering: [
+                info(status: "error"),
+                event(.statusChanged(id: alpha, name: "Alpha", from: "error", to: "running")),
+            ])
+        #expect(ended.failure == nil)
+        #expect(ended.verbs == subscribeThenRead)
     }
 
     // MARK: - Reaching the State
