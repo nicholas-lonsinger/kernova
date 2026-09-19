@@ -92,6 +92,9 @@ struct VMLibraryViewModelEphemeralTests {
         let instance = try #require(
             viewModel.instances.first { $0.configuration.id == first.config.id })
         instance.enter(phase)
+        // A suspension is a slot on disk, not a phase name: every predicate the
+        // discard paths read asks the file.
+        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
         let other = second.flatMap { seeded in
             viewModel.instances.first { $0.configuration.id == seeded.config.id }
         }

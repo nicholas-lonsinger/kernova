@@ -271,6 +271,91 @@ struct VMInstanceTests {
         #expect(!FileManager.default.fileExists(atPath: instance.saveFileURL.path(percentEncoded: false)))
     }
 
+    // MARK: - The suspend slot
+
+    @Test("A suspend slot only counts while nothing is live")
+    func holdsSuspendedSessionNeedsAnAtRestPhase() throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        #expect(!instance.holdsSuspendedSession)
+
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        for phase: VMLifecyclePhase in [.suspended, .stopped, .failed(message: "x"), .initialBoot] {
+            instance.enter(phase)
+            #expect(instance.holdsSuspendedSession, "\(phase)")
+            #expect(!instance.canEditSettings, "\(phase)")
+            #expect(instance.canResume, "\(phase)")
+            #expect(instance.canDelete, "\(phase)")
+        }
+        for phase: VMLifecyclePhase in [
+            .running(sessionID: UUID()), .saving(sessionID: UUID()), .starting(sessionID: nil),
+            .revertingToSnapshot,
+        ] {
+            instance.enter(phase)
+            #expect(!instance.holdsSuspendedSession, "\(phase)")
+        }
+    }
+
+    @Test("Discarding the saved state takes the file and the suspension together")
+    func discardSavedStateRestsTheVMStopped() throws {
+        let instance = VMInstanceFixture.make(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        instance.discardSavedState()
+
+        #expect(!instance.hasSaveFile)
+        #expect(instance.phase == .stopped)
+        #expect(instance.canEditSettings)
+        #expect(!instance.canResume)
+    }
+
+    @Test("A half-written suspend slot is dropped, and a finished one is not")
+    func dropTruncatedSaveFileReadsTheSavingPhase() throws {
+        let sessionID = UUID()
+        let interrupted = VMInstanceFixture.make(phase: .saving(sessionID: sessionID))
+        defer { VMInstanceFixture.removeBundle(of: interrupted) }
+        try VMInstanceFixture.writeSaveFile(for: interrupted)
+
+        interrupted.dropTruncatedSaveFile()
+        #expect(!interrupted.hasSaveFile)
+
+        // A save that finished has left `.saving` behind, so the slot it wrote
+        // is untouchable by this.
+        let settled = VMInstanceFixture.make(phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: settled) }
+        try VMInstanceFixture.writeSaveFile(for: settled)
+
+        settled.dropTruncatedSaveFile()
+        #expect(settled.hasSaveFile)
+    }
+
+    @Test("A guest that dies mid-suspend leaves no slot behind")
+    func didStopWithErrorWhileSavingDropsTheSlot() throws {
+        let sessionID = UUID()
+        let instance = VMInstanceFixture.make(phase: .saving(sessionID: sessionID))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        instance.handleSessionEvent(
+            .didStopWithError(NSError(domain: "test", code: 1)))
+
+        #expect(!instance.hasSaveFile)
+        #expect(instance.status == .error)
+    }
+
+    @Test("A guest that dies while running leaves a slot it did not write alone")
+    func didStopWithErrorWhileRunningKeepsAnUnrelatedSlot() throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        instance.handleSessionEvent(
+            .didStopWithError(NSError(domain: "test", code: 1)))
+
+        #expect(instance.hasSaveFile)
+    }
+
     // MARK: - isColdPaused
 
     @Test("isColdPaused is true when paused with no live session")

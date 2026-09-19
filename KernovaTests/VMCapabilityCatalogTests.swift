@@ -101,11 +101,15 @@ struct VMCapabilityCatalogTests {
                     .toggleSettingsPane,
                 ]
             ),
-            // No save file on disk, so a suspended VM has no suspend slot to
-            // capture.
+            // No save file on disk, so this VM holds no suspended session:
+            // Resume, Discard and the suspend-slot capture all fall away, and
+            // what is left is an at-rest VM whose settings nothing pins.
             (
-                "suspended", .suspended,
-                [.discardSavedState, .resume, .open, .rename, .delete, .toggleSettingsPane]
+                "suspended, slot gone", .suspended,
+                Self.atRestConfiguration.union([
+                    .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories,
+                    .clone, .rename, .delete, .open, .toggleSettingsPane,
+                ])
             ),
             ("starting, no VM yet", .starting(sessionID: nil), []),
             ("starting", .starting(sessionID: id), [.forceStop]),
@@ -155,6 +159,53 @@ struct VMCapabilityCatalogTests {
         }
     }
 
+    /// Everything a saved state pins, because VZ restores one only into the
+    /// configuration it was written under.
+    private static let pinnedBySavedState: Set<VMCapability> = [
+        .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editPortForwarding,
+        .editConfiguration, .switchNetworkMode, .clone,
+    ]
+
+    @Test("A saved state pins an at-rest VM's settings and trades its Start for Resume")
+    func aSavedStateRepinsWhatAnAtRestVMOffers() throws {
+        for phase: VMLifecyclePhase in [.stopped, .failed(message: "Boot failed."), .suspended] {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+            defer { VMInstanceFixture.removeBundle(of: instance) }
+
+            // With no slot on disk, every at-rest phase answers the same way.
+            #expect(harness.catalog.isApplicable(.start, to: instance), "\(phase)")
+            #expect(!harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
+            #expect(!harness.catalog.isApplicable(.discardSavedState, to: instance), "\(phase)")
+            for capability in Self.pinnedBySavedState {
+                #expect(
+                    harness.catalog.isApplicable(capability, to: instance),
+                    "\(capability) with no slot, \(phase)")
+            }
+            #expect(harness.catalog.isApplicable(.delete, to: instance), "\(phase)")
+            #expect(harness.catalog.bringUpVerb(for: instance) == .start, "\(phase)")
+
+            try VMInstanceFixture.writeSaveFile(for: instance)
+
+            for capability in Self.pinnedBySavedState {
+                #expect(
+                    !harness.catalog.isApplicable(capability, to: instance),
+                    "\(capability) with a slot, \(phase)")
+            }
+            #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
+            #expect(harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
+            #expect(harness.catalog.isApplicable(.discardSavedState, to: instance), "\(phase)")
+            // Delete keeps working: the slot is a file inside the bundle and
+            // goes with it.
+            #expect(harness.catalog.isApplicable(.delete, to: instance), "\(phase)")
+            // The offer names Resume; a start committed anyway restores rather
+            // than being refused.
+            #expect(harness.catalog.bringUpVerb(for: instance) == .resume, "\(phase)")
+            #expect(harness.catalog.accepts(.start, on: instance), "\(phase)")
+            #expect(harness.catalog.stopAction(for: instance) == .discardSavedState, "\(phase)")
+        }
+    }
+
     @Test("Nothing is available that is not applicable")
     func availabilityImpliesApplicability() {
         for phase in VMLifecyclePhaseFixtures.all {
@@ -190,29 +241,35 @@ struct VMCapabilityCatalogTests {
     // MARK: - The stop slot
 
     @Test("The stop slot names a graceful stop, a discard, or an Ephemeral revert")
-    func stopActionNamesWhatTheSlotDoes() {
+    func stopActionNamesWhatTheSlotDoes() throws {
         let harness = makeHarness()
         let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
         #expect(harness.catalog.stopAction(for: running) == .stop)
 
         let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: suspended) }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(harness.catalog.stopAction(for: suspended) == .discardSavedState)
 
         let baseline = VMSnapshot(name: "Ephemeral")
         let ephemeral = makeInstance(
             in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline])
+        defer { VMInstanceFixture.removeBundle(of: ephemeral) }
+        try VMInstanceFixture.writeSaveFile(for: ephemeral)
         ephemeral.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
         #expect(harness.catalog.stopAction(for: ephemeral) == .revertToBaseline)
     }
 
     @Test("The stop slot stands for both capabilities that can fill it")
-    func stopActionAvailabilityCoversBothCapabilities() {
+    func stopActionAvailabilityCoversBothCapabilities() throws {
         let harness = makeHarness()
         let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
         #expect(harness.catalog.isAvailable(.stop, on: running))
         #expect(harness.catalog.isStopActionAvailable(on: running))
 
         let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: suspended) }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(!harness.catalog.isAvailable(.stop, on: suspended))
         #expect(harness.catalog.isAvailable(.discardSavedState, on: suspended))
         #expect(harness.catalog.isStopActionAvailable(on: suspended))
@@ -643,15 +700,25 @@ struct VMCapabilityCatalogTests {
     // MARK: - Bring-up
 
     @Test(
-        "The bring-up verb boots a resting VM and restores a suspended one",
+        "The bring-up verb boots a resting VM and restores one holding a saved state",
         arguments: [
-            (VMLifecyclePhase.stopped, VMCapabilityCatalog.BringUpVerb.start),
-            (.failed(message: "Boot failed."), .start),
-            (.suspended, .resume),
-        ] as [(VMLifecyclePhase, VMCapabilityCatalog.BringUpVerb)])
-    func bringUpVerbByPhase(phase: VMLifecyclePhase, expected: VMCapabilityCatalog.BringUpVerb) {
+            (VMLifecyclePhase.stopped, false, VMCapabilityCatalog.BringUpVerb.start),
+            (.failed(message: "Boot failed."), false, .start),
+            // A suspension whose slot has gone boots: there is nothing left to
+            // restore, whatever the phase is still called.
+            (.suspended, false, .start),
+            (.stopped, true, .resume),
+            (.failed(message: "Restore failed."), true, .resume),
+            (.suspended, true, .resume),
+        ] as [(VMLifecyclePhase, Bool, VMCapabilityCatalog.BringUpVerb)])
+    func bringUpVerbByPhase(
+        phase: VMLifecyclePhase, holdsSavedState: Bool,
+        expected: VMCapabilityCatalog.BringUpVerb
+    ) throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: phase)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        if holdsSavedState { try VMInstanceFixture.writeSaveFile(for: instance) }
 
         #expect(harness.catalog.bringUpVerb(for: instance) == expected)
         // The standing pass adds guards on top of this one and changes nothing

@@ -195,6 +195,8 @@ struct VMLibraryViewModelTests {
         suspending.shouldSuspendOnResume = true
         let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -949,10 +951,12 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("resume delegates to lifecycle coordinator")
-    func resumeDelegates() async {
+    func resumeDelegates() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         viewModel.instances.append(instance)
 
         await viewModel.resume(instance)
@@ -1378,13 +1382,15 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a cold resume is refused while a machine ID twin is running")
-    func coldResumeBlockedByRunningMachineIDTwin() async {
+    func coldResumeBlockedByRunningMachineIDTwin() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMachineIDPair(to: viewModel)
         // Cold-paused: paused with no `virtualMachine`, so the resume would build
         // a fresh one and claim the identity.
         resuming.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: resuming) }
+        try VMInstanceFixture.writeSaveFile(for: resuming)
         other.enter(.running(sessionID: UUID()))
 
         await viewModel.resume(resuming)
@@ -1395,11 +1401,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a cold resume proceeds past a machine ID twin when the guard preference is off")
-    func coldResumeProceedsWhenDuplicateMachineIDGuardDisabled() async {
+    func coldResumeProceedsWhenDuplicateMachineIDGuardDisabled() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMachineIDPair(to: viewModel)
         resuming.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: resuming) }
+        try VMInstanceFixture.writeSaveFile(for: resuming)
         other.enter(.running(sessionID: UUID()))
         preferences.blockDuplicateMachineIDBoot = false
 
@@ -1602,11 +1610,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a cold resume is refused while a MAC address twin is running")
-    func coldResumeBlockedByRunningMACAddressTwin() async {
+    func coldResumeBlockedByRunningMACAddressTwin() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMACAddressPair(to: viewModel)
         resuming.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: resuming) }
+        try VMInstanceFixture.writeSaveFile(for: resuming)
         other.enter(.running(sessionID: UUID()))
 
         await viewModel.resume(resuming)
@@ -2145,7 +2155,7 @@ struct VMLibraryViewModelTests {
         instance.enter(.failed(message: "Test failure"))  // where a failed start leaves the VM
 
         let failure = StartFailedAttachment(
-            kind: .removableMedia, id: item.id, label: item.label, message: "test")
+            verb: .start, kind: .removableMedia, id: item.id, label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         #expect(instance.configuration.removableMedia == nil)
@@ -2172,7 +2182,7 @@ struct VMLibraryViewModelTests {
             contents: Data("fake save".utf8))
 
         let failure = StartFailedAttachment(
-            kind: .removableMedia, id: item.id, label: item.label, message: "test")
+            verb: .start, kind: .removableMedia, id: item.id, label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         // The save restores only into the saved device set, so the confirmed
@@ -2287,7 +2297,7 @@ struct VMLibraryViewModelTests {
         // alert sat queued behind another sheet.
 
         let failure = StartFailedAttachment(
-            kind: .removableMedia, id: item.id, label: item.label, message: "test")
+            verb: .start, kind: .removableMedia, id: item.id, label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         // No config write to a deleted bundle, and no boot.
@@ -2306,7 +2316,7 @@ struct VMLibraryViewModelTests {
         // The user removed it in Settings before confirming the alert, so what
         // the recovery was for already holds and the click is the Start.
         let failure = StartFailedAttachment(
-            kind: .removableMedia, id: UUID(), label: "Stale ISO", message: "test")
+            verb: .start, kind: .removableMedia, id: UUID(), label: "Stale ISO", message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
         #expect(virtService.startCallCount == 1)
@@ -2438,10 +2448,12 @@ struct VMLibraryViewModelTests {
     // MARK: - Stop Paused Confirmation
 
     @Test("resumeAndStop dispatches resume then stop")
-    func resumeAndStopDispatches() async {
+    func resumeAndStopDispatches() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        try VMInstanceFixture.writeSaveFile(for: instance)
         viewModel.instances.append(instance)
 
         await viewModel.resumeAndStop(instance)
@@ -4426,10 +4438,12 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("startAutomaticVMsForLaunch resumes a marked VM with saved state")
-    func autoStartResumesColdPaused() async {
+    func autoStartResumesColdPaused() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let saved = markAutoStart(VMInstanceFixture.make(name: "Suspended"))
         saved.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: saved) }
+        try VMInstanceFixture.writeSaveFile(for: saved)
         viewModel.instances = [saved]
 
         await viewModel.startAutomaticVMsForLaunch()
@@ -4589,7 +4603,7 @@ struct VMLibraryViewModelTests {
     /// bring-up is only reported as one, and what that costs on screen is the
     /// app delegate's decision from the app's own posture.
     @Test("startAutomaticVMsForLaunch reports every bring-up and surfaces nothing itself")
-    func autoStartReadiesWithoutSurfacing() async {
+    func autoStartReadiesWithoutSurfacing() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         // No window exists on a headless launch, which is what leaves the
         // presenter nil.
@@ -4599,6 +4613,8 @@ struct VMLibraryViewModelTests {
         let inline = markAutoStart(VMInstanceFixture.make(name: "Inline"))
         let saved = markAutoStart(VMInstanceFixture.make(name: "Suspended"))
         saved.enter(.suspended)
+        defer { VMInstanceFixture.removeBundle(of: saved) }
+        try VMInstanceFixture.writeSaveFile(for: saved)
         viewModel.instances = [popOut, inline, saved]
         viewModel.selectedID = inline.id
         var readied: [UUID] = []
