@@ -3,7 +3,7 @@
 # logs and result-bundle JSON under fixtures/ through fakes of `make`, `xcrun`,
 # and `xcodebuild` placed first on PATH, so every verdict path of
 # make-verdict.sh and xcresult-report.sh is exercised without Xcode. Run it
-# after editing the skill; it takes under a second.
+# after editing the skill; it runs in seconds.
 #
 # Fixture placeholders: @ROOT@ is this checkout's root (the scripts rewrite it
 # repo-relative), @BUNDLE@ the directory holding the fake .xcresult bundles.
@@ -24,9 +24,10 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/nox" "$tmp/logs" "$tmp/out" \
     "$tmp/bundles/failed.xcresult" "$tmp/bundles/passed.xcresult" "$tmp/bundles/empty.xcresult"
-# nox is a PATH with no xcodebuild; the script clears and writes its verdict
-# file before it looks for xcodebuild, so give it just those two tools.
-ln -s /bin/rm /bin/mkdir "$tmp/nox/"
+# nox is a PATH with no xcodebuild; before it looks for xcodebuild the script
+# makes its temp file and clears its verdict file, and the setup error renames
+# a new one into place, so give it just the tools those steps reach for.
+ln -s /bin/rm /bin/mkdir /bin/mv /usr/bin/mktemp "$tmp/nox/"
 
 for f in "$FIX"/logs/*.log; do
     sed "s#@ROOT@#$ROOT#g; s#@BUNDLE@#$tmp/bundles#g" "$f" >"$tmp/logs/$(basename "$f")"
@@ -36,7 +37,14 @@ printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/xcodebuild"
 cat >"$tmp/bin/make" <<'FAKE'
 #!/bin/sh
 # Replays $FAKE_MAKE_LOG and exits $FAKE_MAKE_STATUS, whatever the target.
+# FAKE_MAKE_WAIT holds the replay open until that file appears, so a caller can
+# drive a run that is genuinely in flight; the second write then lands after
+# whatever a concurrent run did meanwhile.
 cat "$FAKE_MAKE_LOG"
+if [ -n "${FAKE_MAKE_WAIT:-}" ]; then
+    while [ ! -e "$FAKE_MAKE_WAIT" ]; do sleep 0.02; done
+    cat "$FAKE_MAKE_LOG"
+fi
 exit "${FAKE_MAKE_STATUS:-0}"
 FAKE
 cat >"$tmp/bin/xcrun" <<'FAKE'
@@ -55,8 +63,7 @@ sed "s#@ROOT@#$FAKE_ROOT#g" "$fixture"
 FAKE
 chmod +x "$tmp/bin"/*
 # A PATH with no xcodebuild at all: macOS keeps an xcode-select shim at
-# /usr/bin/xcodebuild, so the system directories cannot be on it. The script
-# needs only bash (for its shebang) and make before its preflight runs.
+# /usr/bin/xcodebuild, so the system directories cannot be on it.
 cp "$tmp/bin/make" "$tmp/nox/make"
 ln -s "$(command -v bash)" "$tmp/nox/bash"
 
@@ -88,15 +95,21 @@ reject()       { ! grep -qE -- "$1" "$tmp/last" || fail "$name: output has /$1/"
 expect_count() { [ "$(grep -cE -- "$1" "$tmp/last")" -eq "$2" ] || fail "$name: expected $2 lines matching /$1/"; }
 expect_last()  { [ "$(tail -n 1 "$tmp/last" | grep -cE -- "$1")" -eq 1 ] || fail "$name: last line is not /$1/: $(tail -n 1 "$tmp/last")"; }
 expect_lines() { [ "$(grep -c . "$tmp/last")" -eq "$1" ] || fail "$name: expected $1 lines, got $(grep -c . "$tmp/last")"; }
+expect_err()   { grep -qE -- "$1" "$tmp/last.err" || fail "$name: stderr lacks /$1/: $(cat "$tmp/last.err")"; }
 
 verdict() { "$SKILL/make-verdict.sh" "$@"; }
 with_log() { FAKE_MAKE_LOG="$tmp/logs/$1" FAKE_MAKE_STATUS="$2" "$SKILL/make-verdict.sh" "${@:3}"; }
 
+# A run's log is <out>/<target>/<timestamp>-<pid>.log; RUN_LOG matches one.
+RUN_LOG='[0-9]{8}-[0-9]{6}-[0-9]+\.log'
+log_count() { local n=0 f; for f in "$tmp/out/$1"/*.log; do [ -f "$f" ] && n=$((n + 1)); done; printf '%s\n' "$n"; }
+log_named() { sed -n 's/^make-verdict: target=.* log=//p' "${1:-$tmp/last}"; }
+
 # ---- make-verdict.sh: build -------------------------------------------------------
 
 run "build green" 0 with_log build-ok.log 0 build
-expect '^make-verdict: target=build suite=- duration=[0-9]+s log=.*/build\.log$'
-expect_last '^make-verdict: verdict=green target=build suite=- log=.*/build\.log xcresult=-$'
+expect "^make-verdict: target=build suite=- duration=[0-9]+s log=$tmp/out/build/$RUN_LOG\$"
+expect_last "^make-verdict: verdict=green target=build suite=- log=$tmp/out/build/$RUN_LOG xcresult=-\$"
 expect_lines 2
 [ -f "$tmp/out/build.verdict" ] || fail "$name: no verdict file written"
 cmp -s "$tmp/out/build.verdict" "$tmp/last" || fail "$name: verdict file differs from stdout"
@@ -107,7 +120,7 @@ expect_count "^  Kernova/Services/VMSession\.swift:42:9: error: cannot find 'foo
 expect "^  KernovaKit/Sources/KernovaKit/Wire\.swift:7:1: error: missing return"
 reject 'warning:'
 reject "$ROOT"
-expect_last '^make-verdict: verdict=build-failed target=build suite=- log=.*/build\.log xcresult=-$'
+expect_last "^make-verdict: verdict=build-failed target=build suite=- log=$tmp/out/build/$RUN_LOG xcresult=-\$"
 
 run "build-for-testing green" 0 with_log build-ok.log 0 build-for-testing
 expect_last '^make-verdict: verdict=green target=build-for-testing '
@@ -123,16 +136,20 @@ expect '^KernovaTests/VMConfigurationTests\.swift:58: Expectation failed: error 
 expect '^error → nil$'
 reject '^xcresult-report:'
 reject "$ROOT"
-expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 log=.*/test\.log xcresult=$tmp/bundles/failed\.xcresult$"
+expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 log=$tmp/out/test/$RUN_LOG xcresult=$tmp/bundles/failed\.xcresult\$"
 
 run "test green" 0 with_log test-passed.log 0 test
 expect '^result=Passed total=3948 passed=3948 failed=0 skipped=0 xfail=0$'
-expect_last '^make-verdict: verdict=green target=test suite=- total=3948 failed=0 log=.* xcresult=.*/passed\.xcresult$'
+expect_last "^make-verdict: verdict=green target=test suite=- total=3948 failed=0 log=$tmp/out/test/$RUN_LOG xcresult=.*/passed\.xcresult\$"
 expect_lines 3
 
 run "suite matched nothing" 3 with_log test-none.log 0 test-suite KernovaTests/NoSuchSuite
 expect '^make-verdict: target=test-suite suite=KernovaTests/NoSuchSuite '
 expect_last '^make-verdict: verdict=no-tests-ran target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 '
+
+run "zero tests but make failed" 1 with_log test-none.log 1 test-suite KernovaTests/NoSuchSuite
+expect '^tail:$'
+expect_last '^make-verdict: verdict=test-failed target=test-suite suite=KernovaTests/NoSuchSuite total=0 failed=0 reason=make-exit-1 '
 
 run "test build failed" 2 with_log test-build-failed.log 65 test
 expect '^errors:$'
@@ -155,7 +172,7 @@ expect_last '^make-verdict: verdict=green target=test-without-building '
 # ---- make-verdict.sh: lint --------------------------------------------------------
 
 run "lint green" 0 with_log lint-ok.log 0 lint
-expect_last '^make-verdict: verdict=green target=lint suite=- log=.*/lint\.log xcresult=-$'
+expect_last "^make-verdict: verdict=green target=lint suite=- log=$tmp/out/lint/$RUN_LOG xcresult=-\$"
 
 run "lint failed" 4 with_log lint-failed.log 2 lint
 expect '^errors:$'
@@ -187,22 +204,113 @@ run "suite on a non-suite target" 5 verdict build KernovaTests/X
 expect_last '^make-verdict: verdict=setup-error reason=usage '
 run "missing log" 5 verdict --from-log "$tmp/logs/nope.log" test
 expect_last '^make-verdict: verdict=setup-error reason=no-log '
+# A run make called a success whose result bundle is unreadable: the setup
+# error names the bundle reason, and the only diagnostic there is for it is
+# the stderr of the reader that failed.
+run "bundle the log names is gone" 5 with_log test-bundle-gone.log 0 test
+expect_last '^make-verdict: verdict=setup-error reason=no-bundle target=test suite=-$'
+expect_err "^make-verdict\\.sh: xcresult-report\\.sh: no result bundle at '$tmp/bundles/gone\\.xcresult'$"
 run "xcodebuild missing" 5 env PATH="$tmp/nox" FAKE_MAKE_LOG="$tmp/logs/build-ok.log" "$SKILL/make-verdict.sh" build
 expect_last '^make-verdict: verdict=setup-error reason=xcodebuild-missing '
 cmp -s "$tmp/out/build.verdict" "$tmp/last" || fail "$name: setup error left a stale or missing verdict file"
 run "help" 0 verdict --help
 expect_lines 0
-printf 'stale\n' >"$tmp/out/build.verdict"
-printf '%s\n' "$$" >"$tmp/out/make-verdict.pid"
-run "second start while one runs" 5 with_log build-ok.log 0 build
-expect_last '^make-verdict: verdict=setup-error reason=already-running target=build suite=-$'
-[ "$(cat "$tmp/out/build.verdict")" = stale ] || fail "$name: refused start touched the running run's verdict file"
-[ "$(cat "$tmp/out/make-verdict.pid")" = "$$" ] || fail "$name: refused start touched the pid file"
-( : ) & dead=$!; wait "$dead"
-printf '%s\n' "$dead" >"$tmp/out/make-verdict.pid"
-run "pid file of a dead run does not block" 0 with_log build-ok.log 0 build
-expect_last '^make-verdict: verdict=green '
-[ ! -e "$tmp/out/make-verdict.pid" ] || fail "$name: pid file left behind"
+
+# ---- make-verdict.sh: a log per run ----------------------------------------
+
+# Two runs of one target write two logs, and each verdict names its own: the
+# first run's log still names its own bundle after the second has run.
+rm -rf "$tmp/out/test" "$tmp/out/test.verdict"
+run "first of two runs of one target" 0 with_log test-passed.log 0 test
+first_log="$(log_named)"
+grep -q "log=$first_log xcresult=$tmp/bundles/passed.xcresult$" "$tmp/out/test.verdict" \
+    || fail "$name: the verdict file does not name this run's log and bundle"
+run "second of two runs of one target" 1 with_log test-failed.log 65 test
+second_log="$(log_named)"
+grep -q "log=$second_log xcresult=$tmp/bundles/failed.xcresult$" "$tmp/out/test.verdict" \
+    || fail "$name: the verdict file does not name this run's log and bundle"
+[ "$first_log" != "$second_log" ] || fail "$name: both runs wrote $first_log"
+grep -q "$tmp/bundles/passed.xcresult" "$first_log" || fail "$name: the first run's log no longer names its own bundle"
+run "the first run's log still reports the first run" 0 verdict --from-log "$first_log" test
+expect_last "xcresult=$tmp/bundles/passed\.xcresult$"
+
+# release_inflight — let the held-open run finish, and exit as it did. Reached
+# on every path: a fake make left spinning outlives this script.
+release_inflight() {
+    local rc
+    touch "$tmp/release"
+    wait "$inflight"; rc=$?
+    rm -f "$tmp/release"
+    return "$rc"
+}
+
+# start_inflight <stdout file> — a `test` run the fake make holds open until
+# $tmp/release appears, into an emptied target directory. Sets $inflight to its
+# pid and $inflight_log to the log it wrote. No log means no scenario: it then
+# fails $name, releases the run, and returns 1, so the caller skips the
+# assertions that would each report the same absence again.
+start_inflight() {
+    local polls=0 f
+    rm -rf "$tmp/out/test" "$tmp/out/test.verdict"
+    FAKE_MAKE_LOG="$tmp/logs/test-passed.log" FAKE_MAKE_STATUS=0 FAKE_MAKE_WAIT="$tmp/release" \
+        "$SKILL/make-verdict.sh" test >"$1" 2>&1 &
+    inflight=$!
+    inflight_log=
+    while [ -z "$inflight_log" ] && [ "$polls" -lt 500 ]; do
+        for f in "$tmp/out/test"/*.log; do [ -f "$f" ] && inflight_log="$f"; done
+        [ -n "$inflight_log" ] || sleep 0.01
+        polls=$((polls + 1))
+    done
+    [ -n "$inflight_log" ] && return 0
+    count=$((count + 1))
+    fail "$name: the in-flight run wrote no log"
+    release_inflight
+    return 1
+}
+
+# A run of one target genuinely in flight, held open by the fake make, while a
+# second run of that same target runs to completion beside it: each reports the
+# bundle its own log names, and neither log is written by the other.
+name="a run beside one in flight"
+if start_inflight "$tmp/inflight.out"; then
+    run "a run beside one in flight reports its own bundle" 1 with_log test-failed.log 65 test
+    expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 failed=2 log=$tmp/out/test/$RUN_LOG xcresult=$tmp/bundles/failed\.xcresult$"
+
+    name="a run beside one in flight"
+    count=$((count + 1))
+    [ "$(log_count test)" -eq 2 ] || fail "$name: $(log_count test) logs for two runs, expected 2"
+    release_inflight; rc=$?
+    [ "$rc" -eq 0 ] || { fail "$name: the in-flight run exited $rc"; sed 's/^/      /' "$tmp/inflight.out"; }
+    [ "$(grep -c "$tmp/bundles/passed.xcresult" "$inflight_log")" -eq 2 ] \
+        || fail "$name: the in-flight run's log was truncated under it"
+    grep -q "log=$inflight_log xcresult=$tmp/bundles/passed.xcresult$" "$tmp/inflight.out" \
+        || fail "$name: the in-flight run's verdict does not name its own log and bundle"
+fi
+
+# Pruning spares a run in flight: its log is the oldest in the window, and it
+# reads that log back by path once make returns.
+name="pruning spares a run in flight"
+if start_inflight "$tmp/inflight-prune.out"; then
+    count=$((count + 1))
+    # A second of the timestamp, so every run that follows outranks this one.
+    sleep 1
+    for _ in 1 2 3 4 5 6; do with_log test-passed.log 0 test >/dev/null 2>&1; done
+    [ -f "$inflight_log" ] || fail "$name: the in-flight run's log was pruned"
+    release_inflight; rc=$?
+    [ "$rc" -eq 0 ] || { fail "$name: the in-flight run exited $rc"; sed 's/^/      /' "$tmp/inflight-prune.out"; }
+    grep -q "log=$inflight_log xcresult=$tmp/bundles/passed.xcresult$" "$tmp/inflight-prune.out" \
+        || fail "$name: the in-flight run's verdict does not name its own log and bundle"
+fi
+
+# Each target's directory keeps the newest few logs and nothing older.
+rm -rf "$tmp/out/test-without-building"
+for _ in 1 2 3 4 5 6; do with_log test-passed.log 0 test-without-building >/dev/null 2>&1; done
+name="log retention"
+count=$((count + 1))
+[ "$(log_count test-without-building)" -eq 5 ] \
+    || fail "$name: kept $(log_count test-without-building) logs of 6 runs, expected 5"
+newest="$(log_named "$tmp/out/test-without-building.verdict")"
+[ -f "$newest" ] || fail "$name: the newest run's log was pruned"
 
 # ---- xcresult-report.sh ----------------------------------------------------
 
