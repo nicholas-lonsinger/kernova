@@ -459,6 +459,47 @@ struct VsockHostConnectionTests {
         #expect(pendingLogCount(conn) == 0)
     }
 
+    /// The failed send's frame reaches `holdForNextConnection` after
+    /// `setEnabled(false)` has already cleared the ring — the pause that
+    /// disabling performs is what fails the send.
+    @Test("Explicitly disabled: a frame parked by a failed send is dropped, and a later enable does not deliver it")
+    func explicitlyDisabledDropsParkedFrame() throws {
+        let conn = VsockHostConnection()
+        conn.setEnabled(false)
+
+        let sink = AgentLogSink()
+        sink.install()
+        defer { sink.uninstall() }
+
+        conn.holdForNextConnection(
+            makeLogFrame(message: "parked"), failedOn: try makeClosedChannel(),
+            failure: VsockChannelError.closed)
+
+        #expect(pendingLogCount(conn) == 0)
+        #expect(sink.count(matching: sendFailedMarker) == 0)
+
+        conn.setEnabled(true)
+        #expect(pendingLogCount(conn) == 0)
+    }
+
+    @Test("Enabled: a frame parked by a failed send goes back to the head of the buffer")
+    func enabledParksFrameAtHead() throws {
+        let conn = VsockHostConnection()
+        conn.setEnabled(true)
+        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "queued"))
+
+        let sink = AgentLogSink()
+        sink.install()
+        defer { sink.uninstall() }
+
+        conn.holdForNextConnection(
+            makeLogFrame(message: "parked"), failedOn: try makeClosedChannel(),
+            failure: VsockChannelError.closed)
+
+        #expect(pendingMessages(conn) == ["parked", "queued"])
+        #expect(sink.count(matching: "\(sendFailedMarker), holding 2 record(s)") == 1)
+    }
+
     // MARK: - Undecided policy: pre-handshake buffering (#598)
 
     @Test("Undecided (no policy yet): forwardLog buffers the frame instead of dropping it")
@@ -596,6 +637,16 @@ struct VsockHostConnectionTests {
             #expect(try await message(from: host1) == "buffered")
             #expect(dialled.dialled.value == 2)
         }
+    }
+
+    /// A channel whose send has already failed, standing in for the one a
+    /// drain was sending on.
+    private func makeClosedChannel() throws -> VsockChannel {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        Darwin.close(hostFd)
+        let channel = VsockChannel(fileDescriptor: agentFd)
+        channel.close()
+        return channel
     }
 
     /// The message of the next `LogRecord` frame on `channel`.
