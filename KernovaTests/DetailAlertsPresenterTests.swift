@@ -393,10 +393,11 @@ struct DetailAlertsPresenterTests {
     // MARK: - The start-failed removal offer
 
     private func makeStartFailure(
-        _ reason: StartFailedAttachment.Reason, message: String, verb: VMVerb = .start
+        _ reason: StartFailedAttachment.Reason, message: String, verb: VMVerb = .start,
+        kind: StartFailedAttachment.Kind = .storageDisk
     ) -> StartFailedAttachment {
         StartFailedAttachment(
-            verb: verb, kind: .storageDisk, reason: reason, id: UUID(), label: "Archive",
+            verb: verb, kind: kind, reason: reason, id: UUID(), label: "Archive",
             message: message)
     }
 
@@ -430,19 +431,17 @@ struct DetailAlertsPresenterTests {
         #expect(resumed.title == "Couldn't Resume “Builder”")
     }
 
-    /// A retry is named only where the code knows the state it fixes. Nothing
-    /// here can tell a deleted file from one on a volume that is not mounted, so
-    /// the copy names reconnecting as a condition to check, never as the cause.
+    /// Nothing here can tell a deleted file from one on a volume that is not
+    /// mounted, so the copy names reconnecting as a condition to check, never as
+    /// the cause.
     @Test("A file that isn't there names reconnecting, and claims no cause")
     func startFailedAlertOnAMissingFileNamesTheRetry() {
         let message = DetailAlertsPresenter.startFailedAttachmentMessage(
             makeStartFailure(
                 .notFound, message: "Storage disk 'Archive' not found at /Volumes/Ext/a.img."),
-            discardsSavedState: false)
+            holdsSavedState: false)
 
         #expect(message.hasPrefix("Storage disk 'Archive' not found at /Volumes/Ext/a.img."))
-        // Conditional, so the copy carries no claim about why the file is not
-        // at that path.
         #expect(message.contains("If it’s on a disk that isn’t connected, connect it and try again."))
         #expect(!message.contains("was deleted"))
         #expect(!message.contains("may have been"))
@@ -450,35 +449,64 @@ struct DetailAlertsPresenterTests {
         #expect(message.contains("re-attach it later in Settings"))
     }
 
-    @Test("A file the VM may not write names the one fix that needs no Settings")
-    func startFailedAlertOnAnUnwritableFileNamesTheRetry() {
+    /// Marking the entry Read Only is the one remedy this app can be sure of —
+    /// the builder asks for a writable file only for an entry the VM may write —
+    /// and each kind's switch lives in its own Settings section.
+    @Test(
+        "An unwritable file names the Read Only switch, in the section that carries it",
+        arguments: [
+            (StartFailedAttachment.Kind.storageDisk, "Storage Disks"),
+            (.removableMedia, "Removable Media"),
+        ])
+    func startFailedAlertOnAnUnwritableFileNamesReadOnly(
+        kind: StartFailedAttachment.Kind, section: String
+    ) {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notWritable, message: "Archive is not writable: /tmp/a.img.", kind: kind),
+            holdsSavedState: false)
+
+        #expect(
+            message.contains("Turn on Read Only for it in Settings, under \(section),"), "\(kind)")
+        // The file-system side is a condition, not a diagnosis: `isWritableFile`
+        // is equally false for a read-only volume and a sandbox denial.
+        #expect(
+            message.contains("If the file or the disk it’s on is locked or read-only"), "\(kind)")
+        #expect(message.contains("You can also remove “Archive”"), "\(kind)")
+    }
+
+    /// Settings are locked while a saved state is on disk, so the one remedy
+    /// that needs them is not offered to a VM that cannot reach them.
+    @Test("An unwritable file on a suspended VM is not sent to Settings")
+    func startFailedAlertOnAnUnwritableFileWithASavedStateOmitsReadOnly() {
         let message = DetailAlertsPresenter.startFailedAttachmentMessage(
             makeStartFailure(
                 .notWritable, message: "Storage disk 'Archive' is not writable: /tmp/a.img."),
-            discardsSavedState: true)
+            holdsSavedState: true)
 
-        #expect(message.contains("Make the file writable and try again."))
-        // A VM holding a saved state cannot reach its settings until that state
-        // is discarded, so nothing sends the user there.
-        #expect(!message.contains("read-only"))
+        #expect(!message.contains("Turn on Read Only"))
+        #expect(
+            message.contains(
+                "If the file or the disk it’s on is locked or read-only, make it writable and "
+                    + "try again."))
         #expect(
             message.contains(
                 "Removing it also discards this virtual machine's saved state"))
     }
 
-    /// Fixing either means editing the entry, which a VM holding a saved state
-    /// cannot do — so the alert states what was found and offers the removal,
-    /// and invents no step.
+    /// Read Only does not make a folder a disk image, and nothing here knows
+    /// what the framework objected to — so neither case invents a step.
     @Test(
-        "A folder and a refused attach name no retry",
+        "A folder and a refused attach name no remedy",
         arguments: [StartFailedAttachment.Reason.pathIsDirectory, .attachRefused])
-    func startFailedAlertNamesNoRetryWhereNoneIsCertain(reason: StartFailedAttachment.Reason) {
+    func startFailedAlertNamesNoRemedyWhereNoneIsCertain(reason: StartFailedAttachment.Reason) {
         let message = DetailAlertsPresenter.startFailedAttachmentMessage(
             makeStartFailure(reason, message: "Storage disk 'Archive' is a directory."),
-            discardsSavedState: false)
+            holdsSavedState: false)
 
         #expect(message.contains("You can remove “Archive”"), "\(reason)")
         #expect(!message.contains("try again."), "\(reason)")
+        #expect(!message.contains("Read Only"), "\(reason)")
     }
 
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")

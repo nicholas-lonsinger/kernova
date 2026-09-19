@@ -731,7 +731,7 @@ final class DetailAlertsPresenter: NSObject {
         AlertConfiguration(
             title: "Couldn't \(failure.verb == .resume ? "Resume" : "Start") “\(vm.name)”",
             message: Self.startFailedAttachmentMessage(
-                failure, discardsSavedState: vm.hasSaveFile),
+                failure, holdsSavedState: vm.hasSaveFile),
             buttons: [
                 AlertButton("Remove and Start", role: .destructive) { [weak self] in
                     guard let self else { return }
@@ -741,42 +741,66 @@ final class DetailAlertsPresenter: NSObject {
             ])
     }
 
-    /// What the start-failed alert says: what was found, the one retry that is
-    /// certain to apply, and what the removal costs.
+    /// What the start-failed alert says: what was found, what can be done about
+    /// it, and what the removal costs.
     ///
-    /// The retry is per ``StartFailedAttachment/Reason``, and only where the
-    /// code knows the state it fixes. A path that is a folder and a file the
-    /// framework refused get none: fixing either means editing the entry, which
-    /// a VM holding a saved state cannot do until that state is discarded — and
-    /// advice nobody in that state can follow is worse than none.
+    /// One remedy here is certain, and it is ``StartFailedAttachment/Reason/notWritable``'s:
+    /// the builder asks for a writable file only for an entry the VM may write
+    /// (`requireWritable: !disk.readOnly`), so marking that entry Read Only
+    /// skips the check the bring-up died on. It is named only while the VM's
+    /// settings can be reached — `holdsSavedState` is exactly what closes them
+    /// (``VMInstance/canEditSettings``) — because advice nobody in that state
+    /// can follow is worse than none. Everything else the file-system reasons
+    /// could be is put to the user as a condition to check, for the reason
+    /// ``StartFailedAttachment/Reason`` gives.
+    ///
+    /// ``StartFailedAttachment/Reason/pathIsDirectory`` and
+    /// ``StartFailedAttachment/Reason/attachRefused`` are offered no remedy at
+    /// all: Read Only does not make a folder a disk image, and nothing here
+    /// knows what the framework objected to.
     ///
     /// Every entry this alert is built for is external
     /// (``StartFailedAttachment``), so re-attaching it later is always true.
     static func startFailedAttachmentMessage(
-        _ failure: StartFailedAttachment, discardsSavedState: Bool
+        _ failure: StartFailedAttachment, holdsSavedState: Bool
     ) -> String {
-        let retry: String
+        let remedy: String
         switch failure.reason {
         case .notFound:
-            // Stated as a condition to check, never as the cause: nothing here
-            // can tell a deleted file from one on a volume that is not mounted.
-            retry = "If it’s on a disk that isn’t connected, connect it and try again. "
+            remedy = "If it’s on a disk that isn’t connected, connect it and try again. "
+        case .notWritable where !holdsSavedState:
+            // The certain one first, named for the control that performs it.
+            remedy =
+                "Turn on Read Only for it in Settings, under \(Self.settingsSection(failure.kind)), "
+                + "to start without writing to it. If the file or the disk it’s on is locked or "
+                + "read-only, making it writable works too. "
         case .notWritable:
-            retry = "Make the file writable and try again. "
+            remedy =
+                "If the file or the disk it’s on is locked or read-only, make it writable and "
+                + "try again. "
         case .pathIsDirectory, .attachRefused:
-            retry = ""
+            remedy = ""
         }
         // "also" only where something was offered before it.
-        let offer = retry.isEmpty ? "You can remove" : "You can also remove"
+        let offer = remedy.isEmpty ? "You can remove" : "You can also remove"
         var message =
-            "\(failure.message)\n\n\(retry)\(offer) “\(failure.label)” from this virtual "
+            "\(failure.message)\n\n\(remedy)\(offer) “\(failure.label)” from this virtual "
             + "machine and start without it — the file itself is not deleted, and you can "
             + "re-attach it later in Settings."
-        if discardsSavedState {
+        if holdsSavedState {
             message +=
                 " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
         }
         return message
+    }
+
+    /// The Settings section an attachment's Read Only switch lives in, so the
+    /// copy sends the user to the pane that actually carries it.
+    private static func settingsSection(_ kind: StartFailedAttachment.Kind) -> String {
+        switch kind {
+        case .storageDisk: "Storage Disks"
+        case .removableMedia: "Removable Media"
+        }
     }
 
     private func installerMountedConfig(

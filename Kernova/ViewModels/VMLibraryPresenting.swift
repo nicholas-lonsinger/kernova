@@ -27,14 +27,16 @@ struct StartFailedAttachment: Equatable, Sendable {
         case removableMedia
     }
 
-    /// What was wrong with the attachment, for the one sentence the alert can
-    /// add about getting it working again.
+    /// What was wrong with the attachment, for the sentences the alert adds
+    /// about getting it working again.
     ///
-    /// A retry is named only where the state that retry fixes is certain.
-    /// ``notFound`` is the one that is not: `PathValidation.resolveFile` throws
-    /// it from a `fileExists` miss, which a deleted file and an unmounted
-    /// volume reach alike — so its copy names reconnecting as a condition the
-    /// user can check, never as the cause.
+    /// Two of these are what `PathValidation.resolveFile` could see rather than
+    /// what is actually wrong, so neither names a cause: ``notFound`` comes from
+    /// a `fileExists` miss, which a deleted file and an unmounted volume reach
+    /// alike, and ``notWritable`` from `FileManager.isWritableFile(atPath:)`,
+    /// which is equally false for a read-only volume, a file the Finder or
+    /// `chflags uchg` locked, and a write the sandbox denies. Copy about either
+    /// names a condition the user can check instead.
     enum Reason: Equatable, Sendable {
         case notFound
         case pathIsDirectory

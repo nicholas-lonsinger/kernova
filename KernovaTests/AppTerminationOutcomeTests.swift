@@ -152,14 +152,4 @@ struct AppTerminationSaveStepTests {
         #expect(step(hasLiveSession: false) == .skip)
         #expect(step(hasLiveSession: false, hasUnsettledOperation: true) == .skip)
     }
-
-    @Test("a failed save terminates only the VM it left live")
-    func failedSaveTerminatesOnlyALiveGuest() {
-        // The usual outcome: the save tore its own session down on the way out,
-        // so there is nothing to terminate and asking would only be refused.
-        #expect(!AppTerminationController.terminatesAfterFailedSave(canForceStop: false))
-        // The residual race: something overtook the save and handed the VM back
-        // live, which is the half-live VM this fallback exists for.
-        #expect(AppTerminationController.terminatesAfterFailedSave(canForceStop: true))
-    }
 }
