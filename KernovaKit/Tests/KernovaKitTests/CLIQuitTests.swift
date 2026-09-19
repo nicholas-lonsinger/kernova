@@ -20,7 +20,7 @@ struct CLIQuitTests {
 
         // The app answers `ok`, runs its save pass, and only then exits — which
         // is the close the tool is waiting for.
-        listener.serve([VMCommandResponse(result: .ok)])
+        listener.serve([[VMCommandResponse(result: .ok)]])
         try client.post(.quit)
 
         let answer = try client.nextFrame()

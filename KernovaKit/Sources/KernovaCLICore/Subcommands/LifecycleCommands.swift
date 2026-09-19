@@ -38,7 +38,10 @@ extension KernovaCommand {
             commandName: "start",
             abstract: "Start a virtual machine.",
             discussion: "Nothing is brought in front of you; `kernova open` is the verb that puts "
-                + "a display there.\n\nA virtual machine that creates a macOS account on its "
+                + "a display there.\n\nA virtual machine that still owes its guest setup — a "
+                + "macOS install, or a Linux installer image to fetch — returns once that setup "
+                + "has begun, which carries on afterwards; `kernova wait` follows it to its "
+                + "outcome.\n\nA virtual machine that creates a macOS account on its "
                 + "first boot is started in Kernova, which asks for the account's password in a "
                 + "sheet. This tool takes no password, because it runs in the App Sandbox, which "
                 + "denies turning terminal echo off, and such a start exits 5.")
