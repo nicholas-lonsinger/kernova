@@ -25,7 +25,7 @@ struct CLIPreparingWaitTests {
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
         client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([VMCommandResponse(result: .summary(settled))])
+        listener.serve([[VMCommandResponse(result: .summary(settled))]])
 
         #expect(try PreparingCopy.settle(phantom, on: client) == settled)
         // `.id`, not the name or the text a caller typed: a clone's source
@@ -41,11 +41,13 @@ struct CLIPreparingWaitTests {
         defer { client.close() }
         client.waitForFrames(upTo: testWaitBackstop)
         listener.serve([
-            VMCommandResponse(
-                result: .failure(
-                    .operationFailed(
-                        verb: .awaitPreparing, title: nil, message: "The import was cancelled.",
-                        recovery: nil)))
+            [
+                VMCommandResponse(
+                    result: .failure(
+                        .operationFailed(
+                            verb: .awaitPreparing, title: nil, message: "The import was cancelled.",
+                            recovery: nil)))
+            ]
         ])
 
         do {
@@ -68,7 +70,7 @@ struct CLIPreparingWaitTests {
         // took the request and has not come back to it, which is what the
         // permission panel on a mistyped path leaves a script holding.
         listener.serve(
-            [VMCommandResponse(result: .summary(phantom))], holdingOpen: true)
+            [[VMCommandResponse(result: .summary(phantom))]], holdingOpen: true)
 
         do {
             // The deadline is the assertion here, so it is the one place a
@@ -96,7 +98,7 @@ struct CLIPreparingWaitTests {
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
         client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([VMCommandResponse(result: .ok)])
+        listener.serve([[VMCommandResponse(result: .ok)]])
 
         do {
             _ = try PreparingCopy.settle(phantom, on: client)

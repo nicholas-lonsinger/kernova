@@ -24,8 +24,11 @@ public enum VMLibraryEvent: Codable, Sendable, Hashable {
     case statusChanged(id: UUID, name: String, from: String, to: String)
     /// A VM's guest-agent connectivity changed.
     case agentStatusChanged(id: UUID, name: String, status: String)
-    /// A VM entered its error state, or the create/clone/import writing it failed —
-    /// either way, carrying whatever message it reported.
+    /// Work on a VM did not complete, carrying whatever message it reported.
+    ///
+    /// Not a status: a failure the VM was turned back from leaves it resting
+    /// where the attempt began, so this says what happened and nothing about
+    /// where the VM now is.
     case failure(id: UUID, name: String, message: String)
     /// A VM's display name changed.
     case renamed(id: UUID, from: String, to: String)

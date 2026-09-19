@@ -41,7 +41,10 @@ extension KernovaCommand {
             commandName: "wait",
             abstract: "Block until a virtual machine reaches a state.",
             discussion: "Race-free against a virtual machine already in the state: the app "
-                + "subscribes before it answers, so nothing can land in between and be missed.")
+                + "subscribes before it answers, so nothing can land in between and be missed."
+                + "\n\nA virtual machine that fails while the wait runs ends it at exit 1, "
+                + "carrying what Kernova reported. One already in the error status when the "
+                + "wait starts does not: it can be started from there, so the wait goes on.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -68,101 +71,132 @@ extension KernovaCommand {
             let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
-            let deadline = Date().addingTimeInterval(timeout)
+            try StateWait(selector: selector, until: until, timeout: timeout).run(on: client)
+        }
+    }
+}
 
-            // Subscribe first. The app takes its snapshot inside the same
-            // main-actor call, so no change can land between the two.
-            try client.post(.events)
-            guard let snapshot = try nextFrame(from: client, before: deadline) else {
+/// The wait `kernova wait` performs, over a connection its caller opened.
+///
+/// Returns when the VM reaches ``until``, and refuses the moment Kernova says
+/// that state is not coming: a VM that fails exits
+/// ``CLIExitCode/operationFailed`` carrying Kernova's own sentence, one that
+/// leaves the library exits ``CLIExitCode/notFound``, and the deadline exits
+/// ``CLIExitCode/timedOut``.
+struct StateWait {
+    /// Which virtual machine.
+    let selector: VMSelector
+    /// The state being waited for.
+    let until: WaitCondition
+    /// Seconds to wait before giving up.
+    let timeout: Double
+
+    /// Runs the wait to one of its ends.
+    func run(on client: VMCommandClient) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        // Subscribe first. The app takes its snapshot inside the same
+        // main-actor call, so no change can land between the two.
+        try client.post(.events)
+        guard let snapshot = try nextFrame(from: client, before: deadline) else {
+            throw CLIFailure(.unavailable, "Kernova closed the connection.")
+        }
+        _ = try snapshot.payload()
+
+        // The app resolves the selector, so a name matches by exactly the
+        // rules every other verb uses and a refusal carries its own exit
+        // code. Issued only now, once the snapshot proves the subscription
+        // is live, so the baseline it reads cannot predate it.
+        try client.post(.info(selector))
+
+        // Events for a VM not yet identified are kept rather than dropped:
+        // the info answer and the event stream are answered by separate
+        // tasks, so nothing guarantees the answer reaches the wire first.
+        var pending: [VMCommandResponse.Result] = []
+        let baseline = try awaitInfo(from: client, before: deadline, buffering: &pending)
+        if isSatisfied(byBaseline: baseline) { return }
+        for result in pending where try isSatisfied(by: result, vm: baseline.id) { return }
+
+        while true {
+            guard let frame = try nextFrame(from: client, before: deadline) else {
+                throw CLIFailure(
+                    .unavailable, "Kernova stopped answering before the state arrived.")
+            }
+            if try isSatisfied(by: frame.payload(), vm: baseline.id) { return }
+        }
+    }
+
+    /// Reads frames until the `info` answer lands, keeping every event that
+    /// arrives first.
+    private func awaitInfo(
+        from client: VMCommandClient, before deadline: Date,
+        buffering pending: inout [VMCommandResponse.Result]
+    ) throws -> VMInfo {
+        while true {
+            guard let frame = try nextFrame(from: client, before: deadline) else {
                 throw CLIFailure(.unavailable, "Kernova closed the connection.")
             }
-            _ = try snapshot.payload()
-
-            // The app resolves the selector, so a name matches by exactly the
-            // rules every other verb uses and a refusal carries its own exit
-            // code. Issued only now, once the snapshot proves the subscription
-            // is live, so the baseline it reads cannot predate it.
-            try client.post(.info(selector))
-
-            // Events for a VM not yet identified are kept rather than dropped:
-            // the info answer and the event stream are answered by separate
-            // tasks, so nothing guarantees the answer reaches the wire first.
-            var pending: [VMCommandResponse.Result] = []
-            let baseline = try awaitInfo(from: client, before: deadline, buffering: &pending)
-            if isSatisfied(byBaseline: baseline) { return }
-            for result in pending where try isSatisfied(by: result, vm: baseline.id) { return }
-
-            while true {
-                guard let frame = try nextFrame(from: client, before: deadline) else {
-                    throw CLIFailure(
-                        .unavailable, "Kernova stopped answering before the state arrived.")
-                }
-                if try isSatisfied(by: frame.payload(), vm: baseline.id) { return }
-            }
+            // A refusal here is the app's own — a selector naming no VM
+            // exits 3, an ambiguous one exits 4 listing the candidates.
+            let result = try frame.payload()
+            if case .info(let info) = result { return info }
+            pending.append(result)
         }
+    }
 
-        /// Reads frames until the `info` answer lands, keeping every event that
-        /// arrives first.
-        private func awaitInfo(
-            from client: VMCommandClient, before deadline: Date,
-            buffering pending: inout [VMCommandResponse.Result]
-        ) throws -> VMInfo {
-            while true {
-                guard let frame = try nextFrame(from: client, before: deadline) else {
-                    throw CLIFailure(.unavailable, "Kernova closed the connection.")
-                }
-                // A refusal here is the app's own — a selector naming no VM
-                // exits 3, an ambiguous one exits 4 listing the candidates.
-                let result = try frame.payload()
-                if case .info(let info) = result { return info }
-                pending.append(result)
-            }
-        }
+    /// Whether the VM was already in the state when the wait started.
+    private func isSatisfied(byBaseline info: VMInfo) -> Bool {
+        until.isSatisfied(byStatus: info.status)
+            ?? until.isSatisfied(byAgentStatus: info.agentStatus)
+            ?? false
+    }
 
-        /// Whether the VM was already in the state when the wait started.
-        private func isSatisfied(byBaseline info: VMInfo) -> Bool {
-            until.isSatisfied(byStatus: info.status)
-                ?? until.isSatisfied(byAgentStatus: info.agentStatus)
-                ?? false
+    /// Whether `result` says the wait is over.
+    ///
+    /// - Throws: ``CLIFailure`` when the event says the state being waited for
+    ///   is not coming.
+    private func isSatisfied(by result: VMCommandResponse.Result, vm: UUID) throws -> Bool {
+        switch result {
+        case .info(let info) where info.id == vm:
+            return until.isSatisfied(byAgentStatus: info.agentStatus) ?? false
+        case .event(.statusChanged(let id, _, _, let to)) where id == vm:
+            return until.isSatisfied(byStatus: to) ?? false
+        case .event(.agentStatusChanged(let id, _, let status)) where id == vm:
+            return until.isSatisfied(byAgentStatus: status) ?? false
+        case .event(.failure(let id, _, let message)) where id == vm:
+            // What a VM entering the error status reports, and the only frame
+            // carrying why: the status change beside it says `error` and no
+            // more, and `VMInfo` holds no such field. Ends every condition —
+            // a VM that failed reaches no state a script waits for.
+            throw CLIFailure(.operationFailed, message)
+        case .event(.removed(let id, let name)) where id == vm:
+            // The VM left the library, so no state it could reach is
+            // coming — including `stopped`, which is about a guest that
+            // still exists.
+            throw CLIFailure(.notFound, "\u{201C}\(name)\u{201D} left the library.")
+        default:
+            return false
         }
+    }
 
-        /// Whether `result` says the wait is over.
-        private func isSatisfied(by result: VMCommandResponse.Result, vm: UUID) throws -> Bool {
-            switch result {
-            case .info(let info) where info.id == vm:
-                return until.isSatisfied(byAgentStatus: info.agentStatus) ?? false
-            case .event(.statusChanged(let id, _, _, let to)) where id == vm:
-                return until.isSatisfied(byStatus: to) ?? false
-            case .event(.agentStatusChanged(let id, _, let status)) where id == vm:
-                return until.isSatisfied(byAgentStatus: status) ?? false
-            case .event(.removed(let id, let name)) where id == vm:
-                // The VM left the library, so no state it could reach is
-                // coming — including `stopped`, which is about a guest that
-                // still exists.
-                throw CLIFailure(.notFound, "\u{201C}\(name)\u{201D} left the library.")
-            default:
-                return false
-            }
+    /// The next frame, mapping the read deadline onto the timeout exit.
+    private func nextFrame(from client: VMCommandClient, before deadline: Date) throws
+        -> VMCommandResponse?
+    {
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { throw timedOut }
+        client.waitForFrames(upTo: remaining)
+        do {
+            return try client.nextFrame()
+        } catch let failure as CLIFailure where failure.code == .timedOut {
+            throw timedOut
         }
+    }
 
-        /// The next frame, mapping the read deadline onto the timeout exit.
-        private func nextFrame(from client: VMCommandClient, before deadline: Date) throws
-            -> VMCommandResponse?
-        {
-            let remaining = deadline.timeIntervalSinceNow
-            guard remaining > 0 else { throw timedOut }
-            client.waitForFrames(upTo: remaining)
-            do {
-                return try client.nextFrame()
-            } catch let failure as CLIFailure where failure.code == .timedOut {
-                throw timedOut
-            }
-        }
-
-        private var timedOut: CLIFailure {
-            CLIFailure(
-                .timedOut,
-                "\u{201C}\(vm)\u{201D} was not \(until.rawValue) within \(Int(timeout)) seconds.")
-        }
+    private var timedOut: CLIFailure {
+        CLIFailure(
+            .timedOut,
+            "\u{201C}\(selector.displayText)\u{201D} was not \(until.rawValue) within "
+                + "\(Int(timeout)) seconds.")
     }
 }
