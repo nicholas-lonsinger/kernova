@@ -27,6 +27,9 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     /// Thrown only by pinned creates when set — the "stored addressing is no
     /// longer reservable" case.
     var pinnedCreateError: (any Error)?
+    /// Thrown by every member start when set — the case a build degrades to
+    /// a network nothing holds.
+    var startMemberError: (any Error)?
 
     // MARK: - Recorded calls
 
@@ -42,15 +45,33 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     private(set) var releasedNetworks: [OpaquePointer] = []
     /// The network each attachment was built to join, in call order.
     private(set) var attachedNetworks: [OpaquePointer] = []
+    /// The network each member interface was started on, in call order.
+    private(set) var startedMembers: [OpaquePointer] = []
+    /// The network each stopped member was held on, in call order.
+    private(set) var stoppedMembers: [OpaquePointer] = []
+    /// Every member start, member stop and network release in one order, each
+    /// naming the network it acted on — so a test can assert a member's stop
+    /// landed before its network's ref went.
+    private(set) var networkCalls: [NetworkCall] = []
+
+    /// One recorded call in ``networkCalls``.
+    enum NetworkCall: Equatable {
+        case startMember(OpaquePointer)
+        case stopMember(OpaquePointer)
+        case releaseNetwork(OpaquePointer)
+    }
+
+    /// The network each member interface handed out was started on.
+    private var memberNetworks: [OpaquePointer: OpaquePointer] = [:]
 
     /// Runs inside each create, before it returns, with the 1-based number of
     /// the call — the seam for a test that has to change service state while a
     /// create is in flight.
     var duringCreateNetwork: ((Int) -> Void)?
 
-    private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
+    private var fabricatedPointers: [UnsafeMutableRawPointer] = []
 
-    deinit { fabricatedNetworks.forEach { $0.deallocate() } }
+    deinit { fabricatedPointers.forEach { $0.deallocate() } }
 
     func createNetwork(
         _ kind: VmnetNetworkKind,
@@ -70,6 +91,22 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 
     func releaseNetwork(_ handle: VmnetNetworkHandle) {
         releasedNetworks.append(handle.network)
+        networkCalls.append(.releaseNetwork(handle.network))
+    }
+
+    func startMember(on handle: VmnetNetworkHandle) throws -> VmnetMemberHandle {
+        startedMembers.append(handle.network)
+        networkCalls.append(.startMember(handle.network))
+        if let startMemberError { throw startMemberError }
+        let interface = fabricatePointer()
+        memberNetworks[interface] = handle.network
+        return VmnetMemberHandle(interface: interface)
+    }
+
+    func stopMember(_ member: VmnetMemberHandle) {
+        guard let network = memberNetworks[member.interface] else { return }
+        stoppedMembers.append(network)
+        networkCalls.append(.stopMember(network))
     }
 
     /// A NAT attachment standing in for the vmnet one, which would retain the
@@ -82,9 +119,14 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     /// A handle over a one-byte allocation standing in for the vmnet ref:
     /// distinct per call, and nothing ever reads what it points at.
     private func makeHandle() -> VmnetNetworkHandle {
-        let network = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
-        fabricatedNetworks.append(network)
-        return VmnetNetworkHandle(network: OpaquePointer(network))
+        VmnetNetworkHandle(network: fabricatePointer())
+    }
+
+    /// A one-byte allocation standing in for a vmnet ref, distinct per call.
+    private func fabricatePointer() -> OpaquePointer {
+        let allocation = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        fabricatedPointers.append(allocation)
+        return OpaquePointer(allocation)
     }
 }
 
@@ -106,6 +148,11 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
     var materializedKinds: Set<VmnetNetworkKind> = Set(VmnetNetworkKind.allCases)
     /// When `true`, `materializeNetwork` fails and leaves `materializedKinds` as is.
     var materializeFails = false
+    /// The kinds whose run the service would be holding a member interface
+    /// for — a suite opts one in to script the idle pass ending that run.
+    /// `endRunIfHeld` takes a kind out of it and leaves the network wanting a
+    /// recreate.
+    var heldRunKinds: Set<VmnetNetworkKind> = []
     /// The kinds whose addressing is established, as `networks.json` carries it
     /// across launches. Defaults to every kind — a suite opts into the
     /// fresh-machine case, where the registry learns the addressing, by
@@ -121,6 +168,8 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
     /// Every `materializeNetwork` call, in order — failures included.
     private(set) var materializeRequestedKinds: [VmnetNetworkKind] = []
     private(set) var invalidatedKinds: [VmnetNetworkKind] = []
+    /// Every `endRunIfHeld(for:)` call, in order.
+    private(set) var endedRunKinds: [VmnetNetworkKind] = []
 
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
         requestedKinds.append(kind)
@@ -146,6 +195,17 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetNetworkRecreat
     func invalidateNetwork(for kind: VmnetNetworkKind) {
         invalidatedKinds.append(kind)
         materializedKinds.remove(kind)
+    }
+
+    /// Mirrors the service: a run only ends where one was started, the network
+    /// it ends is kept materialized, and a pending declaration outranks the
+    /// run state as the reason to replace it.
+    func endRunIfHeld(for kind: VmnetNetworkKind) {
+        endedRunKinds.append(kind)
+        guard materializedKinds.contains(kind), heldRunKinds.remove(kind) != nil,
+            scriptedRecreationReasons[kind] == nil
+        else { return }
+        scriptedRecreationReasons[kind] = .runEnded
     }
 
     // MARK: - Reservations

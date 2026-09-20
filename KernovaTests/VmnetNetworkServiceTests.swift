@@ -1057,24 +1057,26 @@ struct VmnetNetworkServiceTests {
         #expect(service.reservedAddress(for: mac, kind: .shared) == "192.168.77.2")
     }
 
-    // MARK: - Served networks
+    // MARK: - The network's run
 
-    @Test("A network that built an attachment for a boot reports it served, its declarations unchanged")
-    func bootAttachmentMarksTheNetworkServed() throws {
+    @Test("The first attachment for a boot takes the member interface that holds the run")
+    func bootAttachmentStartsTheRun() throws {
         let location = makeStoreLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
         let (service, operations) = try makeSeededSharedService(
             macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        let handle = try service.network(for: .shared)
 
         _ = try service.attachment(for: .shared)
 
-        // Its reservations lapse when that run ends, so the network is retired
-        // even though nothing was declared since it was created.
-        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+        #expect(operations.startedMembers == [handle.network])
+        // The run lasts as long as that member does, so its reservations are
+        // still being served and there is nothing to replace.
+        #expect(service.recreationReason(for: .shared) == nil)
         #expect(operations.attachedNetworks.count == 1)
     }
 
-    @Test("A second attachment joins the network the first one did")
+    @Test("A second attachment joins the network — and the run — the first one did")
     func secondAttachmentJoinsTheSameNetwork() throws {
         let location = makeStoreLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
@@ -1084,30 +1086,136 @@ struct VmnetNetworkServiceTests {
         _ = try service.attachment(for: .shared)
         _ = try service.attachment(for: .shared)
 
-        // Being served is a reason the arbiter weighs, never one the service
-        // acts on by itself: VMs sharing a run share the network.
+        // VMs sharing a run share the network, and one member holds it for
+        // all of them.
         #expect(operations.createdKinds.count == 1)
         #expect(operations.releasedNetworks.isEmpty)
+        #expect(operations.startedMembers.count == 1)
         let attached = operations.attachedNetworks
         try #require(attached.count == 2)
         #expect(attached[0] == attached[1])
     }
 
-    @Test("A network that built a live attachment reports it served")
-    func liveAttachmentMarksTheNetworkServed() throws {
+    @Test("A live attachment starts the run too")
+    func liveAttachmentStartsTheRun() throws {
         let location = makeStoreLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
-        let (service, _) = try makeSeededSharedService(macs: ["aa:bb:cc:dd:ee:01"], at: location)
-        _ = try service.network(for: .shared)
-        #expect(service.recreationReason(for: .shared) == nil)
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        let handle = try service.network(for: .shared)
+        #expect(operations.startedMembers.isEmpty)
 
         #expect(service.attachmentIfMaterialized(for: .shared) != nil)
 
-        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+        // Both join paths pass through the one choke point, so a VM switching
+        // onto the network live holds its run exactly as a booting one does.
+        #expect(operations.startedMembers == [handle.network])
+        #expect(service.recreationReason(for: .shared) == nil)
     }
 
-    @Test("A network materialized only to learn its addressing is never retired as served")
-    func learnedNetworkIsNotServed() async throws {
+    @Test("Ending a held run stops the member, and the network is replaced before the next join")
+    func endingTheRunRetiresTheNetwork() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        let handle = try service.network(for: .shared)
+        _ = try service.attachment(for: .shared)
+
+        service.endRunIfHeld(for: .shared)
+
+        #expect(operations.stoppedMembers == [handle.network])
+        // The network itself is kept — its ref, and with it the subnet, holds
+        // until something invalidates it.
+        #expect(operations.releasedNetworks.isEmpty)
+        #expect(service.recreationReason(for: .shared) == .runEnded)
+    }
+
+    @Test("Ending a run nothing holds stops nothing")
+    func endingAnUnheldRunStopsNothing() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        _ = try service.network(for: .shared)
+
+        // A network materialized for the addressing learn, then two passes
+        // over one that has already ended: neither has a member to stop.
+        service.endRunIfHeld(for: .shared)
+        _ = try service.attachment(for: .shared)
+        service.endRunIfHeld(for: .shared)
+        service.endRunIfHeld(for: .shared)
+
+        #expect(operations.stoppedMembers.count == 1)
+    }
+
+    @Test("Invalidating a network stops the member it holds before its ref goes")
+    func invalidateStopsTheMemberBeforeReleasing() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        let handle = try service.network(for: .shared)
+        _ = try service.attachment(for: .shared)
+
+        service.invalidateNetwork(for: .shared)
+
+        // The start retained the network object, so releasing the ref before
+        // the stop lands would leave the recreate racing the daemon.
+        #expect(
+            operations.networkCalls == [
+                .startMember(handle.network), .stopMember(handle.network),
+                .releaseNetwork(handle.network),
+            ])
+    }
+
+    @Test("A member interface that will not start leaves the network behaving as one nothing holds")
+    func aRefusedMemberDegradesToAnUnheldNetwork() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        operations.startMemberError = TestFailure("the member interface was refused")
+
+        _ = try service.attachment(for: .shared)
+        _ = try service.attachment(for: .shared)
+
+        // The guests get this run's reservations and the network is replaced
+        // before the next VM joins — everything a network with no member does.
+        #expect(service.recreationReason(for: .shared) == .runEnded)
+        #expect(operations.attachedNetworks.count == 2)
+        // Nothing started, so nothing is retried and nothing is stopped.
+        #expect(operations.startedMembers.count == 1)
+        #expect(operations.stoppedMembers.isEmpty)
+        service.endRunIfHeld(for: .shared)
+        #expect(operations.stoppedMembers.isEmpty)
+    }
+
+    @Test("A recreate for pending declarations stops the member, and the new network takes its own")
+    func aPendingRecreateBracketsTheMember() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        let first = try service.network(for: .shared)
+        _ = try service.attachment(for: .shared)
+
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        #expect(service.recreationReason(for: .shared) == .declarationsPending)
+        service.invalidateNetwork(for: .shared)
+        let second = try service.network(for: .shared)
+        _ = try service.attachment(for: .shared)
+
+        #expect(second.network != first.network)
+        #expect(
+            operations.networkCalls == [
+                .startMember(first.network), .stopMember(first.network),
+                .releaseNetwork(first.network), .startMember(second.network),
+            ])
+    }
+
+    @Test("A network materialized only to learn its addressing takes no member interface")
+    func learnedNetworkTakesNoMember() async throws {
         let location = makeStoreLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
         let operations = MockVmnetNetworkOperator()
@@ -1116,8 +1224,11 @@ struct VmnetNetworkServiceTests {
 
         #expect(await service.materializeNetwork(for: .shared))
 
-        // No attachment ever joined it, so its reservations have not had a run
-        // to lapse in — recreating it would only cost another create.
+        // Nothing has joined it, so holding its run would put a bridge and an
+        // interface on the host for a network no VM is on — and its
+        // reservations have had no run to lapse in, so there is nothing to
+        // replace either.
+        #expect(operations.startedMembers.isEmpty)
         #expect(service.recreationReason(for: .shared) == nil)
         #expect(operations.attachedNetworks.isEmpty)
     }

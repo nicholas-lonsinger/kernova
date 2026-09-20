@@ -567,7 +567,7 @@ struct VMNetworkSlotRegistryTests {
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 
-    // MARK: - Replacing a Served Network at the Next Join
+    // MARK: - Replacing a Network Whose Run Ended at the Next Join
 
     /// A registry over the real service, its networks created by a scripted
     /// operator — for following one network object across a stop and the
@@ -591,25 +591,76 @@ struct VMNetworkSlotRegistryTests {
         return instance
     }
 
-    @Test("An idle pass keeps a served network, its subnet held")
-    func anIdlePassKeepsAServedNetwork() throws {
+    @Test("An idle pass with nothing on the network ends its run and keeps it, its subnet held")
+    func anIdlePassEndsTheRunAndKeepsTheNetwork() throws {
         let (registry, service, operations) = makeRegistryOverService()
         service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        let handle = try service.network(for: .shared)
         _ = try service.attachment(for: .shared)
         let released = operations.releasedNetworks
         roster.instances = [VMInstanceFixture.make(name: "Stopped")]
 
         registry.rebuildNetworksIfIdle()
 
+        // Nothing is on it, so nothing is served by keeping the run going —
+        // and the next VM to join needs a network that serves its
+        // reservations, which only a new run does.
+        #expect(operations.stoppedMembers == [handle.network])
         #expect(operations.releasedNetworks == released)
         #expect(!service.isPinnedOnlyForTesting(.shared))
-        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+        #expect(service.recreationReason(for: .shared) == .runEnded)
     }
 
-    @Test("A VM joining a served network nobody else holds replaces it, and readers are told to ask again")
-    func aJoinReplacesAnUnheldServedNetwork() {
+    @Test("An idle pass ends a held run and keeps the network for the next join to replace")
+    func theIdlePassEndsAHeldRun() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        vmnet.heldRunKinds = [.shared]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = [VMInstanceFixture.make(name: "Stopped")]
+
+        registry.rebuildNetworksIfIdle()
+
+        #expect(vmnet.endedRunKinds == VmnetNetworkKind.allCases)
+        // The network stays, its subnet held, wanting a replacement before the
+        // next VM joins — which is what `prepareNetwork` does.
+        #expect(vmnet.invalidatedKinds.isEmpty)
+        #expect(vmnet.recreationReason(for: .shared) == .runEnded)
+    }
+
+    @Test("An idle pass recreating for pending declarations ends the held run first")
+    func aPendingRecreateEndsTheHeldRunFirst() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.heldRunKinds = [.shared]
+        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
+        let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
+        roster.instances = [VMInstanceFixture.make(name: "Stopped")]
+
+        registry.rebuildNetworksIfIdle()
+
+        // The member holding the run goes with the network it was started on.
+        #expect(vmnet.endedRunKinds == VmnetNetworkKind.allCases)
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("An idle pass leaves the run of a network a VM is on alone")
+    func anIdlePassKeepsTheRunAVMIsOn() throws {
+        let (registry, service, operations) = makeRegistryOverService()
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        _ = try service.attachment(for: .shared)
+        roster.instances = [makeHolder(named: "Running", on: .shared)]
+
+        registry.rebuildNetworksIfIdle()
+
+        // The run is the one that VM is on: ending it here would drop its
+        // reservations under a guest that is using them.
+        #expect(operations.stoppedMembers.isEmpty)
+        #expect(service.recreationReason(for: .shared) == nil)
+    }
+
+    @Test("A VM joining a network whose run ended replaces it, and readers are told to ask again")
+    func aJoinReplacesANetworkWhoseRunEnded() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedRecreationReasons = [.shared: .runEnded]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         let joiner = VMInstanceFixture.make(name: "Joiner")
         roster.instances = [VMInstanceFixture.make(name: "Stopped"), joiner]
@@ -621,10 +672,10 @@ struct VMNetworkSlotRegistryTests {
         #expect(registry.addressingGeneration > before)
     }
 
-    @Test("A VM joining a served network a running VM is on reuses it: that run has not ended")
+    @Test("A VM joining a network a running VM is on reuses it: that run has not ended")
     func aJoinReusesANetworkARunningVMHolds() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        vmnet.scriptedRecreationReasons = [.shared: .runEnded]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         let joiner = VMInstanceFixture.make(name: "Joiner")
         roster.instances = [makeHolder(named: "Running", on: .shared), joiner]
@@ -634,10 +685,10 @@ struct VMNetworkSlotRegistryTests {
         #expect(vmnet.invalidatedKinds.isEmpty)
     }
 
-    @Test("A VM joining a served network another VM's build has taken reuses it")
+    @Test("A VM joining a network another VM's build has taken reuses it")
     func aJoinReusesANetworkABuildHolds() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        vmnet.scriptedRecreationReasons = [.shared: .runEnded]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         let building = VMInstanceFixture.make(name: "Building", phase: .starting(sessionID: nil))
         building.configuration.networkEnabled = true
@@ -654,10 +705,10 @@ struct VMNetworkSlotRegistryTests {
         building.tearDownSession(restingAt: .stopped)
     }
 
-    @Test("A download in flight does not keep a served network from being replaced at the next join")
-    func aDownloadDoesNotHoldAServedNetwork() {
+    @Test("A download in flight does not keep a spent network from being replaced at the next join")
+    func aDownloadDoesNotHoldASpentNetwork() {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        vmnet.scriptedRecreationReasons = [.shared: .runEnded]
         let (registry, _) = makeRegistry(vmnetNetworks: vmnet)
         let joiner = VMInstanceFixture.make(name: "Joiner")
         roster.instances = [makeDownloading(named: "Downloading"), joiner]
@@ -667,8 +718,8 @@ struct VMNetworkSlotRegistryTests {
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 
-    @Test("A served network is kept across a stop and replaced as the next VM joins, its addresses never pending")
-    func aServedNetworkIsReplacedAtTheNextJoin() throws {
+    @Test("A network is kept across a stop and replaced as the next VM joins, its addresses never pending")
+    func aSpentNetworkIsReplacedAtTheNextJoin() throws {
         let (registry, service, operations) = makeRegistryOverService()
         let macs = ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"]
         for mac in macs { service.reserveAddressIfNeeded(for: mac, kind: .shared) }
@@ -686,8 +737,10 @@ struct VMNetworkSlotRegistryTests {
         #expect(operations.releasedNetworks.count == 1)
         #expect(addresses() == reserved)
 
-        // The first VM has stopped: nobody holds the network, and it stays.
+        // The first VM has stopped: nobody is on the network, so its run ends
+        // while the network itself — and its subnet — stays.
         registry.rebuildNetworksIfIdle()
+        #expect(operations.stoppedMembers == operations.startedMembers)
         #expect(operations.releasedNetworks.count == 1)
         #expect(addresses() == reserved)
 
@@ -704,5 +757,9 @@ struct VMNetworkSlotRegistryTests {
         #expect(operations.releasedNetworks.last == attached[0])
         #expect(operations.pinnedAddressings.last == operations.freshAddressing)
         #expect(operations.installedReservations.last?.map(\.mac) == macs)
+        // Each run had its own member: the first one's was stopped before its
+        // network's ref went, and the second VM's run holds the new one.
+        #expect(operations.startedMembers == [attached[0], attached[1]])
+        #expect(operations.stoppedMembers == [attached[0]])
     }
 }

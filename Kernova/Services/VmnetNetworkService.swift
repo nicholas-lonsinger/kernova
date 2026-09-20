@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import Synchronization
 import Virtualization
 import vmnet
 
@@ -114,6 +115,21 @@ struct VmnetNetworkHandle: @unchecked Sendable {
     let network: vmnet_network_ref
 }
 
+/// A member interface Kernova holds on one of its networks, so the network's
+/// run lasts as long as any VM is on it rather than as long as the guest
+/// interfaces happen to overlap.
+///
+/// It originates nothing: Kernova never calls `vmnet_read` or `vmnet_write` on
+/// it, so no frame is ever sourced from it — no DHCP lease, no ARP entry, no
+/// bridge address-cache entry. It shows on the bridge as
+/// `member: vmenetN flags=3<LEARNING,DISCOVER>`
+/// (docs/research/2026-09-20-vmnet-member-interface-holds-a-network-run.md).
+struct VmnetMemberHandle: @unchecked Sendable {
+    /// Feed to `vmnet_stop_interface`. Safe to cross isolation domains: the
+    /// ref is an opaque interface handle.
+    let interface: interface_ref
+}
+
 /// One DHCP reservation: the MAC holding a slot and the IPv4 address that
 /// slot's position maps to.
 struct VmnetReservation: Equatable, Sendable {
@@ -140,6 +156,18 @@ protocol VmnetNetworkOperating: Sendable {
     ) throws -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing)
     /// Releases `handle`'s network ref, ending its subnet reservation.
     func releaseNetwork(_ handle: VmnetNetworkHandle)
+    /// Starts a member interface of Kernova's own on `handle`'s network,
+    /// returning once vmnet reports it started. Throws when it does not start.
+    ///
+    /// The member counts as an internal interface, so the network's run lasts
+    /// while it is up whatever the guests do.
+    func startMember(on handle: VmnetNetworkHandle) throws -> VmnetMemberHandle
+    /// Stops `member`, returning once vmnet reports it stopped.
+    ///
+    /// The start retained the network object and this releases it, so waiting
+    /// for the stop is what lets a create pinned to the same subnet follow
+    /// without racing the daemon.
+    func stopMember(_ member: VmnetMemberHandle)
     /// A VZ attachment joining `handle`'s network.
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment
 }
@@ -209,6 +237,58 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
 
     func releaseNetwork(_ handle: VmnetNetworkHandle) {
         releaseVmnetRef(handle.network)
+    }
+
+    /// vmnet reports a member interface's start and stop on a completion
+    /// handler rather than at the call, and both calls are sequenced on that
+    /// completion — so it runs here, off the thread waiting for it.
+    private static let memberQueue = DispatchQueue(label: "app.kernova.vmnet-member")
+
+    func startMember(on handle: VmnetNetworkHandle) throws -> VmnetMemberHandle {
+        let outcome = Mutex<vmnet_return_t?>(nil)
+        let completed = DispatchSemaphore(value: 0)
+        // RATIONALE (2026-09-20): the descriptor is empty. A member started
+        // this way is assigned a MAC address whichever way the descriptor asks
+        // — `vmnet_allocate_mac_address_key: false` is accepted and changes
+        // nothing — and what keeps the member inert is that nothing is ever
+        // written to it
+        // (docs/research/2026-09-20-vmnet-member-interface-holds-a-network-run.md).
+        guard
+            let interface = vmnet_interface_start_with_network(
+                handle.network, xpc_dictionary_create(nil, nil, 0), Self.memberQueue,
+                { status, _ in
+                    outcome.withLock { $0 = status }
+                    completed.signal()
+                })
+        else {
+            throw VmnetOperationError(
+                operation: "vmnet_interface_start_with_network", status: nil)
+        }
+        completed.wait()
+        let status = outcome.withLock { $0 }
+        guard status == .VMNET_SUCCESS else {
+            throw VmnetOperationError(
+                operation: "vmnet_interface_start_with_network", status: status)
+        }
+        return VmnetMemberHandle(interface: interface)
+    }
+
+    func stopMember(_ member: VmnetMemberHandle) {
+        let completed = DispatchSemaphore(value: 0)
+        let scheduled = vmnet_stop_interface(member.interface, Self.memberQueue) { _ in
+            completed.signal()
+        }
+        guard scheduled == .VMNET_SUCCESS else {
+            // Nothing was scheduled, so nothing will signal — and the network
+            // object the start retained stays retained, which the next create
+            // pinned to this subnet reports as a conflict.
+            #log(
+                Self.logger, .error,
+                "vmnet_stop_interface did not schedule its completion (vmnet status \(scheduled.rawValue, privacy: .public))"
+            )
+            return
+        }
+        completed.wait()
     }
 
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
@@ -323,8 +403,13 @@ protocol VmnetNetworkProviding: Sendable {
     /// round-trip — never call on the main actor; config assembly runs
     /// off-main. Throws when the network cannot be materialized.
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment
-    /// The non-blocking variant for the main-actor live-attach path: an
-    /// attachment when the network is already materialized, `nil` otherwise.
+    /// The variant for the main-actor live-attach path: an attachment when the
+    /// network is already materialized, `nil` otherwise — it never waits for a
+    /// materialization in flight.
+    ///
+    /// The first attachment a network hands out takes the member interface
+    /// holding its run, so that one call waits for vmnet to start it (tens of
+    /// milliseconds); every later one returns straight away.
     func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment?
     /// Materializes the network of `kind` off the caller's actor. `true` on
     /// success (or when already materialized); failures are logged here.
@@ -383,6 +468,13 @@ protocol VmnetNetworkRecreating: Sendable {
     /// materialization creates it anew — pinned to the persisted addressing,
     /// so recovery cannot drift the subnet.
     func invalidateNetwork(for kind: VmnetNetworkKind)
+    /// Ends the run of the materialized network of `kind` by stopping the
+    /// member interface the service holds on it; a no-op while it holds none.
+    ///
+    /// The network itself is kept, its ref and with it the subnet held. Call
+    /// only with no VM on that network: the run this ends is the one every
+    /// guest on it shares.
+    func endRunIfHeld(for kind: VmnetNetworkKind)
     /// Why the materialized network of `kind` should be replaced before a VM
     /// next joins it, `nil` when it should not — and while none is
     /// materialized, since the next materialization installs whatever is
@@ -396,9 +488,10 @@ enum VmnetNetworkRecreationReason: Equatable, Sendable {
     /// It carries a different set of DHCP reservations or forwarding rules than
     /// the ones that would install now.
     case declarationsPending
-    /// It has handed out an attachment, so once no VM holds one its run has
-    /// ended and its reservations have lapsed (``VmnetNetworkService``).
-    case servedAttachment
+    /// Its run is over — nothing holds the network up any more, so the DHCP
+    /// reservations it served have lapsed and a guest joining it now would
+    /// take a dynamic lease (``VmnetNetworkService``).
+    case runEnded
 }
 
 /// Owns the app's managed vmnet networks — the Host Only network and the
@@ -411,9 +504,17 @@ enum VmnetNetworkRecreationReason: Equatable, Sendable {
 /// neither a recreate nor a relaunch moves a guest's address.
 ///
 /// A network serves its DHCP reservations for one run: the system drops them
-/// when the network's last attachment leaves, and a later run of the same
+/// when the network's last interface leaves, and a later run of the same
 /// network serves none
 /// (docs/research/2026-09-18-vmnet-dhcp-reservations-lapse-on-network-stop.md).
+/// So from the first attachment a network hands out until no VM holds one,
+/// the service keeps a member interface of its own on it: a guest's interface
+/// is then never the last to leave, and the run — with its reservations —
+/// survives the seconds an in-guest reboot spends with the guest's interface
+/// gone
+/// (docs/research/2026-09-20-vmnet-member-interface-holds-a-network-run.md).
+/// ``endRunIfHeld(for:)`` is what ends a run, once nothing is on the network.
+///
 /// Reservations and forwarding rules are also fixed at creation (vmnet.h:
 /// modifying reservations is not allowed while a network is active, and rules
 /// can only be added to a configuration). A materialized network is kept, its
@@ -453,6 +554,11 @@ final class VmnetNetworkService: @unchecked Sendable {
     private var pinnedOnlyKinds: Set<VmnetNetworkKind> = []
     /// Serializes materialization, so concurrent callers produce one network.
     private let materializeLock = NSLock()
+    /// Serializes the member interface's start and stop, so two VMs joining at
+    /// once start one member and a stop can never overtake the start it ends.
+    /// Never held with `stateLock`, and held across the vmnet call — the run a
+    /// caller reads under it is the one its call acts on.
+    private let memberLock = NSLock()
     /// Store writes happen here, off whatever thread mutated the records.
     private let persistQueue = DispatchQueue(label: "app.kernova.vmnet-store", qos: .utility)
 
@@ -793,13 +899,38 @@ final class VmnetNetworkService: @unchecked Sendable {
         }
     }
 
-    /// A published network: the handle callers attach to, and the configuration
-    /// it was created with — the only one it honors.
+    /// A published network: the handle callers attach to, the configuration it
+    /// was created with — the only one it honors — and its run.
     private struct MaterializedNetworkState {
         let handle: VmnetNetworkHandle
         let installed: InstalledConfiguration
-        /// Whether an attachment joining it has been handed out.
-        var hasServedAttachment = false
+        var run: NetworkRun = .notStarted
+    }
+
+    /// What a materialized network's run is, as the member interface the
+    /// service holds on it says.
+    private enum NetworkRun {
+        /// No attachment has been handed out: the network exists to have
+        /// established its addressing, and no interface has ever joined it.
+        case notStarted
+        /// The service holds `member` on it, so the run lasts however many
+        /// guests come and go.
+        case held(VmnetMemberHandle)
+        /// Nothing holds the run: the service ended it, or its member never
+        /// started. The reservations it served are gone with it.
+        case spent
+
+        /// The member the service holds, `nil` when it holds none.
+        var member: VmnetMemberHandle? {
+            guard case .held(let member) = self else { return nil }
+            return member
+        }
+
+        /// Whether no member has been started on this network yet.
+        var isNotStarted: Bool {
+            guard case .notStarted = self else { return false }
+            return true
+        }
     }
 
     /// Pairs each declared rule with the address of the reservation carrying
@@ -965,18 +1096,60 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         cachedHandle(for: kind).map { servedAttachment(joining: $0, of: kind) }
     }
 
-    /// An attachment joining `handle`, recording that the network of `kind`
-    /// has served one — unless `handle` is no longer the one materialized,
-    /// since an invalidation already retired it.
+    /// An attachment joining `handle`, starting the network's run first — the
+    /// one choke point every attachment of every kind passes through, so the
+    /// run begins exactly when something first joins.
     private func servedAttachment(
         joining handle: VmnetNetworkHandle, of kind: VmnetNetworkKind
     ) -> VZNetworkDeviceAttachment {
-        stateLock.lock()
-        if networks[kind]?.handle.network == handle.network {
-            networks[kind]?.hasServedAttachment = true
-        }
-        stateLock.unlock()
+        startMemberIfNeeded(joining: handle, of: kind)
         return operations.attachment(joining: handle)
+    }
+
+    /// Takes the member interface that holds the run of `kind`'s network, the
+    /// first time an attachment joining `handle` is handed out.
+    ///
+    /// Not at materialization: the addressing learn materializes a network no
+    /// VM is on, and a member started there would put a bridge and an
+    /// interface on the host for a network nothing is using.
+    ///
+    /// A member that will not start leaves the run ``NetworkRun/spent``, which
+    /// is the behavior of a network nothing holds: its reservations lapse with
+    /// its guests, and it is replaced before the next VM joins.
+    private func startMemberIfNeeded(joining handle: VmnetNetworkHandle, of kind: VmnetNetworkKind) {
+        memberLock.lock()
+        defer { memberLock.unlock() }
+        stateLock.lock()
+        let isUnstarted =
+            networks[kind].map { $0.handle.network == handle.network && $0.run.isNotStarted } ?? false
+        stateLock.unlock()
+        guard isUnstarted else { return }
+        do {
+            let member = try operations.startMember(on: handle)
+            setRun(.held(member), of: kind, if: handle)
+            #log(
+                Self.logger, .notice,
+                "Started the \(kind.rawValue, privacy: .public) network's run, held by a member interface of the app's own"
+            )
+        } catch {
+            // Capability degrades by absence: everything else works as it does
+            // on a network nothing holds — the guests get their reservations
+            // for this run, and the network is replaced before the next one.
+            #log(
+                Self.logger, .error,
+                "Could not hold the \(kind.rawValue, privacy: .public) network's run — its DHCP reservations lapse when its guests leave it: \(error.localizedDescription, privacy: .public)"
+            )
+            setRun(.spent, of: kind, if: handle)
+        }
+    }
+
+    /// Records `run` for `kind`, unless `handle` is no longer the network
+    /// materialized for it — an invalidation already retired that one.
+    private func setRun(_ run: NetworkRun, of kind: VmnetNetworkKind, if handle: VmnetNetworkHandle) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard networks[kind]?.handle.network == handle.network else { return }
+        networks[kind]?.run = run
     }
 
     // A nonisolated async method runs off the caller's actor, so the blocking
@@ -995,8 +1168,10 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
     }
 
     func invalidateNetwork(for kind: VmnetNetworkKind) {
+        memberLock.lock()
+        defer { memberLock.unlock() }
         stateLock.lock()
-        let dropped = networks.removeValue(forKey: kind)?.handle
+        let dropped = networks.removeValue(forKey: kind)
         // A sibling VM's live attachment may still hold the old network (VZ
         // retains its own ref), keeping the subnet reserved past our release —
         // so the recreate must reserve the stored addressing or fail, never
@@ -1004,11 +1179,29 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         if dropped != nil { pinnedOnlyKinds.insert(kind) }
         stateLock.unlock()
         guard let dropped else { return }
+        // The member's start retains the network object, so the ref released
+        // below is not the last one until the stop returns.
+        if let member = dropped.run.member { operations.stopMember(member) }
         // Releasing the ref ends this process's claim on the subnet; without
         // it, a fully torn-down network would still block the pinned recreate
         // as a conflict.
-        operations.releaseNetwork(dropped)
+        operations.releaseNetwork(dropped.handle)
         #log(Self.logger, .notice, "Invalidated the \(kind.rawValue, privacy: .public) network")
+    }
+
+    func endRunIfHeld(for kind: VmnetNetworkKind) {
+        memberLock.lock()
+        defer { memberLock.unlock() }
+        stateLock.lock()
+        let member = networks[kind]?.run.member
+        if member != nil { networks[kind]?.run = .spent }
+        stateLock.unlock()
+        guard let member else { return }
+        operations.stopMember(member)
+        #log(
+            Self.logger, .notice,
+            "Ended the \(kind.rawValue, privacy: .public) network's run — its next run serves its DHCP reservations"
+        )
     }
 
     func reserveAddressIfNeeded(for mac: String, kind: VmnetNetworkKind) {
@@ -1145,7 +1338,13 @@ extension VmnetNetworkService: VmnetNetworkProviding, VmnetNetworkRecreating {
         if resolveDeclarationsLocked(for: kind).installable != live.installed {
             return .declarationsPending
         }
-        return live.hasServedAttachment ? .servedAttachment : nil
+        // A run still held serves its reservations for as long as it lasts, so
+        // there is nothing to replace: a VM joining now joins that run. One
+        // never started serves them from its first join, whenever that comes.
+        switch live.run {
+        case .notStarted, .held: return nil
+        case .spent: return .runEnded
+        }
     }
 
     func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {

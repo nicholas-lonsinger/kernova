@@ -3385,12 +3385,12 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 
-    @Test("A session opening on a network that served a finished run replaces it first")
+    @Test("A session opening on a network whose run ended replaces it first")
     func sessionOpeningReplacesALapsedNetwork() async throws {
         let vmnet = MockVmnetNetworkProvider()
         let viewModel = await makeSharedNetworkLibrary(named: ["Joining VM"], vmnet: vmnet)
         let instance = try #require(viewModel.instances.first)
-        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
+        vmnet.scriptedRecreationReasons = [.shared: .runEnded]
 
         // The configuration build that follows would otherwise hand out an
         // attachment on a network whose reservations have lapsed.

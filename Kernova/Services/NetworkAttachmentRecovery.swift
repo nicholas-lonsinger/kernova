@@ -449,9 +449,13 @@ final class NetworkAttachmentCoordinator {
     }
 
     /// VZ's attachment-disconnect callback: the framework has nil'd the
-    /// attachment. Benign by design — it also fires on initial boot, device
-    /// reset, and guest reboot — so it is never surfaced as a VM error; the
-    /// answer is always to reattach.
+    /// attachment. Benign by design, so it is never surfaced as a VM error;
+    /// the answer is always to reattach.
+    ///
+    /// A guest leaving and rejoining its network is not among the events it
+    /// reports: for an in-guest reboot, VZ removes the vmnet interface and
+    /// adds it back without calling this
+    /// (docs/research/2026-09-20-vmnet-member-interface-holds-a-network-run.md).
     func attachmentWasDisconnected(error: any Error) {
         #log(
             Self.logger, .warning,

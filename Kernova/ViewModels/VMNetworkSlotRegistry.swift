@@ -423,43 +423,52 @@ final class VMNetworkSlotRegistry {
 
     // MARK: - Network Recreation
 
-    /// Recreates every idle app-managed network whose declarations are pending
-    /// or that a session reports defective.
+    /// Ends the run of every app-managed network no VM is on, and recreates
+    /// the ones whose declarations are pending or that a session reports
+    /// defective.
     ///
-    /// Both are re-derived on every pass. Pending declarations are installed
-    /// here rather than at the next join so a stopped VM's new address reads as
-    /// reserved now instead of pending until something boots; a defect report
-    /// comes from a detached session that nothing else wakes. A network that
-    /// has only served an attachment is kept, its subnet held:
+    /// All three are re-derived on every pass. Pending declarations are
+    /// installed here rather than at the next join so a stopped VM's new
+    /// address reads as reserved now instead of pending until something boots;
+    /// a defect report comes from a detached session that nothing else wakes.
+    /// A network whose run has merely ended is kept, its subnet held:
     /// ``prepareNetwork(_:forJoining:)`` replaces it.
     func rebuildNetworksIfIdle() {
         for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind) }
     }
 
     private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind) {
+        let candidates = instances
+        guard !candidates.contains(where: { $0.mayHoldAttachment(on: kind) }) else { return }
+        // Nothing is on the network, so the member the service holds is all
+        // that keeps its run — and the DHCP reservations that run serves —
+        // alive. Ending it here is what makes the next join find a spent run
+        // and replace the network, rather than handing the guest a network
+        // whose reservations have lapsed.
+        vmnetNetworks.endRunIfHeld(for: kind)
         let reason: String
         if vmnetNetworks.recreationReason(for: kind) == .declarationsPending {
             reason = "to install its pending changes"
-        } else if instances.contains(where: { $0.suspectsDefectiveNetwork(on: kind) }) {
+        } else if candidates.contains(where: { $0.suspectsDefectiveNetwork(on: kind) }) {
             reason = "after a session reported it defective"
         } else {
             return
         }
-        recreateIfUnheld(kind, because: reason, among: instances)
+        recreateIfUnheld(kind, because: reason, among: candidates)
     }
 
     /// Replaces the app-managed network of `kind` before `joiner` takes an
     /// attachment on it, when the network has any reason to be recreated and no
     /// other VM holds an attachment on it.
     ///
-    /// The one place a network that served an attachment is replaced: nobody
-    /// else holding it at the moment a VM joins is what says its run has ended.
+    /// The one place a network whose run has ended is replaced: that run's
+    /// DHCP reservations went with it, so the joiner needs a new one.
     func prepareNetwork(_ kind: VmnetNetworkKind, forJoining joiner: VMInstance) {
         let reason: String
         switch vmnetNetworks.recreationReason(for: kind) {
         case .declarationsPending:
             reason = "before '\(joiner.name)' joins it, to install its pending changes"
-        case .servedAttachment:
+        case .runEnded:
             reason = "before '\(joiner.name)' joins it, so its next run serves its DHCP reservations"
         case nil:
             return
