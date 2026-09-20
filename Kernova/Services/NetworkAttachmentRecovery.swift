@@ -332,9 +332,11 @@ final class NetworkAttachmentCoordinator {
     private let choice: @MainActor () -> NetworkChoice?
     private let onPendingChange: @MainActor (Bool) -> Void
     private let onNetworkDefectSuspected: @MainActor () -> Void
-    /// Called just before an attach moves this session onto an app-managed
-    /// network it was not on — never for a reattach to the one it was on, so
-    /// a persistently rejected attach stays paced by the retry ladder.
+    /// Called just before an attach puts this session on an app-managed
+    /// network it is not a member of: the chosen mode resolving onto another
+    /// one, and the reattach after the attachment it held left the one it was
+    /// on. Never for a retry of a rejected attach, so a persistently rejected
+    /// one stays paced by the retry ladder.
     private let onJoiningVmnetNetwork: @MainActor (VmnetNetworkKind) -> Void
 
     /// `true` while the device is detached — no attachment realizes the chosen
@@ -371,6 +373,19 @@ final class NetworkAttachmentCoordinator {
     /// The network the chosen mode resolved to at the last reconcile, so a
     /// change of network can retire what was claimed about the previous one.
     private var resolvedVmnetKind: VmnetNetworkKind?
+
+    /// Whether the attachment this session held left the network it was on, so
+    /// the next one it takes is a join.
+    ///
+    /// A guest resetting its network device — an in-guest reboot — takes its
+    /// interface out of the app-managed network, whose DHCP reservations lapse
+    /// with the run that ends as the last interface leaves
+    /// (``VmnetNetworkService``), so rejoining it unreplaced puts the guest on
+    /// a dynamic lease. Set by every disconnect but a failed attach's own
+    /// report: that attachment never reached the network, so marking it would
+    /// pull the network out from under an attach that is failing for its own
+    /// reason and recreate it again for each attempt.
+    private var attachmentLapsed = false
 
     /// The app-managed network this session believes is defective, `nil` when
     /// it suspects none — the outstanding claim
@@ -461,9 +476,13 @@ final class NetworkAttachmentCoordinator {
         // the device's mirror must say so even when this session isn't
         // eligible to reattach right now.
         device.attachmentWasDisconnected()
-        guard isActive, isEligible() else { return }
         let isFailedAttachReport =
             lastAttachAttemptAt.map { clock.seconds(since: $0) < disconnectBurstWindow } ?? false
+        // Ahead of the guards too: an attachment that lived and then went away
+        // took this session's interface off the network with it, and that is
+        // as true at the activation an ineligible session reattaches on.
+        if !isFailedAttachReport { attachmentLapsed = true }
+        guard isActive, isEligible() else { return }
         if isFailedAttachReport {
             // VZ has already nil'd the attachment; reflect that and let the
             // ladder pace the next attempt rather than reattaching in lockstep
@@ -507,11 +526,20 @@ final class NetworkAttachmentCoordinator {
         }
 
         let desired = resolvePlan(for: choice)
-        let joining = desired?.vmnetKind.flatMap { $0 == resolvedVmnetKind ? nil : $0 }
+        // Both ways this session arrives on an app-managed network it is not a
+        // member of: the chosen mode resolving onto another one, and a reattach
+        // after the attachment it held left the one it was on.
+        let joining = desired?.vmnetKind.flatMap {
+            $0 == resolvedVmnetKind && !attachmentLapsed ? nil : $0
+        }
         noteResolvedVmnetKind(desired?.vmnetKind)
         if let desired {
             if device.currentPlan != desired {
                 if let joining { onJoiningVmnetNetwork(joining) }
+                // Taking an attachment settles the lapse, whether or not the
+                // host grants it: a rejected attach retries on the ladder, and
+                // the network it lands on was decided here.
+                attachmentLapsed = false
                 lastAttachAttemptAt = clock.now
                 if device.apply(desired) {
                     #log(

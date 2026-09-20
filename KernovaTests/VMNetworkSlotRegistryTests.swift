@@ -705,4 +705,91 @@ struct VMNetworkSlotRegistryTests {
         #expect(operations.pinnedAddressings.last == operations.freshAddressing)
         #expect(operations.installedReservations.last?.map(\.mac) == macs)
     }
+
+    /// A running Shared VM holding the attachment its configuration build took
+    /// on `service`'s network, with the join hook the library wires it — the
+    /// shape a guest reboot disconnects.
+    private func makeAttachedSharedVM(
+        named name: String, mac: String, joining registry: VMNetworkSlotRegistry,
+        on service: VmnetNetworkService, alongside others: [VMInstance]
+    ) throws -> (VMInstance, MockNetworkDeviceControl, NetworkAttachmentCoordinator) {
+        let instance = VMInstanceFixture.make(name: name)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.configuration.macAddress = mac
+        instance.enter(.running(sessionID: UUID()))
+        roster.instances = others + [instance]
+        instance.onJoiningVmnetNetwork = { [weak instance] kind in
+            guard let instance else { return }
+            registry.prepareNetwork(kind, forJoining: instance)
+        }
+        // The bring-up: the session joins the network, and its configuration
+        // build takes the attachment that starts the network's run.
+        instance.beginSessionContext()
+        _ = try service.attachment(for: .shared)
+        let device = MockNetworkDeviceControl(plan: .sharedVmnet)
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device, vmnetNetworks: service, isVMNetworkingEntitled: true)
+        coordinator.activate()
+        return (instance, device, coordinator)
+    }
+
+    @Test("A disconnected session rejoins a replacement, and its reserved address is what answers")
+    func aDisconnectReplacesAnUnheldServedNetwork() throws {
+        let (registry, service, operations) = makeRegistryOverService()
+        let mac = "aa:bb:cc:dd:ee:01"
+        service.reserveAddressIfNeeded(for: mac, kind: .shared)
+        // The addressing learn: a network no VM has joined yet.
+        _ = try service.network(for: .shared)
+        let (instance, device, coordinator) = try makeAttachedSharedVM(
+            named: "Rebooting", mac: mac, joining: registry, on: service, alongside: [])
+        let served = try #require(operations.attachedNetworks.last)
+        let releasedBefore = operations.releasedNetworks
+        let reserved = GuestIPAddress.reserved("192.168.213.2")
+        #expect(registry.reservedAddress(for: instance.configuration) == reserved)
+
+        // An in-guest reboot: VZ nils the attachment, and the interface leaving
+        // took the network's run, and its reservations, with it.
+        device.plan = nil
+        coordinator.attachmentWasDisconnected(error: TestFailure("guest reboot"))
+
+        // The network the session was on is the one that went.
+        #expect(operations.releasedNetworks == releasedBefore + [served])
+        // The mock device installs a plan without asking the service, so the
+        // attach the real handle makes on the replacement is spelled out here.
+        _ = try service.attachment(for: .shared)
+        #expect(operations.attachedNetworks.last != served)
+        #expect(operations.pinnedAddressings.last == operations.freshAddressing)
+        #expect(operations.installedReservations.last?.map(\.mac) == [mac])
+        #expect(registry.reservedAddress(for: instance.configuration) == reserved)
+
+        coordinator.stop()
+        instance.tearDownSession(restingAt: .stopped)
+    }
+
+    @Test("A disconnected session rejoins the network a sibling is still on: that run has not ended")
+    func aDisconnectReusesANetworkASiblingHolds() throws {
+        let (registry, service, operations) = makeRegistryOverService()
+        let mac = "aa:bb:cc:dd:ee:01"
+        service.reserveAddressIfNeeded(for: mac, kind: .shared)
+        _ = try service.network(for: .shared)
+        let holder = makeHolder(named: "Holder", on: .shared)
+        let (instance, device, coordinator) = try makeAttachedSharedVM(
+            named: "Rebooting", mac: mac, joining: registry, on: service, alongside: [holder])
+        let releasedBefore = operations.releasedNetworks
+        let createdBefore = operations.createdKinds
+
+        device.plan = nil
+        coordinator.attachmentWasDisconnected(error: TestFailure("guest reboot"))
+
+        // The sibling's interface kept the network running, so its reservations
+        // stand and pulling it away would drop that guest's link.
+        #expect(operations.releasedNetworks == releasedBefore)
+        #expect(operations.createdKinds == createdBefore)
+        #expect(service.recreationReason(for: .shared) == .servedAttachment)
+        #expect(registry.reservedAddress(for: instance.configuration) == .reserved("192.168.213.2"))
+
+        coordinator.stop()
+        instance.tearDownSession(restingAt: .stopped)
+    }
 }

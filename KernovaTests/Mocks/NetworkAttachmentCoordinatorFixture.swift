@@ -19,7 +19,7 @@ func attachNetworkCoordinator(
     device: MockNetworkDeviceControl,
     provider: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
     linkObserver: MockNetworkLinkObserver = MockNetworkLinkObserver(),
-    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    vmnetNetworks: any VmnetNetworkProviding = MockVmnetNetworkProvider(),
     // Pinned rather than read from the test host's signature, so the plans
     // these tests assert on don't vary with how it was signed.
     isVMNetworkingEntitled: Bool = false,

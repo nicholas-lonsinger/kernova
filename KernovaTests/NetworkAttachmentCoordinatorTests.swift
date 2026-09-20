@@ -747,8 +747,28 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.device.appliedPlans == [.hostOnly, .sharedVmnet])
     }
 
-    @Test("A reattach to the network the session was on never asks to join, so a rejected one stays on the ladder")
-    func reattachToTheSameNetworkNeverAsksToJoin() async {
+    @Test("The reattach after a disconnect asks to join the network its interface left")
+    func aDisconnectReattachAsksToJoin() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            devicePlan: .hostOnly)
+        h.coordinator.activate()
+        // Already on the network its mode resolves to, so there is nothing to join.
+        #expect(h.joins.joins.isEmpty)
+
+        // A guest reboot resets the device, taking its interface out of the
+        // network and ending the run its reservations were served for.
+        h.device.plan = nil
+        h.coordinator.attachmentWasDisconnected(error: TestFailure("guest reboot"))
+
+        #expect(h.joins.joins.map { $0.kind } == [.hostOnly])
+        #expect(h.joins.joins.map { $0.appliedBefore } == [0])
+        #expect(h.device.appliedPlans == [.hostOnly])
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("A rejected attach's retries never ask to join, so the ladder paces them")
+    func ladderRetriesNeverAskToJoin() async {
         let h = makeHarness(
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             devicePlan: .hostOnly,
@@ -756,7 +776,9 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.activate()
 
         h.device.plan = nil
-        h.coordinator.attachmentWasDisconnected(error: TestFailure("link down"))
+        h.coordinator.attachmentWasDisconnected(error: TestFailure("guest reboot"))
+        #expect(h.joins.joins.count == 1)
+
         for rung in 1...2 {
             h.device.plan = nil
             h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
@@ -768,9 +790,10 @@ struct NetworkAttachmentCoordinatorTests {
             #expect(h.device.appliedPlans.count == rung + 1)
         }
 
-        // A join could replace the network under every rejected attach and
-        // reset the ladder each time; the reattaches walk it instead.
-        #expect(h.joins.joins.isEmpty)
+        // A join would replace the network under every rejected attach, and the
+        // reattach that replacement wakes resets the ladder — so the rungs ask
+        // for none.
+        #expect(h.joins.joins.count == 1)
     }
 
     @Test("Switching to a Host Only network that won't materialize detaches rather than staying Shared")

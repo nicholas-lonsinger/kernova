@@ -290,7 +290,7 @@ final class VMInstance {
 
     /// Fired just before this VM takes an attachment on the app-managed network
     /// of `kind`: a session's configuration build, or its attachment recovery
-    /// moving it onto that network.
+    /// putting it on a network the session is not a member of.
     ///
     /// Wired by `VMLibrary.wirePersistence(for:)`, which replaces the network
     /// first when it needs replacing and nobody else is on it.
