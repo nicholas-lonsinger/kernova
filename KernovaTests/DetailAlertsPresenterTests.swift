@@ -390,6 +390,125 @@ struct DetailAlertsPresenterTests {
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
     }
 
+    // MARK: - The start-failed removal offer
+
+    private func makeStartFailure(
+        _ reason: StartFailedAttachment.Reason, message: String, verb: VMVerb = .start,
+        kind: StartFailedAttachment.Kind = .storageDisk
+    ) -> StartFailedAttachment {
+        StartFailedAttachment(
+            verb: verb, kind: kind, reason: reason, id: UUID(), label: "Archive",
+            message: message)
+    }
+
+    /// The removal edits the configuration and, for a VM holding one, destroys a
+    /// saved state — so no keystroke performs it. Same layout the core's own
+    /// destructive confirmations get.
+    @Test("The removal offer puts its destructive action off Return, with Cancel on Escape")
+    func startFailedAlertKeepsTheRemovalOffReturn() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
+        let failure = makeStartFailure(.notFound, message: "Storage disk 'Archive' not found.")
+
+        let alert = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+
+        #expect(alert.buttons.map(\.title) == ["Remove and Start", "Cancel"])
+        #expect(alert.buttons.map(\.role) == [.destructive, .cancel])
+        #expect(!alert.buttons.contains { $0.role == .default })
+    }
+
+    @Test("The offer heads itself with the bring-up the user asked for")
+    func startFailedAlertNamesTheBringUp() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(name: "Builder", in: viewModel)
+
+        let started = presenter.startFailedAttachmentAlertForTesting(
+            makeStartFailure(.notFound, message: "gone"), on: vm)
+        let resumed = presenter.startFailedAttachmentAlertForTesting(
+            makeStartFailure(.notFound, message: "gone", verb: .resume), on: vm)
+
+        #expect(started.title == "Couldn't Start “Builder”")
+        #expect(resumed.title == "Couldn't Resume “Builder”")
+    }
+
+    /// Nothing here can tell a deleted file from one on a volume that is not
+    /// mounted, so the copy names reconnecting as a condition to check, never as
+    /// the cause.
+    @Test("A file that isn't there names reconnecting, and claims no cause")
+    func startFailedAlertOnAMissingFileNamesTheRetry() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notFound, message: "Storage disk 'Archive' not found at /Volumes/Ext/a.img."),
+            holdsSavedState: false)
+
+        #expect(message.hasPrefix("Storage disk 'Archive' not found at /Volumes/Ext/a.img."))
+        #expect(message.contains("If it’s on a disk that isn’t connected, connect it and try again."))
+        #expect(!message.contains("was deleted"))
+        #expect(!message.contains("may have been"))
+        #expect(message.contains("You can also remove “Archive”"))
+        #expect(message.contains("re-attach it later in Settings"))
+    }
+
+    /// Marking the entry Read Only is the one remedy this app can be sure of —
+    /// the builder asks for a writable file only for an entry the VM may write —
+    /// and each kind's switch lives in its own Settings section.
+    @Test(
+        "An unwritable file names the Read Only switch, in the section that carries it",
+        arguments: [
+            (StartFailedAttachment.Kind.storageDisk, "Storage Disks"),
+            (.removableMedia, "Removable Media"),
+        ])
+    func startFailedAlertOnAnUnwritableFileNamesReadOnly(
+        kind: StartFailedAttachment.Kind, section: String
+    ) {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notWritable, message: "Archive is not writable: /tmp/a.img.", kind: kind),
+            holdsSavedState: false)
+
+        #expect(
+            message.contains("Turn on Read Only for it in Settings, under \(section),"), "\(kind)")
+        // The file-system side is a condition, not a diagnosis: `isWritableFile`
+        // is equally false for a read-only volume and a sandbox denial.
+        #expect(
+            message.contains("If the file or the disk it’s on is locked or read-only"), "\(kind)")
+        #expect(message.contains("You can also remove “Archive”"), "\(kind)")
+    }
+
+    /// Settings are locked while a saved state is on disk, so the one remedy
+    /// that needs them is not offered to a VM that cannot reach them.
+    @Test("An unwritable file on a suspended VM is not sent to Settings")
+    func startFailedAlertOnAnUnwritableFileWithASavedStateOmitsReadOnly() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notWritable, message: "Storage disk 'Archive' is not writable: /tmp/a.img."),
+            holdsSavedState: true)
+
+        #expect(!message.contains("Turn on Read Only"))
+        #expect(
+            message.contains(
+                "If the file or the disk it’s on is locked or read-only, make it writable and "
+                    + "try again."))
+        #expect(
+            message.contains(
+                "Removing it also discards this virtual machine's saved state"))
+    }
+
+    /// Read Only does not make a folder a disk image, and nothing here knows
+    /// what the framework objected to — so neither case invents a step.
+    @Test(
+        "A folder and a refused attach name no remedy",
+        arguments: [StartFailedAttachment.Reason.pathIsDirectory, .attachRefused])
+    func startFailedAlertNamesNoRemedyWhereNoneIsCertain(reason: StartFailedAttachment.Reason) {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(reason, message: "Storage disk 'Archive' is a directory."),
+            holdsSavedState: false)
+
+        #expect(message.contains("You can remove “Archive”"), "\(reason)")
+        #expect(!message.contains("try again."), "\(reason)")
+        #expect(!message.contains("Read Only"), "\(reason)")
+    }
+
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()

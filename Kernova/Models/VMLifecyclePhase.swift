@@ -181,7 +181,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
 
     /// Whether a live `VZVirtualMachine` is attached and settled at a state VZ
     /// can act on — the VMs a termination save-suspends, a device can be
-    /// attached to, and a graceful stop is offered for.
+    /// attached to, and either kind of stop is offered for.
     ///
     /// ``suspended`` is excluded: its state is already on disk, with nothing
     /// live to act on.
@@ -234,16 +234,6 @@ enum VMLifecyclePhase: Sendable, Equatable {
     /// Whether the guest's memory can be written to the bundle's suspend slot.
     var canSave: Bool { hasLiveSession }
 
-    /// Whether the bundle's suspend slot is being written right now.
-    ///
-    /// The window in which a slot on disk is however far VZ has got
-    /// (``terminationMustWaitOut``): a file to drop rather than a session
-    /// anything may offer.
-    var isWritingSuspendSlot: Bool {
-        if case .saving = self { return true }
-        return false
-    }
-
     var canRename: Bool { !isTransitioning }
 
     /// Whether a rename committed in this phase survives.
@@ -264,24 +254,14 @@ enum VMLifecyclePhase: Sendable, Equatable {
 
     /// Whether the VM is eligible for forceful termination.
     ///
-    /// A live `VZVirtualMachine` is what a force stop acts on, so its absence
-    /// decides: suspended VMs have nothing in memory to terminate, a
-    /// disks-only capture is a file copy with no VM behind it, and a start
-    /// still assembling its configuration has yet to create one. Each would
-    /// otherwise drop the running operation's claim and then fail with
-    /// ``VirtualizationError/noVirtualMachine``. An install is excluded even
-    /// with a VM attached: its cancel is what stops it.
-    var canForceStop: Bool {
-        switch self {
-        case .running, .livePaused, .saving, .capturingLive:
-            true
-        case .starting(let id), .restoringSavedState(let id):
-            id != nil
-        case .installing, .stopped, .initialBoot, .failed, .suspended, .capturingAtRest,
-            .revertingToSnapshot:
-            false
-        }
-    }
+    /// `VZVirtualMachine.stopWithCompletionHandler:` (macOS 27.0 SDK) "stop[s] a
+    /// virtual machine that is in either Running or Paused state", and VZ's own
+    /// `Starting`, `Saving` and `Restoring` are none of those: a stop asked
+    /// during one is refused with "Invalid virtual machine state transition"
+    /// (observed 2026-09-19 against a restore and a suspend, which fail for as
+    /// long as VZ is loading or writing). ``hasLiveSession`` names that settled
+    /// window, so a force stop is offered only where VZ will take it.
+    var canForceStop: Bool { hasLiveSession }
 
     /// Whether the VM has a display session a backing view should present.
     var hasActiveDisplay: Bool {

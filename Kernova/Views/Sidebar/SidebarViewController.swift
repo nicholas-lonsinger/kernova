@@ -742,10 +742,6 @@ extension SidebarViewController {
             let discard = item(stopAction.menuTitle, #selector(menuStop(_:)), instance)
             discard.isEnabled = capabilities.isStopActionAvailable(on: instance)
             menu.addItem(discard)
-        } else if capabilities.isApplicable(.forceStop, to: instance) && !canStop {
-            // Transient states (starting/saving/restoring) where graceful stop isn't
-            // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.
-            menu.addItem(item("Force Stop…", #selector(menuForceStop(_:)), instance))
         }
 
         // State

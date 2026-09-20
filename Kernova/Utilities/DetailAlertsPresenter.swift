@@ -194,6 +194,14 @@ final class DetailAlertsPresenter: NSObject {
         forceStopConfig(instance)
     }
 
+    /// The start-failed removal offer's rendered copy and buttons, so a test can
+    /// assert what each case states and that nothing destructive takes Return.
+    func startFailedAttachmentAlertForTesting(
+        _ failure: StartFailedAttachment, on instance: VMInstance
+    ) -> AlertConfiguration {
+        startFailedAttachmentConfig(failure, instance)
+    }
+
     /// The VM whose delete is in flight, or `nil` if none.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
 
@@ -711,32 +719,88 @@ final class DetailAlertsPresenter: NSObject {
     private func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
-        // Only an external file can be picked again: no verb attaches an entry
-        // at a bundle-internal path, so the re-attach clause is true for
-        // external disks and removable media alone.
-        let isInternal =
-            failure.kind == .storageDisk
-            && vm.effectiveStorageDisks.first { $0.id == failure.id }?.isInternal == true
-        var message =
-            "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted"
-        message += isInternal ? "." : ", and you can re-attach it later in Settings."
-        if vm.hasSaveFile {
-            message +=
-                " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
-        }
         // The heading names the bring-up that failed; the button names what the
         // recovery does, which is a start either way — a resume's saved state is
         // discarded along with the attachment.
-        return AlertConfiguration(
+        //
+        // Laid out as ``AlertConfiguration/init(confirming:confirm:alternative:dismiss:)``
+        // lays a destructive confirmation out: the action on the trailing edge
+        // taking no Return, the dismiss on Escape. The removal edits the
+        // configuration and, for a VM holding one, destroys a saved state — so
+        // no keystroke performs it.
+        AlertConfiguration(
             title: "Couldn't \(failure.verb == .resume ? "Resume" : "Start") “\(vm.name)”",
-            message: message,
+            message: Self.startFailedAttachmentMessage(
+                failure, holdsSavedState: vm.hasSaveFile),
             buttons: [
-                AlertButton("Remove and Start", role: .default) { [weak self] in
+                AlertButton("Remove and Start", role: .destructive) { [weak self] in
                     guard let self else { return }
                     Task { await self.viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
                 },
                 AlertButton("Cancel", role: .cancel),
             ])
+    }
+
+    /// What the start-failed alert says: what was found, what can be done about
+    /// it, and what the removal costs.
+    ///
+    /// One remedy here is certain, and it is ``StartFailedAttachment/Reason/notWritable``'s:
+    /// the builder asks for a writable file only for an entry the VM may write
+    /// (`requireWritable: !disk.readOnly`), so marking that entry Read Only
+    /// skips the check the bring-up died on. It is named only while the VM's
+    /// settings can be reached — `holdsSavedState` is exactly what closes them
+    /// (``VMInstance/canEditSettings``) — because advice nobody in that state
+    /// can follow is worse than none. Everything else the file-system reasons
+    /// could be is put to the user as a condition to check, for the reason
+    /// ``StartFailedAttachment/Reason`` gives.
+    ///
+    /// ``StartFailedAttachment/Reason/pathIsDirectory`` and
+    /// ``StartFailedAttachment/Reason/attachRefused`` are offered no remedy at
+    /// all: Read Only does not make a folder a disk image, and nothing here
+    /// knows what the framework objected to.
+    ///
+    /// Every entry this alert is built for is external
+    /// (``StartFailedAttachment``), so re-attaching it later is always true.
+    static func startFailedAttachmentMessage(
+        _ failure: StartFailedAttachment, holdsSavedState: Bool
+    ) -> String {
+        let remedy: String
+        switch failure.reason {
+        case .notFound:
+            remedy = "If it’s on a disk that isn’t connected, connect it and try again. "
+        case .notWritable where !holdsSavedState:
+            // The certain one first, named for the control that performs it.
+            remedy =
+                "Turn on Read Only for it in Settings, under \(Self.settingsSection(failure.kind)), "
+                + "to start without writing to it. If the file or the disk it’s on is locked or "
+                + "read-only, making it writable works too. "
+        case .notWritable:
+            remedy =
+                "If the file or the disk it’s on is locked or read-only, make it writable and "
+                + "try again. "
+        case .pathIsDirectory, .attachRefused:
+            remedy = ""
+        }
+        // "also" only where something was offered before it.
+        let offer = remedy.isEmpty ? "You can remove" : "You can also remove"
+        var message =
+            "\(failure.message)\n\n\(remedy)\(offer) “\(failure.label)” from this virtual "
+            + "machine and start without it — the file itself is not deleted, and you can "
+            + "re-attach it later in Settings."
+        if holdsSavedState {
+            message +=
+                " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
+        }
+        return message
+    }
+
+    /// The Settings section an attachment's Read Only switch lives in, so the
+    /// copy sends the user to the pane that actually carries it.
+    private static func settingsSection(_ kind: StartFailedAttachment.Kind) -> String {
+        switch kind {
+        case .storageDisk: "Storage Disks"
+        case .removableMedia: "Removable Media"
+        }
     }
 
     private func installerMountedConfig(

@@ -228,27 +228,40 @@ struct VMLifecyclePhaseTests {
         }
     }
 
-    @Test("canForceStop needs a live VM to terminate, and skips the install that owns its cancel")
+    @Test("canForceStop is offered exactly where Virtualization takes a stop")
     func canForceStop() {
         for phase in [
             VMLifecyclePhase.running(sessionID: Self.session),
             .livePaused(sessionID: Self.session),
-            .saving(sessionID: Self.session),
-            .capturingLive(sessionID: Self.session),
-            .starting(sessionID: Self.session),
-            .restoringSavedState(sessionID: Self.session),
         ] {
             #expect(phase.canForceStop, "\(phase)")
         }
-        // A disks-only capture is a file copy, a revert tore its session down
-        // first, and a start still assembling its configuration has none yet.
+        // VZ's own Starting, Saving and Restoring are none of the two states
+        // `stopWithCompletionHandler:` accepts, so a termination asked during
+        // one is refused — a disks-only capture and a revert have no VM at all,
+        // and an install's cancel is what stops it.
         for phase in [
             VMLifecyclePhase.capturingAtRest, .revertingToSnapshot, .suspended,
-            .starting(sessionID: nil), .restoringSavedState(sessionID: nil),
+            .starting(sessionID: nil), .starting(sessionID: Self.session),
+            .restoringSavedState(sessionID: nil),
+            .restoringSavedState(sessionID: Self.session),
+            .saving(sessionID: Self.session), .capturingLive(sessionID: Self.session),
             .installing(sessionID: Self.session), .stopped, .initialBoot,
             .failed(message: "Boot failed."),
         ] {
             #expect(!phase.canForceStop, "\(phase)")
+        }
+    }
+
+    /// Load-bearing, not a coincidence to note: the sidebar renders Force Stop
+    /// only as the ⌥-alternate of Stop, so a `canStop` narrowed on its own would
+    /// take Force Stop off a live VM's context menu with nothing failing. If
+    /// this ever has to diverge, that menu needs its standalone Force Stop arm
+    /// back.
+    @Test("A graceful stop and a forceful one are offered in exactly the same phases")
+    func canStopAndCanForceStopCoincide() {
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(phase.canStop == phase.canForceStop, "\(phase)")
         }
     }
 

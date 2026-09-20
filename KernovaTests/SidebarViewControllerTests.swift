@@ -579,23 +579,23 @@ struct SidebarViewControllerTests {
         #expect(forceStop?.isAlternate == false)
     }
 
-    @Test("Transient (starting) VM offers a standalone Force Stop, not an Option-alternate")
-    func contextMenuForceStopStandaloneDuringTransition() {
+    @Test(
+        "A VM mid-operation offers neither stop — Virtualization takes a termination from neither",
+        arguments: [
+            VMLifecyclePhase.starting(sessionID: UUID()), .saving(sessionID: UUID()),
+            .restoringSavedState(sessionID: UUID()), .capturingLive(sessionID: UUID()),
+        ])
+    func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: VMLifecyclePhase) {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
-        // Force Stop acts on the live VZ VM, which a start has by the time it
-        // is running the guest.
-        let instance = VMInstanceFixture.make(phase: .starting(sessionID: UUID()))
+        let instance = VMInstanceFixture.make(phase: phase)
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
-        let menu = controller.buildContextMenu(for: instance)
-        let menuTitles = titles(of: menu)
+        let menuTitles = titles(of: controller.buildContextMenu(for: instance))
 
-        // No graceful "Stop" to pair with, so "Force Stop" stands alone and stays
-        // visible without holding Option.
-        #expect(!menuTitles.contains("Stop"))
-        #expect(menuItem("Force Stop…", in: menu)?.isAlternate == false)
+        #expect(!menuTitles.contains("Stop"), "\(phase)")
+        #expect(!menuTitles.contains("Force Stop…"), "\(phase)")
     }
 
     @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")

@@ -111,15 +111,15 @@ struct VMCapabilityCatalogTests {
                     .clone, .rename, .delete, .open, .toggleSettingsPane,
                 ])
             ),
+            // No phase between a bring-up and a settled guest offers a force
+            // stop: VZ takes a termination only from Running or Paused, so the
+            // offer would be a control the framework refuses.
             ("starting, no VM yet", .starting(sessionID: nil), []),
-            ("starting", .starting(sessionID: id), [.forceStop]),
-            ("saving", .saving(sessionID: id), display.union([.forceStop])),
-            ("capturing live", .capturingLive(sessionID: id), display.union([.forceStop])),
+            ("starting", .starting(sessionID: id), []),
+            ("saving", .saving(sessionID: id), display),
+            ("capturing live", .capturingLive(sessionID: id), display),
             ("capturing at rest", .capturingAtRest, display),
-            (
-                "restoring a saved state", .restoringSavedState(sessionID: id),
-                display.union([.forceStop])
-            ),
+            ("restoring a saved state", .restoringSavedState(sessionID: id), display),
             ("restoring, no VM yet", .restoringSavedState(sessionID: nil), display),
             ("reverting to a snapshot", .revertingToSnapshot, display),
             ("installing", .installing(sessionID: id), []),

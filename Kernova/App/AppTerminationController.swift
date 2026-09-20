@@ -605,7 +605,14 @@ final class AppTerminationController: NSObject {
     }
 
     /// Save-suspends one VM for termination, force-stopping it when the save
-    /// fails so a half-live VM can't outlive the process.
+    /// fails and left a guest still live, so a half-live VM can't outlive the
+    /// process.
+    ///
+    /// A save that failed on its own terms tore its session down on the way out
+    /// (``VirtualizationService/tearDownIfStillOwned(_:actingFor:restingAt:)``),
+    /// which is why the termination is asked for only where
+    /// ``VMLifecyclePhase/canForceStop`` still holds: the VM it is owed to is
+    /// the one something else overtook and handed back live.
     ///
     /// The pass waits an in-flight lifecycle operation out before calling this,
     /// so a rejection here is the residual race where a user-initiated operation
@@ -631,6 +638,7 @@ final class AppTerminationController: NSObject {
                 Self.logger, .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
+            guard instance.canForceStop else { return false }
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {
