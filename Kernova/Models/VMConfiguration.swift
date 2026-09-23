@@ -60,7 +60,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var startsAutomaticallyOnLaunch: Bool
 
     /// When `true`, every power-off returns this VM to the snapshot named by
-    /// ``ephemeralBaselineSnapshotID``, discarding the session's guest changes.
+    /// ``ephemeralBaselineSnapshotID``, its disks and, through
+    /// ``adoptingSnapshotState(_:)``, its settings, discarding the session's
+    /// guest changes and any setting edited since the capture.
     ///
     /// Suspend is not a power-off: a suspended session survives, reverting at
     /// its next shutdown. Read at power-off, so it is editable while the VM runs.
