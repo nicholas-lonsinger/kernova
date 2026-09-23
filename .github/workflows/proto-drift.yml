@@ -33,9 +33,8 @@ jobs:
         id: filter
         run: |
           set -euo pipefail
-          # Files whose changes warrant a real drift check. Mirrors what
-          # the workflow-level `paths:` filter used to enumerate.
-          pattern='^(KernovaKit/(Proto/|Sources/KernovaKit/Generated/|Package\.swift)|Kernova\.xcodeproj/project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved|Tools/regen-proto\.sh|\.github/workflows/proto-drift\.yml)'
+          # Files whose changes warrant a real drift check.
+          pattern='^(KernovaKit/(Proto/|Sources/KernovaKit/Generated/|Package\.swift)|Kernova\.xcodeproj/project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved|Tools/regen-proto\.sh|\.github/workflows/proto-drift\.yml|\.github/actions/select-xcode/)'
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "workflow_dispatch — always running the full check"
