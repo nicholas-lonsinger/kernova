@@ -301,12 +301,11 @@ public func drainMainQueue() async {
 /// Runs a **synchronous, blocking** bridge call on a GCD global-queue thread,
 /// mirroring production's callers.
 ///
-/// RATIONALE: a blocking bridge call parks its thread until the transfer
-/// resolves, so it belongs on a GCD global queue — those overcommit, and a
-/// parked pull there costs a kernel thread rather than one of the cooperative
-/// pool's 3-4 CI threads. Parked on the cooperative pool instead, enough pulls
-/// exhaust it, the tasks the reply depends on starve, and the bundle freezes
-/// until the shortest injected timeout fires — the 2026-07-19 CI mass failures.
+/// A blocking bridge call parks its thread until the transfer resolves. GCD
+/// global queues overcommit, so a parked pull there costs a kernel thread; on
+/// the cooperative pool (3-4 threads on CI) enough parked pulls exhaust it, the
+/// tasks the reply depends on starve, and the bundle freezes until the shortest
+/// injected timeout fires (observed as the 2026-07-19 CI mass failures).
 public func offCooperativePool<T: Sendable>(
     _ body: @escaping @Sendable () -> T
 ) async -> T {

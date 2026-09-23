@@ -25,13 +25,10 @@ struct AppPreferences {
         static let expandedSidebarSections = "KernovaSidebarExpandedSections"
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
-        // Deliberately inverted relative to `keepInMenuBarOnQuit` — see that
-        // property's RATIONALE.
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
         static let agentInstallPromptDisabled = "agentInstallPromptDisabled"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
-        // Also inverted — see `keepInMenuBarOnQuit`'s RATIONALE.
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
         static let cloneKeepsMachineID = "cloneKeepsMachineID"
         static let clipboardMaxPasteBytes = "clipboardMaxPasteBytes"
@@ -41,6 +38,9 @@ struct AppPreferences {
 
     /// Reads the inverse of the boolean stored under the given key, so an unset
     /// key yields a `true` default.
+    ///
+    /// Every `true`-defaulting preference is stored through this pair, under a
+    /// key naming the inverse it literally holds, so no defaults are registered.
     private func invertedBool(forKey key: String) -> Bool {
         !defaults.bool(forKey: key)
     }
@@ -88,12 +88,6 @@ struct AppPreferences {
     /// Whether a GUI-origin quit (⌘Q, the app menu's soft-quit item, the Dock's
     /// Quit) keeps Kernova resident in the menu bar with its VMs running instead
     /// of terminating it, defaulting to `true`.
-    ///
-    /// RATIONALE: the value is stored *inverted* under `quitTerminatesApp` so the
-    /// file's plain `bool(forKey:)` convention — an unset key reads `false` —
-    /// produces this preference's `true` default without registering defaults.
-    /// The key names what it literally holds. Every `true`-defaulting preference
-    /// here works this way, through `invertedBool(forKey:)`.
     var keepInMenuBarOnQuit: Bool {
         get { invertedBool(forKey: Keys.quitTerminatesApp) }
         nonmutating set { setInvertedBool(newValue, forKey: Keys.quitTerminatesApp) }

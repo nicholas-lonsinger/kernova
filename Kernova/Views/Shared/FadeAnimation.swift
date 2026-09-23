@@ -20,11 +20,11 @@ func animateFade(
         context.duration = duration
         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         if let completion {
-            // RATIONALE: NSAnimationContext completion handlers are not actor-isolated
-            // by the framework but always run on the main thread, so bridge back via
-            // assumeIsolated. Set on the context (a non-`@Sendable` property) rather
-            // than passed as the `@Sendable` `completionHandler:` argument, which would
-            // warn on capturing the non-Sendable `@MainActor` closure.
+            // NSAnimationContext runs completion handlers on the main thread without
+            // declaring actor isolation, hence `assumeIsolated`. The context's
+            // `completionHandler` property is non-`@Sendable`; the `@Sendable`
+            // `completionHandler:` argument would warn on capturing the
+            // non-Sendable `@MainActor` closure.
             context.completionHandler = { MainActor.assumeIsolated { completion() } }
         }
         for view in views {

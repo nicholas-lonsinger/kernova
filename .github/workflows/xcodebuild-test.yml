@@ -154,13 +154,10 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: test-results
-          # RATIONALE: upload the PARENT dir, not the `.xcresult` bundle directly.
           # upload-artifact roots the archive at the lowest common ancestor of the
-          # matched files, so pointing it at the bundle drops the `.xcresult`
-          # wrapper — the download then unpacks as a bare Info.plist + Data/ that
-          # xcresulttool can't open without first renaming it back. Uploading the
-          # enclosing `artifacts/` keeps `TestResults.xcresult/` intact in the
-          # download (matching the Makefile's `RESULT_BUNDLE`), so `gh run
-          # download` yields a directly-usable result bundle.
+          # matched files, so a path naming the `.xcresult` bundle itself drops
+          # the bundle's wrapper: the download unpacks as a bare Info.plist +
+          # Data/ that xcresulttool can't open. The parent keeps
+          # `TestResults.xcresult/` (the Makefile's `RESULT_BUNDLE`) intact.
           path: artifacts/
           retention-days: 7

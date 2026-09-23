@@ -183,11 +183,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         _ window: NSWindow,
         willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions
     ) -> NSApplication.PresentationOptions {
-        // RATIONALE: manually toggling `toolbar?.isVisible` on fullscreen
-        // enter/exit contaminates the autosaved toolbar configuration (quitting
-        // while fullscreen persists "hidden"), so `.autoHideToolbar` does it
-        // instead — the toolbar slides in with the menu bar on hover. It requires
-        // `.autoHideMenuBar`, which requires `.autoHideDock`.
+        // Toggling `toolbar?.isVisible` on fullscreen enter/exit writes into the
+        // autosaved toolbar configuration (quitting while fullscreen persists
+        // "hidden"); `.autoHideToolbar` hides it without that write, sliding it in
+        // with the menu bar on hover. It requires `.autoHideMenuBar`, which
+        // requires `.autoHideDock`.
         [.fullScreen, .autoHideMenuBar, .autoHideDock, .autoHideToolbar]
     }
 

@@ -17,12 +17,11 @@ import Testing
 @Suite("LazyPullCoordinator on the main thread", .serialized, .admissionGated)
 @MainActor
 struct LazyPullCoordinatorMainThreadTests {
-    // RATIONALE: 5 s, far below `testWaitBackstop`. Each test holds the real
-    // main thread inside `pull` from this main-queue job, where the nested loop
-    // cannot drain the main queue (`NestedEventLoopWait`), so the window caps
-    // how long the bundle's MainActor is held hostage if the fast path loses;
-    // every fast path here is ms-scale and same-thread, so the value never masks
-    // a failure.
+    // Each test holds the real main thread inside `pull` from a main-queue job,
+    // where the nested loop cannot drain the main queue (`NestedEventLoopWait`),
+    // so this caps how long the bundle's MainActor is held if the fast path
+    // loses — the exception `testWaitBackstop` names. Every fast path here is
+    // ms-scale and same-thread, so 5 s never masks a failure.
     private static let window: TimeInterval = 5
 
     private nonisolated func inlineRep(_ text: String) -> ClipboardContent.Representation {

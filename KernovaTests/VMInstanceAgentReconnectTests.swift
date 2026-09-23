@@ -177,8 +177,6 @@ struct VMInstanceAgentReconnectTests {
         instance.enter(.livePaused(sessionID: try #require(instance.liveSessionID)))
         #expect(instance.isLivePaused)
 
-        // RATIONALE: negative assertion ("prove nothing was torn down or
-        // armed") — a fixed observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(500))
         #expect(instance.vsockControlService?.isConnected == true)
         #expect(instance.agentPostStartTaskForTesting == nil)

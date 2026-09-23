@@ -473,10 +473,9 @@ struct VsockChannelTests {
         // Close the peer end so the next write to fds[0] hits EPIPE.
         Darwin.close(fds[1])
 
-        // RATIONALE: deliberately do NOT call `start()`. The readability
-        // handler would otherwise observe EOF and tear the channel down
-        // (flipping `closed` to true) before we can attempt the write —
-        // and the test would then see `.closed` instead of `.write`.
+        // Left unstarted: a started channel's readability handler observes the
+        // EOF and closes the channel before the write, which then throws
+        // `.closed` instead of `.write`.
         let a = VsockChannel(fileDescriptor: fds[0])
         defer { a.close() }
 

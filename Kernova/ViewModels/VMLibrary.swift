@@ -101,11 +101,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     }
 
     /// `true` when any instance is mid-create, mid-clone, or mid-import.
-    // RATIONALE: global and unbounded on purpose. `reconcileWithDisk` skips while
-    // this is true, and `cancelPreparingConfirmed` keeps a cancelling row in
-    // `instances` for the same reason: any gap lets reconcile resurrect a bundle
-    // whose uninterruptible copy is still settling. A wedged `FileManager.copyItem`
-    // therefore holds the gate until relaunch.
+    // `reconcileWithDisk` skips while this is true, and `cancelPreparingConfirmed`
+    // keeps a cancelling row in `instances` so it stays true: any gap in the gate
+    // lets reconcile resurrect a bundle whose uninterruptible copy is still
+    // settling. A wedged `FileManager.copyItem` therefore holds it until relaunch.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
     /// Whether any VM is doing work that terminating would destroy rather than

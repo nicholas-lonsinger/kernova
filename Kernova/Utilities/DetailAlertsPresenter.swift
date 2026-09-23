@@ -691,11 +691,9 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func stopPausedConfig(_ vm: VMInstance) -> AlertConfiguration {
-        // RATIONALE: this alert is itself the confirmation, so both buttons
-        // call the facade with consent already given rather than routing
-        // through `requestForceStop`, which would stack a second alert on top
-        // of this one. The message text makes the destructive outcome explicit,
-        // so one confirmation is sufficient.
+        // This alert is the confirmation, so both buttons call the facade
+        // directly: `requestForceStop` presents its own alert, which would stack
+        // on top of this one.
         AlertConfiguration(
             confirming: VMCommandCore.stopPausedPrompt(vm),
             confirm: { [weak self] in

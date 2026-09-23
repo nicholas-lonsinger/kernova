@@ -172,13 +172,10 @@ struct VMBundleLayout: Sendable {
     }
 
     /// Reads the virtual capacity recorded in an ASIF image's header.
-    ///
-    // RATIONALE: ASIF's on-disk layout is undocumented, but its `shdw`
-    // container records the virtual size at byte offset 0x30 as a big-endian
-    // `UInt64` count of 512-byte sectors (verified exact across 50/100 GB
-    // disks: 97_656_250 and 195_312_500 sectors). The
-    // magic is validated and the result bounds-checked, so a future format
-    // change degrades to on-disk-only rather than misbehaving.
+    // ASIF's on-disk layout is undocumented; its `shdw` container records the
+    // virtual size at byte offset 0x30 as a big-endian `UInt64` count of 512-byte
+    // sectors (verified exact on 50 and 100 GB disks: 97_656_250 and 195_312_500
+    // sectors).
     private func asifCapacity(at url: URL) -> ASIFCapacity {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return .notASIF }
         defer { try? handle.close() }

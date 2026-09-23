@@ -117,8 +117,6 @@ struct VsockGuestClientTests {
         }
         try await stopDone.changed.wait { stopDone.value > 0 }
 
-        // RATIONALE: negative assertion ("prove serve was never invoked") — a
-        // fixed observation window, not a wait timeout.
         // The provider only returns `.success(localFd)` after the release above,
         // so the window has to span the loop's post-provider `stopped` check.
         // `nanoseconds:`, not `for:` — this target deploys to macOS 12.

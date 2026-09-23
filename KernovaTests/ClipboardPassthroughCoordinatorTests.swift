@@ -756,9 +756,6 @@ struct ClipboardPassthroughCoordinatorTests {
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
         h.coordinator.republishIfCeilingRaised()
 
-        // Bounded negative check, as in `stopHaltsInboundPublish`. RATIONALE:
-        // asserting the *absence* of an event needs a bounded wait; the short
-        // sleep is the backstop, not a success deadline.
         try await Task.sleep(for: .milliseconds(300))
         #expect(!republished)
         #expect(h.pasteboard.string(forType: .string) == "what the user copied")
@@ -783,9 +780,6 @@ struct ClipboardPassthroughCoordinatorTests {
         preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
         h.coordinator.republishIfCeilingRaised()
 
-        // Bounded negative check, as in `stopHaltsInboundPublish`. RATIONALE:
-        // asserting the *absence* of an event needs a bounded wait; the short
-        // sleep is the backstop, not a success deadline.
         try await Task.sleep(for: .milliseconds(300))
         #expect(!republished)
         #expect(h.pasteboard.string(forType: .string) == "previous host content")
@@ -891,9 +885,6 @@ struct ClipboardPassthroughCoordinatorTests {
         let baseline = h.pasteboard.changeCount
         h.service.simulateInboundOffer(ClipboardContent(text: "should not appear"))
 
-        // Bounded negative check: stop() cancelled the observation, so no publish
-        // Task fires. RATIONALE: asserting the *absence* of an event needs a
-        // bounded wait; the short sleep is the backstop, not a success deadline.
         try await Task.sleep(for: .milliseconds(300))
         #expect(!publishedAfterStop)
         #expect(h.pasteboard.changeCount == baseline)

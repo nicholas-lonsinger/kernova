@@ -694,8 +694,6 @@ struct VsockControlServiceTests {
         suspension.isSuspended = true
         try await connectLatched(guest: guest, hello: helloObserved)
 
-        // RATIONALE: negative assertion ("prove the watchdog never fired") —
-        // a fixed observation window, not a wait timeout.
         // Four terminate windows with the guest sending nothing at all.
         try await Task.sleep(for: .milliseconds(800))
         #expect(service.isConnected)
@@ -791,9 +789,7 @@ struct VsockControlServiceTests {
         suspension.isSuspended = true
         try await connectLatched(guest: guest, hello: helloObserved)
 
-        // RATIONALE: negative assertion ("prove the watchdog didn't fire during
-        // the pause") — a fixed observation window, not a wait timeout. Three
-        // terminate windows, guest sending nothing.
+        // Three terminate windows, guest sending nothing.
         try await Task.sleep(for: .milliseconds(600))
         #expect(service.isConnected)
 
@@ -841,10 +837,8 @@ struct VsockControlServiceTests {
         // Snapshot the baseline only after a settle window: a heartbeat written
         // just before the flip is still in flight through the socket and the
         // recorder's task, and counting it against the frozen guest would be a
-        // false failure.
-        //
-        // RATIONALE: no signal marks "the in-flight frame has landed", so the
-        // settle is a fixed window like the negative assertion it precedes.
+        // false failure. No signal marks that frame landing, so the settle is a
+        // fixed window.
         suspension.isSuspended = true
         try await Task.sleep(for: .milliseconds(150))
 
@@ -939,10 +933,8 @@ struct VsockControlServiceTests {
         service.stop()
         #expect(!service.isConnected)
 
-        // RATIONALE: negative assertion ("prove the callback never fired") —
-        // a fixed observation window, not a wait timeout. The consume task also
-        // unwinds in here, and its settle must not fire the callback either:
-        // the owner's stop() latched first.
+        // The consume task also unwinds in here, and its settle must not fire
+        // the callback either: the owner's stop() latched first.
         try await Task.sleep(for: .milliseconds(200))
         #expect(lost.count == 0)
     }
