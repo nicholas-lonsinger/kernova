@@ -52,7 +52,8 @@ final class AdvancedSettingsViewController: NSViewController {
         ])
         let caption = makeGroupedFormCaption(
             "Advanced actions such as Start in Recovery Mode are normally revealed by holding the "
-                + "Option (⌥) key in menus. Turn this on to always show them.")
+                + "Option (⌥) key in a virtual machine's context menu. Turn this on to always show "
+                + "them.")
 
         let blockCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Block duplicate machine IDs from booting", control: blockDuplicateIDSwitch)
@@ -68,8 +69,9 @@ final class AdvancedSettingsViewController: NSViewController {
         let cloneCaption = makeGroupedFormCaption(
             "A new machine ID gives each clone its own identity, so it can run alongside its "
                 + "source. macOS 12 and earlier guests may not boot after their ID changes — "
-                + "clone those keeping the ID. To do the opposite for one clone, hold Option (⌥) "
-                + "over Clone in the Virtual Machine menu or the VM's context menu.")
+                + "clone those keeping the ID. To do the opposite for one clone, use the second "
+                + "Clone item in the Virtual Machine menu, or hold Option (⌥) over Clone in the "
+                + "VM's context menu.")
 
         var rows: [NSView] = [
             makeGroupedFormSectionHeader("Advanced Options"),
