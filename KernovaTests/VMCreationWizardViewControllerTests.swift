@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMCreationWizardViewController Tests", .admissionGated)
+@Suite("VMCreationWizardViewController Tests", .admissionGated, .scopedWindows)
 @MainActor
 struct VMCreationWizardViewControllerTests {
     @Test("Initial OS-selection step: Back hidden, Next enabled, Create hidden")
@@ -210,15 +210,12 @@ struct VMCreationWizardViewControllerTests {
         let vm = makeAccountModel()
         vm.currentStep = .resources
         let wizard = VMCreationWizardViewController(creationVM: vm)
-        let parent = makeTestWindow(
+        let parent = showTestWindow(
             styleMask: [.titled], contentSize: NSSize(width: 900, height: 800))
-        parent.orderFront(nil)
-        defer { parent.close() }
         let presenter = SheetPresenter()
         presenter.show(content: wizard, in: parent)
-        defer { presenter.reset() }
         let sheet = try #require(parent.attachedSheet)
-        hideFromScreen(sheet)
+        adoptAppWindow(sheet)
         // A key-view request builds the sheet's loop from the Resources step, as
         // the sheet does when it first shows.
         sheet.selectNextKeyView(nil)
