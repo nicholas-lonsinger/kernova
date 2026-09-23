@@ -54,6 +54,7 @@ SWIFT_FORMAT := xcrun swift-format
 # verdict against recorded fixtures — no Xcode, no network, seconds to run —
 # which is what lets `lint` gate them, and the pre-push hook with it.
 SKILL_TESTS := .agents/skills/freshen-main/tests/run.sh \
+               .agents/skills/launch-build/tests/run.sh \
                .agents/skills/make-verdict/tests/run.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
