@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("SnapshotSectionView Tests", .admissionGated)
+@Suite("SnapshotSectionView Tests", .admissionGated, .scopedWindows)
 @MainActor
 struct SnapshotSectionViewTests {
     /// Records what the section asks its host to do.
@@ -436,8 +436,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
             canRevert: true)
-        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
-        defer { window.close() }
+        showInTestWindow(view, size: NSSize(width: 480, height: 200))
 
         view.beginRename(first.id)
         #expect(view.activeEdit == first.id)
@@ -468,8 +467,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
             canRevert: true)
-        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
-        defer { window.close() }
+        showInTestWindow(view, size: NSSize(width: 480, height: 200))
 
         view.beginRename(first.id)
         render(
@@ -518,8 +516,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
             canRevert: true)
-        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
-        defer { window.close() }
+        showInTestWindow(view, size: NSSize(width: 480, height: 200))
 
         view.beginNotesEditing(first.id)
         #expect(view.activeEdit == first.id)
@@ -540,8 +537,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
             canRevert: true)
-        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
-        defer { window.close() }
+        showInTestWindow(view, size: NSSize(width: 480, height: 200))
 
         view.beginNotesEditing(first.id)
         escape(nameLabel(named: "before", in: view))
@@ -557,8 +553,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
             canRevert: true)
-        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
-        defer { window.close() }
+        showInTestWindow(view, size: NSSize(width: 480, height: 200))
 
         view.beginNotesEditing(first.id)
 
@@ -591,8 +586,7 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
             canRevert: true)
-        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
-        defer { window.close() }
+        showInTestWindow(view, size: NSSize(width: 480, height: 200))
 
         view.beginNotesEditing(first.id)
         let field = allSubviews(InlineEditableLabel.self, in: view) { $0.isEditable }.first

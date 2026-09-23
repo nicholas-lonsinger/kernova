@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The General panel's own behavior, drilled into through the shell.
-@Suite("VM Settings General Panel Tests", .serialized, .admissionGated)
+@Suite("VM Settings General Panel Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsGeneralPanelTests {
     private let preferences = makeTestPreferences()

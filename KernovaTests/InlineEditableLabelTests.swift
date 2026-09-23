@@ -5,7 +5,7 @@ import Testing
 @testable import Kernova
 
 /// The shared inline-edit state machine every editable name and note runs on.
-@Suite("Inline Editable Label Tests", .serialized, .admissionGated)
+@Suite("Inline Editable Label Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct InlineEditableLabelTests {
     private func makeLabel(
@@ -18,10 +18,7 @@ struct InlineEditableLabelTests {
     }
 
     /// Puts `labels` in a window, left to right, the way a row lays them out.
-    ///
-    /// Keep the returned window alive for the length of the test: an editing
-    /// label's first responder lives on it.
-    private func host(_ labels: [InlineEditableLabel]) -> NSWindow {
+    private func host(_ labels: [InlineEditableLabel]) {
         let window = makeTestWindow(styleMask: [.titled])
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
         var previous: NSLayoutXAxisAnchor = container.leadingAnchor
@@ -35,7 +32,6 @@ struct InlineEditableLabelTests {
         }
         window.contentView = container
         container.layoutSubtreeIfNeeded()
-        return window
     }
 
     /// Sends the field editor's cancel command, the way Escape reaches a label.
@@ -72,8 +68,7 @@ struct InlineEditableLabelTests {
         first.onEditCommitted = { text, _ in name.value = text }
         let second = makeLabel(text: name.value)
         second.currentText = { name.value }
-        let window = host([first, second])
-        defer { window.close() }
+        host([first, second])
 
         first.beginEditing()
         type("Handed off", into: first)
@@ -94,8 +89,7 @@ struct InlineEditableLabelTests {
     @Test("A label with no current-text source keeps the text it opened with")
     func withoutCurrentTextTheSeedStands() {
         let label = makeLabel(text: "Original")
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         label.beginEditing()
 
@@ -110,8 +104,7 @@ struct InlineEditableLabelTests {
         var commits: [String] = []
         let label = makeLabel()
         label.onEditCommitted = { text, _ in commits.append(text) }
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         label.beginEditing()
         type("Typed", into: label)
@@ -130,8 +123,7 @@ struct InlineEditableLabelTests {
         let label = makeLabel()
         label.onEditCommitted = { _, _ in commits += 1 }
         label.onEditCancelled = { cancels += 1 }
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         label.endEditing()
 
@@ -149,8 +141,7 @@ struct InlineEditableLabelTests {
         let label = makeLabel(text: "Original")
         label.onEditCommitted = { _, _ in commits += 1 }
         label.onEditCancelled = { cancels += 1 }
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         label.beginEditing()
         type("Half-typed", into: label)
@@ -171,8 +162,7 @@ struct InlineEditableLabelTests {
         let label = makeLabel(text: "Original")
         label.onEditCommitted = { _, _ in commits += 1 }
         label.onEditCancelled = { cancels += 1 }
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         label.beginEditing()
         type("Half-typed", into: label)
@@ -197,8 +187,7 @@ struct InlineEditableLabelTests {
         #expect(label.isEditable)
         #expect(label.currentEditor() == nil)
 
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         #expect(label.currentEditor() != nil)
         #expect(label.isEditing)
@@ -212,8 +201,7 @@ struct InlineEditableLabelTests {
         label.beginEditing()
         name.value = "Renamed elsewhere"
 
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         #expect(label.stringValue == "Renamed elsewhere")
         #expect(label.currentEditor()?.string == "Renamed elsewhere")
@@ -240,8 +228,7 @@ struct InlineEditableLabelTests {
     @Test("A label whose controls are disabled refuses to begin editing")
     func disabledControlsRefuseToEdit() {
         let label = makeLabel(controlsEnabled: false)
-        let window = host([label])
-        defer { window.close() }
+        host([label])
 
         label.beginEditing()
 

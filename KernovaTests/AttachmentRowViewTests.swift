@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("AttachmentRowView Tests", .admissionGated)
+@Suite("AttachmentRowView Tests", .admissionGated, .scopedWindows)
 @MainActor
 struct AttachmentRowViewTests {
     private func makeRow(
@@ -58,8 +58,7 @@ struct AttachmentRowViewTests {
     @Test("A note holding a newline raises the overflow callback instead of editing inline")
     func multilineNoteRoutesToOverflow() {
         let row = makeRow(title: "Data Disk", notes: "line one\nline two")
-        let window = showInTestWindow(row, size: NSSize(width: 480, height: 80))
-        defer { window.close() }
+        showInTestWindow(row, size: NSSize(width: 480, height: 80))
 
         var overflowIDs: [UUID] = []
         var editBegan = false
@@ -77,8 +76,7 @@ struct AttachmentRowViewTests {
     @Test("A single-line note begins inline editing rather than overflowing")
     func singleLineNoteEditsInline() {
         let row = makeRow(title: "Data Disk", notes: "before")
-        let window = showInTestWindow(row, size: NSSize(width: 480, height: 80))
-        defer { window.close() }
+        showInTestWindow(row, size: NSSize(width: 480, height: 80))
 
         var overflowIDs: [UUID] = []
         var editBegan = false
@@ -94,8 +92,7 @@ struct AttachmentRowViewTests {
     @Test("Committing a note fires onNotesCommitted with the row's id")
     func commitForwardsToOwner() {
         let row = makeRow(title: "Data Disk", notes: "before")
-        let window = showInTestWindow(row, size: NSSize(width: 480, height: 80))
-        defer { window.close() }
+        showInTestWindow(row, size: NSSize(width: 480, height: 80))
         var committed: [(UUID, String)] = []
         row.onNotesCommitted = { committed.append(($0, $1)) }
 
@@ -112,8 +109,7 @@ struct AttachmentRowViewTests {
     @Test("A row with no editable title ignores an edit request, controls still live")
     func nonEditableTitleIgnoresEditRequests() throws {
         let row = makeRow(title: "Projects", controlsEnabled: true, isTitleEditable: false)
-        let window = showInTestWindow(row, size: NSSize(width: 480, height: 80))
-        defer { window.close() }
+        showInTestWindow(row, size: NSSize(width: 480, height: 80))
         var editBegan = false
         row.onEditBegan = { _ in editBegan = true }
 

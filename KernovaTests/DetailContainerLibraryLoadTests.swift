@@ -7,7 +7,7 @@ import KernovaTestSupport
 /// The detail pane across the library's empty-until-read interval. The app now
 /// presents its window before the library has been read, so the pane has to
 /// distinguish "no VMs" from "no VMs *yet*".
-@Suite("DetailContainer library-load state", .serialized, .admissionGated)
+@Suite("DetailContainer library-load state", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct DetailContainerLibraryLoadTests {
     private let preferences = makeTestPreferences()
@@ -29,11 +29,10 @@ struct DetailContainerLibraryLoadTests {
 
     /// Hosts the container in a window and runs the appearance pass that builds
     /// its content and arms its observation, as the split view controller does.
-    private func present(_ controller: DetailContainerViewController) -> NSWindow {
+    private func present(_ controller: DetailContainerViewController) {
         controller.loadViewIfNeeded()
-        let window = showInTestWindow(controller.view, size: NSSize(width: 900, height: 600))
+        showInTestWindow(controller.view, size: NSSize(width: 900, height: 600))
         controller.viewDidAppear()
-        return window
     }
 
     /// Runs after every main-actor task already queued, so an `ObservationLoop`
@@ -68,8 +67,7 @@ struct DetailContainerLibraryLoadTests {
         let (storage, _) = storageHoldingOneVM()
         let viewModel = makeViewModel(storageService: storage)
         let controller = DetailContainerViewController(viewModel: viewModel)
-        let window = present(controller)
-        defer { window.close() }
+        present(controller)
 
         // The library holds a VM that simply hasn't been read yet, so "No Virtual
         // Machine Selected" — and its New Virtual Machine button — would be a
@@ -82,8 +80,7 @@ struct DetailContainerLibraryLoadTests {
     func emptyStateShownAfterEmptyLoad() async {
         let viewModel = makeViewModel()
         let controller = DetailContainerViewController(viewModel: viewModel)
-        let window = present(controller)
-        defer { window.close() }
+        present(controller)
         #expect(hasEmptyState(controller) == false)
 
         await viewModel.loadVMs()
@@ -102,8 +99,7 @@ struct DetailContainerLibraryLoadTests {
         let (storage, config) = storageHoldingOneVM()
         let viewModel = makeViewModel(storageService: storage)
         let controller = DetailContainerViewController(viewModel: viewModel)
-        let window = present(controller)
-        defer { window.close() }
+        present(controller)
 
         await viewModel.loadVMs()
         await drainMainActor()

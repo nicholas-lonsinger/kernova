@@ -5,6 +5,7 @@ Read this before checking a change in the running app, against a guest or throug
 ## Launching the build
 
 Drive a build with the `kernova` tool inside it, `Kernova.app/Contents/Helpers/kernova`: each copy of Kernova answers only the tool in its own bundle, and the one on `PATH` links into whichever copy installed it. An `open`, by path or by bundle identifier, starts a new instance beside a running copy, and every copy loads the same VM library.
+A test run anywhere on the Mac is one more process named Kernova, so a window or process query selects the copy under test by its PID (`kCGWindowOwnerPID` for a window), never by owner or process name.
 A running copy you did not launch belongs to the maintainer or another session, so ask before quitting it. Quit your own with its tool's `kernova quit`: ⌘Q only closes its windows while it keeps running in the menu bar.
 
 ## Against a guest
@@ -17,7 +18,7 @@ Keystrokes a screen-control tool sends into a VM's display can reach the guest a
 
 Spotlight and Siri see Kernova's intents only from a build installed in `/Applications` and launched once. A build running from DerivedData shows only its app row in Spotlight while Shortcuts still lists and runs every intent, which reads like broken intent metadata. `ditto` the build to `/Applications/Kernova.app`, confirm no other on-disk copy outranks it, and launch that copy.
 
-Start the log stream before acting, over `process == "Kernova" OR process == "linkd" OR process == "searchtoold" OR process == "assistantd"`. The framework's `com.apple.appintents:Execution` lines are debug-level, so `log show` afterwards never has them, and a narrower capture cannot tell whether a request reached Kernova.
+Start the log stream before acting, over `processIdentifier == <that copy's PID> OR process == "linkd" OR process == "searchtoold" OR process == "assistantd"`. The framework's `com.apple.appintents:Execution` lines are debug-level, so `log show` afterwards never has them, and a narrower capture cannot tell whether a request reached Kernova.
 
 To run an intent without the Shortcuts editor, write a `WFWorkflowActions` plist whose action identifier is `app.kernova.<IntentTypeName>` and whose parameters are keyed by property name. A file parameter bound to Shortcut Input is `{"Value":{"Type":"ExtensionInput"},"WFSerializationType":"WFTextTokenAttachment"}`. Convert the plist with `plutil -convert binary1`, since `shortcuts sign` rejects XML, then run `shortcuts sign --mode anyone --input <plist> --output <name>.shortcut`.
 
