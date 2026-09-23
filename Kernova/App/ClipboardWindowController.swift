@@ -40,6 +40,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
             contentViewController: viewController
         )
         window.minSize = NSSize(width: 380, height: 300)
+        window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
         window.setFrameAutosaveName(autosaveScope.clipboardFrame(for: instance.instanceID))

@@ -62,4 +62,45 @@ struct GroupedFormStyleTests {
         #expect(rowInCard.minX == GroupedFormStyle.cardPadding)
         #expect(rowInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
     }
+
+    @Test("A card's field rows start their fields at one edge, past the widest label")
+    func fieldRowsShareALabelColumn() throws {
+        let short = NSTextField(string: "")
+        let long = NSTextField(string: "")
+        let card = makeGroupedFormCard(rows: [
+            GroupedFormFieldRow("Name", control: short),
+            GroupedFormFieldRow("Account name", control: long),
+        ])
+        card.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        card.layoutSubtreeIfNeeded()
+
+        let widest = try #require(findLabel(withText: "Account name", in: card))
+        let widestInCard = widest.convert(widest.bounds, to: card)
+        let shortInCard = short.convert(short.bounds, to: card)
+        let longInCard = long.convert(long.bounds, to: card)
+        #expect(
+            widest.alignmentRect(forFrame: widest.frame).width == widest.intrinsicContentSize.width)
+        #expect(shortInCard.minX == longInCard.minX)
+        #expect(shortInCard.minX > widestInCard.maxX)
+        #expect(shortInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
+        #expect(longInCard.maxX == shortInCard.maxX)
+    }
+
+    @Test(
+        "A card's fill is a translucent overlay, darkening in light and lightening in dark",
+        arguments: [NSAppearance.Name.aqua, .darkAqua])
+    func cardFillOverlaysAnyBackground(appearance: NSAppearance.Name) throws {
+        var resolved: NSColor?
+        try #require(NSAppearance(named: appearance)).performAsCurrentDrawingAppearance {
+            resolved = GroupedFormStyle.cardFill.usingColorSpace(.sRGB)
+        }
+        let fill = try #require(resolved)
+
+        #expect(fill.alphaComponent > 0 && fill.alphaComponent < 1)
+        if appearance == .darkAqua {
+            #expect(fill.brightnessComponent > 0.5)
+        } else {
+            #expect(fill.brightnessComponent < 0.5)
+        }
+    }
 }

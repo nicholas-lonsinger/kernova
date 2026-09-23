@@ -16,6 +16,7 @@ final class SettingsWindowController: NSWindowController {
             contentViewController: SettingsTabViewController(viewModel: viewModel))
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
+        window.autorecalculatesKeyViewLoop = true
         // The controller is a singleton reused across opens, so the window must
         // survive being closed (don't deallocate it out from under the reference).
         window.isReleasedWhenClosed = false

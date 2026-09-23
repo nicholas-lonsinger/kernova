@@ -204,6 +204,44 @@ struct VMCreationWizardViewControllerTests {
         #expect(wizard.children.first is GuestAccountContentViewController)
     }
 
+    @available(macOS 27.0, *)
+    @Test("Tab walks the account fields in order when the step mounts after the sheet is up")
+    func tabWalksTheAccountFields() throws {
+        let vm = makeAccountModel()
+        vm.currentStep = .resources
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        let parent = makeTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 900, height: 800))
+        parent.orderFront(nil)
+        defer { parent.close() }
+        let presenter = SheetPresenter()
+        presenter.show(content: wizard, in: parent)
+        defer { presenter.reset() }
+        let sheet = try #require(parent.attachedSheet)
+        hideFromScreen(sheet)
+        // A key-view request builds the sheet's loop from the Resources step, as
+        // the sheet does when it first shows.
+        sheet.selectNextKeyView(nil)
+
+        findButton(titled: "Next", in: wizard.view)?.performClick(nil)
+        try #require(wizard.children.first is GuestAccountContentViewController)
+
+        let labels = ["Full name", "Account name", "Password", "Verify"]
+        let fields = try labels.map {
+            try #require(editableField($0, in: wizard.view), "no \($0) field")
+        }
+        #expect(sheet.makeFirstResponder(fields[0]))
+        // Asserts the loop Tab follows rather than where Tab lands: a window
+        // that isn't key — no test window is — never moves focus on
+        // `selectNextKeyView`, but the request still brings the loop up to date.
+        sheet.selectNextKeyView(nil)
+        for index in fields.indices.dropFirst() {
+            #expect(
+                fields[index - 1].nextValidKeyView === fields[index],
+                "Tab from \(labels[index - 1]) lands on \(labels[index])")
+        }
+    }
+
     @Test("Next from Resources mounts Review when no account is being created")
     func nextFromResourcesSkipsTheAccountStep() {
         let vm = VMCreationViewModel()  // Download Latest, nothing looked up yet
