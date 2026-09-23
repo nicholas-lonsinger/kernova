@@ -119,7 +119,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)),
                 makeFileRow(
                     label: "Initrd", path: creationVM.initrdPath, browseAction: #selector(browseInitrd)),
-                makeGroupedFormCardRow("Command line", control: commandLineField, fillsControl: true),
+                GroupedFormFieldRow("Command line", control: commandLineField),
             ]))
     }
 
@@ -259,7 +259,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         control.alignment = .centerY
         control.spacing = Spacing.standard
 
-        return makeGroupedFormCardRow(label, control: control, fillsControl: true)
+        return GroupedFormFieldRow(label, control: control)
     }
 
     // MARK: - Actions

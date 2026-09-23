@@ -41,6 +41,7 @@ final class SheetPresenter: NSObject {
         )
         sheet.titlebarAppearsTransparent = true
         sheet.titleVisibility = .hidden
+        sheet.autorecalculatesKeyViewLoop = true
         sheet.contentViewController = content
 
         parent.beginSheet(sheet) { [weak self] _ in

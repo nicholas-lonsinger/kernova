@@ -19,13 +19,12 @@ enum GroupedFormStyle {
     /// Inset from a card's edges to its rows.
     static let cardPadding: CGFloat = 12
 
-    /// Fill for a grouped card, standing off the window background it sits on:
-    /// the control background (white in Aqua) in light, a lightening overlay in
-    /// dark, where a card lighter than the window is what reads as raised.
+    /// Fill for a grouped card: a translucent overlay — darkening in light,
+    /// lightening in dark — so a card stands off whatever background it sits on.
     static let cardFill = NSColor(name: "groupedFormCardFill") { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? .secondaryLabelColor.withAlphaComponent(0.08)
-            : .controlBackgroundColor
+            ? .secondarySystemFill
+            : .tertiarySystemFill
     }
 }
 
@@ -154,45 +153,70 @@ func makeGroupedFormHairline() -> NSView {
     return line
 }
 
-/// Builds a full-width card row: a leading label and a trailing control/value.
+/// The leading title of a card row, which keeps its full width however narrow
+/// the row gets.
+@MainActor
+private func makeGroupedFormRowTitle(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = Typography.body
+    label.isSelectable = false
+    label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+    label.setContentCompressionResistancePriority(.required, for: .horizontal)
+    return label
+}
+
+/// Builds a full-width card row: a leading label and a control/value pushed to
+/// the trailing edge — for steppers, switches, popups, and read-only values. An
+/// input that fills the row is a ``GroupedFormFieldRow``.
 ///
-/// By default the control is pushed to the trailing edge (for steppers, switches,
-/// popups, and read-only values). Pass `fillsControl: true` for an input that
-/// should stretch to fill the row (a text field). `titleLabel` hands the
-/// freshly-built label back to the caller, for rows whose text has to be
-/// restyled later.
+/// `titleLabel` hands the freshly-built label back to the caller, for rows
+/// whose text has to be restyled later.
 @MainActor
 func makeGroupedFormCardRow(
     _ labelText: String,
     control: NSView,
     alignment: NSLayoutConstraint.Attribute = .centerY,
-    fillsControl: Bool = false,
     titleLabel: ((NSTextField) -> Void)? = nil
 ) -> NSView {
-    let label = NSTextField(labelWithString: labelText)
-    label.font = Typography.body
-    label.isSelectable = false
-    label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-    label.setContentCompressionResistancePriority(.required, for: .horizontal)
+    let label = makeGroupedFormRowTitle(labelText)
     titleLabel?(label)
 
-    let views: [NSView]
-    if fillsControl {
-        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        views = [label, control]
-    } else {
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        views = [label, spacer, control]
-    }
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: views)
+    let row = NSStackView(views: [label, spacer, control])
     row.orientation = .horizontal
     row.alignment = alignment
     row.spacing = Spacing.standard
     return row
+}
+
+/// A card row whose control fills the space after its label — a text field or
+/// an editor — starting at the label column ``makeGroupedFormCard(rows:)``
+/// gives its field rows.
+@MainActor
+final class GroupedFormFieldRow: NSStackView {
+    fileprivate let titleLabel: NSTextField
+
+    init(
+        _ labelText: String, control: NSView,
+        alignment: NSLayoutConstraint.Attribute = .centerY
+    ) {
+        titleLabel = makeGroupedFormRowTitle(labelText)
+        super.init(frame: .zero)
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setViews([titleLabel, control], in: .leading)
+        orientation = .horizontal
+        self.alignment = alignment
+        spacing = Spacing.standard
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormFieldRow does not support NSCoder")
+    }
 }
 
 /// A card row that can be shown and hidden after its card is built.
@@ -230,6 +254,8 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
 /// Separators run from the label edge to the card's trailing edge — the
 /// asymmetry System Settings draws — so the content stack spans to that edge
 /// and every non-hairline row is inset back by ``GroupedFormStyle/cardPadding``.
+/// The ``GroupedFormFieldRow``s among `rows` share one label column, the width
+/// of their widest label, so their controls start at one edge.
 @MainActor
 func makeGroupedFormCard(rows: [NSView]) -> NSView {
     let content = NSStackView()
@@ -271,6 +297,10 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
         entry.view.widthAnchor.constraint(
             equalTo: content.widthAnchor, constant: entry.bleeds ? 0 : -pad
         ).isActive = true
+    }
+    let fieldTitles = rows.compactMap { ($0 as? GroupedFormFieldRow)?.titleLabel }
+    for title in fieldTitles.dropFirst() {
+        title.widthAnchor.constraint(equalTo: fieldTitles[0].widthAnchor).isActive = true
     }
     return container
 }

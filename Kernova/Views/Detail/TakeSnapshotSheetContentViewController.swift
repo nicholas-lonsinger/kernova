@@ -179,9 +179,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         notesEditor.onCancel = { [weak self] in self?.cancelTapped() }
 
         return makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Name", control: nameField, fillsControl: true),
-            makeGroupedFormCardRow(
-                "Notes", control: notesEditor, alignment: .top, fillsControl: true),
+            GroupedFormFieldRow("Name", control: nameField),
+            GroupedFormFieldRow("Notes", control: notesEditor, alignment: .top),
         ])
     }
 

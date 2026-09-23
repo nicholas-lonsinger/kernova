@@ -84,6 +84,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // content view's fitting size, and `minSize` then clamps to that. Setting
         // `minSize` first lets the fitting size overwrite it.
         window.minSize = NSSize(width: 800, height: 500)
+        window.autorecalculatesKeyViewLoop = true
 
         super.init(window: window)
         window.delegate = self

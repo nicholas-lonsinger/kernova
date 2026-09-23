@@ -18,6 +18,10 @@ final class ClipboardRichTextPreviewView: NSView {
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
+        // An uncolored run draws in the attributed-string default, black, and a
+        // source's explicit black decodes intact — both unreadable on the dark
+        // well unless the text view maps colors for a dark appearance.
+        textView.usesAdaptiveColorMappingForDarkAppearance = true
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 4, height: 8)
         textView.isVerticallyResizable = true
