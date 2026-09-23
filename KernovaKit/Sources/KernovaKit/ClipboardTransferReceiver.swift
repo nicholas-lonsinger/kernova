@@ -540,12 +540,12 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     /// paste ceiling and the free-space pre-flight were computed from is the
     /// only one to hold it to. A file's is exact, so its ceiling is that plus
     /// the one entry header's allowance. A folder's is a stat-walk estimate,
-    /// and its allowance is generous on purpose: the archive adds a header per
-    /// entry to the file bytes the estimate sums, and a tree can legitimately
-    /// grow a little between the copy-time walk and the paste-time encode.
-    /// Doubling covers header overhead for any tree whose file bytes dominate,
-    /// and the floor covers one whose estimate is zero or tiny — a scaffold of
-    /// empty files — while staying far below any paste ceiling.
+    /// and its allowance is generous: the archive adds a header per entry to
+    /// the file bytes the estimate sums, and a tree can legitimately grow a
+    /// little between the copy-time walk and the paste-time encode. Doubling
+    /// covers header overhead for any tree whose file bytes dominate, and the
+    /// floor covers one whose estimate is zero or tiny — a scaffold of empty
+    /// files — while staying far below any paste ceiling.
     func extractCeiling(forAdvertisedByteCount advertisedByteCount: Int, isDirectory: Bool) -> Int {
         guard isDirectory else {
             return advertisedByteCount.saturatingAdding(ClipboardStreamTuning.fileExtractAllowance)

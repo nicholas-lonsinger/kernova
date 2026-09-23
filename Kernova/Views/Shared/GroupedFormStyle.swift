@@ -46,10 +46,10 @@ final class FlippedClipView: NSClipView {
 ///
 /// `content` is hosted inside a full-width document view and inset symmetrically
 /// by ``GroupedFormStyle/contentSideInset``, plus `topInset` / `bottomInset`.
-/// The document view fills the clip view's width on purpose: pinning it
-/// *narrower* than the clip makes `NSClipView` offset its bounds origin to align
-/// the under-sized document, which scrolls the content sideways and defeats the
-/// inset. Callers add their own per-subview width constraints against `content`.
+/// The document view fills the clip view's width: pinning it *narrower* than the
+/// clip makes `NSClipView` offset its bounds origin to align the under-sized
+/// document, which scrolls the content sideways and defeats the inset. Callers
+/// add their own per-subview width constraints against `content`.
 ///
 /// `maxContentWidth` caps the content and centers it, for a pane with no natural
 /// width of its own; a viewport narrower than the cap still fills, minus the

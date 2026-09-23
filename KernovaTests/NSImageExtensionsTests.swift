@@ -12,5 +12,5 @@ struct NSImageExtensionsTests {
     }
 
     // The failure path (unknown symbol) is not tested here because
-    // systemSymbol triggers assertionFailure in debug builds by design.
+    // systemSymbol triggers assertionFailure in debug builds.
 }

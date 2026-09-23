@@ -161,7 +161,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         content.setCustomSpacing(Spacing.section, after: vmGroup)
 
         // Full-width members (cards and wrapping captions). The reset button is
-        // intentionally excluded so it hugs its intrinsic width at the leading edge.
+        // excluded so it hugs its intrinsic width at the leading edge.
         for member in [
             menuBarCard, menuBarCaption, agentInstallCard, agentInstallCaption,
             vmGroup, resetCaption,

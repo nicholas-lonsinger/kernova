@@ -126,8 +126,7 @@ enum VMCapability: CaseIterable, Hashable {
     /// Each of these moves VM state or snapshot files and would race an
     /// operation that is still settling, so it reads as unavailable rather than
     /// erroring on click. A snapshot's name and note are metadata-only manifest
-    /// writes no operation reads mid-flight, and are deliberately not on this
-    /// list.
+    /// writes no operation reads mid-flight, and are not on this list.
     ///
     /// Exhaustive rather than `default`, so a new capability has to choose a
     /// side.
@@ -192,10 +191,10 @@ struct VMCapabilityCatalog {
     /// Whether the VM's own state admits `capability` at all — the level a
     /// surface that *hides* an unavailable command reads.
     ///
-    /// Transient blockers are deliberately absent: a VM that can be snapshotted
-    /// still shows Take Snapshot while an operation settles, dimmed.
-    /// Exhaustive rather than `default`, so a new capability has to be answered
-    /// here as well as in ``isAvailable(_:on:)`` and ``accepts(_:on:)``.
+    /// Transient blockers are absent: a VM that can be snapshotted still shows
+    /// Take Snapshot while an operation settles, dimmed. Exhaustive rather than
+    /// `default`, so a new capability has to be answered here as well as in
+    /// ``isAvailable(_:on:)`` and ``accepts(_:on:)``.
     func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch capability {
         case .info, .ipAddress, .snapshots, .reveal, .showInFinder,
@@ -474,8 +473,8 @@ struct VMCapabilityCatalog {
     }
 
     /// Whether the VM's own state takes a *commit* of `capability` —
-    /// ``isApplicable(_:to:)`` everywhere but the capabilities deliberately
-    /// taken in a state they are not offered in.
+    /// ``isApplicable(_:to:)`` everywhere but the capabilities taken in
+    /// a state they are not offered in.
     ///
     /// Exhaustive rather than `default`, so a new capability has to choose a
     /// side here too.
@@ -504,12 +503,12 @@ struct VMCapabilityCatalog {
             if case .restoringSavedState = instance.phase { return true }
             return isApplicable(.resume, to: instance)
         case .rename:
-            // Offering a rename and taking one are deliberately different
-            // states. A rename rewrites the name and nothing a running
-            // operation reads, so a name typed into a field editor that was
-            // open when the VM started or began suspending is kept rather than
-            // traded for an alert — only the revert that will assign a whole
-            // configuration back over this one refuses
+            // Offering a rename and taking one answer to different states. A
+            // rename rewrites the name and nothing a running operation reads,
+            // so a name typed into a field editor that was open when the VM
+            // started or began suspending is kept rather than traded for an
+            // alert — only the revert that will assign a whole configuration
+            // back over this one refuses
             // (``VMLifecyclePhase/renamePersists``).
             return instance.renamePersists
         case .info, .ipAddress, .snapshots, .startInRecovery, .cancelGuestSetup, .stop,

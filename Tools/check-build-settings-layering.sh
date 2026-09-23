@@ -79,8 +79,8 @@ violations=$(awk '
 ' "$pbxproj" "$pbxproj")
 
 # The three targets Config/Local.xcconfig has to reach. KernovaCLI.xcconfig and
-# KernovaRelaunchHelper.xcconfig pin Release to `-` on purpose — export
-# re-signs them — so they are out of scope here.
+# KernovaRelaunchHelper.xcconfig pin Release to `-` because export re-signs
+# them, so they are out of scope here.
 signing_files=(
     Config/Targets/Kernova.xcconfig
     Config/Targets/KernovaTests.xcconfig

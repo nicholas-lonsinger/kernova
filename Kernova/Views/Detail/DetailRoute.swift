@@ -55,9 +55,9 @@ enum DetailRoute: Equatable {
             // Without this they route to the display pane, which replaces the
             // Settings form with the backing view for the length of the copy.
             //
-            // Settled phases are excluded deliberately — a suspended VM has no
-            // session either, and the display pane's own idle state is what
-            // belongs there rather than a spinner.
+            // Settled phases are excluded: a suspended VM has no session
+            // either, and it shows the display pane's own idle state, not a
+            // spinner.
             if phase.isTransitioning, phase.sessionID == nil {
                 return .transition(label: label)
             }

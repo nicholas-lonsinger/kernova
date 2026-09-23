@@ -50,9 +50,9 @@ final class VMCommandSocketListener {
     /// binds nothing and says so once.
     ///
     /// `awaitReady` is the app's first library read. The socket is bound before
-    /// that read lands — deliberately, so a client that just launched the app
-    /// finds something to connect to — which means a verb answered eagerly
-    /// would report an empty library as the truth. Every request waits on it.
+    /// that read lands, so a client that just launched the app finds something
+    /// to connect to, which means a verb answered eagerly would report an empty
+    /// library as the truth. Every request waits on it.
     init(
         router: VMCommandEnvelopeRouter,
         authorizer: (any PeerAuthorizing)?,

@@ -75,11 +75,11 @@ struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
 
     /// The pairing `identity` answers to, or `nil` when this VM claims it not.
     ///
-    /// Key and form only — deliberately *not* the receptacle, unlike the full
-    /// identity equality reconciliation uses. A serial-form key follows the unit
-    /// to any port, so narrowing it by receptacle would break the case it exists
-    /// for; a receptacle-form key already spells the port into the key itself,
-    /// so key equality pins the port without any help.
+    /// Key and form only — *not* the receptacle, unlike the full identity
+    /// equality reconciliation uses. A serial-form key follows the unit to any
+    /// port, so narrowing it by receptacle would break the case it exists for; a
+    /// receptacle-form key already spells the port into the key itself, so key
+    /// equality pins the port without any help.
     func pairing(matching identity: USBAccessoryIdentity) -> USBAccessoryPairing? {
         pairings.first { $0.key == identity.key && $0.form == identity.form }
     }

@@ -532,8 +532,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             pinnedOnlyKinds.remove(kind)
             stateLock.unlock()
             if stale {
-                // Left pending on purpose: the next configuration sync or
-                // session teardown recreates the network at an idle moment.
+                // Left pending: the next configuration sync or session
+                // teardown recreates the network at an idle moment.
                 #log(
                     Self.logger, .warning,
                     "Published the \(kind.rawValue, privacy: .public) network without the \(changed, privacy: .public) declared during its creation — they take effect at the next recreate"

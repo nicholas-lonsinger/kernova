@@ -6,7 +6,7 @@ import Testing
 
 /// The one place per-VM command capability is derived: what each state admits,
 /// what a transient blocker takes away, and the capabilities whose commit is
-/// deliberately wider than their offer.
+/// wider than their offer.
 @Suite("VMCapabilityCatalog Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCapabilityCatalogTests {
@@ -498,8 +498,8 @@ struct VMCapabilityCatalogTests {
 
     @Test("Outside the offer-versus-accept exceptions, a commit is exactly an offer")
     func acceptanceMatchesAvailabilityElsewhere() {
-        /// The pairs the two levels are deliberately allowed to disagree on:
-        /// rename in every phase, and each bring-up verb in the phase it joins.
+        /// The pairs the two levels disagree on: rename in every phase, and
+        /// each bring-up verb in the phase it joins.
         func isAnException(_ capability: VMCapability, in phase: VMLifecyclePhase) -> Bool {
             switch (capability, phase) {
             case (.rename, _), (.start, .starting), (.start, .restoringSavedState),

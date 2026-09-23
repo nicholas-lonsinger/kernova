@@ -4,8 +4,8 @@ import AppKit
 ///
 /// The generic grouped-form atoms (cards, rows, banners, scrolling) live in
 /// `GroupedFormStyle` and are shared with the settings pane. The tokens here are
-/// wizard-scoped on purpose and do **not** reach for `CalloutStyle`, which is
-/// tuned for narrow 340pt popovers.
+/// wizard-scoped and do **not** reach for `CalloutStyle`, which is tuned for
+/// narrow 340pt popovers.
 enum WizardStyle {
     /// The sheet's fixed width: a step fits the sheet, and a new step never
     /// grows it.

@@ -386,8 +386,8 @@ final class DownloadService: Sendable {
 
     /// Discards the `.kernovadownload` bundle for the given destination, if present.
     ///
-    /// Safe to call when no bundle exists, and non-fatal by design — every failure
-    /// is swallowed and logged, which is what lets callers treat disposal as
+    /// Safe to call when no bundle exists, and non-fatal — every failure is
+    /// swallowed and logged, which is what lets callers treat disposal as
     /// cleanup rather than part of the download's success condition.
     ///
     /// Trashes by default so a multi-GB partial survives an unintended VM delete;
@@ -747,7 +747,7 @@ extension DownloadService: Downloading {}
 
 /// Metadata serialized as `Info.plist` at the root of a `.kernovadownload` bundle.
 ///
-/// The expected total size is deliberately absent — it is re-derived from
+/// The expected total size is absent — it is re-derived from
 /// `Content-Length` (200) or `Content-Range` (206 / 416) on every request.
 struct DownloadBundleMetadata: Codable, Sendable, Equatable {
     var originalURL: URL

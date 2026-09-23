@@ -350,11 +350,11 @@ final class VirtualizationService {
             instance.cancelAgentPostStartWatchdog()
             #log(Self.logger, .notice, "Paused VM '\(instance.name, privacy: .public)'")
         } catch {
-            // The phase is deliberately untouched: the pause did not take, so
-            // the VM is where it was, still holding the session — and the guest
-            // stays usable, with Stop, Force Stop and a retried Pause all
-            // offered. Resting at a phase naming no session would strand it
-            // instead: liveness is read off the phase, so every later event this
+            // The phase stays untouched: the pause did not take, so the VM is
+            // where it was, still holding the session — and the guest stays
+            // usable, with Stop, Force Stop and a retried Pause all offered.
+            // Resting at a phase naming no session would strand it instead:
+            // liveness is read off the phase, so every later event this
             // still-live session raises — the guest's own shutdown above all —
             // would be dropped, and the pipes, vsock listeners, security scopes
             // and file locks it holds would never be released.
@@ -394,11 +394,11 @@ final class VirtualizationService {
                 try await session.resume()
                 sessionID = session.id
             } else {
-                // Deliberately arms nothing below: a restore resumes whatever
-                // guest state was frozen, which may be a Recovery session that
-                // never runs the agent, and no host-side flag survives the save
-                // to say which. The accept path arms once a control channel
-                // actually shows up.
+                // Arms nothing below: a restore resumes whatever guest state
+                // was frozen, which may be a Recovery session that never runs
+                // the agent, and no host-side flag survives the save to say
+                // which. The accept path arms once a control channel actually
+                // shows up.
                 sessionID = try await restoreFromSaveFile(
                     instance, attemptSessionID: &attemptSessionID)
             }

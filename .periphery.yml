@@ -16,11 +16,9 @@ schemes:
 
 # `KernovaKit` is a closed monorepo package — every consumer (the
 # `Kernova` app and `KernovaMacOSAgent`) lives in this same project, so
-# Periphery's cross-target index can resolve real usage of public symbols.
-# We let it surface unused public declarations rather than retaining them
-# wholesale. If a specific public symbol is exported intentionally but
-# unused in-repo, prefer a per-symbol `// periphery:ignore` over flipping
-# this back to `true`.
+# Periphery's cross-target index resolves real usage of public symbols, and
+# an unused public declaration is dead code. A public symbol with a use
+# outside the repo takes a per-symbol `// periphery:ignore`.
 retain_public: false
 
 # Keeps AppKit selectors, NSMenuItemValidation conformance, target/action

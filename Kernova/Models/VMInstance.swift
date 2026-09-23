@@ -1099,8 +1099,8 @@ final class VMInstance {
     ///
     /// The two are one call because a phase naming a session that is gone is
     /// exactly the state this type exists to make unrepresentable — so
-    /// `restingAt` must name none. A retry that deliberately stays mid-operation
-    /// passes the sessionless form of the phase it is in
+    /// `restingAt` must name none. A retry that stays mid-operation passes
+    /// the sessionless form of the phase it is in
     /// (``VMLifecyclePhase/starting(sessionID:)`` with `nil`, say).
     func tearDownSession(restingAt phase: VMLifecyclePhase) {
         if let strandedSessionID = phase.sessionID {

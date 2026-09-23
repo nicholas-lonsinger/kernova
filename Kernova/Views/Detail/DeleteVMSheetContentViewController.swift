@@ -50,8 +50,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
     /// Per-row checkboxes for the *selectable* (non-shared) externals, keyed
     /// by attachment id.
     ///
-    /// Shared externals get a disabled checkbox that is deliberately not
-    /// recorded here, so they can never be collected on confirm.
+    /// Shared externals get a disabled checkbox that is not recorded
+    /// here, so they can never be collected on confirm.
     private(set) var checkboxes: [UUID: NSButton] = [:]
 
     /// Ids of the externals whose checkbox is currently on.
@@ -521,9 +521,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
             title: prompt.confirmTitle, target: self, action: #selector(confirmTapped(_:))
         )
         confirmButton.bezelStyle = .push
-        // Trash is recoverable, so confirm is the intentional Return default. Immediate
-        // delete is irreversible: no Return default, so a stray Return can't trigger it —
-        // the user must click (or press Escape to cancel).
+        // Trash is recoverable, so confirm is the Return default. Immediate delete is
+        // irreversible: no Return default, so a stray Return can't trigger it — the user
+        // must click (or press Escape to cancel).
         if mode == .trash {
             confirmButton.keyEquivalent = "\r"
         }

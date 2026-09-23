@@ -47,7 +47,7 @@ final class ReleasableMockMacOSInstallService: MacOSInstallProviding {
         installStartedContinuation.yield(())
         installStartedContinuation.finish()
         if !releasedEarly {
-            // Deliberately not `withTaskCancellationHandler`: parking through a
+            // Not `withTaskCancellationHandler`: parking through a
             // cancellation-blind continuation is what makes the install finish
             // successfully after the cancel lands.
             await withCheckedContinuation { continuation in

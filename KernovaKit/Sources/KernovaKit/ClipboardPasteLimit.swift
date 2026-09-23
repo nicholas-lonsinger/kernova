@@ -59,8 +59,8 @@ public enum ClipboardPasteLimit {
     /// The ceiling a received `PolicyUpdate.clipboard_max_paste_bytes` selects.
     ///
     /// `0` is the field's unset value, not a real ceiling of zero — reading it
-    /// literally would refuse every paste. A host that predates the field, or one
-    /// that deliberately sends nothing, leaves the receiver on its own default.
+    /// literally would refuse every paste. A host that sends nothing leaves the
+    /// receiver on its own default.
     public static func fromPolicy(_ pushed: UInt64) -> Int {
         pushed == 0 ? defaultBytes : Int(clamping: pushed)
     }

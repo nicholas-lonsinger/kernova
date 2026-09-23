@@ -4,9 +4,8 @@ import Foundation
 ///
 /// The wire layout is USB 2.0 §9.6.1 — 18 packed little-endian bytes, which
 /// `IOUSBDeviceDescriptor` mirrors. `iManufacturer`/`iProduct`/`iSerialNumber`
-/// are deliberately absent: they are string *indices*, and the strings they
-/// index are read off the IORegistry node instead — see
-/// ``USBAccessoryNodeProperties``.
+/// are absent: they are string *indices*, and the strings they index are read
+/// off the IORegistry node instead — see ``USBAccessoryNodeProperties``.
 struct USBDeviceDescriptor: Sendable, Equatable {
     /// The USB revision the device reports, BCD-encoded (`0x0200` is USB 2.0).
     let usbVersion: UInt16
@@ -81,7 +80,7 @@ struct USBDeviceDescriptor: Sendable, Equatable {
 enum USBClassCode {
     /// The USB-IF name for `code`, or `nil` for one the spec does not assign.
     ///
-    /// `0x00` is absent on purpose: it is not a class, it is the statement that
+    /// `0x00` is absent: it is not a class, it is the statement that
     /// the interfaces carry the class.
     static func name(_ code: UInt8) -> String? {
         switch code {

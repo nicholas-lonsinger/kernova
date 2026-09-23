@@ -149,9 +149,9 @@ final class AppWindowRegistry {
     /// Whether any user-facing Kernova window is currently on screen, optionally
     /// counting a miniaturized one as present.
     ///
-    /// Deliberately does NOT special-case `NSApp.isHidden`, which turns every
-    /// window's `isVisible` false without closing one: this answers what is on
-    /// screen, and hiding is a term of the residency decision instead — see
+    /// Does NOT special-case `NSApp.isHidden`, which turns every window's
+    /// `isVisible` false without closing one: this answers what is on screen,
+    /// and hiding is a term of the residency decision instead — see
     /// ``AppResidencyController/residencyOutcome(hasVisibleUserWindow:isHidden:keepInMenuBar:hasUninterruptibleWork:)``.
     func hasUserWindow(countingMiniaturized: Bool) -> Bool {
         if hasTrackedUserWindow(countingMiniaturized: countingMiniaturized) { return true }

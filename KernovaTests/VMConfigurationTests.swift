@@ -1688,7 +1688,7 @@ struct VMConfigurationTests {
 
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
-        // Intentionally omits the required fields displayPreference and
+        // Omits the required fields displayPreference and
         // clipboardSharingEnabled. (The audio keys are optional and default, so
         // their absence alone would not throw.)
         let json = """

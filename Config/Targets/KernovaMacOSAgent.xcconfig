@@ -41,7 +41,7 @@ CLANG_INSTRUMENT_FOR_OPTIMIZATION_PROFILING[config=Debug] = NO
 // export, which is where Xcode otherwise adds the one and strips the other
 // (developer.apple.com/documentation/security/resolving-common-notarization-issues).
 // Debug stays ad-hoc: inside the guest a host code identity buys nothing. Both
-// identity pins shadow Config/Local.xcconfig by design.
+// identity pins shadow Config/Local.xcconfig.
 CODE_SIGN_IDENTITY[sdk=macosx*] = -
 CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = Developer ID Application
 CODE_SIGN_STYLE = Automatic

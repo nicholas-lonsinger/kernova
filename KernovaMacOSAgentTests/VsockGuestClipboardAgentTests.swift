@@ -1731,8 +1731,8 @@ struct VsockGuestClipboardAgentTests {
         arguments: [
             (ClipboardStreamAbortCode.diskFull.rawValue, ClipboardErrorCode.pasteDiskFull),
             (ClipboardStreamAbortCode.stallTimeout.rawValue, ClipboardErrorCode.pasteTimeout),
-            // Deliberately not a `ClipboardStreamAbortCode`: a code this build
-            // cannot read must still be reported, on the generic failure.
+            // Not a `ClipboardStreamAbortCode`: a code this build cannot
+            // read must still be reported, on the generic failure.
             ("archive.error", ClipboardErrorCode.pasteFailed),
         ])
     func abortReportsOnTheGuestMenuToo(
@@ -2208,7 +2208,7 @@ struct VsockGuestClipboardAgentTests {
 
         // The channel goes and the agent redials. The promise stays standing —
         // its providers hold the offer's cache alive — and the change-count gate
-        // is deliberately unset for the new host.
+        // is unset for the new host.
         host0.close()
         try await waitUntil { agent.liveChannelForTesting == nil }
         try await waitUntil { agent.liveChannelForTesting != nil }

@@ -259,7 +259,7 @@ conflict_check() {
 }
 
 # One unpiped watch, bounded by the overall deadline. Its exit code is
-# intentionally ignored; the caller re-verifies the rollup afterwards.
+# ignored: the caller re-verifies the rollup afterwards.
 bounded_watch() {
   gh pr checks "$PR" --watch --fail-fast >/dev/null 2>&1 &
   _wpid=$!

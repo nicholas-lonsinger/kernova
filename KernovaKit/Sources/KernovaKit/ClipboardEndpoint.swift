@@ -262,10 +262,10 @@ public final class ClipboardEndpoint {
     /// Ends the connection: stops draining, wakes every parked pull, retires
     /// what this side offered, and closes the channel. Idempotent.
     ///
-    /// The peer's clipboard offers and their materialization caches deliberately
-    /// survive: a pasteboard write this side published outlives the session
-    /// behind it, and every representation already pulled stays servable —
-    /// docs/CLIPBOARD.md, "Pay on consume".
+    /// The peer's clipboard offers and their materialization caches survive: a
+    /// pasteboard write this side published outlives the session behind it, and
+    /// every representation already pulled stays servable — docs/CLIPBOARD.md,
+    /// "Pay on consume".
     public func stop() {
         session.stop()
         inbound?.endSession()

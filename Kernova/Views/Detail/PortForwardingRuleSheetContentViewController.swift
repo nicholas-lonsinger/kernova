@@ -190,9 +190,9 @@ final class PortForwardingRuleSheetContentViewController: NSViewController {
         return container
     }
 
-    /// Deliberately without a target/action of its own: Return then reaches the
-    /// default button, which is the only thing that composes a rule — a field
-    /// action would run alongside it and add the same rule twice.
+    /// Without a target/action of its own: Return then reaches the default
+    /// button, which is the only thing that composes a rule — a field action
+    /// would run alongside it and add the same rule twice.
     private func configure(_ field: NSTextField, identifier: NSUserInterfaceItemIdentifier) {
         field.identifier = identifier
         field.alignment = .right

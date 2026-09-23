@@ -180,8 +180,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// Here rather than in the Virtual Machine menu because the rows that most
     /// need removing name hardware that is in a drawer, and a menu can only
     /// list what is plugged in. Here rather than Storage because a passthrough
-    /// accessory is deliberately not part of the VM's configuration, while
-    /// Sharing is already what the host hands this guest while it runs.
+    /// accessory is not part of the VM's configuration, while Sharing is
+    /// already what the host hands this guest while it runs.
     private func buildUSBPairingsSection() -> NSView {
         pairingListStack = makeGroupedFormListStack()
         // Not lockable: a remembered accessory is a preference about what to

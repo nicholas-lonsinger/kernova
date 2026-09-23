@@ -43,8 +43,8 @@ struct AppRegistryWaitTests {
     func waitFailsAtItsDeadline() async throws {
         let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()])
 
-        // The deadline is the assertion here, so it is deliberately small —
-        // the exception `testWaitBackstop` names.
+        // The deadline is the assertion here, so it is small — the
+        // exception `testWaitBackstop` names.
         let released = await awaitDeregistration(from: registry, scope: .all, within: 0.2)
 
         #expect(!released)
@@ -109,8 +109,8 @@ struct AppRegistryWaitTests {
         let registry = FakeAppRegistry(
             registered: [], byProcessIdentifier: [42: FakeRegisteredInstance()])
 
-        // The deadline is the assertion here, so it is deliberately small —
-        // the exception `testWaitBackstop` names.
+        // The deadline is the assertion here, so it is small — the
+        // exception `testWaitBackstop` names.
         let released = await awaitDeregistration(ofProcess: 42, from: registry, within: 0.2)
 
         #expect(!released)

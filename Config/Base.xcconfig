@@ -111,8 +111,8 @@ GCC_TREAT_WARNINGS_AS_ERRORS = YES
 // Ad-hoc, so a fresh clone builds with no team or certificate.
 CODE_SIGN_IDENTITY = -
 
-// Empty on purpose: ad-hoc signing uses no team, and there is no value that
-// isn't someone's personal team ID.
+// Empty: ad-hoc signing uses no team, and any value would be someone's
+// personal team ID.
 DEVELOPMENT_TEAM =
 
 // The app target's CODE_SIGN_ENTITLEMENTS, both configurations. The

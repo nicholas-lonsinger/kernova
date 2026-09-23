@@ -472,10 +472,10 @@ public final class ClipboardOutboundOffers {
             // skips it and keeps pulling, and this is what lets the verdict name
             // how many were left behind.
             onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
-            // Deliberately no `activity.bump()` here: activity is bytes moving,
-            // and a transfer's end is the start of the wait for the peer's next
-            // move — its next pull, or its `DropComplete` — which is exactly
-            // what the liveness window is there to bound.
+            // No `activity.bump()` here: activity is bytes moving, and a
+            // transfer's end is the start of the wait for the peer's next move
+            // — its next pull, or its `DropComplete` — which is exactly what
+            // the liveness window is there to bound.
             onComplete: { success in
                 operation.unitEnded(id: xid, succeeded: success)
                 // Nothing on this side knows the peer has stopped asking, so the

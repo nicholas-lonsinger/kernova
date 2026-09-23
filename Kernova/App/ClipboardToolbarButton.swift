@@ -63,7 +63,7 @@ private final class TransferBarView: NSView {
     /// Opaque track grays: light gray on the dark toolbar, a slightly darker
     /// gray on the light one.
     ///
-    /// Deliberately not a system fill color — those are translucent, which makes
+    /// Not a system fill color: those are translucent, which makes
     /// the track illegible over the glass platter.
     private static let trackColor = NSColor(
         name: nil,

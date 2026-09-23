@@ -2071,8 +2071,8 @@ struct VMCommandCoreTests {
 
         harness.core.quit()
 
-        // Deferred deliberately: a transport waiting on this verb has to get
-        // its answer written before the process starts going down.
+        // Deferred: a transport waiting on this verb has to get its
+        // answer written before the process starts going down.
         #expect(quits.count == 0)
 
         try await quits.gate.wait { quits.count == 1 }

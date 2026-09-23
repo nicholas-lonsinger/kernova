@@ -58,9 +58,9 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Updates the menu-bar icon to reflect a connection-state change.
     ///
-    /// Takes no state deliberately: `onStateChange` deliveries are hopped to main
-    /// through independently spawned tasks with no ordering guarantee, so the
-    /// live lock-guarded state is re-read instead of trusting a delivered value.
+    /// Takes no state: `onStateChange` deliveries are hopped to main through
+    /// independently spawned tasks with no ordering guarantee, so the live
+    /// lock-guarded state is re-read instead of trusting a delivered value.
     func connectionStateChanged() {
         setIcon(for: connectionState())
     }

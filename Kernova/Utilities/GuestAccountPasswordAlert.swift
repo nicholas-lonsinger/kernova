@@ -89,7 +89,7 @@ final class GuestAccountPasswordFields: NSView {
 /// and what each of its three answers means.
 ///
 /// Free-form rather than a core confirmation: it confirms no verb the core
-/// raised — it collects the one value the bundle deliberately does not carry.
+/// raised — it collects the one value the bundle does not carry.
 @MainActor
 enum GuestAccountPasswordAlert {
     /// Names the account, not the VM: the VM is what the user clicked Start on,

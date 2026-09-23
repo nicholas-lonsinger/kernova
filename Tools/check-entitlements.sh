@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# The two app entitlement plists are parallel by design:
-# Kernova.entitlements is the shipping set, Kernova.Development.entitlements
-# the same set minus the restricted keys an unauthorized signature cannot
-# carry. Nothing else enforces that parity — Xcode's Signing & Capabilities
-# editor writes only to whichever file KERNOVA_APP_ENTITLEMENTS selects, so a
-# capability added there would otherwise drift into one variant silently.
-# Fails lint when the key sets differ by anything other than a restricted key.
-# Values are not compared: every key is a boolean grant, and a key present with
-# a non-true value fails at signing, not silently.
+# The two app entitlement plists are parallel: Kernova.entitlements is the
+# shipping set, Kernova.Development.entitlements the same set minus the
+# restricted keys an unauthorized signature cannot carry. Nothing else enforces
+# that parity — Xcode's Signing & Capabilities editor writes only to whichever
+# file KERNOVA_APP_ENTITLEMENTS selects, so a capability added there would
+# otherwise drift into one variant silently. Fails lint when the key sets
+# differ by anything other than a restricted key. Values are not compared:
+# every key is a boolean grant, and a key present with a non-true value fails
+# at signing, not silently.
 
 set -uo pipefail
 

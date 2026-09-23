@@ -186,7 +186,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         displayAutoResizeSwitch = makeGroupedFormSwitch(target: self, action: #selector(displayAutoResizeToggled))
 
         var rows: [NSView] = [
-            // Deliberately not `lockable`: the flag lives on the display view, so
+            // Not `lockable`: the flag lives on the display view, so
             // it is legal to flip while the VM runs.
             makeGroupedFormRowWithInfo(
                 "Automatically resize with window", control: displayAutoResizeSwitch,
@@ -357,7 +357,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         systemKeysPopUp = makePopUp(
             Self.systemKeyChoices, action: #selector(systemKeysChanged))
 
-        // Deliberately not `lockable`: the flag lives on the display view, so it
+        // Not `lockable`: the flag lives on the display view, so it
         // is legal to flip while the VM runs.
         var rows: [NSView] = [
             makeGroupedFormRowWithInfo(

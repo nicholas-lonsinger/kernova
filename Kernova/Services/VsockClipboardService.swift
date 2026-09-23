@@ -68,9 +68,9 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
 
     /// This VM's transfer report, which every surface renders.
     ///
-    /// It outlives this connection deliberately: a promise this service published
-    /// outlives it too, so a service superseded by a reconnect still reports the
-    /// failures of those promises.
+    /// It outlives this connection: a promise this service published outlives it
+    /// too, so a service superseded by a reconnect still reports the failures of
+    /// those promises.
     private let reporter: ClipboardTransferReporter
 
     /// Reveal and idle seams handed to every operation this service opens; tests
@@ -117,8 +117,8 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
     /// never learns the publisher type. Called on inbound supersession (a newer
     /// offer, or a release): the guest rejects the superseded generation's pulls
     /// as `request.stale`, so a promise left on the pasteboard would advertise
-    /// flavors that silently serve nothing. VM stop deliberately does *not*
-    /// retract — a stopped session's materialized reps stay servable.
+    /// flavors that silently serve nothing. VM stop does *not* retract — a
+    /// stopped session's materialized reps stay servable.
     @ObservationIgnored
     var retractStaleHostWrite: (@MainActor () -> Bool)?
 

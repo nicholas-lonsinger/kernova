@@ -130,9 +130,9 @@ public enum ClipboardSnapshotPolicy {
     /// Applies every rule, in order, over (uti, data) pairs read from one pasteboard item.
     ///
     /// Copied *files* take the disk-backed `.file` path and never pass through
-    /// here. Dynamic (`dyn.*`) UTIs are deliberately kept: the encoding is a
-    /// deterministic function of the original legacy type, so macOS↔macOS
-    /// round-trips reproduce the exact type.
+    /// here. Dynamic (`dyn.*`) UTIs are kept: the encoding is a deterministic
+    /// function of the original legacy type, so macOS↔macOS round-trips
+    /// reproduce the exact type.
     public static func evaluate(_ raw: [(uti: String, data: Data)]) -> Outcome {
         var kept: [ClipboardContent.Representation] = []
         var skipped: [Skipped] = []

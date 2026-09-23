@@ -127,8 +127,8 @@ struct CLIArgumentParsingTests {
 
     @Test("import takes --timeout, and waits as long as it takes without one")
     func importParsesTimeout() throws {
-        // Absent is unbounded on purpose: the wait covers a permission panel a
-        // person is answering, and no deadline can guess how long that takes.
+        // Absent is unbounded: the wait covers a permission panel a person is
+        // answering, and no deadline can guess how long that takes.
         let bare = try #require(
             try parse(["import", "/tmp/Alpha.kernova"]) as? KernovaCommand.Import)
         #expect(bare.timeout == nil)

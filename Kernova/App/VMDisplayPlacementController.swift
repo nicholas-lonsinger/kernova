@@ -203,8 +203,8 @@ final class VMDisplayPlacementController {
     /// Readies a VM's display for a bring-up: opens its window when it has none,
     /// and leaves one already open exactly where it is.
     ///
-    /// Deliberately not ``showDisplayWindow(for:)``: readying is not surfacing,
-    /// so a bring-up reaching a Kernova the user is not in puts the window up
+    /// Not ``showDisplayWindow(for:)``: readying is not surfacing, so a
+    /// bring-up reaching a Kernova the user is not in puts the window up
     /// behind what they are looking at — and a fullscreen VM readied that way
     /// runs in a pop-out window, its persisted preference untouched, until the
     /// user brings it forward and enters fullscreen themselves.

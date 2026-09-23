@@ -668,9 +668,8 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // A live-paused VM is frozen by design: the guest cannot answer a
-        // heartbeat, so the pre-#706 behavior — terminate for silence — blamed
-        // the agent for the user's pause.
+        // A live-paused VM is frozen: the guest cannot answer a heartbeat, so
+        // terminating for silence would blame the agent for the user's pause.
         let suspension = SuspensionFlag()
         let helloObserved = ObservedRecorder()
         let service = makeService(

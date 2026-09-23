@@ -4,9 +4,8 @@ import KernovaKit
 
 /// The tool's end of the app's command socket.
 ///
-/// Blocking on purpose: the tool is one request and one answer, so a run loop
-/// would buy nothing and a plain `read`/`write` is what makes the exit code the
-/// only thing a caller has to interpret.
+/// Blocking: the tool sends one request and reads one answer, and a plain
+/// `read`/`write` leaves the exit code the only thing a caller has to interpret.
 final class VMCommandClient {
     private let fd: Int32
     private var decoder = StreamFrameDecoder()

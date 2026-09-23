@@ -427,7 +427,7 @@ struct VMLibraryTests {
         library.reconcileWithDisk()
 
         // A bundle the scan never saw says nothing about the slot inside it,
-        // and the eviction pass deliberately keeps such a VM.
+        // and the eviction pass keeps such a VM.
         #expect(library.instances.count == 1)
         #expect(instance.phase == .suspended)
     }
@@ -807,7 +807,7 @@ struct VMLibraryTests {
         library.wirePersistence(for: instance)
 
         // A clone's bundle is a fresh directory, and the pairing file is
-        // deliberately not among the ones a clone copies — so the clone starts
+        // not among the ones a clone copies — so the clone starts
         // expecting nothing, rather than racing its source for one device.
         #expect(instance.usbPairings.isEmpty)
     }

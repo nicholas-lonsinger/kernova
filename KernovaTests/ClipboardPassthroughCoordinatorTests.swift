@@ -449,7 +449,7 @@ struct ClipboardPassthroughCoordinatorTests {
         h.coordinator.pollHostClipboard()
         try await h.resolves.wait(untilCompleted: 1)
 
-        // A Linux guest rejects every file copy by design, so reporting here
+        // A text-only transport (a Linux guest's) refuses every file copy, so reporting here
         // would fire on each one rather than on anything the user can act on.
         #expect(h.service.grabbed.isEmpty)
         #expect(h.reports.failure == nil)

@@ -39,8 +39,8 @@ extension ClipboardContent {
     /// `nil` when none is present.
     ///
     /// Prefers the richest RTF-family flavor so a copy with an embedded inline
-    /// image previews *with* the image. HTML is deliberately *not* rendered
-    /// styled: `NSAttributedString`'s HTML import can synchronously fetch remote
+    /// image previews *with* the image. HTML is *not* rendered styled:
+    /// `NSAttributedString`'s HTML import can synchronously fetch remote
     /// resources and block the main thread, which is unsafe for untrusted
     /// clipboard bytes.
     var richTextRepresentation: Representation? {
@@ -95,7 +95,7 @@ extension ClipboardContent {
 
     /// Whether a string is a single-line `file://`/`http://`/`https://` URL.
     ///
-    /// Strict by design: multi-line text or a non-URL string is treated as prose,
+    /// Strict: multi-line text or a non-URL string is treated as prose,
     /// so real captions never trigger the image-beats-text rule.
     private static func looksLikePathOrURL(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)

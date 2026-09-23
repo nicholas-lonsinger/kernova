@@ -234,7 +234,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// VMs marked `VMConfiguration.startsAutomaticallyOnLaunch` come up once the
     /// library read lands.
     ///
-    /// `.headless` drops straight to `.accessory` — deliberately *not* through
+    /// `.headless` drops straight to `.accessory` — *not* through
     /// ``syncActivationPolicy()``, which reads a window list this launch has not
     /// built yet.
     func start(provenance: LaunchProvenance) {
@@ -488,9 +488,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// A launch that asked for the app hidden — `kernova`'s `hides`, an App
     /// Intents launch — stays hidden for the life of the process, and a hidden
     /// app displays no window however it is ordered, `orderFrontRegardless`
-    /// included. Only a summon does this: a launch that presents deliberately
-    /// builds its library behind the hide, where the Dock icon is what brings
-    /// it forward.
+    /// included. Only a summon does this: a `.present` launch builds its library
+    /// behind the hide, where the Dock icon is what brings it forward.
     private func unhideForSummon() {
         guard NSApp.isHidden else { return }
         #log(Self.logger, .notice, "Summoned while hidden — unhiding")
@@ -633,8 +632,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// closed every window and is only reached with *Continue running in Status
     /// Bar* on (``AppTerminationController/shouldTerminateOnQuit``), so it knows
     /// the answer the reconcile would have to infer — and while the app is
-    /// hidden the reconcile deliberately infers nothing, which would leave a
-    /// window-less app holding a Dock icon that only an unhide could clear.
+    /// hidden the reconcile infers nothing, which would leave a window-less app
+    /// holding a Dock icon that only an unhide could clear.
     func closeGUIForSoftQuit() {
         windows.closeAll()
         // Drop the Dock presence BEFORE anchoring the reminder. Left to the
@@ -722,8 +721,8 @@ final class AppResidencyController: WindowResidencyHosting {
     ///   icon (not headless — the app has to stay reachable to show progress)
     ///   until the work settles and the observation re-runs this.
     ///
-    /// A settled `.running` VM deliberately does *not* hold the quit back:
-    /// save-suspending it is the decided behavior.
+    /// A settled `.running` VM does *not* hold the quit back:
+    /// `applicationShouldTerminate` save-suspends it.
     nonisolated static func residencyOutcome(
         hasVisibleUserWindow: Bool,
         isHidden: Bool,
@@ -794,9 +793,9 @@ final class AppResidencyController: WindowResidencyHosting {
     /// `isVisible == false`, so a close landing meanwhile is only legible once
     /// the app is back on screen.
     ///
-    /// Deliberately not ``syncActivationPolicy()``: that one quits an app whose
-    /// last window closed, and an unhide is the one moment where a person has
-    /// just asked for the app.
+    /// Not ``syncActivationPolicy()``: that one quits an app whose last
+    /// window closed, and an unhide is the one moment where a person has just
+    /// asked for the app.
     ///
     /// An unhide ``unhideForSummon()`` performed is not that moment and decides
     /// nothing: the summon that asked for it is already putting a surface up.

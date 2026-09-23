@@ -102,9 +102,9 @@ struct DownloadServiceTests {
         defer { StubURLProtocol.handler = nil }
 
         let fileSystem = MockFileSystem()
-        // A generic failure, deliberately NOT `.fileNoSuchFile` — that one is
-        // swallowed silently as the ordinary "nothing to discard" case and
-        // would not exercise this path.
+        // A generic failure, NOT `.fileNoSuchFile` — that one is swallowed
+        // silently as the ordinary "nothing to discard" case and would not
+        // exercise this path.
         fileSystem.trashError = CocoaError(.fileWriteNoPermission)
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
 
@@ -117,8 +117,8 @@ struct DownloadServiceTests {
         let written = try Data(contentsOf: destination)
         #expect(written == payload)
 
-        // The husk is now a deliberately permitted state: the directory
-        // survives the failed disposal, but holds no bytes to resume from.
+        // The husk is a permitted state: the directory survives the failed
+        // disposal, but holds no bytes to resume from.
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
         #expect(bundle.exists)
         #expect(!bundle.isResumable)
@@ -233,9 +233,9 @@ struct DownloadServiceTests {
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
-        // Seed bundle with stale partial data. The new payload is INTENTIONALLY
-        // shorter than the stale data; if truncation didn't happen, the final
-        // file would still contain the tail of the stale bytes and would be
+        // Seed bundle with stale partial data. The new payload is shorter
+        // than the stale data; if truncation didn't happen, the final file
+        // would still contain the tail of the stale bytes and would be
         // larger than `newPayload.count`. That's how we observe truncation
         // instead of just confirming "no bytes overlap visibly."
         let stale = Data(repeating: 0xFF, count: 8192)

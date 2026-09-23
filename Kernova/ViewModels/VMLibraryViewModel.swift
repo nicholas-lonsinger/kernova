@@ -1274,10 +1274,10 @@ final class VMLibraryViewModel {
 
     /// Starts every VM marked to start automatically, one after another.
     ///
-    /// Sequential on purpose: each guest commits its whole memory allocation at
-    /// start, and the duplicate machine-ID and MAC refusals inside the start and
-    /// resume verbs compare against VMs that are already live, so they only
-    /// answer deterministically once the previous VM has settled.
+    /// Sequential: each guest commits its whole memory allocation at start, and
+    /// the duplicate machine-ID and MAC refusals inside the start and resume
+    /// verbs compare against VMs that are already live, so they only answer
+    /// deterministically once the previous VM has settled.
     ///
     /// Per-VM failures are logged and surfaced by those two methods; the pass
     /// carries on to the next VM either way.

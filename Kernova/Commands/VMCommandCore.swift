@@ -7,7 +7,7 @@ import KernovaLogging
 ///
 /// Holds no VM state of its own — ``VMLibrary`` owns which VMs exist and
 /// ``VMLifecycleCoordinator`` owns per-VM operation serialization — so it is
-/// deliberately *not* `@Observable`: there is nothing here for a view to watch.
+/// *not* `@Observable`: there is nothing here for a view to watch.
 ///
 /// It presents nothing and imports no AppKit. Anything a user has to see leaves
 /// as a thrown ``CommandError`` at the call that caused it, or through
@@ -106,9 +106,9 @@ final class VMCommandCore: VMCommanding {
     /// that pairing — and, because the detach re-enumerates the device, has to
     /// keep the return it causes from re-creating one.
     ///
-    /// Deliberately not fired by the lifecycle's own eject sweeps: a stop, a
-    /// suspend or a snapshot capture takes an accessory off without the user
-    /// asking, and must leave the pairing alone.
+    /// Not fired by the lifecycle's own eject sweeps: a stop, a suspend or a
+    /// snapshot capture takes an accessory off without the user asking, and
+    /// must leave the pairing alone.
     var onUserReleasedAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
 
     /// Measures the window or screen a starting VM's display is about to occupy,

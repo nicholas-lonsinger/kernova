@@ -6,7 +6,7 @@ import Foundation
 /// The raw value is the name every automation surface reads and writes;
 /// ``displayName`` is what a person reads. Nothing is *decided* here: a
 /// predicate belongs to the phase, which distinguishes the cases a status
-/// deliberately conflates.
+/// conflates.
 public enum VMStatus: String, Sendable {
     case stopped
     case starting
@@ -26,8 +26,8 @@ public enum VMStatus: String, Sendable {
     /// The wire name a VM whose bundle is still being written by a create,
     /// clone or import reports.
     ///
-    /// Deliberately not a case: it is not a runtime state a session can be in,
-    /// and nothing but a listing ever sees it.
+    /// Not a case: it is not a runtime state a session can be in, and
+    /// nothing but a listing ever sees it.
     public static let preparingWireName = "preparing"
 
     /// What a person reads for this status.

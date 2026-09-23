@@ -1830,9 +1830,9 @@ struct VMInstanceTests {
     @Test("A watchdog armed in a torn-down session never fires on its successor")
     func watchdogFromAPriorContextDoesNotFireOnTheNext() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        // Held to the end of the test on purpose: without it the released
-        // context deallocates and the task's weak capture answers the question
-        // before the identity check is reached, which is not what is under test.
+        // Held to the end of the test: without it the released context
+        // deallocates and the task's weak capture answers the question before
+        // the identity check is reached, which is not what is under test.
         let staleContext = instance.sessionContext
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         let stale = instance.agentPostStartTaskForTesting

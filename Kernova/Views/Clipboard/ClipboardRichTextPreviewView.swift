@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Read-only styled preview of inline RTF.
 ///
-/// Non-editable on purpose: editing rich content as plain text in place would
+/// Non-editable: editing rich content as plain text in place would
 /// silently flatten its formatting.
 @MainActor
 final class ClipboardRichTextPreviewView: NSView {

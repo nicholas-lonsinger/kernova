@@ -32,8 +32,8 @@ extension UTType {
 
     /// Disk image types offered in file picker panels for storage device attachment.
     ///
-    /// `.raw` is deliberately mapped to `.data` because `UTType(filenameExtension: "raw")`
-    /// resolves to `public.camera-raw-image` (digital camera photos), not raw disk images.
+    /// `.raw` maps to `.data` because `UTType(filenameExtension: "raw")` resolves to
+    /// `public.camera-raw-image` (digital camera photos), not raw disk images.
     static let diskImageTypes: [UTType] = {
         let logger = KernovaLogger(subsystem: "app.kernova", category: "UTType")
         let resolvedExtensions: [(ext: String, fallback: UTType)] = [

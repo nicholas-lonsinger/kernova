@@ -858,16 +858,14 @@ struct LazyPullCoordinatorTests {
         "a straggler abort for attempt #1 lands on attempt #2's awaiter when both share an id, but leaves no orphaned state behind (#499)"
     )
     func staleAbortCollidesWithReusedAwaiterButTableStaysConsistent() async throws {
-        // `ClipboardTransferID` is intentionally reproducible from
-        // (generation, repIndex, direction), so a retried pull of the identical
-        // offer/rep registers under the SAME id as the attempt it's retrying —
-        // after that attempt's own pull retired its awaiter. A delayed connection
-        // meant for #1 (one the peer opened before the local cancel reached it)
-        // is keyed purely on that id, so it lands on #2 instead. This test pins
-        // the CURRENT, accepted behavior — a bounded, benign collision (#2
-        // observes a spurious abort it can retry from), not a crash, hang, or
-        // corrupted registration table. See `ClipboardTransferID`'s doc for why
-        // a per-attempt discriminator was deferred rather than implemented.
+        // `ClipboardTransferID` is a function of (generation, repIndex,
+        // direction) alone, so a retried pull of the identical offer/rep
+        // registers under the SAME id as the attempt it's retrying — after that
+        // attempt's own pull retired its awaiter. A delayed connection meant for
+        // #1 (one the peer opened before the local cancel reached it) is keyed
+        // purely on that id, so it lands on #2 instead. The collision is
+        // bounded: #2 observes a spurious abort it can retry from, not a crash,
+        // hang, or corrupted registration table.
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
