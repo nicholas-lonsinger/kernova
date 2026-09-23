@@ -79,7 +79,7 @@ dev_dir=$(xcode-select -p 2>/dev/null || echo '')
 case "$dev_dir" in
     '')
         fail "Xcode not found — xcode-select has no active developer directory"
-        detail "Install Xcode 26+ then: sudo xcode-select -s /Applications/Xcode.app"
+        detail "Install Xcode 27+ then: sudo xcode-select -s /Applications/Xcode.app"
         ;;
     *CommandLineTools*)
         fail "Full Xcode required, but Command Line Tools are selected ($dev_dir)"
@@ -87,10 +87,10 @@ case "$dev_dir" in
         ;;
     *)
         xc_ver=$(xcodebuild -version 2>/dev/null | head -1 | awk '{print $2}')
-        if ge_major "$(major_of "$xc_ver")" 26; then
-            pass "Xcode $xc_ver (>= 26 required)"
+        if ge_major "$(major_of "$xc_ver")" 27; then
+            pass "Xcode $xc_ver (>= 27 required)"
         else
-            fail "Xcode 26 or later required — found ${xc_ver:-unknown}"
+            fail "Xcode 27 or later required — found ${xc_ver:-unknown}"
         fi
         ;;
 esac
