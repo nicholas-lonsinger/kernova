@@ -68,6 +68,10 @@ func makeGroupedFormScrollView(
     scrollView.borderType = .noBorder
     scrollView.drawsBackground = false
     scrollView.autohidesScrollers = true
+    // No `scrollerStyle`: the user's scroll-bar setting chooses it. Under
+    // "Always", the legacy scroller and the gutter it reserves are the form's
+    // persistent more-below cue — `ScrollMoreIndicator` leaves that scroller
+    // unveiled for the same reason.
     scrollView.automaticallyAdjustsContentInsets = false
     scrollView.contentInsets = NSEdgeInsetsZero
     scrollView.contentView.automaticallyAdjustsContentInsets = false

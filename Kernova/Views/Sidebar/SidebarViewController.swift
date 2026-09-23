@@ -89,6 +89,10 @@ final class SidebarViewController: NSViewController {
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
+        // Overlay whatever the scroll-bar setting: the divider snap fits the
+        // outline to the longest name (`widthToFitLongestRow()`), and a legacy
+        // scroller, shown only while the list overflows, takes its gutter out of
+        // that width whenever it appears, truncating the name the snap fitted.
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder

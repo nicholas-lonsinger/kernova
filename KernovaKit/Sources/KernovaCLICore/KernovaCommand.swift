@@ -4,9 +4,13 @@ import Foundation
 
 /// The `kernova` tool's root command.
 ///
-/// The whole binary is `KernovaCommand.run()`. Parsing, rendering and exit
-/// codes live in this package rather than in the executable target, so all of
-/// them are reachable from `KernovaKitTests` without a fourth test bundle.
+/// The shipped tool runs in the App Sandbox, which fails `tcsetattr` on a
+/// terminal with `EPERM` (kernel: `deny(1) file-ioctl path:/dev/tty
+/// ioctl-command:(_IO "t" 22)`, observed 2026-09-22 on macOS 27.0), and
+/// `readpassphrase(3)` ignores the failure and reads with echo on — so a
+/// terminal prompt that hides its input unsandboxed echoes the secret in the
+/// shipped tool. A secret reaches this tool on standard input, or the app asks
+/// for it.
 public struct KernovaCommand: ParsableCommand {
     /// The tool's name, one-line abstract, and `--version` answer.
     public static let configuration = CommandConfiguration(

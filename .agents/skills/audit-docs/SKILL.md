@@ -1,25 +1,31 @@
 ---
 name: audit-docs
-description: Audit AGENTS.md or a docs/ file clause by clause — verify every declaration against the tree, keep only rules that prevent a silent wrong action a capable model would otherwise take, walk the findings through with the maintainer, and fold each of their decisions back into this skill. Use when asked to review, audit, or prune AGENTS.md, CLAUDE.md, or any file under docs/ for correctness or load-bearing content; it edits no audited file, only itself.
-argument-hint: "<file> [<file>...]"
+description: Audit AGENTS.md, CLAUDE.md, a docs/ file, or the agent's memory for this repository clause by clause — verify every declaration against the tree, keep only what prevents a silent wrong action a capable model would otherwise take, route each survivor to the layer that owns it, walk the findings through with the maintainer, and fold their decisions back into this skill. Use when asked to review, audit, or prune any of those; the audit edits nothing it audits.
+argument-hint: "<file>|memory [<file>...]"
 ---
 
 Audit the file(s) named by the arguments: $ARGUMENTS
 
 With no argument, audit AGENTS.md, then docs/README.md, then every file
-docs/README.md indexes, in its order. Research notes under docs/research/ are
-immutable: verify nothing in them and edit nothing, but flag any note a doc
-cites whose claim current code contradicts.
+docs/README.md indexes, in its order. The argument `memory` audits the
+agent's persisted memory for this repository: its index, then every file in
+it. Research notes under docs/research/ are immutable: verify nothing in
+them and edit nothing, but flag any note a doc cites whose claim current code
+contradicts.
 
 ## Process
 
 Each file is audited by a subagent on a model at least as capable as the one
 that will read the docs — question 1 below is judged by the auditor, and a
-weaker judge keeps whatever it finds hard. The subagent gets one file and a
-full context. The report goes to a file; the terminal gets the headline.
+weaker judge keeps whatever it finds hard. The subagent gets one file, or a
+batch of small files that share a subject, and a full context. The report
+goes to a file outside the repository, where nothing commits it; the
+terminal gets the headline.
 
-The review is a walkthrough. Present the headline defects first, then take
-them one at a time with the maintainer. Every decision the maintainer makes
+The audit pass edits nothing it audits. The review is a walkthrough: present
+the headline defects first and take them one at a time with the maintainer,
+then the maintainer's-call list. A verdict the tests decide is not walked
+unless the maintainer disputes it. Every decision the maintainer makes
 is generalized before the next item: restate it as a test, apply it to every
 remaining verdict, and write it into this file by restatement into the
 section it belongs to — as the principle, never as the instance that
@@ -27,21 +33,23 @@ prompted it, a date, or a "learned from" note. When the walkthrough ends,
 read this whole file and revise it once more: fold in what the walkthrough
 showed as a pattern, restate any test the decisions bent, and delete what no
 longer earns its place. Then re-run the file under the updated skill, reusing
-the first run's verified facts and discarding its verdicts. The second run's
-proposed text is what gets applied, and the updated skill lands in the same
-PR as the edits.
+the first run's verified facts — a claim it only inferred is verified now —
+and discarding its verdicts. The second run's proposed text is what gets
+applied, and the updated skill lands in the same PR as the edits.
 
 Verdicts fall to one of two owners. The audit decides everything the tests
 below decide. A stated preference with no wrong action behind it is the
 maintainer's: list those separately, each with one recommended option, and
 stop there.
 
-What the audit uncovers beside the docs is acted on, not deferred. A code
-defect or a mechanism gap becomes a small PR on a subagent while the review
-continues, or a GitHub issue filed on the spot. A large refactor or cleanup
-is wanted; "leave it for whoever touches it next" is not a verdict. A
-mechanism the audit proposes is explained before it merges: what it does,
-where it is called from, and how it behaves at the edges, in plain terms.
+What the audit uncovers beside the docs — a code defect, a mechanism gap —
+is triaged under AGENTS.md's Review Feedback Handling, and nothing that
+clears its severity bar waits for whoever touches the code next: **Fix now**
+becomes a small PR on a subagent while the review continues, **Fix later**
+an issue filed on the spot. A large refactor or cleanup is a welcome
+outcome, never a reason to defer. A mechanism the audit proposes is
+explained before it merges: what it does, where it is called from, and how
+it behaves at the edges, in plain terms.
 
 Work one section at a time. Within a section, go clause by clause — no
 skimming, no sampling. A table row, a list item, and each clause of a compound
@@ -76,8 +84,9 @@ corrected version through the same derivability test and the layer test. Most
 corrected declarations belong one layer down, or nowhere.
 
 Third-party material — competitive analysis, what another product does or
-ships, research into someone else's software — has no home in the repo.
-Delete it wherever it appears.
+ships, research into someone else's software — has no home in the repo or
+in an agent's memory. Delete it wherever it appears; what it showed about
+Apple's platform stays, stated as that fact.
 
 ### Rules — the model's judgment is the baseline
 
@@ -107,15 +116,23 @@ questions, in order; the first failure sets the verdict.
    would exercise well. Drop the method when only the outcome matters; keep
    it only when the method is the non-obvious part. Then apply AGENTS.md's
    layer table: a rule that fires only during one procedure belongs in that
-   runbook; one that must fire without a lookup stays in AGENTS.md.
+   runbook; one that must fire without a lookup stays in AGENTS.md. A
+   destination `///` that already holds its one non-obvious constraint takes
+   no second: move or cut one first.
 
 A rule that passes all three is **load-bearing**; say so in one word and move
 on.
 
-A rule that carves out an exception is judged with its exception: the audit
-states why the exception is structural rather than preferred, and what change
-would dissolve it. An exception with no structural reason is a defect to
-dissolve, and one with a reason gets its removal path named.
+A rule or a code site that carves out an exception is judged with its
+exception: the audit states why the exception is structural rather than
+preferred, and what change would dissolve it. An exception with no structural
+reason is a defect to dissolve. One with a reason gets that reason stated
+where the exception lives — unstated, it reads as a divergence to consolidate
+— and its removal path named in the report.
+
+A clause telling the reader a question is settled and not to reopen it is
+deleted: AGENTS.md's top rule outranks it, and what survives is the fact that
+makes reopening unnecessary.
 
 A violation of the rule elsewhere in the tree is evidence about that file, not
 about the rule. Route the violation to the offending file's verdict list, then
@@ -144,13 +161,42 @@ A principle is exempt from question 1 by design. Instead:
 Target exists, the anchor resolves, and the read-trigger is accurate. Then the
 layer test: a pointer whose target docs/README.md already routes to with the
 same trigger is a duplicate, and a pointer to a doc that itself links onward
-to the same place is one hop too many.
+to the same place is one hop too many. A sentence naming a skill as the way
+to do a step names the task instead: the skill's description is its
+advertisement, and a second one drifts from it.
 
 ### Filler
 
 Delete, unless the clause carries an external fact with evidence (AGENTS.md's
 routing test 0), in which case reclassify as a declaration. A why-clause stays
 only when the why changes what the reader does.
+
+### Memory
+
+A memory file is one section, audited by the same tests, and AGENTS.md's
+layer table routes every clause that passes as if newly written — its memory
+row included, and often to a mechanism, since a script that reports the
+condition a memory warns about deletes the memory. A fact observed through
+one agent's tool but stated about the app or the platform holds under any
+agent, and a rule that binds work in the repository is not a private
+arrangement because it discloses a plan or a stance. Two things differ:
+
+- **Its read-trigger is its `description` and its index line.** Judge each
+  as a docs/README.md row: it names the situation in which the reader needs
+  the memory, and it matches the body. A file the index omits, or an index
+  line whose file is gone, is a dangling pointer.
+- **What stays must earn memory.** It is a non-obvious external fact that
+  costs real time to rediscover, a preference that could not be guessed, or
+  an environmental fact invisible from the tree — judged against a model
+  more capable than the auditor, since the auditor is the model most likely
+  to have needed it. Where the subject changes release to release, an agent
+  harness above all, keep the shape of the failure, not its mechanism. A
+  `Why:` that narrates how the memory was learned is filler.
+
+A fact the table sends to an agent's user scope is `move → user scope`,
+outside this audit's edits. A moved memory's file and index line are deleted
+once the PR carrying its destination merges, never before: an abandoned PR
+would take the fact with it.
 
 ### Runbooks
 
@@ -185,8 +231,13 @@ proposed:
 
 ## Cross-document checks (after the per-clause pass)
 
-- **Duplication:** the same fact or rule stated in two files. Name both, name
-  the deeper layer, recommend keeping only that one.
+Run once over every file's report together, not per subagent, against the
+default branch as it stands then: a merge since the per-file pass can settle
+or moot a verdict, and each such verdict is re-checked.
+
+- **Duplication:** the same fact or rule stated in two files, memory against
+  the repo docs included. Name both, name the deeper layer, recommend keeping
+  only that one.
 - **Contradiction:** two files that disagree. Name both, and which the code
   agrees with. When the code follows the file that does not own the subject
   under the layer table, the owner's rule wins and the code is swept to it.
@@ -212,7 +263,8 @@ per file, per section, a table:
 
 Verdicts: `keep`, `delete`, `rewrite` (give the text), `move → <file>`,
 `fix mechanism → delete` (name it), `fix code → delete` (name the sites),
-`false → <evidence>`, `unverifiable`, `contradicts <file>`.
+`false → <evidence>`, `unverifiable`, `contradicts <file>`, and for memory
+`move → user scope`.
 
 One verdict per clause, and no hedged alternatives. If two verdicts seem
 possible, the tests above decide, and when they genuinely tie the verdict is
@@ -228,5 +280,3 @@ incidental findings — code defects, mechanism gaps, violations in other files
 cross-document findings; then at most five sentences on the file as a whole:
 does it still earn its slot in docs/README.md, and is its named reader the
 reader it actually serves.
-
-Do not edit any audited file.
