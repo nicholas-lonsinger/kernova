@@ -7,22 +7,22 @@ Read this before changing how a guest attaches to a network or is reached from o
 ### 1. Exposure is the user's choice; recovery restores it, never widens or substitutes
 
 **A guest gets exactly the exposure the user chose for it, per VM.** Nothing widens it
-without that choice — not a mode change, a forwarding rule, a decode fallback, or a
-recovery path. When the exact choice is unavailable, recovery narrows within the chosen
+without that choice — not a mode change, a decode fallback, or a recovery path. When the exact choice is unavailable, recovery narrows within the chosen
 mode (a persisted bridged interface that is gone falls back to Automatic) or runs
 detached until it returns; it never attaches a mode the user did not choose.
 
 ### 2. Refuse at entry what cannot take effect
 
 **A value the guest can never use is refused, or disclosed, where the user enters it** —
-a forwarding host port another VM already claims, a MAC address no frame can source, a
-share path that is not a folder — never accepted and left to fail at the next start.
+a MAC address no frame can source, a share path that is not a folder — never accepted
+and left to fail at the next start.
 
-### 3. An address is stated as fact only where the app assigns it
+### 3. An address is stated at the strength of its source
 
-**Show a guest address as knowledge only when the app controls its assignment.** Where
-something else assigns it, say so; never present a guess — a sniffed lease, a value that
-may have expired — as the address.
+**Show a guest address only as what the app saw — the address the host last saw the
+guest use, while that sighting is current.** Where the app sees none, say who assigns
+it or say nothing; never present a guess — a lease read from elsewhere, an entry past
+its expiry — as the address.
 
 ### 4. A MAC address belongs to one virtual machine
 

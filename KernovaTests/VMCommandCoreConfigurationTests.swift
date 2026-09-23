@@ -6,9 +6,8 @@ import Testing
 @testable import Kernova
 
 /// The configuration verbs against a real library: the keyspace read and
-/// written through the core's own gates, the shared-directory and
-/// port-forwarding edits a caller names by path and by port, and every refusal
-/// each of them owes.
+/// written through the core's own gates, the shared-directory edits a caller
+/// names by path, and every refusal each of them owes.
 @Suite("VMCommandCore Configuration Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCommandCoreConfigurationTests {
@@ -40,7 +39,7 @@ struct VMCommandCoreConfigurationTests {
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             isVMNetworkingEntitled: true
         )
         let core = VMCommandCore(
@@ -803,148 +802,5 @@ struct VMCommandCoreConfigurationTests {
             }
         }
         #expect(instance.configuration.sharedDirectories == nil)
-    }
-
-    // MARK: - Port forwarding
-
-    @Test("The forwarding listing is every rule the VM carries, in order")
-    func portForwardingRulesAnswerWhatTheVMCarries() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let rules = [
-            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
-            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
-        ]
-        instance.configuration.portForwardingRules = rules
-
-        // The VM's networking is off, so a rule is listed whether or not any
-        // network is carrying it right now.
-        #expect(try harness.core.portForwardingRules(of: .name("Alpha")) == rules)
-    }
-
-    @Test("A VM forwarding nothing lists nothing, and a selector nothing answers to is refused")
-    func portForwardingRulesOnAnEmptyAndAMissingVM() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-
-        #expect(try harness.core.portForwardingRules(of: .name("Alpha")).isEmpty)
-        #expect(throws: CommandError.self) {
-            try harness.core.portForwardingRules(of: .name("Typo"))
-        }
-    }
-
-    @Test("A rule is added and dropped by its host-side claim")
-    func portForwardingRoundTrips() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let rule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
-
-        try harness.core.addPortForwardingRule(.name("Alpha"), rule: rule)
-        #expect(instance.configuration.portForwardingRules == [rule])
-
-        try harness.core.removePortForwardingRule(.name("Alpha"), claim: rule.hostClaim)
-        #expect(instance.configuration.portForwardingRules.isEmpty)
-    }
-
-    @Test("A host port another VM already claims is refused, naming the holder")
-    func hostPortCollisionsRefuse() throws {
-        let harness = makeHarness()
-        let alpha = makeInstance(in: harness, name: "Alpha")
-        let beta = makeInstance(in: harness, name: "Beta")
-        beta.configuration.portForwardingRules = [
-            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 8080)
-        ]
-
-        do {
-            try harness.core.addPortForwardingRule(
-                .name("Alpha"),
-                rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80))
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidArgument(let message) = error else {
-                Issue.record("expected invalidArgument, got \(error)")
-                return
-            }
-            #expect(message.contains("Beta"))
-        }
-        #expect(alpha.configuration.portForwardingRules.isEmpty)
-
-        // The same host port on the other transport is a different claim.
-        try harness.core.addPortForwardingRule(
-            .name("Alpha"),
-            rule: PortForwardingRule(transport: .udp, hostPort: 8080, guestPort: 80))
-        #expect(alpha.configuration.portForwardingRules.count == 1)
-    }
-
-    @Test("Adding the rule the VM already carries changes nothing")
-    func addingAnIdenticalRuleIsIdempotent() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let rule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
-        try harness.core.addPortForwardingRule(.name("Alpha"), rule: rule)
-
-        try harness.core.addPortForwardingRule(.name("Alpha"), rule: rule)
-
-        #expect(instance.configuration.portForwardingRules == [rule])
-    }
-
-    @Test("This VM's own rule on the same host port names itself, not a collision")
-    func aDifferentGuestPortOnItsOwnClaimNamesTheRule() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Alpha")
-        let existing = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
-        try harness.core.addPortForwardingRule(.name("Alpha"), rule: existing)
-
-        do {
-            try harness.core.addPortForwardingRule(
-                .name("Alpha"),
-                rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 8081))
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidArgument(let message) = error else {
-                Issue.record("expected invalidArgument, got \(error)")
-                return
-            }
-            #expect(message.contains("8081") == false)
-            #expect(message.contains("guest port 80"))
-        }
-        #expect(instance.configuration.portForwardingRules == [existing])
-    }
-
-    @Test("A rule this VM does not carry cannot be dropped")
-    func removingAnAbsentRuleRefuses() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-
-        #expect(throws: CommandError.self) {
-            try harness.core.removePortForwardingRule(
-                .name("Alpha"),
-                claim: PortForwardingHostClaim(transport: .tcp, hostPort: 8080))
-        }
-    }
-
-    @Test("A port that addresses no service is refused")
-    func portZeroIsRefused() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-
-        #expect(throws: CommandError.self) {
-            try harness.core.addPortForwardingRule(
-                .name("Alpha"),
-                rule: PortForwardingRule(transport: .tcp, hostPort: 0, guestPort: 80))
-        }
-        #expect(instance.configuration.portForwardingRules.isEmpty)
-    }
-
-    @Test("A running VM takes no forwarding edit")
-    func forwardingEditsAreAtRest() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, phase: .running(sessionID: UUID()))
-
-        #expect(throws: CommandError.self) {
-            try harness.core.addPortForwardingRule(
-                .name("Alpha"),
-                rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80))
-        }
     }
 }

@@ -49,6 +49,7 @@ struct VMLibraryViewModelTests {
             downloadsDirectory: downloadsDirectory,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
+            arpTable: ScriptedARPTable(),
             isVMNetworkingEntitled: isVMNetworkingEntitled
         )
         vm.presenter = presenter
@@ -70,7 +71,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         vm.presenter = presenter
         return (vm, suspending)
@@ -675,7 +676,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         vm.presenter = presenter
         return vm
@@ -2565,7 +2566,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS)
@@ -2780,191 +2781,20 @@ struct VMLibraryViewModelTests {
         #expect(!instance.canResume)
     }
 
-    // MARK: - Address Reservation Release
+    // MARK: - Networked instances
 
-    /// A VM in the library already holding a reservation slot on its mode's
-    /// network — the state a load leaves behind, without going through a scan.
-    private func makeReservedInstance(
+    /// A VM in the library on `mac` in `mode` — the state a load leaves
+    /// behind, without going through a scan.
+    private func makeNetworkedInstance(
         in viewModel: VMLibraryViewModel, using vmnet: MockVmnetNetworkProvider,
-        mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM",
-        rules: [PortForwardingRule] = []
+        mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM"
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(name: name)
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = mode
         instance.configuration.macAddress = mac
-        instance.configuration.portForwardingRules = rules
         viewModel.instances.append(instance)
-        if let kind = VmnetNetworkKind(mode: mode) {
-            vmnet.reserveAddressIfNeeded(for: mac, kind: kind)
-        }
         return instance
-    }
-
-    @Test("Deleting a VM releases its DHCP reservation slot")
-    func deleteReleasesAddressReservation() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-
-        await viewModel.delete(instance)
-
-        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-        #expect(vmnet.reservedMACs.isEmpty)
-    }
-
-    @Test("A slot another VM still wants survives a delete")
-    func deleteKeepsASlotADuplicateMACStillWants() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let first = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-        _ = makeReservedInstance(in: viewModel, using: vmnet, mac: "AA:BB:CC:DD:EE:0F")
-
-        await viewModel.delete(first)
-
-        #expect(vmnet.releasedMACs.isEmpty)
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-    }
-
-    @Test("Editing the MAC releases the retired slot before the new MAC takes one")
-    func macAddressChangeReleasesTheRetiredSlotFirst() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-
-        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
-
-        // Release first, so the freed slot is the lowest one available and the
-        // VM's reserved address does not move.
-        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:10"])
-    }
-
-    @Test("Switching network mode releases the slot on the old kind")
-    func modeSwitchReleasesTheOldKindsSlot() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-
-        viewModel.updateConfiguration(of: instance) { $0.networkMode = .hostOnly }
-
-        #expect(vmnet.releasedMACs.map(\.kind) == [.shared])
-        #expect(vmnet.reservedMACs.map(\.kind) == [.hostOnly])
-    }
-
-    @Test("Disabling networking releases the slot")
-    func disablingNetworkingReleasesTheSlot() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-
-        viewModel.updateConfiguration(of: instance) { $0.networkEnabled = false }
-
-        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-        #expect(vmnet.reservedMACs.isEmpty)
-    }
-
-    @Test("An unrelated configuration change releases nothing")
-    func unrelatedChangeReleasesNothing() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-
-        viewModel.updateConfiguration(of: instance) { $0.name = "Renamed" }
-
-        #expect(vmnet.releasedMACs.isEmpty)
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-    }
-
-    @Test("Loading the library frees slots no VM claims")
-    func loadFreesSlotsNoVMClaims() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let storage = MockVMStorageService()
-        var config = VMConfiguration(name: "Kept", guestOS: .linux, bootMode: .efi)
-        config.networkEnabled = true
-        config.networkMode = .shared
-        config.macAddress = "aa:bb:cc:dd:ee:0f"
-        storage.bundles[
-            FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        ] = config
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
-        // A slot left behind by a VM trashed while the app was not running.
-        vmnet.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:99", kind: .shared)
-
-        await viewModel.loadVMs()
-
-        #expect(vmnet.retainedMACs.first(where: { $0.kind == .shared })?.macs == ["aa:bb:cc:dd:ee:0f"])
-        #expect(vmnet.retainedMACs.first(where: { $0.kind == .hostOnly })?.macs == [])
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-    }
-
-    @Test("A library that failed to read a bundle frees no slot")
-    func loadWithAFailedBundleFreesNothing() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "Unreadable", guestOS: .linux, bootMode: .efi)
-        let failing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[failing] = config
-        storage.loadConfigurationFailURLs = [failing]
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
-        vmnet.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:99", kind: .shared)
-
-        await viewModel.loadVMs()
-
-        // The failed bundle's VM still exists, so its slot must not be reclaimed.
-        #expect(vmnet.retainedMACs.isEmpty)
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:99"])
-    }
-
-    @Test("A reconcile keeps the slot of a VM whose bundle is on disk but unreadable")
-    func reconcileKeepsTheSlotOfAnUnreadableBundle() {
-        let vmnet = MockVmnetNetworkProvider()
-        let storage = MockVMStorageService()
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
-        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-        // The bundle is still on disk; only its configuration stopped parsing,
-        // so the VM leaves the library but has not gone away.
-        storage.bundles[instance.bundleURL] = instance.configuration
-        storage.loadConfigurationFailURLs = [instance.bundleURL]
-
-        viewModel.reconcileWithDisk()
-
-        #expect(viewModel.instances.isEmpty)
-        #expect(vmnet.releasedMACs.isEmpty)
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-    }
-
-    @Test("A reconcile releases the slot of a VM whose bundle is gone")
-    func reconcileReleasesTheSlotOfADeletedBundle() {
-        let vmnet = MockVmnetNetworkProvider()
-        let storage = MockVMStorageService()
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
-        _ = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
-
-        viewModel.reconcileWithDisk()
-
-        #expect(viewModel.instances.isEmpty)
-        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
-    }
-
-    @Test("An unentitled build neither releases nor prunes")
-    func unentitledBuildLeavesReservationsAlone() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(
-            vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
-        let instance = VMInstanceFixture.make()
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
-        viewModel.instances = [instance]
-
-        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
-        await viewModel.loadVMs()
-
-        #expect(vmnet.releasedMACs.isEmpty)
-        #expect(vmnet.retainedMACs.isEmpty)
     }
 
     // MARK: - MAC Address Uniqueness
@@ -2977,8 +2807,8 @@ struct VMLibraryViewModelTests {
     ) -> (VMLibraryViewModel, VMInstance, VMInstance) {
         let (viewModel, _, _, _, _) = makeViewModel(
             storageService: storage, vmnetNetworks: vmnet)
-        let holder = makeReservedInstance(in: viewModel, using: vmnet, mac: held, name: "Holder")
-        let editor = makeReservedInstance(
+        let holder = makeNetworkedInstance(in: viewModel, using: vmnet, mac: held, name: "Holder")
+        let editor = makeNetworkedInstance(
             in: viewModel, using: vmnet, mac: editing, name: "Editing VM")
         return (viewModel, holder, editor)
     }
@@ -2998,8 +2828,6 @@ struct VMLibraryViewModelTests {
         #expect(accepted == false)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
         #expect(storage.saveConfigurationCallCount == 0)
-        #expect(vmnet.releasedMACs.isEmpty)
-        #expect(vmnet.declaredForwardingRules.isEmpty)
         #expect(presenter.errorTitle == "MAC Address In Use")
         #expect(presenter.errorMessage?.contains("Holder") == true)
         #expect(presenter.errorMessage?.contains("aa:bb:cc:dd:ee:0f") == true)
@@ -3094,372 +2922,7 @@ struct VMLibraryViewModelTests {
 
         #expect(accepted)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
         #expect(!presenter.showError)
-    }
-
-    // MARK: - Port Forwarding Sync
-
-    private static let webRule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
-    private static let sshRule = PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
-
-    @Test("A configuration change declares a shared VM's forwarding rules")
-    func updateConfigurationDeclaresForwardingRules() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = VMInstanceFixture.make()
-
-        viewModel.updateConfiguration(of: instance) {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "AA:BB:CC:DD:EE:0F"
-            $0.portForwardingRules = [Self.webRule]
-        }
-
-        #expect(vmnet.declaredForwardingRules.last?.mac == "aa:bb:cc:dd:ee:0f")
-        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
-    }
-
-    @Test("Switching away from Shared Network withdraws the VM's forwarding rules")
-    func modeSwitchWithdrawsForwardingRules() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = VMInstanceFixture.make()
-        viewModel.updateConfiguration(of: instance) {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "aa:bb:cc:dd:ee:0f"
-            $0.portForwardingRules = [Self.webRule]
-        }
-
-        viewModel.updateConfiguration(of: instance) { $0.networkMode = .hostOnly }
-
-        #expect(vmnet.declaredForwardingRules.last?.rules.isEmpty == true)
-    }
-
-    @Test("Editing the MAC address moves the rules to it and withdraws the old ones")
-    func macAddressChangeMovesForwardingRules() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = VMInstanceFixture.make()
-        viewModel.updateConfiguration(of: instance) {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "aa:bb:cc:dd:ee:0f"
-            $0.portForwardingRules = [Self.webRule]
-        }
-
-        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
-
-        // The retired address gives up its claim on the host port before the new
-        // one declares the same rules, so nothing is dropped as a duplicate.
-        #expect(
-            vmnet.declaredForwardingRules.suffix(2).map(\.mac)
-                == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
-        #expect(vmnet.declaredForwardingRules.dropLast().last?.rules.isEmpty == true)
-        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:10"])
-    }
-
-    @Test("Deleting a VM withdraws its forwarding rules")
-    func deleteWithdrawsForwardingRules() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = VMInstanceFixture.make()
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
-        instance.configuration.portForwardingRules = [Self.webRule]
-        viewModel.instances = [instance]
-
-        await viewModel.delete(instance)
-
-        #expect(vmnet.declaredForwardingRules.last?.rules.isEmpty == true)
-    }
-
-    @Test("A pending rule change recreates the shared network once no VM is on it")
-    func pendingRulesRecreateTheNetworkWhenIdle() {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = VMInstanceFixture.make()
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
-        viewModel.instances = [instance]
-
-        viewModel.updateConfiguration(of: instance) { $0.portForwardingRules = [Self.webRule] }
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    /// A stopped VM on the app-managed network of `mode`, in a library of its own.
-    private func makeNetworkedLibrary(
-        mode: VMNetworkMode, vmnet: MockVmnetNetworkProvider
-    ) -> (VMLibraryViewModel, VMInstance) {
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let instance = VMInstanceFixture.make()
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = mode
-        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
-        viewModel.instances = [instance]
-        return (viewModel, instance)
-    }
-
-    @Test("A changed MAC recreates the shared network once no VM is on it")
-    func macChangeRecreatesTheSharedNetworkWhenIdle() {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-        let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
-
-        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A Host Only VM's changed MAC recreates the Host Only network")
-    func macChangeRecreatesTheHostOnlyNetwork() {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.hostOnly: .declarationsPending]
-        let (viewModel, instance) = makeNetworkedLibrary(mode: .hostOnly, vmnet: vmnet)
-
-        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
-
-        #expect(vmnet.invalidatedKinds == [.hostOnly])
-    }
-
-    @Test("A mode switch recreates both app-managed networks, each once")
-    func modeSwitchRecreatesBothNetworks() {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending, .hostOnly: .declarationsPending]
-        let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
-
-        // The slot moves off one network and onto the other, so both carry a
-        // reservation set the recreate has to install.
-        viewModel.updateConfiguration(of: instance) { $0.networkMode = .hostOnly }
-
-        #expect(Set(vmnet.invalidatedKinds) == [.shared, .hostOnly])
-        #expect(vmnet.invalidatedKinds.count == 2)
-    }
-
-    @Test("Deleting a VM recreates the network its slot was on")
-    func deleteRecreatesTheNetwork() async {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-        let (viewModel, instance) = makeNetworkedLibrary(mode: .shared, vmnet: vmnet)
-
-        await viewModel.delete(instance)
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    /// A library holding one shared-network VM per name, wired through the real
-    /// load path so each instance carries its persistence hooks.
-    private func makeSharedNetworkLibrary(
-        named names: [String], vmnet: MockVmnetNetworkProvider
-    ) async -> VMLibraryViewModel {
-        let storage = MockVMStorageService()
-        for name in names {
-            var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-            config.networkMode = .shared
-            config.macAddress = VZMACAddress.randomLocallyAdministered().string
-            storage.bundles[
-                FileManager.default.temporaryDirectory
-                    .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-            ] = config
-        }
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
-        await viewModel.loadVMs()
-        return viewModel
-    }
-
-    @Test("A live shared-network VM holds the recreate off until its session is torn down")
-    func liveSharedVMDefersTheRecreate() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(
-            named: ["Running VM", "Edited VM"], vmnet: vmnet)
-        let running = try #require(viewModel.instances.first { $0.name == "Running VM" })
-        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
-        running.enter(.running(sessionID: UUID()))
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-
-        viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
-        #expect(vmnet.invalidatedKinds.isEmpty)
-
-        // Releasing the session's virtual machine is what makes the recreate
-        // safe.
-        running.tearDownSession(restingAt: .stopped)
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A save-suspended VM releases the shared network for a pending rule change")
-    func saveSuspendReleasesTheSharedNetwork() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(
-            named: ["Suspending VM", "Edited VM"], vmnet: vmnet)
-        let suspending = try #require(viewModel.instances.first { $0.name == "Suspending VM" })
-        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
-        suspending.enter(.running(sessionID: UUID()))
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-
-        viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
-        #expect(vmnet.invalidatedKinds.isEmpty)
-
-        // A save-suspend rests suspended with nothing live, so the rebuild
-        // rides the session teardown rather than any phase.
-        await viewModel.save(suspending)
-
-        #expect(suspending.status == .paused)
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A live switch out of Shared Network frees the network for the pending rebuild")
-    func liveSwitchOutOfSharedFreesTheNetwork() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(named: ["Running VM"], vmnet: vmnet)
-        let running = try #require(viewModel.instances.first)
-        running.enter(.running(sessionID: UUID()))
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-
-        // The rule sync runs while the VM is still on the shared network; only
-        // the mode write that follows frees it.
-        viewModel.updateConfiguration(of: running) {
-            $0.portForwardingRules = [Self.webRule]
-        }
-        #expect(vmnet.invalidatedKinds.isEmpty)
-
-        viewModel.updateConfiguration(of: running) { $0.networkMode = .hostOnly }
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A VM arriving from the library load recreates its materialized network once")
-    func loadedVMRecreatesTheMaterializedNetwork() async {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-
-        _ = await makeSharedNetworkLibrary(named: ["First VM", "Second VM"], vmnet: vmnet)
-
-        // Each VM's slot is taken as it loads, but the first recreate leaves the
-        // network unmaterialized — nothing pends against one that does not exist.
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A live VM holds a reservation recreate off until its session is torn down")
-    func liveVMDefersTheReservationRecreate() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(
-            named: ["Running VM", "Edited VM"], vmnet: vmnet)
-        let running = try #require(viewModel.instances.first { $0.name == "Running VM" })
-        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
-        running.enter(.running(sessionID: UUID()))
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-
-        viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:11" }
-        #expect(vmnet.invalidatedKinds.isEmpty)
-
-        running.tearDownSession(restingAt: .stopped)
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A session torn down from a transitioning status still frees the network")
-    func teardownFromATransitioningStatusStillRecreates() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(
-            named: ["Saving VM", "Edited VM"], vmnet: vmnet)
-        let saving = try #require(viewModel.instances.first { $0.name == "Saving VM" })
-        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
-        saving.enter(.running(sessionID: UUID()))
-        vmnet.scriptedRecreationReasons = [.shared: .declarationsPending]
-
-        viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:11" }
-        #expect(vmnet.invalidatedKinds.isEmpty)
-
-        // The teardown hook fires for a VM the scan must skip rather than
-        // believe: it released the network in the same call that rested it.
-        saving.enter(.saving(sessionID: UUID()))
-        saving.tearDownSession(restingAt: .suspended)
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-    }
-
-    @Test("A session opening on a network that served a finished run replaces it first")
-    func sessionOpeningReplacesALapsedNetwork() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(named: ["Joining VM"], vmnet: vmnet)
-        let instance = try #require(viewModel.instances.first)
-        vmnet.scriptedRecreationReasons = [.shared: .servedAttachment]
-
-        // The configuration build that follows would otherwise hand out an
-        // attachment on a network whose reservations have lapsed.
-        instance.beginSessionContext()
-
-        #expect(vmnet.invalidatedKinds == [.shared])
-        instance.tearDownSession(restingAt: .stopped)
-    }
-
-    @Test("A session's defect report reaches the registry through the library's wiring")
-    func aDefectReportReachesTheRegistry() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        let viewModel = await makeSharedNetworkLibrary(named: ["Reporting VM"], vmnet: vmnet)
-        let instance = try #require(viewModel.instances.first)
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .hostOnly
-        instance.enter(.running(sessionID: UUID()))
-        let device = MockNetworkDeviceControl()
-        device.refusedPlans = [.hostOnly]
-        vmnet.materializeFails = true
-        let coordinator = attachNetworkCoordinator(
-            to: instance, device: device, vmnetNetworks: vmnet)
-
-        coordinator.activate()
-
-        // The coordinator drops nothing itself: the network goes only because
-        // the report reached the library, which found nobody holding it.
-        #expect(vmnet.invalidatedKinds == [.hostOnly])
-        await coordinator.vmnetMaterializationTaskForTesting?.value
-        coordinator.stop()
-    }
-
-    @Test("Deleting a VM leaves the rules of one sharing its address declared")
-    func deleteKeepsADuplicateMACsForwardingRules() async {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let deleted = makeReservedInstance(
-            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Deleted",
-            rules: [Self.webRule])
-        _ = makeReservedInstance(
-            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Survivor",
-            rules: [Self.sshRule])
-
-        await viewModel.delete(deleted)
-
-        // Rules are keyed on the address, so withdrawing the deleted VM's would
-        // disarm the survivor's through the same key.
-        #expect(vmnet.declaredForwardingRules.last?.mac == "aa:bb:cc:dd:ee:0f")
-        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.sshRule])
-    }
-
-    @Test("Editing a MAC leaves the rules of a VM sharing the retired address declared")
-    func macAddressChangeKeepsADuplicateMACsForwardingRules() {
-        let vmnet = MockVmnetNetworkProvider()
-        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
-        let edited = makeReservedInstance(
-            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Edited",
-            rules: [Self.webRule])
-        _ = makeReservedInstance(
-            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Survivor",
-            rules: [Self.sshRule])
-
-        viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
-
-        #expect(
-            vmnet.declaredForwardingRules.suffix(2).map(\.mac)
-                == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
-        #expect(vmnet.declaredForwardingRules.dropLast().last?.rules == [Self.sshRule])
-        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
     }
 
     // MARK: - trySave / tryForceStop
@@ -3895,7 +3358,7 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Race VM")
@@ -5736,7 +5199,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -5825,7 +5288,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -6252,7 +5715,7 @@ struct VMLibraryViewModelTests {
             usbAccessoryService: MockUSBAccessoryService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Work")

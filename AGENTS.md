@@ -26,7 +26,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **Stable or absent, never propped up.** A capability that works only while a mechanism holds platform state open, or that rests on platform behavior no vendor documents, ships degraded to what the platform sanctions, behind the guest agent, or not at all. A design that holds only under conditions — an ordering that must hold, a wait placed just so, behavior observed on one OS build — is a no.
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `buildNetworkSection()`.
 - **Outcome names in the UI; vendor terms at the platform boundary.** Where Apple's own UI names the thing, keep Apple's term at that boundary and the outcome-describing domain term everywhere else. Worked case: `NetworkModeChoice.title(entitled:interfaces:)`.
-- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `PortForwardingRule`.
+- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `GuestIPAddress`.
 
 ## Build & Test
 

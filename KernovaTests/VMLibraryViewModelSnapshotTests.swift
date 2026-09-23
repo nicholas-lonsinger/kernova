@@ -31,7 +31,7 @@ struct VMLibraryViewModelSnapshotTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         return Harness(
@@ -61,7 +61,7 @@ struct VMLibraryViewModelSnapshotTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         viewModel.presenter = presenter
         return SuspendingHarness(

@@ -128,8 +128,6 @@ struct VMCommandEnvelopeRouter {
             return .snapshotSizes(try await commands.snapshotOnDiskBytes(of: selector))
         case .sharedDirectories(let selector):
             return .sharedDirectories(try commands.sharedDirectories(of: selector))
-        case .portForwardingRules(let selector):
-            return .portForwardingRules(try commands.portForwardingRules(of: selector))
         case .usbAccessories(let selector):
             return .usbAccessories(try commands.usbAccessories(of: selector))
         case .availableUSBAccessories:
@@ -224,13 +222,6 @@ struct VMCommandEnvelopeRouter {
             return .ok
         case .editSharedDirectory(let selector, let edit):
             try await apply(edit, to: selector)
-            return .ok
-        case .editPortForwarding(let selector, let edit):
-            switch edit {
-            case .add(let rule): try commands.addPortForwardingRule(selector, rule: rule)
-            case .remove(let claim):
-                try commands.removePortForwardingRule(selector, claim: claim)
-            }
             return .ok
         case .editUSBAccessory(let selector, let edit):
             try await apply(edit, to: selector)

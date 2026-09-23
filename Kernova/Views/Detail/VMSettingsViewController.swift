@@ -244,9 +244,9 @@ final class VMSettingsViewController: NSViewController {
                 // its own rather than riding the read above, which is free to
                 // stop enumerating every configuration.
                 _ = self.viewModel.macOSVMNamesMarkedForAutoStart
-                // Registers the reservation store's addressing, so an address
-                // still pending fills in once it becomes derivable.
-                _ = self.viewModel.reservedAddress(for: self.instance.configuration)
+                // Registers the observed addresses, so the IP address row
+                // follows each read of the host's table.
+                _ = self.viewModel.guestAddress(for: self.instance)
                 // Registers every instance's `preparingState`, so the Storage
                 // lock follows a clone of *this* VM starting and finishing.
                 _ = self.viewModel.capabilities.isAvailable(.editStorageDisks, on: self.instance)

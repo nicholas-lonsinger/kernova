@@ -71,7 +71,7 @@ extension VMCommandCore {
         }
 
         try refuseClipboardPassthrough(on: instance, from: current, to: candidate, confirmed: confirmed)
-        if let conflict = library.networkSlots.slotConflict(
+        if let conflict = library.macAddresses.macAddressConflict(
             on: instance, movingFrom: current, to: candidate)
         {
             throw CommandError.conflict(
@@ -233,71 +233,5 @@ extension VMCommandCore {
             .path(percentEncoded: false)
         guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }
         return String(standardized.dropLast())
-    }
-
-    // MARK: - Port Forwarding
-
-    /// The VM's host→guest mappings, in the order it carries them.
-    ///
-    /// Every rule the VM stores, whether or not the network carrying it is
-    /// declared right now: what the VM would forward is what a caller edits.
-    func portForwardingRules(of selector: VMSelector) throws -> [PortForwardingRule] {
-        try resolve(selector).configuration.portForwardingRules
-    }
-
-    /// Adds one host→guest mapping, leaving a rule the VM already carries as it
-    /// is.
-    ///
-    /// A network carries one rule per (transport, host port) across every VM
-    /// joined to it, so a port *another* rule already claims is refused rather
-    /// than added and silently dropped at declaration time. This VM's own claim
-    /// is answered first: the identical rule is the state the caller asked for,
-    /// and a different guest port behind the same host port names the rule
-    /// standing in the way rather than reporting the VM as its own blocker.
-    func addPortForwardingRule(_ selector: VMSelector, rule: PortForwardingRule) throws {
-        let instance = try resolve(selector)
-        try require(.editPortForwarding, on: instance)
-        try Self.requireAddressablePorts(rule)
-        if let mine = instance.configuration.portForwardingRules.first(where: {
-            $0.hostClaim == rule.hostClaim
-        }) {
-            guard mine != rule else { return }
-            throw CommandError.invalidArgument(
-                "\u{201C}\(instance.name)\u{201D} already forwards "
-                    + "\(rule.transport.displayName) port \(rule.hostPort) to guest port "
-                    + "\(mine.guestPort). Remove that rule first.")
-        }
-        if let holder = library.networkSlots.vmClaiming(rule.hostClaim) {
-            throw CommandError.invalidArgument(
-                "\u{201C}\(holder.name)\u{201D} already forwards "
-                    + "\(rule.transport.displayName) port \(rule.hostPort).")
-        }
-        try writeConfiguration(of: instance, verb: .editPortForwarding) {
-            $0.portForwardingRules.append(rule)
-        }
-    }
-
-    /// Refuses a rule naming a port that addresses no service.
-    private static func requireAddressablePorts(_ rule: PortForwardingRule) throws {
-        let range = PortForwardingRule.portRange
-        guard range.contains(Int(rule.hostPort)), range.contains(Int(rule.guestPort)) else {
-            throw CommandError.invalidArgument(
-                "A forwarded port is \(range.lowerBound) to \(range.upperBound).")
-        }
-    }
-
-    /// Drops the rule claiming `claim`, refusing when this VM carries none.
-    func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws {
-        let instance = try resolve(selector)
-        try require(.editPortForwarding, on: instance)
-        guard instance.configuration.portForwardingRules.contains(where: { $0.hostClaim == claim })
-        else {
-            throw CommandError.invalidArgument(
-                "\u{201C}\(instance.name)\u{201D} does not forward "
-                    + "\(claim.transport.displayName) port \(claim.hostPort).")
-        }
-        try writeConfiguration(of: instance, verb: .editPortForwarding) {
-            $0.portForwardingRules.removeAll { $0.hostClaim == claim }
-        }
     }
 }

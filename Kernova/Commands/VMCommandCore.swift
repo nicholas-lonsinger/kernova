@@ -229,7 +229,7 @@ final class VMCommandCore: VMCommanding {
 
     func summary(_ instance: VMInstance) -> VMSummary {
         instance.summary(
-            ipAddress: library.networkSlots.reservedAddress(for: instance.configuration))
+            ipAddress: library.guestAddresses.address(for: instance))
     }
 
     // MARK: - State Gates
@@ -398,7 +398,7 @@ final class VMCommandCore: VMCommanding {
             diskSizeInGB: config.diskSizeInGB,
             networkMode: config.networkEnabled ? config.networkMode.rawValue : nil,
             macAddress: config.macAddress,
-            ipAddress: library.networkSlots.reservedAddress(for: config),
+            ipAddress: library.guestAddresses.address(for: instance),
             agentStatus: instance.agentStatus.wireName,
             hasSavedState: instance.hasSaveFile,
             isEphemeral: config.ephemeralModeEnabled,
@@ -408,7 +408,7 @@ final class VMCommandCore: VMCommanding {
     }
 
     func ipAddress(of selector: VMSelector) throws -> GuestIPAddress {
-        library.networkSlots.reservedAddress(for: try resolve(selector).configuration)
+        library.guestAddresses.address(for: try resolve(selector))
     }
 
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
@@ -494,8 +494,7 @@ final class VMCommandCore: VMCommanding {
                     .added(
                         VMSummary(
                             id: id, name: now.name, status: wireStatus(for: now),
-                            ipAddress: library.networkSlots.reservedAddress(
-                                for: instance.configuration))))
+                            ipAddress: library.guestAddresses.address(for: instance))))
                 continue
             }
             if before.status != now.status || before.isPreparing != now.isPreparing {

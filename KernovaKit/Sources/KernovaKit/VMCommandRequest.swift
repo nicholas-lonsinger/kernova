@@ -32,8 +32,6 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case snapshotOnDiskBytes(VMSelector)
         /// The folders the VM shares with its guest.
         case sharedDirectories(VMSelector)
-        /// The VM's host→guest port mappings.
-        case portForwardingRules(VMSelector)
         /// The USB accessories this VM's guest currently holds.
         case usbAccessories(VMSelector)
         /// The USB accessories macOS has assigned to Kernova and no guest holds.
@@ -90,7 +88,6 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case editStorageDisk(VMSelector, StorageDiskEdit)
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
         case editSharedDirectory(VMSelector, SharedDirectoryEdit)
-        case editPortForwarding(VMSelector, PortForwardingEdit)
         case editUSBAccessory(VMSelector, USBAccessoryEdit)
         case guestAgentDisk(VMSelector, GuestAgentDiskEdit)
 
@@ -122,7 +119,6 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .snapshots: .snapshots
             case .snapshotOnDiskBytes: .snapshotOnDiskBytes
             case .sharedDirectories: .sharedDirectories
-            case .portForwardingRules: .portForwardingRules
             case .usbAccessories: .usbAccessories
             case .availableUSBAccessories: .availableUSBAccessories
             case .usbPairings: .usbPairings
@@ -152,7 +148,6 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .editStorageDisk: .editStorageDisk
             case .editRemovableMedia: .editRemovableMedia
             case .editSharedDirectory: .editSharedDirectory
-            case .editPortForwarding: .editPortForwarding
             case .editUSBAccessory: .editUSBAccessory
             case .guestAgentDisk: .guestAgentDisk
             case .configurationKeys: .configurationKeys

@@ -100,23 +100,19 @@ enum CompletionLine {
         return words.indices.contains(index - 1) && words[index - 1] == "="
     }
 
-    /// The virtual machine the line is asking about something of, the command
-    /// asking, and whether the machine was named by identifier.
-    ///
-    /// The command comes back with the machine because a completion may need
-    /// more of the line than the machine — which transport a `forward remove`
-    /// named, say.
+    /// The virtual machine the line is asking about something of, and whether
+    /// the machine was named by identifier.
     ///
     /// - Returns: `nil` when the line is not one that names a virtual machine
     ///   alongside something of that machine's own, or has not named the
     ///   machine yet.
     static func vmSubject(
         in words: [String], completingAt index: Int
-    ) -> (command: any VMScopedCommandLine, vm: String, byIdentifier: Bool)? {
+    ) -> (vm: String, byIdentifier: Bool)? {
         guard let command = command(from: words, completingAt: index) as? any VMScopedCommandLine,
             command.vm != placeholder
         else { return nil }
-        return (command, command.vm, command.options.id)
+        return (command.vm, command.options.id)
     }
 }
 
@@ -131,7 +127,7 @@ protocol GlobalOptionsCommand: ParsableCommand {
 }
 
 /// A subcommand that names a virtual machine and something the machine itself
-/// carries — one of its snapshots, a folder it shares, a port it forwards.
+/// carries — one of its snapshots, a folder it shares, an accessory it holds.
 ///
 /// That second argument is completed against the machine's own listing, so the
 /// completion has to reach the machine the line already named.

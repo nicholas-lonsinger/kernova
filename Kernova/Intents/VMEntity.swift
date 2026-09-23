@@ -77,7 +77,7 @@ struct VMEntity: IndexedEntity {
         self.diskSizeInGB = info.diskSizeInGB
         self.networkMode = info.networkMode
         self.macAddress = info.macAddress
-        self.ipAddress = info.ipAddress.reservedAddress
+        self.ipAddress = info.ipAddress.address
         self.agentStatus = info.agentStatus
         self.hasSavedState = info.hasSavedState
         self.isEphemeral = info.isEphemeral

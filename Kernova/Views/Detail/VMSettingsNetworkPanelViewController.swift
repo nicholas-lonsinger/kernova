@@ -1,8 +1,8 @@
 import AppKit
 import KernovaKit
 
-/// The Network category: the Mode picker and the address, MAC and
-/// port-forwarding rows behind it.
+/// The Network category: the Mode picker and the address and MAC rows behind
+/// it.
 ///
 /// A single-section category, so the section draws no header of its own and
 /// hands its info affordance and lock hint to the panel header.
@@ -13,7 +13,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private(set) var chrome = VMSettingsPanelChrome()
     private var lockRegistry = VMSettingsLockRegistry()
 
-    private let portForwardingSheetPresenter = SheetPresenter()
     private let panelStack = NSStackView()
 
     /// Injected host state, read through the context.
@@ -33,14 +32,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: NSButton?
-    /// What the copy button copies — the reserved address, `nil` while the
+    /// What the copy button copies — the observed address, `nil` while the
     /// row shows anything else.
     private var ipAddressCopyValue: String?
-    /// The Port forwarding block — the rule rows and the Add Rule row — hidden
-    /// wherever forwarding cannot apply.
-    private var portForwardingRow: GroupedFormCollapsibleRow?
-    /// Holds the rule rows and the trailing Add Rule row, rebuilt on change.
-    private var portForwardingListStack = NSStackView()
     /// Stands in for the card's rows while the mode is None.
     private var networkNoDeviceCaption = NSTextField()
     /// Holds the banner naming the other VMs sharing this one's MAC address.
@@ -52,9 +46,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The Mode menu's rendered selection, so a `refresh()` pass that changed
     /// nothing about networking skips a rebuild.
     private var renderedNetworkChoice: NetworkModeChoice?
-    /// The rules (and lock state) the Port forwarding rows were last built for,
-    /// so a rebuild happens exactly when one of them changed.
-    private var renderedPortForwardingRows: RenderedPortForwardingRows?
     /// The live-switch state the Mode menu was last built for; a change rebuilds
     /// so the None entry's enablement tracks it.
     private var renderedNetworkLiveSwitchable = false
@@ -64,11 +55,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// render their own choice as an unavailable entry.
     private var enumeratedInterfaces: [BridgedInterface]?
 
-    /// Value snapshot of the Port forwarding rows' rendered appearance.
-    private struct RenderedPortForwardingRows: Equatable {
-        let rules: [PortForwardingRule]
-        let controlsEnabled: Bool
-    }
     // MARK: Network
 
     /// The Network section and the info popover carrying the panel's whole
@@ -76,9 +62,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     ///
     /// "UI copy states only what is known": every paragraph is built from what
     /// this build and this host can actually deliver — the Shared reach clause
-    /// concedes the absent port forwarding instead of promising it when the
-    /// entitlement is missing, and the vmnet and Wi-Fi limitations are stated
-    /// at Apple's strength, on the surface the user picks a mode from.
+    /// points at the IP address row only where that row can show an address,
+    /// and the Wi-Fi limitation is stated at the standard's strength, on the
+    /// surface the user picks a mode from.
     private func buildNetworkSection() -> NSView {
         // Outside `lockableRows`: the picker is the live-switch surface while
         // the VM runs, so `refreshNetwork()` owns its enablement and its row's
@@ -90,7 +76,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         var rows: [NSView] = [modeRow]
         rows.append(makeIPAddressRow())
         rows.append(makeMACAddressRow())
-        rows.append(makePortForwardingRow())
         networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
         networkWarningContainer = NSStackView()
         networkWarningContainer.orientation = .vertical
@@ -98,14 +83,13 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkWarningContainer.spacing = Spacing.small
         networkWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        // With the entitlement, Shared and Host Only assign each guest a
-        // deterministic address the IP address row shows, and Shared can forward
-        // host ports to it; without it there is neither, so the copy concedes
-        // the gap instead.
+        // The IP address row shows a running Shared guest's address only where
+        // the guest rides the app-managed network and the host's table can be
+        // read, so only there does the copy point at it.
         let sharedReachClause =
-            entitlements.hasVMNetworking
-            ? "other machines on your network reach it only on the ports you forward, and this Mac reaches it at the address in the IP address row"
-            : "there is no port forwarding from host to guest — incoming connections require knowing the guest's IP"
+            entitlements.hasVMNetworking && entitlements.supportsGuestAddressObservation
+            ? "this Mac reaches it at the address in the IP address row"
+            : "this Mac reaches it at its address on that subnet"
         var paragraphs: [InfoPopoverParagraph] = [
             .body(
                 "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, other machines on your network cannot reach it, and \(sharedReachClause). Host Only puts the guest on a private network reachable only from this Mac: it can talk to the host and to other Host Only guests, with no access to your network or the internet. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
@@ -114,20 +98,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
                 "Bridged traffic bypasses a VPN running on the host. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations and there is no client-side fix, so prefer a wired interface."
             ),
         ]
-        if entitlements.hasVMNetworking {
-            paragraphs.append(
-                .body(
-                    "A forwarded port is reachable from other devices on your network. Rule changes take effect the next time a Shared Network virtual machine starts."
-                ))
-            // A known vmnet limitation per Apple DTS (FB7731708); the same thread
-            // reports the fix in macOS 27: developer.apple.com/forums/thread/822658
-            if #unavailable(macOS 27) {
-                paragraphs.append(
-                    .body(
-                        "On this version of macOS a forwarded port is not reachable from this Mac itself through localhost. Apple documents this as a known limitation of vmnet."
-                    ))
-            }
-        }
         if instance.configuration.guestOS == .linux {
             paragraphs.append(
                 .body(
@@ -148,10 +118,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         ])
     }
 
-    /// The IP address row: the reserved address with a copy affordance for
-    /// the modes the app assigns addressing in, "Assigned by your network"
-    /// for Bridged (external DHCP — nothing deterministic to show).
-    /// `refreshIPAddressRow()` owns its content and visibility.
+    /// The IP address row: the address the host last saw the guest use, with a
+    /// copy affordance, or the prose `GuestIPAddress.displayText` states
+    /// instead. `refreshIPAddressRow()` owns its content and visibility.
     private func makeIPAddressRow() -> GroupedFormCollapsibleRow {
         let value = makeGroupedFormValueLabel("")
         ipAddressValueLabel = value
@@ -176,26 +145,13 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     /// Renders the IP address row from the address the pane resolved — absence
-    /// over a visible-but-empty control wherever nothing assigns one.
+    /// over a visible-but-empty control wherever there is nothing to state.
     private func refreshIPAddressRow() {
-        ipAddressCopyValue = nil
-        switch resolved.ipAddress {
-        case .unavailable:
-            ipAddressRow?.isHidden = true
-        case .externallyAssigned:
-            ipAddressRow?.isHidden = false
-            ipAddressCopyButton?.isHidden = true
-            ipAddressValueLabel?.stringValue = "Assigned by your network"
-        case .pending:
-            ipAddressRow?.isHidden = false
-            ipAddressCopyButton?.isHidden = true
-            ipAddressValueLabel?.stringValue = "—"
-        case .reserved(let address):
-            ipAddressRow?.isHidden = false
-            ipAddressCopyValue = address
-            ipAddressCopyButton?.isHidden = false
-            ipAddressValueLabel?.stringValue = address
-        }
+        let address = resolved.ipAddress
+        ipAddressCopyValue = address.address
+        ipAddressRow?.isHidden = address.displayText == nil
+        ipAddressCopyButton?.isHidden = address.address == nil
+        ipAddressValueLabel?.stringValue = address.displayText ?? ""
     }
 
     @objc private func copyIPAddressTapped() {
@@ -248,130 +204,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         if macAddressField.currentEditor() == nil {
             macAddressField.stringValue = instance.configuration.macAddress ?? ""
         }
-    }
-
-    // MARK: Port Forwarding
-
-    /// The Port forwarding block: a title, one row per rule, and the trailing
-    /// Add Rule row. `refreshPortForwardingRows()` owns its contents;
-    /// `refreshNetwork()` owns its visibility.
-    private func makePortForwardingRow() -> GroupedFormCollapsibleRow {
-        let title = NSTextField(labelWithString: "Port forwarding")
-        title.font = Typography.body
-        title.isSelectable = false
-
-        portForwardingListStack = makeGroupedFormListStack()
-        portForwardingListStack.spacing = Spacing.small
-
-        let content = NSStackView(views: [title, portForwardingListStack])
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = Spacing.small
-        content.translatesAutoresizingMaskIntoConstraints = false
-        portForwardingListStack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-
-        let row = GroupedFormCollapsibleRow(row: content)
-        portForwardingRow = row
-        return row
-    }
-
-    /// Whether this VM's port-forwarding rules take an edit right now.
-    private var canEditPortForwarding: Bool {
-        viewModel.capabilities.isAvailable(.editPortForwarding, on: instance)
-    }
-
-    /// Rebuilds the rule rows when the rules — or the lock state their controls
-    /// carry — changed.
-    private func refreshPortForwardingRows() {
-        let rendered = RenderedPortForwardingRows(
-            rules: instance.configuration.portForwardingRules,
-            controlsEnabled: canEditPortForwarding)
-        guard rendered != renderedPortForwardingRows else { return }
-        renderedPortForwardingRows = rendered
-        clearGroupedFormStack(portForwardingListStack)
-        for (index, rule) in rendered.rules.enumerated() {
-            addGroupedFormFullWidth(
-                makePortForwardingRuleRow(rule, index: index, enabled: rendered.controlsEnabled),
-                to: portForwardingListStack)
-        }
-        addGroupedFormFullWidth(
-            makeAddPortForwardingRuleRow(enabled: rendered.controlsEnabled),
-            to: portForwardingListStack)
-    }
-
-    /// How one rule's ports read in the card — the guest side of the arrow is
-    /// where traffic lands.
-    private static func portForwardingRuleText(_ rule: PortForwardingRule) -> String {
-        "Host \(rule.hostPort) → Guest \(rule.guestPort)"
-    }
-
-    private func makePortForwardingRuleRow(
-        _ rule: PortForwardingRule, index: Int, enabled: Bool
-    ) -> NSView {
-        let transport = NSTextField(labelWithString: rule.transport.displayName)
-        transport.font = Typography.body
-        transport.textColor = .secondaryLabelColor
-        transport.isSelectable = false
-        transport.setContentHuggingPriority(.required, for: .horizontal)
-        transport.widthAnchor.constraint(equalToConstant: 38).isActive = true
-
-        let ports = NSTextField(labelWithString: Self.portForwardingRuleText(rule))
-        ports.font = Typography.body
-        ports.isSelectable = false
-        ports.lineBreakMode = .byTruncatingTail
-
-        let remove = NSButton()
-        remove.image = .systemSymbol("minus.circle", accessibilityDescription: "Remove Rule")
-        remove.imagePosition = .imageOnly
-        remove.isBordered = false
-        remove.contentTintColor = .secondaryLabelColor
-        remove.toolTip = "Remove Rule"
-        remove.isEnabled = enabled
-        remove.tag = index
-        remove.target = self
-        remove.action = #selector(removePortForwardingRuleTapped)
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [transport, ports, spacer, remove])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Spacing.standard
-        return row
-    }
-
-    private func makeAddPortForwardingRuleRow(enabled: Bool) -> NSView {
-        let add = NSButton(
-            title: "Add Rule…", target: self, action: #selector(addPortForwardingRuleTapped))
-        add.image = .systemSymbol("plus.circle", accessibilityDescription: "")
-        add.imagePosition = .imageLeading
-        add.isBordered = false
-        add.bezelStyle = .badge
-        add.contentTintColor = .controlAccentColor
-        add.isEnabled = enabled
-        add.setContentHuggingPriority(.required, for: .horizontal)
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [add, spacer])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Spacing.standard
-        return row
-    }
-
-    /// Re-renders after a rule edit.
-    ///
-    /// The rows are built from the configuration, so this runs with the write
-    /// rather than waiting for the model-observation pass — and the card counts
-    /// the same rules.
-    private func portForwardingRulesChanged() {
-        refreshResolved()
-        refreshPortForwardingRows()
     }
 
     /// While the pane is read-only, whether the Mode picker stays live as the
@@ -514,9 +346,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         refreshMACAddressWarning()
         networkNoDeviceCaption.isHidden = hasDevice
         refreshIPAddressRow()
-        let forwards = resolved.portForwardingRuleCount != nil
-        portForwardingRow?.isHidden = !forwards
-        if forwards { refreshPortForwardingRows() }
     }
 
     /// Discloses that another VM in the library carries this one's MAC address.
@@ -577,26 +406,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         refreshNetwork()
     }
 
-    @objc private func addPortForwardingRuleTapped() {
-        guard canEditPortForwarding, let window = view.window,
-            !portForwardingSheetPresenter.isShown
-        else {
-            return
-        }
-        let sheet = PortForwardingRuleSheetContentViewController(
-            takenHostClaims: viewModel.takenHostPortClaims)
-        sheet.delegate = self
-        portForwardingSheetPresenter.show(content: sheet, in: window)
-    }
-
-    @objc private func removePortForwardingRuleTapped(_ sender: NSButton) {
-        guard canEditPortForwarding else { return }
-        let rules = instance.configuration.portForwardingRules
-        guard rules.indices.contains(sender.tag) else { return }
-        viewModel.removePortForwardingRule(rules[sender.tag].hostClaim, from: instance)
-        portForwardingRulesChanged()
-    }
-
     /// Persists the typed MAC in canonical form, then shows the address the VM
     /// ended up with — so text naming no address a guest can use, and an address
     /// the library refused because another VM holds it, both snap the field back.
@@ -620,7 +429,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         lockRegistry.removeAll()
         renderedNetworkMACWarning = nil
         renderedNetworkChoice = nil
-        renderedPortForwardingRows = nil
         let section = buildNetworkSection()
         panelStack.addArrangedSubview(section)
         section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
@@ -629,10 +437,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     func refresh() {
         lockRegistry.apply(isReadOnly: isReadOnly)
         refreshNetwork()
-    }
-
-    func prepareForDisappearance() {
-        if portForwardingSheetPresenter.isShown { portForwardingSheetPresenter.close() }
     }
 
     override func loadView() {
@@ -673,26 +477,5 @@ extension VMSettingsNetworkPanelViewController: NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard (obj.object as? NSTextField) === macAddressField else { return }
         applyMACAddressFieldEdit()
-    }
-}
-
-// MARK: - PortForwardingRuleSheetContentViewControllerDelegate
-
-extension VMSettingsNetworkPanelViewController:
-    PortForwardingRuleSheetContentViewControllerDelegate
-{
-    func portForwardingRuleSheet(
-        _ vc: PortForwardingRuleSheetContentViewController, didAdd rule: PortForwardingRule
-    ) {
-        portForwardingSheetPresenter.close()
-        // Through the verb, not the configuration: the range and the
-        // network-wide host-port claim are enforced in one place, and the sheet
-        // only decides when to light its Add button up.
-        viewModel.addPortForwardingRule(rule, to: instance)
-        portForwardingRulesChanged()
-    }
-
-    func portForwardingRuleSheetDidCancel(_ vc: PortForwardingRuleSheetContentViewController) {
-        portForwardingSheetPresenter.close()
     }
 }

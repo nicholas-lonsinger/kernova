@@ -16,8 +16,7 @@ struct VMOverviewResolverTests {
     /// reads it issues — each addressing its VM by id — answer at all.
     ///
     /// Listed rather than registered: `wirePersistence` re-reads the snapshot
-    /// manifest these tests seed by hand, and claims a network slot the address
-    /// case asserts nothing takes.
+    /// manifest these tests seed by hand.
     private func makeResolver(
         instance: VMInstance,
         viewModel: VMLibraryViewModel? = nil,
@@ -119,40 +118,44 @@ struct VMOverviewResolverTests {
 
     // MARK: - Address
 
-    @Test("The address is the registry's answer, and displaying it claims nothing")
-    func addressComesFromTheRegistryWithoutClaimingASlot() {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        let instance = VMInstanceFixture.make {
+    /// A Shared VM on `aa:bb:cc:dd:ee:ff`, running unless `phase` says otherwise.
+    private func sharedInstance(phase: VMLifecyclePhase = .running(sessionID: UUID())) -> VMInstance {
+        VMInstanceFixture.make(phase: phase) {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
-        let resolver = makeResolver(instance: instance, vmnetNetworks: vmnet)
+    }
+
+    @Test("The address is the observer's answer for a running VM, and displaying it materializes nothing")
+    func addressComesFromTheObserver() async {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        let model = makeSettingsViewModel(
+            preferences: preferences, vmnetNetworks: vmnet,
+            arpTable: ScriptedARPTable([
+                .scripted("192.168.64.9", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)
+            ]))
+        let resolver = makeResolver(instance: sharedInstance(), viewModel: model, inLibrary: true)
+        await model.library.guestAddresses.readForTesting()
 
         resolver.refresh()
 
-        #expect(resolver.resolved.ipAddress == .reserved("192.168.64.9"))
-        // The declaration path is the store's only writer: this instance is not
-        // in the library, so showing it takes no slot and materializes nothing.
-        #expect(vmnet.reservedMACs.isEmpty)
+        #expect(resolver.resolved.ipAddress == .observed("192.168.64.9"))
         #expect(vmnet.materializeCount == 0)
     }
 
-    @Test("A slot on a network with no addressing yet reads as pending, and states nothing")
-    func addressPendsUntilTheNetworkHasAddressing() {
-        let vmnet = MockVmnetNetworkProvider()
-        let instance = VMInstanceFixture.make {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let resolver = makeResolver(instance: instance, vmnetNetworks: vmnet)
+    @Test("A running VM not yet seen says so; a stopped one states nothing")
+    func addressNotSeenWhileRunningAbsentWhileStopped() {
+        let runningResolver = makeResolver(instance: sharedInstance())
+        runningResolver.refresh()
+        #expect(runningResolver.resolved.ipAddress == .notObserved)
+        #expect(runningResolver.resolved.ipAddress.displayText == "Not seen on the network")
 
-        resolver.refresh()
-
-        #expect(resolver.resolved.ipAddress == .pending)
-        #expect(resolver.resolved.ipAddress.displayText == nil)
+        let stoppedResolver = makeResolver(instance: sharedInstance(phase: .stopped))
+        stoppedResolver.refresh()
+        #expect(stoppedResolver.resolved.ipAddress == .unavailable)
+        #expect(stoppedResolver.resolved.ipAddress.displayText == nil)
     }
 
     @Test("Bridged hands addressing to the network; an unentitled build has none to state")
@@ -167,12 +170,7 @@ struct VMOverviewResolverTests {
         #expect(bridgedResolver.resolved.ipAddress == .externallyAssigned)
         #expect(bridgedResolver.resolved.ipAddress.displayText == "Assigned by your network")
 
-        let unentitled = VMInstanceFixture.make {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let unentitledResolver = makeResolver(instance: unentitled, entitled: false)
+        let unentitledResolver = makeResolver(instance: sharedInstance(), entitled: false)
         unentitledResolver.refresh()
         #expect(unentitledResolver.resolved.ipAddress == .unavailable)
 
@@ -180,29 +178,6 @@ struct VMOverviewResolverTests {
         let offResolver = makeResolver(instance: off)
         offResolver.refresh()
         #expect(offResolver.resolved.ipAddress == .unavailable)
-    }
-
-    // MARK: - Forwarding
-
-    @Test("Only an entitled Shared VM with a MAC counts forwarded rules")
-    func forwardingCountAppliesWhereForwardingDoes() {
-        let rules = [PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)]
-        func count(entitled: Bool, mode: VMNetworkMode, mac: String?) -> Int? {
-            let instance = VMInstanceFixture.make {
-                $0.networkEnabled = true
-                $0.networkMode = mode
-                $0.macAddress = mac
-                $0.portForwardingRules = rules
-            }
-            let resolver = makeResolver(instance: instance, entitled: entitled)
-            resolver.refresh()
-            return resolver.resolved.portForwardingRuleCount
-        }
-
-        #expect(count(entitled: true, mode: .shared, mac: "aa:bb:cc:dd:ee:ff") == 1)
-        #expect(count(entitled: false, mode: .shared, mac: "aa:bb:cc:dd:ee:ff") == nil)
-        #expect(count(entitled: true, mode: .hostOnly, mac: "aa:bb:cc:dd:ee:ff") == nil)
-        #expect(count(entitled: true, mode: .shared, mac: nil) == nil)
     }
 
     // MARK: - Warnings

@@ -10,12 +10,12 @@ import Testing
 struct CLIRenderingTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .reserved("192.168.64.4"))
+        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"))
     private let longName = VMSummary(
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
-        name: "A Much Longer Name", status: "initialBoot", ipAddress: .pending)
+        name: "A Much Longer Name", status: "initialBoot", ipAddress: .notObserved)
 
-    private func info(ipAddress: GuestIPAddress = .reserved("192.168.64.4")) -> VMInfo {
+    private func info(ipAddress: GuestIPAddress = .observed("192.168.64.4")) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared",
@@ -69,7 +69,7 @@ struct CLIRenderingTests {
         // Each address reads the way `info` states it, per case.
         #expect(lines[1].contains("192.168.64.4"))
         #expect(lines[1].contains(alpha.id.uuidString))
-        #expect(lines[2].contains("Pending"))
+        #expect(lines[2].contains("Not seen"))
     }
 
     @Test("--quiet prints names alone, one per line")
@@ -476,87 +476,20 @@ struct CLIRenderingTests {
             try decoder.decode([USBPairingSummary].self, from: Data(rendered.utf8)) == pairings)
     }
 
-    // MARK: - Forwarded ports
-
-    private let rules = [
-        PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
-        PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
-    ]
-
-    @Test("A forwarding listing names the mappings of the transport it was asked for")
-    func forwardingListingIsMappingsAlone() {
-        let tcp = TableRenderer.render(
-            KernovaCommand.Forward.List.listed(rules, onUDP: false), quiet: false
-        ).components(separatedBy: "\n")
-
-        #expect(tcp == ["MAPPING", "8080:80"])
-        // No transport column: every row of one listing shares one, and the
-        // flag that chose it is the one `forward remove` takes back.
-        #expect(!tcp[0].contains("TRANSPORT"))
-    }
-
-    @Test("--quiet on a forwarding listing prints exactly what forward remove takes back")
-    func quietForwardingListingIsMappingsOnly() {
-        // The same fixture carries both transports, so each spelling of the
-        // verb has to print only the rules that spelling drops — a UDP mapping
-        // fed back without --udp names no rule, and two rules on one host port
-        // would otherwise print as one line twice.
-        #expect(
-            TableRenderer.render(
-                KernovaCommand.Forward.List.listed(rules, onUDP: false), quiet: true) == "8080:80")
-        #expect(
-            TableRenderer.render(
-                KernovaCommand.Forward.List.listed(rules, onUDP: true), quiet: true) == "5353:53")
-    }
-
-    @Test("Two rules on one host port stay two lines, because each is on its own transport")
-    func oneHostPortOnBothTransportsListsSeparately() {
-        let both = [
-            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
-            PortForwardingRule(transport: .udp, hostPort: 8080, guestPort: 8080),
-        ]
-
-        #expect(
-            TableRenderer.render(
-                KernovaCommand.Forward.List.listed(both, onUDP: false), quiet: true) == "8080:80")
-        #expect(
-            TableRenderer.render(
-                KernovaCommand.Forward.List.listed(both, onUDP: true), quiet: true) == "8080:8080")
-    }
-
-    @Test("A virtual machine forwarding nothing prints nothing at all")
-    func emptyForwardingListingIsEmpty() {
-        #expect(TableRenderer.render([PortForwardingRule](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([PortForwardingRule](), quiet: true).isEmpty)
-    }
-
-    @Test("Forwarding JSON is the wire DTO itself, decodable back")
-    func forwardingJSONIsTheWireDTO() throws {
-        let rendered = try JSONRenderer.render(rules)
-
-        #expect(
-            try JSONDecoder().decode([PortForwardingRule].self, from: Data(rendered.utf8)) == rules)
-        let objects = try #require(
-            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
-        for field in ["transport", "hostPort", "guestPort"] {
-            #expect(objects.first?[field] != nil, "missing \(field)")
-        }
-    }
-
     // MARK: - Addresses
 
     @Test("Each address case states its own answer, and only one is an address")
     func everyAddressCaseRenders() {
-        #expect(TableRenderer.render(GuestIPAddress.reserved("10.0.0.2")) == "10.0.0.2")
-        #expect(TableRenderer.render(GuestIPAddress.pending) == "Pending")
+        #expect(TableRenderer.render(GuestIPAddress.observed("10.0.0.2")) == "10.0.0.2")
+        #expect(TableRenderer.render(GuestIPAddress.notObserved) == "Not seen")
         #expect(TableRenderer.render(GuestIPAddress.externallyAssigned) == "Assigned by your network")
         #expect(TableRenderer.render(GuestIPAddress.unavailable) == "None")
     }
 
-    @Test("Only a reserved address prints; the other three refuse rather than print prose")
-    func onlyAReservedAddressPrints() throws {
-        #expect(try KernovaCommand.IP.line(for: .reserved("10.0.0.2"), vm: "Alpha") == "10.0.0.2")
-        for absent: GuestIPAddress in [.pending, .externallyAssigned, .unavailable] {
+    @Test("Only an observed address prints; the other three refuse rather than print prose")
+    func onlyAnObservedAddressPrints() throws {
+        #expect(try KernovaCommand.IP.line(for: .observed("10.0.0.2"), vm: "Alpha") == "10.0.0.2")
+        for absent: GuestIPAddress in [.notObserved, .externallyAssigned, .unavailable] {
             do {
                 _ = try KernovaCommand.IP.line(for: absent, vm: "Alpha")
                 Issue.record("expected a refusal for \(absent)")
@@ -588,11 +521,26 @@ struct CLIRenderingTests {
     @Test("A guest address survives the JSON round trip in every case")
     func jsonCarriesEveryAddressCase() throws {
         for address: GuestIPAddress in [
-            .reserved("10.0.0.2"), .pending, .externallyAssigned, .unavailable,
+            .observed("10.0.0.2"), .notObserved, .externallyAssigned, .unavailable,
         ] {
             let rendered = try JSONRenderer.render(address)
             #expect(
                 try JSONDecoder().decode(GuestIPAddress.self, from: Data(rendered.utf8)) == address)
+        }
+    }
+
+    @Test("A guest address's JSON names its state, and only an observed one carries an address")
+    func addressJSONNamesItsState() throws {
+        let expected: [(GuestIPAddress, [String: String])] = [
+            (.observed("192.168.64.111"), ["state": "observed", "address": "192.168.64.111"]),
+            (.notObserved, ["state": "notObserved"]),
+            (.externallyAssigned, ["state": "externallyAssigned"]),
+            (.unavailable, ["state": "unavailable"]),
+        ]
+        for (address, fields) in expected {
+            let rendered = try JSONRenderer.render(address)
+            let object = try JSONSerialization.jsonObject(with: Data(rendered.utf8))
+            #expect(object as? [String: String] == fields)
         }
     }
 }

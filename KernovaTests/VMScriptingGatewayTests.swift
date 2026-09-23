@@ -202,7 +202,7 @@ struct VMScriptingGatewayTests {
         commands.infoByID[summary.id] = VMInfo(
             id: summary.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 6,
             memoryBytes: 8 << 30, diskSizeInGB: 128, networkMode: "shared",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .reserved("192.168.64.3"),
+            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.3"),
             agentStatus: "connected", hasSavedState: true, isEphemeral: true, snapshotCount: 2,
             bundlePath: "/VMs/Alpha.kernova")
 

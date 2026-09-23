@@ -90,20 +90,6 @@ enum TableRenderer {
             rows: rows.map { [$0.path, $0.readOnly ? "Yes" : "No"] })
     }
 
-    /// A VM's forwarded ports on one transport, in the order it carries them.
-    ///
-    /// The transport is the caller's filter rather than a column: `forward
-    /// remove` names a rule by transport as well as by ports, so every line —
-    /// under `quiet` above all — has to be one the same spelling of the verb
-    /// takes back.
-    static func render(_ rules: [PortForwardingRule], quiet: Bool) -> String {
-        guard !quiet else {
-            return rules.map(PortMapping.text(for:)).joined(separator: "\n")
-        }
-        guard !rules.isEmpty else { return "" }
-        return columns(headings: ["MAPPING"], rows: rules.map { [PortMapping.text(for: $0)] })
-    }
-
     /// USB accessories, in the order Kernova was handed them.
     ///
     /// The two verbs name a row differently — an accessory is attached by its
@@ -177,8 +163,8 @@ enum TableRenderer {
     /// and collapsing them to a blank would lose the only useful part.
     static func render(_ address: GuestIPAddress) -> String {
         switch address {
-        case .reserved(let value): value
-        case .pending: "Pending"
+        case .observed(let value): value
+        case .notObserved: "Not seen"
         case .externallyAssigned: "Assigned by your network"
         case .unavailable: "None"
         }

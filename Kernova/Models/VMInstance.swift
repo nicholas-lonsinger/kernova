@@ -251,14 +251,6 @@ final class VMInstance {
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
 
-    /// Fired at the end of ``tearDownSession()``, once this VM's
-    /// `VZVirtualMachine` and everything riding it are released — a stop, a
-    /// force stop, an error, or a completed save-suspend alike.
-    ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`; the library uses it for work
-    /// that can only run while no VM holds the resource it touches.
-    @ObservationIgnored var onSessionTornDown: (@MainActor () -> Void)?
-
     /// Fired from ``restAfterPowerOff()`` — the guest powering off, however it got
     /// there: a graceful shutdown from inside, Stop, or Force Stop.
     ///
@@ -276,25 +268,8 @@ final class VMInstance {
     /// re-run whatever this triggers.
     ///
     /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler hands the
-    /// guest the accessories paired with it.
+    /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
-
-    /// Fired when something this VM did may let an app-managed network be
-    /// recreated: its attachment recovery reported the network suspect, or the
-    /// VM released the attachment it held on one.
-    ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`, which runs the arbitration
-    /// pass — the recreate itself belongs to the library, the one place that
-    /// can see every VM sharing the network.
-    @ObservationIgnored var onNetworkArbitrationNeeded: (@MainActor () -> Void)?
-
-    /// Fired just before this VM takes an attachment on the app-managed network
-    /// of `kind`: a session's configuration build, or its attachment recovery
-    /// moving it onto that network.
-    ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`, which replaces the network
-    /// first when it needs replacing and nobody else is on it.
-    @ObservationIgnored var onJoiningVmnetNetwork: (@MainActor (VmnetNetworkKind) -> Void)?
 
     /// Applies a configuration mutation, routing it through the persistence
     /// pipeline when `onUpdateConfiguration` is wired.
@@ -661,48 +636,6 @@ final class VMInstance {
         canAttachRemovableMedia && configuration.guestOS == .macOS
     }
 
-    /// Whether this VM may be holding — or be about to take — an attachment on
-    /// the app-managed network of `kind`, so recreating that network would pull
-    /// it out from under a session.
-    ///
-    /// The recovery coordinator answers whenever it exists: its main-actor
-    /// mirror of what was last installed on the session's queue is the
-    /// attachment the VM is *on*, which the configuration disagrees with from a
-    /// live mode switch until the swap lands, in both directions.
-    ///
-    /// Without one — a VM with no session or no network device, and a session
-    /// between its creation and its coordinator being built — the configuration
-    /// decides, and only while a `VZVirtualMachine` is live or a session
-    /// context is open: the configuration build attaches the VM to the network
-    /// before this instance holds anything that can be read back. A phase
-    /// alone holds nothing — a download runs in a transitioning phase with no
-    /// build behind it.
-    func mayHoldAttachment(on kind: VmnetNetworkKind) -> Bool {
-        if let networkAttachmentCoordinator {
-            return networkAttachmentCoordinator.appliedVmnetKind == kind
-        }
-        guard configuration.networkEnabled,
-            VmnetNetworkKind(mode: configuration.networkMode) == kind
-        else { return false }
-        return hasLiveVirtualMachine || sessionContext != nil
-    }
-
-    /// Whether this VM's attachment recovery believes the app-managed network
-    /// of `kind` is defective — the companion read to
-    /// ``mayHoldAttachment(on:)``, answering the other reason to recreate one.
-    ///
-    /// Only a live coordinator can claim it, so a VM without one — no session,
-    /// no network device — claims nothing.
-    func suspectsDefectiveNetwork(on kind: VmnetNetworkKind) -> Bool {
-        networkAttachmentCoordinator?.suspectedDefectiveVmnetKind == kind
-    }
-
-    /// The app-managed network of `kind` was dropped; let a session sitting
-    /// detached on it retake the recreated one.
-    func vmnetNetworkWasInvalidated(_ kind: VmnetNetworkKind) {
-        networkAttachmentCoordinator?.vmnetNetworkWasInvalidated(kind)
-    }
-
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool { phase.isColdPaused }
 
@@ -835,7 +768,7 @@ final class VMInstance {
 
     /// This VM as any refusal or listing names it.
     ///
-    /// The address is a parameter because only ``VMNetworkSlotRegistry``
+    /// The address is a parameter because only ``GuestAddressObserver``
     /// resolves one, and both callers already hold it — so a summary is built
     /// one way whichever of them is naming the VM.
     func summary(ipAddress: GuestIPAddress) -> VMSummary {
@@ -1053,9 +986,6 @@ final class VMInstance {
                 dropDataSink: dropDataSink))
         openRuntimeFileAccess(into: context.fileAccess)
         sessionContext = context
-        if configuration.networkEnabled, let kind = VmnetNetworkKind(mode: configuration.networkMode) {
-            onJoiningVmnetNetwork?(kind)
-        }
         return context
     }
 
@@ -1116,7 +1046,6 @@ final class VMInstance {
         // A VM with no session has no display to place, and `.hidden`
         // (headless) has no window whose close would say so.
         displayMode = .inline
-        onSessionTornDown?()
     }
 
     /// Releases the live session and rests the VM where one with nothing live
@@ -1200,18 +1129,8 @@ final class VMInstance {
             vmnetNetworks: networks,
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
-            onPendingChange: { [weak self, weak context] pending in
+            onPendingChange: { [weak context] pending in
                 context?.networkAttachmentPending = pending
-                // A VM going pending has released whatever attachment it held,
-                // so a recreate another VM's suspicion asked for may now be
-                // safe — this is how a refused report lands later.
-                if pending { self?.onNetworkArbitrationNeeded?() }
-            },
-            onNetworkDefectSuspected: { [weak self] in
-                self?.onNetworkArbitrationNeeded?()
-            },
-            onJoiningVmnetNetwork: { [weak self] kind in
-                self?.onJoiningVmnetNetwork?(kind)
             })
     }
 

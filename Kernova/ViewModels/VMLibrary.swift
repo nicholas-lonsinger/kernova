@@ -7,9 +7,9 @@ import KernovaLogging
 /// read, the directory-watched reconcile, `prepareBundle`/`registerPhantom`/
 /// `evict`, the configuration persistence funnel, and the revert registry.
 ///
-/// It also sequences two collaborators it owns — ``networkSlots`` and
-/// ``removableMedia`` — because only the library knows where in a configuration
-/// write each of them belongs.
+/// It also sequences the collaborators it owns — ``macAddresses``,
+/// ``removableMedia`` and ``guestAddresses`` — because only the library knows
+/// where in a configuration write each of them belongs.
 ///
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
 /// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
@@ -44,9 +44,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// configuration asks for, dispatched from ``applyLivePolicy(for:old:new:)``.
     @ObservationIgnored let removableMedia: VMRemovableMediaReconciler
 
-    /// The DHCP-reservation and port-forwarding slots each VM holds, and the
-    /// MAC-address uniqueness both are keyed on.
-    @ObservationIgnored let networkSlots: VMNetworkSlotRegistry
+    /// The uniqueness of each VM's MAC address across the library.
+    @ObservationIgnored let macAddresses: VMMACAddressRegistry
+
+    /// The address each running VM's guest is seen using on its network.
+    @ObservationIgnored let guestAddresses: GuestAddressObserver
 
     /// Where each preparing write's tree currently sits, keyed by instance id —
     /// the staged path until publication renames it to the VM's own bundle URL.
@@ -181,8 +183,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         lifecycle: VMLifecycleCoordinator,
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
-        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
+        vmnetNetworks: any VmnetNetworkProviding,
+        arpTable: any ARPTableReading,
         isVMNetworkingEntitled: Bool,
+        canObserveGuestAddresses: Bool = EntitlementService.shared.supportsGuestAddressObservation,
         usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore(),
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore()
@@ -195,8 +199,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         self.fileSystem = fileSystem
         self.preferences = preferences
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
-        self.networkSlots = VMNetworkSlotRegistry(
-            vmnetNetworks: vmnetNetworks, isVMNetworkingEntitled: isVMNetworkingEntitled)
+        let guestAddresses = GuestAddressObserver(
+            reader: arpTable, vmnetNetworks: vmnetNetworks, canObserve: canObserveGuestAddresses,
+            isVMNetworkingEntitled: isVMNetworkingEntitled)
+        self.guestAddresses = guestAddresses
+        self.macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
 
         // Assigned after every stored property is set: each closure — and the
         // roster — references the library, which cannot be named before then.
@@ -206,10 +213,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         removableMedia.onFailure = { [weak self] error in
             self?.presentError(error)
         }
-        networkSlots.roster = self
-        networkSlots.onFailure = { [weak self] title, message in
+        macAddresses.roster = self
+        macAddresses.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
         }
+        guestAddresses.roster = self
     }
 
     /// Fills the library from disk, then starts watching the VMs directory for
@@ -337,7 +345,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 wirePersistence(for: instance)
                 return instance
             } + addedDuringRead
-        networkSlots.logDuplicateMACAddressHolders()
+        macAddresses.logDuplicateMACAddressHolders()
 
         if !scan.failedBundleNames.isEmpty {
             reportedFailedBundles.formUnion(scan.failedBundleNames)
@@ -363,7 +371,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 selectedID = instances.first?.id
             }
         }
-        networkSlots.pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
         #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
     }
 
@@ -428,7 +435,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         instances.append(phantom)
         sortInstances()
         persistOrder()
-        networkSlots.logDuplicateMACAddressHolders()
+        macAddresses.logDuplicateMACAddressHolders()
         if selectedInstance?.isPreparing != true {
             selectedID = phantom.id
         }
@@ -628,20 +635,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     }
 
     /// Drops `instance` from the library, moving the selection off it.
-    ///
-    /// `bundleIsGone: false` drops the row but keeps the VM's DHCP reservation
-    /// slot, for a bundle still on disk whose configuration could not be read —
-    /// that VM still exists, so handing its address to somebody else would move
-    /// it once the configuration is readable again.
-    func evict(_ instance: VMInstance, bundleIsGone: Bool = true) {
+    func evict(_ instance: VMInstance) {
         instances.removeAll { $0.id == instance.id }
         if selectedID == instance.id {
             selectedID = instances.first?.id
         }
-        // A VM out of the library stops claiming its host ports and its
-        // address, so the next VM created can be handed both.
-        networkSlots.releaseSlots(for: instance.configuration, bundleIsGone: bundleIsGone)
-        networkSlots.rebuildNetworksIfIdle()
         // Nothing left can ask for the account, so nothing may still hold the
         // answer — whichever way the VM left, and whether or not its bundle
         // survived the departure.
@@ -754,34 +752,16 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             guard let self, let instance else { return }
             self.onAgentBecameCurrent?(instance)
         }
-        // Reservations and forwarding rules are fixed at network creation, so a
-        // change made while a VM ran waits for the last session on that network
-        // to release it.
-        instance.onSessionTornDown = { [weak self] in
-            self?.networkSlots.rebuildNetworksIfIdle()
-        }
-        // A network that served a run which has since ended serves no
-        // reservations again, so it is replaced as the next VM joins it.
-        instance.onJoiningVmnetNetwork = { [weak self, weak instance] kind in
-            guard let self, let instance else { return }
-            self.networkSlots.prepareNetwork(kind, forJoining: instance)
-        }
-        // A session reporting its network defective, or releasing the attachment
-        // it held on one, asks for the same pass: the registry is the only place
-        // an app-managed network is torn down, because it is the only one that
-        // can see every VM sharing it.
-        instance.onNetworkArbitrationNeeded = { [weak self] in
-            self?.networkSlots.rebuildNetworksIfIdle()
-        }
         // An Ephemeral Mode VM goes back to its baseline on every power-off.
         instance.onPoweredOff = { [weak self, weak instance] in
             guard let self, let instance else { return }
             self.onPoweredOff?(instance)
         }
         // A guest that has just become attachable takes back the accessories
-        // paired with it.
+        // paired with it, and is a running guest whose address can be watched.
         instance.onSessionBecameAttachable = { [weak self, weak instance] in
             guard let self, let instance else { return }
+            self.guestAddresses.watch()
             self.onSessionBecameAttachable?(instance)
         }
         // The one construction-site hook every path runs through — load, create,
@@ -793,10 +773,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // found here belongs to no running revert, and reclaiming it does not
         // wait on the next revert of this VM to come along.
         snapshotStore.sweepRestoreStaging(bundleURL: instance.bundleURL)
-        networkSlots.claimSlots(for: instance.configuration)
-        // The create/clone/import/load entry point: a VM arriving with a slot
-        // on an already-materialized network is pending until it is recreated.
-        networkSlots.rebuildNetworksIfIdle()
     }
 
     /// The single entry point for any UI-driven or programmatic mutation of
@@ -824,26 +800,18 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         var new = old
         mutate(&new)
         guard new != old else { return true }
-        guard !networkSlots.refuseSlotConflict(on: instance, movingFrom: old, to: new) else {
+        guard !macAddresses.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) else {
             return false
         }
         guard !removableMedia.refuseUnattachableEdit(on: instance, movingFrom: old, to: new) else {
             return false
         }
         instance.configuration = new
-        networkSlots.moveSlots(from: old, to: new)
         let saved = saveConfiguration(for: instance)
-        // A live session still reads as attached to the network it is *on*, so
-        // the network this VM is switching *to* is idle only until
-        // `applyLivePolicy` attaches it — which it does synchronously. Recreate
-        // it now, or the change this VM just declared waits for a teardown.
-        networkSlots.rebuildNetworksIfIdle()
         applyLivePolicy(for: instance, old: old, new: new)
-        // A live switch off a network frees it inside `applyLivePolicy` — the
-        // pass above ran while the session still held that attachment, so
-        // re-check now rather than leaving the pending change to an unrelated
-        // event.
-        networkSlots.rebuildNetworksIfIdle()
+        // A live switch onto an app-managed network starts a guest worth
+        // watching without starting a session.
+        guestAddresses.watch()
         return saved
     }
 
@@ -932,9 +900,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
             var diskConfigs: [(VMConfiguration, URL)] = []
             var failedBundles: [String] = []
-            // Bundles present on disk but unreadable: their VMs still exist, so
-            // eviction must not reclaim what is keyed on them.
-            var failedBundleURLs: Set<URL> = []
             for bundleURL in diskBundles {
                 let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 do {
@@ -947,7 +912,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                         "Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
                     )
                     failedBundles.append(bundleName)
-                    failedBundleURLs.insert(bundleURL)
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -980,7 +944,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 // Cancel any in-flight setup task before evicting — otherwise it keeps
                 // mutating an orphan instance the library no longer knows about.
                 instance.setupTask?.cancel()
-                evict(instance, bundleIsGone: !failedBundleURLs.contains(instance.bundleURL))
+                evict(instance)
                 #log(
                     Self.logger, .info,
                     "VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
@@ -990,7 +954,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             if didChange {
                 sortInstances()
                 persistOrder()
-                networkSlots.logDuplicateMACAddressHolders()
+                macAddresses.logDuplicateMACAddressHolders()
             }
 
             let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }

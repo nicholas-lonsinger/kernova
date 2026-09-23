@@ -23,7 +23,7 @@ struct VMCommandEnvelopeTests {
         VMInfo(
             id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "shared",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .reserved("192.168.66.2"),
+            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.66.2"),
             agentStatus: "current",
             hasSavedState: true, isEphemeral: false, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova")
@@ -67,7 +67,6 @@ struct VMCommandEnvelopeTests {
             .snapshots(selector),
             .snapshotOnDiskBytes(selector),
             .sharedDirectories(selector),
-            .portForwardingRules(selector),
             .usbAccessories(selector),
             .availableUSBAccessories,
             .events,
@@ -115,12 +114,6 @@ struct VMCommandEnvelopeTests {
             .editSharedDirectory(selector, .remove(directory: diskID)),
             .editSharedDirectory(selector, .removePath(path: "/Users/somebody/Sites")),
             .editSharedDirectory(selector, .setReadOnly(directory: diskID, readOnly: true)),
-            .editPortForwarding(
-                selector,
-                .add(rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80))),
-            .editPortForwarding(
-                selector,
-                .remove(claim: PortForwardingHostClaim(transport: .udp, hostPort: 5353))),
             // An IORegistry ID runs past what 32 bits can name, so the width is
             // part of what has to survive the trip.
             .editUSBAccessory(selector, .attach(accessory: 4_294_967_296)),
@@ -233,7 +226,6 @@ struct VMCommandEnvelopeTests {
             .info(selector),
             .snapshotOnDiskBytes(selector),
             .sharedDirectories(selector),
-            .portForwardingRules(selector),
             .showInFinder(selector),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova"),
             .awaitPreparing(selector),
@@ -253,10 +245,10 @@ struct VMCommandEnvelopeTests {
             .summaries([summary]),
             .summary(summary),
             .info(info),
-            .ipAddress(.reserved("192.168.66.2")),
+            .ipAddress(.observed("192.168.66.2")),
             .ipAddress(.unavailable),
             .ipAddress(.externallyAssigned),
-            .ipAddress(.pending),
+            .ipAddress(.notObserved),
             .snapshots([snapshot]),
             .snapshot(snapshot),
             // A snapshot of a large guest exceeds what 32 bits can name, so the
@@ -268,11 +260,6 @@ struct VMCommandEnvelopeTests {
                 SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
             ]),
             .sharedDirectories([]),
-            .portForwardingRules([
-                PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
-                PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
-            ]),
-            .portForwardingRules([]),
             .usbAccessories([
                 USBAccessorySummary(
                     registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",

@@ -10,7 +10,7 @@
 
 [Highlights](#highlights) · [Features](#features) · [Automation](#automation) · [Requirements](#requirements) · [Building](#building-kernova) · [Docs](#documentation) · [License](#license)
 
-Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no third-party hypervisor, no kernel extensions, no licensing. A source list of machines, one-click lifecycle, and deep host integration: shared clipboard, drag-and-drop, shared folders, port forwarding, USB passthrough, audio, and an in-guest agent.
+Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no third-party hypervisor, no kernel extensions, no licensing. A source list of machines, one-click lifecycle, and deep host integration: shared clipboard, drag-and-drop, shared folders, USB passthrough, audio, and an in-guest agent.
 
 <p align="center">
   <picture>
@@ -30,7 +30,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Clone** VMs and **import** `.kernova` bundles — instant APFS copies on the same volume | ✅ | ✅ |
 | **Headless** operation from the status bar, **auto-start** at login | ✅ | ✅ |
 | **Shared folders** over VirtioFS | ✅ | ✅ |
-| **NAT** with **port forwarding** (TCP/UDP), **bridged**, **host-only** networking | ✅ | ✅ |
+| **NAT**, **bridged**, **host-only** networking | ✅ | ✅ |
 | **Hot-plug** removable media (ISOs, disk images) | ✅ | ✅ |
 | **USB passthrough** of host accessories | ✅ | ✅ |
 | **Audio** out, opt-in **microphone** passthrough | ✅ | ✅ |
@@ -76,7 +76,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Display** | Resolution presets or custom size, **HiDPI**, size-to-fit at startup, live auto-resize. Inline, pop-out window, or **fullscreen** per VM; flip between the live display and a read-only settings form while running. |
 | **Input** | Mac or USB keyboard/pointer, auto-picked by guest version. Per-VM choice of when **system hot keys** reach the guest: never, in full screen, or always — live-switchable. |
 | **Audio** | Guest audio to the host, on by default. **Microphone** passthrough opt-in per VM, off by default. |
-| **Network** | **Shared (NAT)** with TCP/UDP **port forwarding** · **Bridged** to a chosen interface or Automatic · **Host Only** · None. Live **IP address** readout; persistent, editable **MAC address** with one-click regeneration and a duplicate warning. |
+| **Network** | **Shared (NAT)** · **Bridged** to a chosen interface or Automatic · **Host Only** · None. Live **IP address** readout — the address this Mac last saw the guest use; persistent, editable **MAC address** with one-click regeneration and a duplicate warning. |
 | **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
 
 > [!NOTE]
@@ -124,7 +124,7 @@ Four surfaces, one library, the same verbs.
 |---|---|
 | **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, reveal), the library (search, import, clone, rename, delete), snapshots (take, find, revert, rename, notes, delete), and reading state or IP — each VM a typed entity you pick by name. |
 | **AppleScript** | A scripting dictionary with the lifecycle verbs and every VM property, for Script Editor and Automator. |
-| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, settings read/write, snapshots, shared folders, port forwarding, USB accessories, `wait`, and `--format json` on every verb. Shell completions for zsh, bash, and fish. |
+| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, settings read/write, snapshots, shared folders, USB accessories, `wait`, and `--format json` on every verb. Shell completions for zsh, bash, and fish. |
 | **URL scheme** | Clickable links from a browser, a note, or a script. `kernova://open/<name>` brings a running VM's display forward and refuses when it has none; `kernova://reveal/<name>` never refuses — the display when there is one, the VM's library row otherwise. |
 
 ```bash
@@ -133,7 +133,6 @@ kernova wait Alpha --until agent
 kernova ip Alpha --wait
 kernova snapshot take Alpha --name "before upgrade"
 kernova share add Alpha ~/Projects --read-only
-kernova forward add Alpha 2222:22
 kernova get Alpha memory --format json
 ```
 

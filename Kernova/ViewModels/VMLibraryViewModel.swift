@@ -99,11 +99,11 @@ final class VMLibraryViewModel {
     func waitForRevertsToSettle() async { await library.waitForRevertsToSettle() }
 
     func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
-        library.networkSlots.vmNamesSharingMACAddress(with: instance)
+        library.macAddresses.vmNamesSharingMACAddress(with: instance)
     }
 
-    func reservedAddress(for config: VMConfiguration) -> GuestIPAddress {
-        library.networkSlots.reservedAddress(for: config)
+    func guestAddress(for instance: VMInstance) -> GuestIPAddress {
+        library.guestAddresses.address(for: instance)
     }
 
     @discardableResult
@@ -135,12 +135,6 @@ final class VMLibraryViewModel {
     /// Whether this build can pass a host USB accessory through to a guest —
     /// what decides whether the USB Device menu exists at all.
     var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
-
-    /// Every (transport, host port) pair any VM in the library claims — what a
-    /// new rule may not name.
-    var takenHostPortClaims: Set<PortForwardingHostClaim> {
-        library.networkSlots.takenHostPortClaims
-    }
 
     func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
         capabilities.canDeleteSnapshot(snapshot, on: instance)
@@ -307,20 +301,6 @@ final class VMLibraryViewModel {
         }
     }
 
-    func addPortForwardingRule(_ rule: PortForwardingRule, to instance: VMInstance) {
-        runEdit(on: instance) {
-            try self.commands.addPortForwardingRule(.id(instance.id), rule: rule)
-        }
-    }
-
-    func removePortForwardingRule(
-        _ claim: PortForwardingHostClaim, from instance: VMInstance
-    ) {
-        runEdit(on: instance) {
-            try self.commands.removePortForwardingRule(.id(instance.id), claim: claim)
-        }
-    }
-
     /// Cancels a guest setup from the confirmation `GuestSetupProgressViewController`
     /// already gathered, so this always calls the facade pre-confirmed.
     func cancelGuestSetup(_ instance: VMInstance) {
@@ -480,7 +460,8 @@ final class VMLibraryViewModel {
     // MARK: - Initialization
 
     /// A collaborator over the user's own state — the VMs directory, the
-    /// defaults domain, the host's vmnet networks and their store — takes no
+    /// defaults domain, the host's vmnet networks and their store, its ARP
+    /// table — takes no
     /// default: the test host runs as the app, in its container and with its
     /// entitlements, so a default would hand that state to every test that
     /// left it out. ``AppDelegate`` supplies each.
@@ -504,8 +485,10 @@ final class VMLibraryViewModel {
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
         preferences: AppPreferences,
-        vmnetNetworks: any VmnetNetworkProviding & VmnetNetworkRecreating,
-        isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking
+        vmnetNetworks: any VmnetNetworkProviding,
+        arpTable: any ARPTableReading,
+        isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking,
+        canObserveGuestAddresses: Bool = EntitlementService.shared.supportsGuestAddressObservation
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
@@ -532,7 +515,9 @@ final class VMLibraryViewModel {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
-            isVMNetworkingEntitled: isVMNetworkingEntitled
+            arpTable: arpTable,
+            isVMNetworkingEntitled: isVMNetworkingEntitled,
+            canObserveGuestAddresses: canObserveGuestAddresses
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
