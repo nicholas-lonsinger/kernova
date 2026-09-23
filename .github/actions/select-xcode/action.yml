@@ -1,27 +1,44 @@
 name: Select Xcode
 description: >-
-  Select the image's newest Xcode and export its build number as XCODE_BUILD.
-  AccessoryAccess and VZUSBPassthroughDeviceConfiguration are macOS 27 SDK APIs
-  an Xcode 26 toolchain cannot resolve at all, so every job runs on `xcode-27`,
-  the only image carrying one. That image is a preview, so a run can sit queued
-  for a while before a runner picks it up.
+  Select the newest release Xcode the runner carries and export its build
+  number as XCODE_BUILD. AccessoryAccess and VZUSBPassthroughDeviceConfiguration
+  are macOS 27 SDK APIs an Xcode 26 toolchain cannot resolve at all, so every
+  job runs on `xcode-27`, the only image carrying one, and the step fails when
+  the newest release is older than 27. That image is a preview, so a run can
+  sit queued for a while before a runner picks it up.
 
 runs:
   using: composite
   steps:
-    # The image carries one Xcode and an Xcode.app symlink to it, so taking the
-    # newest resolves to that toolchain either way — and stays right on an image
-    # that gains a second. The inventory and SDK version are printed because a
-    # toolchain too old to carry the SDK otherwise surfaces as a bare "unable to
-    # resolve module dependency" naming no Xcode at all. `xcodebuild -version`
-    # doubles as the full-Xcode assert, and names the toolchain whose bundled
-    # swift-format decides a lint run — `swift-format --version` reports `main`.
+    # A bundle is a beta when its LicenseInfo.plist licenseType matches "beta":
+    # runner-images' own test, Test-XcodeStableRelease in
+    # images/macos/scripts/helpers/Xcode.Helpers.psm1, which marks "(beta)" in
+    # the image README. Bundle names do not say: image 20260921.0210 keeps the
+    # 27.1 release at Xcode_27.1_beta.app, and Xcode_27.2.app links the beta.
+    # Symlinks only alias real bundles. `--sdk macosx` is the SDKROOT builds use;
+    # a bare `xcrun` resolved the Command Line Tools SDK under that 27.2 beta.
+    # `xcodebuild -version` names the lint run's swift-format (`--version`: main).
     - shell: bash
       run: |
-        ls -d /Applications/Xcode*.app
-        newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+        shopt -s nocasematch
+        newest='' newest_version=''
+        for app in /Applications/Xcode*.app; do
+          [[ -L "$app" ]] && continue
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/version.plist")" \
+            && license="$(/usr/libexec/PlistBuddy -c 'Print :licenseType' "$app/Contents/Resources/LicenseInfo.plist")" \
+            || { echo "::error::$app has no readable version or licenseType, so it cannot be told apart from a beta"; exit 1; }
+          echo "$app: Xcode $version, licenseType $license"
+          [[ "$license" == *beta* ]] && continue
+          if [[ "$(printf '%s\n' "$newest_version" "$version" | sort -V | tail -1)" == "$version" ]]; then
+            newest="$app" newest_version="$version"
+          fi
+        done
+        if [[ -z "$newest" ]] || (( ${newest_version%%.*} < 27 )); then
+          echo "::error::This tree needs a release Xcode 27 or later; the newest release on this runner is ${newest_version:-none}"
+          exit 1
+        fi
         sudo xcode-select -s "$newest/Contents/Developer"
         xcodebuild -version
-        xcrun --show-sdk-version
+        xcrun --sdk macosx --show-sdk-version
         swift --version
         echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
