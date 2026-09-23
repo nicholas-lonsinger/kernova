@@ -27,6 +27,7 @@ dev="Kernova/Resources/Kernova.Development.entitlements"
 restricted=(
     "com.apple.vm.networking"
     "com.apple.developer.accessory-access.usb"
+    "com.apple.developer.networking.topology-observation"
 )
 
 keys() {

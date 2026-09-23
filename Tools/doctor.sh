@@ -240,7 +240,7 @@ fi
 resolved_entitlements=$(sed -n 's/^[[:space:]]*KERNOVA_APP_ENTITLEMENTS[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
 if [ "$resolved_entitlements" = "Kernova/Resources/Kernova.entitlements" ]; then
     pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
-    detail 'archives cut on this machine carry the restricted com.apple.vm.networking and com.apple.developer.accessory-access.usb keys — the embedded profile has to authorize both'
+    detail 'archives cut on this machine carry the restricted keys Tools/check-entitlements.sh names — the embedded profile has to authorize each'
 elif [ -n "$resolved_entitlements" ]; then
     pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
     detail 'not the full Kernova.entitlements set — archives will NOT carry the restricted keys'

@@ -3,8 +3,7 @@
 <plist version="1.0">
 <dict>
 	<!-- The default entitlements: Kernova.entitlements minus its restricted
-	     keys — com.apple.vm.networking and
-	     com.apple.developer.accessory-access.usb — which signing without an
+	     keys (Tools/check-entitlements.sh lists them), which signing without an
 	     authorizing profile cannot carry (automatic signing refuses them, and
 	     amfid kills an ad-hoc-signed binary claiming one at exec). This variant
 	     is what lets a profile-less checkout build and run. Selected through
