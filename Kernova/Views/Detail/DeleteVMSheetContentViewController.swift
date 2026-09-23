@@ -515,8 +515,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
         cancelButton.bezelStyle = .push
         cancelButton.keyEquivalent = "\u{1B}"  // Escape
 
-        // No ellipsis on the action buttons themselves (project HIG: "none on alert
-        // buttons"); the ellipsis lives on the menu items that open this sheet.
+        // No ellipsis on the action buttons themselves; the ellipsis lives on the
+        // menu items that open this sheet.
         let confirmButton = NSButton(
             title: prompt.confirmTitle, target: self, action: #selector(confirmTapped(_:))
         )

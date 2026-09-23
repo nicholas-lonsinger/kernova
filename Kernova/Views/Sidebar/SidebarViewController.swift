@@ -694,7 +694,7 @@ extension SidebarViewController {
             // "Always show advanced options" is on. Recovery implies `.stopped`,
             // so "Start" was just added and immediately precedes this one —
             // required for alternate pairing.
-            let recovery = item("Start in Recovery Mode", #selector(menuStartRecovery(_:)), instance)
+            let recovery = item("Start in Recovery Mode…", #selector(menuStartRecovery(_:)), instance)
             if !preferences.alwaysShowAdvancedOptions {
                 // Keyless Option-reveal: both items have an empty key equivalent, so the
                 // primary's modifier mask must be cleared to [] (its default is [.command])
