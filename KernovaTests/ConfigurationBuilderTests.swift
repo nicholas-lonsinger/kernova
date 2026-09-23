@@ -23,9 +23,10 @@ struct ConfigurationBuilderTests {
 
     /// A builder over a mock vmnet provider.
     private func makeBuilder(
-        vmnetNetworks: any VmnetNetworkProviding = MockVmnetNetworkProvider()
+        vmnetNetworks: any VmnetNetworkProviding = MockVmnetNetworkProvider(),
+        entitlements: EntitlementService = .unentitled
     ) -> ConfigurationBuilder {
-        ConfigurationBuilder(vmnetNetworks: vmnetNetworks)
+        ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
     }
 
     /// Fails the test when `error` is a path-validation refusal.
@@ -1074,8 +1075,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = makeBuilder(vmnetNetworks: networks)
-        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .unentitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
@@ -1092,9 +1092,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = makeBuilder(vmnetNetworks: networks)
-        builder.entitlements = EntitlementService(
-            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
@@ -1111,9 +1109,7 @@ struct ConfigurationBuilderTests {
 
         let networks = MockVmnetNetworkProvider()
         networks.attachmentError = TestFailure("vmnet refused")
-        var builder = makeBuilder(vmnetNetworks: networks)
-        builder.entitlements = EntitlementService(
-            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.
@@ -1145,10 +1141,8 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        var builder = makeBuilder()
+        var builder = makeBuilder(entitlements: .entitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
-        builder.entitlements = EntitlementService(
-            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.
@@ -1164,9 +1158,8 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        var builder = makeBuilder()
+        var builder = makeBuilder(entitlements: .unentitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
-        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
 
         #expect {
             try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
@@ -1184,9 +1177,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = makeBuilder(vmnetNetworks: networks)
-        builder.entitlements = EntitlementService(
-            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
 
         let devices = try builder.assemble(
             from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
@@ -1202,8 +1193,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let networks = MockVmnetNetworkProvider()
-        var builder = makeBuilder(vmnetNetworks: networks)
-        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .unentitled)
 
         #expect {
             try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
@@ -1224,9 +1214,7 @@ struct ConfigurationBuilderTests {
 
         let networks = MockVmnetNetworkProvider()
         networks.attachmentError = TestFailure("vmnet refused")
-        var builder = makeBuilder(vmnetNetworks: networks)
-        builder.entitlements = EntitlementService(
-            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
 
         // The boot (and a restore from saved state, which rebuilds the same
         // configuration) must succeed; attachment recovery reattaches later.

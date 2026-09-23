@@ -23,6 +23,9 @@ struct ConfigurationBuilder: Sendable {
         /// joins — the one the session's attachment recovery must classify and
         /// re-materialize through.
         let vmnetNetworks: any VmnetNetworkProviding
+        /// The answer `configuration`'s network attachment was chosen by — the
+        /// one the session's attachment recovery must realize Shared by.
+        let entitlements: EntitlementService
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigurationBuilder")
@@ -37,9 +40,7 @@ struct ConfigurationBuilder: Sendable {
     /// The app-managed vmnet networks behind a Host Only or Shared attachment.
     let vmnetNetworks: any VmnetNetworkProviding
 
-    /// What this build's signature authorizes; a fresh instance rather than
-    /// `.shared`, which is `@MainActor` while assembly runs off the main actor.
-    var entitlements = EntitlementService()
+    let entitlements: EntitlementService
 
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
@@ -111,7 +112,8 @@ struct ConfigurationBuilder: Sendable {
             clipboardInputPipe: clipboardPipes?.input,
             clipboardOutputPipe: clipboardPipes?.output,
             coldRemovableMedia: coldRemovableMedia,
-            vmnetNetworks: vmnetNetworks
+            vmnetNetworks: vmnetNetworks,
+            entitlements: entitlements
         )
     }
 

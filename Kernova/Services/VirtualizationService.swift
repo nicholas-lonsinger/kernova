@@ -14,8 +14,8 @@ final class VirtualizationService {
 
     private let configBuilder: ConfigurationBuilder
 
-    init(vmnetNetworks: any VmnetNetworkProviding) {
-        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks)
+    init(vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService) {
+        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
     }
 
     // MARK: - Start

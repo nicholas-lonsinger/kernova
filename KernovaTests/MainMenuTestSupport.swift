@@ -36,7 +36,7 @@ func makeLibraryViewModel(
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         usbAccessoryService: usbAccessoryService,
         preferences: preferences,
-        vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+        vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
     )
 }
 

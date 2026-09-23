@@ -16,8 +16,6 @@ final class VMSettingsPanelContext {
 
     /// Host interfaces offered by the Network panel's Mode picker.
     let bridgedInterfaces: any BridgedInterfaceProviding
-    /// Decides whether that picker offers Bridged at all.
-    let entitlements: EntitlementService
     let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
     let systemSettings: SystemSettingsLink
 
@@ -43,7 +41,6 @@ final class VMSettingsPanelContext {
         viewModel: VMLibraryViewModel,
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding,
-        entitlements: EntitlementService,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus,
         systemSettings: SystemSettingsLink,
         activationCenter: NotificationCenter
@@ -52,12 +49,11 @@ final class VMSettingsPanelContext {
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
         self.bridgedInterfaces = bridgedInterfaces
-        self.entitlements = entitlements
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
         self.fileMonitor = AttachmentFileMonitor(activationCenter: activationCenter)
         self.overview = VMOverviewResolver(
-            instance: instance, viewModel: viewModel, entitlements: entitlements,
+            instance: instance, viewModel: viewModel,
             bridgedInterfaces: bridgedInterfaces, micPermissionStatus: micPermissionStatus)
     }
 

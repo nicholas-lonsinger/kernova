@@ -51,6 +51,10 @@ final class VMLibraryViewModel {
     /// The preferences store this library session reads and writes.
     let preferences: AppPreferences
 
+    /// What this build's signature authorizes, as every surface that degrades
+    /// without an entitlement reads it.
+    let entitlements: EntitlementService
+
     // MARK: - Library Forwarding
 
     // Reads and library-level operations, forwarded verbatim so every existing
@@ -461,10 +465,10 @@ final class VMLibraryViewModel {
 
     /// A collaborator over the user's own state — the VMs directory, the
     /// defaults domain, the host's vmnet networks and their store, its ARP
-    /// table — takes no
-    /// default: the test host runs as the app, in its container and with its
-    /// entitlements, so a default would hand that state to every test that
-    /// left it out. ``AppDelegate`` supplies each.
+    /// table, the signature's entitlements — takes no default: the test host
+    /// runs as the app, in its container and with its signature, so a default
+    /// would hand that state to every test that left it out. ``AppDelegate``
+    /// supplies each.
     init(
         storageService: any VMStorageProviding,
         diskImageService: any DiskImageProviding = DiskImageService(),
@@ -487,13 +491,13 @@ final class VMLibraryViewModel {
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
-        isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking,
-        canObserveGuestAddresses: Bool = EntitlementService.shared.supportsGuestAddressObservation
+        entitlements: EntitlementService
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
         self.snapshotStore = snapshotStore
         self.preferences = preferences
+        self.entitlements = entitlements
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
         let lifecycle = VMLifecycleCoordinator(
@@ -516,8 +520,7 @@ final class VMLibraryViewModel {
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
-            isVMNetworkingEntitled: isVMNetworkingEntitled,
-            canObserveGuestAddresses: canObserveGuestAddresses
+            entitlements: entitlements
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)

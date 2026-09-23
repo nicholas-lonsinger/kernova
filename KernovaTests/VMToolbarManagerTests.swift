@@ -33,7 +33,7 @@ struct VMToolbarManagerTests {
             fileSystem: MockFileSystem(),
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true
+            entitlements: .entitled
         )
         return (library, lifecycle)
     }

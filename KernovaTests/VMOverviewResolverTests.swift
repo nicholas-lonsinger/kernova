@@ -34,8 +34,6 @@ struct VMOverviewResolverTests {
         return VMOverviewResolver(
             instance: instance,
             viewModel: model,
-            entitlements: EntitlementService(
-                reader: MockEntitlementReader(granted: entitled ? ["com.apple.vm.networking"] : [])),
             bridgedInterfaces: interfaces,
             micPermissionStatus: { micPermission })
     }

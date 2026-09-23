@@ -17,7 +17,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     /// Injected host state, read through the context.
     private var bridgedInterfaces: any BridgedInterfaceProviding { context.bridgedInterfaces }
-    private var entitlements: EntitlementService { context.entitlements }
+    private var entitlements: EntitlementService { context.viewModel.entitlements }
 
     private var networkModePopUp = NSPopUpButton()
     /// The Network Mode row, dimmed on the same terms its header hint is shown.

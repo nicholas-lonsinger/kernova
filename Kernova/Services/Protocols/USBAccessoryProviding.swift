@@ -97,7 +97,7 @@ enum USBAccessorySupport {
     /// signature without the entitlement — into the one answer every caller
     /// reads, so no surface has to ask which of them applies.
     @MainActor
-    static func makeService(entitlements: EntitlementService = .shared)
+    static func makeService(entitlements: EntitlementService)
         -> (any USBAccessoryProviding)?
     {
         guard entitlements.supportsUSBAccessories else { return nil }

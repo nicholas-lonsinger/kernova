@@ -64,17 +64,15 @@ struct VMSettingsNetworkPanelTests {
             $0.macAddress = macAddress
         }
         if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
-        // The pane always shows a VM the library holds, and the library's
-        // observer is what answers its address — so `vmnetNetworks` reaches the
-        // panel through the library, never the panel directly.
+        // The pane always shows a VM the library holds, and the library is what
+        // answers its address and its entitlements — so `vmnetNetworks` and
+        // `entitled` reach the panel through the library, never the panel
+        // directly.
         let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
         registerSettingsInstance(instance, in: library)
         let vc = makeSettingsPane(
             instance: instance, viewModel: library, isReadOnly: isReadOnly,
-            bridgedInterfaces: interfaces,
-            entitlements: EntitlementService(
-                reader: MockEntitlementReader(
-                    granted: entitled ? ["com.apple.vm.networking"] : [])))
+            bridgedInterfaces: interfaces)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.network)

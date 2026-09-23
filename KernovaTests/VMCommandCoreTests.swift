@@ -55,8 +55,7 @@ struct VMCommandCoreTests {
             preferences: preferences,
             vmnetNetworks: vmnet,
             arpTable: arpTable,
-            isVMNetworkingEntitled: true,
-            canObserveGuestAddresses: true
+            entitlements: .entitled
         )
         let core = VMCommandCore(
             library: library,
@@ -109,7 +108,7 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true
+            entitlements: .entitled
         )
         let core = VMCommandCore(
             library: library,
@@ -1070,7 +1069,7 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true
+            entitlements: .entitled
         )
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,

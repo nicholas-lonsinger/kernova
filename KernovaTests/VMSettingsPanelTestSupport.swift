@@ -7,9 +7,9 @@ import Testing
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the
 /// shell's own and the six per-panel ones.
 
-/// The library the pane reads through. `vmnetNetworks`, `arpTable` and
-/// `entitled` reach the guest-address observer, which is what answers every
-/// surface's IP address row.
+/// The library the pane reads through, entitlements included.
+/// `vmnetNetworks`, `arpTable` and `entitled` reach the guest-address observer,
+/// which is what answers every surface's IP address row.
 @MainActor
 func makeSettingsViewModel(
     preferences: AppPreferences,
@@ -27,8 +27,7 @@ func makeSettingsViewModel(
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
-        isVMNetworkingEntitled: entitled,
-        canObserveGuestAddresses: true
+        entitlements: entitled ? .entitled : .unentitled
     )
 }
 
@@ -62,7 +61,6 @@ func makeSettingsPane(
     viewModel: VMLibraryViewModel,
     isReadOnly: Bool,
     bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
-    entitlements: EntitlementService = .shared,
     micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
         AVCaptureDevice.authorizationStatus(for: .audio)
     },
@@ -71,7 +69,7 @@ func makeSettingsPane(
 ) -> VMSettingsViewController {
     VMSettingsViewController(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
-        bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
+        bridgedInterfaces: bridgedInterfaces,
         micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
         activationCenter: activationCenter)
 }

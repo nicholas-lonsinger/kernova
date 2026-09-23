@@ -352,7 +352,7 @@ final class NetworkAttachmentCoordinator {
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
         vmnetNetworks: any VmnetNetworkProviding,
-        isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking,
+        isVMNetworkingEntitled: Bool,
         retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
         disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
         vmnetRematerializeDelays: [TimeInterval] =
