@@ -150,6 +150,12 @@ extension VMSettingsPanel {
         viewModel.updateConfiguration(of: instance, mutate: mutate)
     }
 
+    /// ``writeConfig(_:)`` for a mutation that may touch the VM's host state.
+    @discardableResult
+    func writeSettings(_ mutate: (inout VMSettings) -> Void) -> Bool {
+        viewModel.updateSettings(of: instance, mutate: mutate)
+    }
+
     /// Hands a toggle this panel shares with an overview card to the shell, so
     /// both surfaces write through one path.
     func setToggle(_ toggle: VMOverviewToggle, to isOn: Bool) {

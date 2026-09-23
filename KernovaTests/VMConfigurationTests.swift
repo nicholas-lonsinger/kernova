@@ -26,7 +26,6 @@ struct VMConfigurationTests {
                 "displayWidth": 1920,
                 "displayHeight": 1200,
                 "displayPPI": 144,
-                "displayPreference": "inline",
                 "networkEnabled": true,
                 "clipboardSharingEnabled": false,
                 "createdAt": "2025-01-01T00:00:00Z"\(extra)
@@ -371,38 +370,6 @@ struct VMConfigurationTests {
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.serialSocketRelayEnabled == false)
-    }
-
-    // MARK: - Launch Auto-Start
-
-    @Test("startsAutomaticallyOnLaunch round-trips through JSON")
-    func startsAutomaticallyOnLaunchRoundTrip() throws {
-        var original = VMConfiguration(name: "Auto VM", guestOS: .linux, bootMode: .efi)
-        original.startsAutomaticallyOnLaunch = true
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: try encoder.encode(original))
-
-        #expect(decoded.startsAutomaticallyOnLaunch == true)
-    }
-
-    @Test("Missing startsAutomaticallyOnLaunch decodes as false")
-    func missingStartsAutomaticallyOnLaunchDefaultsFalse() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.startsAutomaticallyOnLaunch == false)
-    }
-
-    @Test("A new configuration does not start automatically")
-    func newConfigurationDoesNotStartAutomatically() {
-        let config = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
-
-        #expect(config.startsAutomaticallyOnLaunch == false)
     }
 
     @Test("Unknown JSON keys are silently ignored")
@@ -896,58 +863,6 @@ struct VMConfigurationTests {
         #expect(clone.installContext == nil)
     }
 
-    // MARK: - displayPreference Tests
-
-    @Test("Default displayPreference is inline")
-    func defaultDisplayPreference() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        #expect(config.displayPreference == .inline)
-    }
-
-    @Test("Configuration preserves displayPreference")
-    func displayPreferenceRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Fullscreen VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            displayPreference: .fullscreen
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.displayPreference == .fullscreen)
-    }
-
-    @Test("displayPreference round-trips popOut value")
-    func displayPreferencePopOutRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "PopOut VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            displayPreference: .popOut
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.displayPreference == .popOut)
-    }
-
     // MARK: - displaySizesToWindow / displayHiDPI / displayAutoResizes Tests
 
     @Test("Display sizing defaults: match-window on, HiDPI on, auto-resize on")
@@ -1038,47 +953,6 @@ struct VMConfigurationTests {
         #expect(config.displayWidth == 1280)
         #expect(config.displayHeight == 800)
         #expect(config.displayPPI == 144)
-    }
-
-    // MARK: - lastFullscreenDisplayID Tests
-
-    @Test("Default lastFullscreenDisplayID is nil")
-    func defaultLastFullscreenDisplayID() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        #expect(config.lastFullscreenDisplayID == nil)
-    }
-
-    @Test("Configuration preserves lastFullscreenDisplayID")
-    func lastFullscreenDisplayIDRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Display VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            lastFullscreenDisplayID: 4_280_803_137
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.lastFullscreenDisplayID == 4_280_803_137)
-    }
-
-    @Test("Missing optional lastFullscreenDisplayID decodes as nil")
-    func missingOptionalLastFullscreenDisplayID() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.lastFullscreenDisplayID == nil)
     }
 
     // MARK: - clipboardSharingEnabled Tests
@@ -1330,47 +1204,6 @@ struct VMConfigurationTests {
         #expect(config.installedImage == nil)
     }
 
-    // MARK: - agentInstallNudgeDismissed Tests
-
-    @Test("Default agentInstallNudgeDismissed is false")
-    func defaultAgentInstallNudgeDismissed() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .macOS,
-            bootMode: .macOS
-        )
-        #expect(config.agentInstallNudgeDismissed == false)
-    }
-
-    @Test("Configuration round-trips agentInstallNudgeDismissed")
-    func agentInstallNudgeDismissedRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Dismissed VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            agentInstallNudgeDismissed: true
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.agentInstallNudgeDismissed == true)
-    }
-
-    @Test("A config omitting agentInstallNudgeDismissed decodes it as false")
-    func missingAgentInstallNudgeDismissedDecodesFalse() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.agentInstallNudgeDismissed == false)
-    }
-
     // MARK: - Audio Tests
 
     @Test("audioInputEnabled defaults to false and audioOutputEnabled defaults to true")
@@ -1564,7 +1397,6 @@ struct VMConfigurationTests {
             name: "Comprehensive VM",
             guestOS: .macOS,
             bootMode: .macOS,
-            startsAutomaticallyOnLaunch: true,
             cpuCount: 12,
             memorySizeInGB: 24,
             diskSizeInGB: 256,
@@ -1574,8 +1406,6 @@ struct VMConfigurationTests {
             displaySizesToWindow: false,
             displayHiDPI: false,
             displayAutoResizes: false,
-            displayPreference: .popOut,
-            lastFullscreenDisplayID: 0xDEAD_BEEF,
             networkEnabled: false,
             networkMode: .bridged,
             bridgedInterfaceIdentifier: "en1",
@@ -1649,9 +1479,8 @@ struct VMConfigurationTests {
 
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
-        // Omits the required fields displayPreference and
-        // clipboardSharingEnabled. (The audio keys are optional and default, so
-        // their absence alone would not throw.)
+        // Omits the required field clipboardSharingEnabled. (The audio keys are
+        // optional and default, so their absence alone would not throw.)
         let json = """
             {
                 "id": "12345678-1234-1234-1234-123456789012",

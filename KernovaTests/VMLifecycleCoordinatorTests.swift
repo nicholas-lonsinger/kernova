@@ -593,8 +593,8 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: persisted.path(percentEncoded: false)
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -693,8 +693,8 @@ struct VMLifecycleCoordinatorTests {
         instance.enter(.failed(message: "stale message from an earlier failure"))
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -716,8 +716,8 @@ struct VMLifecycleCoordinatorTests {
             source: .localFile, localIPSWPath: "/tmp/restore.ipsw"
         )
         // Wire the dispatcher so performConfigurationMutation actually mutates.
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         let context = instance.configuration.installContext!
@@ -732,8 +732,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSRecordsTheInstalledImage() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         installService.installedImage = .macOSRestoreImage(version: "15.6.1", build: "24G90")
@@ -750,8 +750,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSFailureRecordsNoImage() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         installService.installError = MacOSInstallError.unsupportedRestoreImage
@@ -778,8 +778,8 @@ struct VMLifecycleCoordinatorTests {
             ).path(percentEncoded: false)
         )
         instance.configuration.installContext = originalContext
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -811,8 +811,8 @@ struct VMLifecycleCoordinatorTests {
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -844,8 +844,8 @@ struct VMLifecycleCoordinatorTests {
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -890,8 +890,8 @@ struct VMLifecycleCoordinatorTests {
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -932,8 +932,8 @@ struct VMLifecycleCoordinatorTests {
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -968,8 +968,8 @@ struct VMLifecycleCoordinatorTests {
             remoteURL: Self.pinnedRestoreImageURL
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -999,8 +999,8 @@ struct VMLifecycleCoordinatorTests {
             ).path(percentEncoded: false)
         )
         instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -1079,8 +1079,8 @@ struct VMLifecycleCoordinatorTests {
             ).path(percentEncoded: false)
         )
         instance.configuration.installContext = originalContext
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -1147,8 +1147,8 @@ struct VMLifecycleCoordinatorTests {
     private func makeLinuxInstance(context: LinuxInstallContext) -> VMInstance {
         let instance = VMInstanceFixture.make(name: "Debian")
         instance.configuration.linuxInstallContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         instance.enter(.initialBoot)
@@ -1468,8 +1468,8 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context)
 
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        let persist = instance.onUpdateSettings
+        instance.onUpdateSettings = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
             return persist?(mutate) ?? true
         }
@@ -1687,8 +1687,8 @@ struct VMLifecycleCoordinatorTests {
         // whose step is known: the destination is persisted while Download
         // runs, and the ISO is attached once Verify has finished.
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        let persist = instance.onUpdateSettings
+        instance.onUpdateSettings = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
             return persist?(mutate) ?? true
         }
@@ -1746,8 +1746,8 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context)
 
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        let persist = instance.onUpdateSettings
+        instance.onUpdateSettings = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
             return persist?(mutate) ?? true
         }

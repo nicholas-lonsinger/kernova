@@ -600,6 +600,74 @@ struct VMLibraryTests {
         #expect(failures.errorMessage == nil)
     }
 
+    /// A present but unreadable sidecar holds state nobody knows, so the VM stays
+    /// out rather than entering with defaults a later write would put over it.
+    @Test("A bundle whose host state cannot be read is reported and not loaded")
+    func unreadableHostStateKeepsTheBundleOut() async {
+        let storage = MockVMStorageService()
+        let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
+        let goodURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[goodURL] = goodConfig
+        let badURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unreadable-host-state.kernova", isDirectory: true)
+        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.loadHostStateFailURLs = [badURL]
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.map(\.name) == ["Good VM"])
+        #expect(failures.errorMessage?.contains("unreadable-host-state") == true)
+        #expect(storage.saveHostStateCallCount == 0)
+    }
+
+    /// Pairings are made again by attaching the device once, so an unreadable
+    /// file costs the VM nothing more than them.
+    @Test("A bundle whose pairings cannot be read loads with none, and the file is removed")
+    func unreadablePairingsLoadEmpty() async throws {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = try storage.bundleURL(for: config)
+        storage.bundles[bundleURL] = config
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let pairingsURL = VMBundleLayout(bundleURL: bundleURL).usbPairingsURL
+        try Data("{ not json".utf8).write(to: pairingsURL)
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+
+        #expect(library.instances.map(\.name) == ["Paired VM"])
+        #expect(library.instances.first?.usbPairings.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: pairingsURL.path(percentEncoded: false)))
+        #expect(failures.showError == false)
+    }
+
+    @Test("reconcileWithDisk keeps out, and reports once, a new bundle whose host state cannot be read")
+    func reconcileKeepsOutAnUnreadableHostState() {
+        let storage = MockVMStorageService()
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unreadable-sidecar.kernova", isDirectory: true)
+        storage.bundles[bundleURL] = VMConfiguration(
+            name: "Unreadable VM", guestOS: .linux, bootMode: .efi)
+        storage.loadHostStateFailURLs.insert(bundleURL)
+
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(library.instances.isEmpty)
+        #expect(failures.errorMessage?.contains("unreadable-sidecar") == true)
+
+        failures.reset()
+        library.reconcileWithDisk()
+        #expect(failures.showError == false)
+
+        storage.loadHostStateFailURLs.remove(bundleURL)
+        library.reconcileWithDisk()
+        #expect(library.instances.map(\.name) == ["Unreadable VM"])
+    }
+
     @Test("reconcileWithDisk re-presents error after previously-failed bundle loads successfully")
     func reconcileReReportsAfterBundleRecovery() {
         let storage = MockVMStorageService()
@@ -785,11 +853,15 @@ struct VMLibraryTests {
 
     // MARK: - USB Accessory Pairings
 
-    /// A library whose pairings live in memory, and the store behind it.
-    private func makePairingLibrary() -> (VMLibrary, MockUSBAccessoryPairingStore) {
+    /// A library whose pairings live in memory, the store behind them, and the
+    /// storage its bundles are listed from.
+    private func makePairingLibrary() -> (
+        VMLibrary, MockUSBAccessoryPairingStore, MockVMStorageService
+    ) {
         let store = MockUSBAccessoryPairingStore()
+        let storage = MockVMStorageService()
         let library = VMLibrary(
-            storageService: MockVMStorageService(),
+            storageService: storage,
             snapshotStore: VMSnapshotStore(),
             lifecycle: VMLifecycleCoordinator(
                 virtualizationService: MockVirtualizationService(),
@@ -809,7 +881,7 @@ struct VMLibraryTests {
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
-        return (library, store)
+        return (library, store, storage)
     }
 
     private func pairing(key: String) -> USBAccessoryPairing {
@@ -818,34 +890,36 @@ struct VMLibraryTests {
             receptacleLabel: "Port-USB-C@2", pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
     }
 
-    @Test("wirePersistence mirrors the pairings the bundle holds")
-    func wirePersistenceLoadsPairings() {
-        let (library, store) = makePairingLibrary()
-        let instance = VMInstanceFixture.make(name: "Paired VM")
-        store.setPairings(
-            USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: instance.bundleURL)
+    @Test("A loaded VM mirrors the pairings its bundle holds")
+    func loadMirrorsPairings() async throws {
+        let (library, store, storage) = makePairingLibrary()
+        let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = try storage.bundleURL(for: config)
+        storage.bundles[bundleURL] = config
+        store.setPairings(USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: bundleURL)
 
-        library.wirePersistence(for: instance)
+        await library.loadVMs()
 
-        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
+        #expect(library.instances.first?.usbPairings.pairings.map(\.key) == ["k"])
     }
 
     @Test("A bundle with no pairings mirrors an empty set")
-    func wirePersistenceLoadsNothingForAFreshBundle() {
-        let (library, _) = makePairingLibrary()
-        let instance = VMInstanceFixture.make(name: "Fresh VM")
+    func loadMirrorsNoPairingsForAFreshBundle() async throws {
+        let (library, _, storage) = makePairingLibrary()
+        let config = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
+        storage.bundles[try storage.bundleURL(for: config)] = config
 
-        library.wirePersistence(for: instance)
+        await library.loadVMs()
 
         // A clone's bundle is a fresh directory, and the pairing file is
         // not among the ones a clone copies — so the clone starts
         // expecting nothing, rather than racing its source for one device.
-        #expect(instance.usbPairings.isEmpty)
+        #expect(library.instances.first?.usbPairings.isEmpty == true)
     }
 
     @Test("updateUSBPairings writes the bundle, and writes nothing when nothing changed")
     func updateUSBPairingsPersistsAndNoOps() {
-        let (library, store) = makePairingLibrary()
+        let (library, store, _) = makePairingLibrary()
         let instance = VMInstanceFixture.make(name: "Paired VM")
         library.wirePersistence(for: instance)
 
@@ -860,7 +934,7 @@ struct VMLibraryTests {
 
     @Test("A failed write leaves the new set in memory and reports the failure")
     func updateUSBPairingsReportsAFailedWrite() {
-        let (library, store) = makePairingLibrary()
+        let (library, store, _) = makePairingLibrary()
         let instance = VMInstanceFixture.make(name: "Paired VM")
         library.wirePersistence(for: instance)
         store.saveError = VMStorageError.bundleNotFound(instance.bundleURL)
@@ -876,7 +950,7 @@ struct VMLibraryTests {
 
     @Test("Pairing an accessory takes its key off every other virtual machine")
     func pairUSBAccessoryIsLibraryWide() {
-        let (library, _) = makePairingLibrary()
+        let (library, _, _) = makePairingLibrary()
         let first = VMInstanceFixture.make(name: "First")
         let second = VMInstanceFixture.make(name: "Second")
         for instance in [first, second] {

@@ -1036,9 +1036,8 @@ struct VMInstanceTests {
         instance: VMInstance, baseline: VMSnapshot, temp: URL
     ) {
         let baseline = VMSnapshot(name: "Ephemeral")
-        let instance = VMInstanceFixture.make(name: "Ephemeral VM", phase: .suspended) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = VMInstanceFixture.make(name: "Ephemeral VM", phase: .suspended)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         let temp = instance.bundleURL
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
@@ -1087,7 +1086,7 @@ struct VMInstanceTests {
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
         try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
 
-        instance.configuration.applyEphemeralMode(enabled: false, baseline: nil)
+        instance.hostState.applyEphemeralMode(enabled: false, baseline: nil)
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
@@ -1446,7 +1445,7 @@ struct VMInstanceTests {
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
     }
 
     @Test("Each boot attempt's context carries its own recovery-boot flag")
@@ -1546,11 +1545,11 @@ struct VMInstanceTests {
         // .waiting (e.g. they wipe + reinstall the VM) is not silently
         // suppressed by their old preference.
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.configuration.agentInstallNudgeDismissed = true
+        instance.hostState.agentInstallNudgeDismissed = true
 
         var persistCallCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             persistCallCount += 1
             return true
         }
@@ -1559,7 +1558,7 @@ struct VMInstanceTests {
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
         #expect(persistCallCount == 1)
     }
 
@@ -1572,8 +1571,8 @@ struct VMInstanceTests {
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
 
         var persistCallCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             persistCallCount += 1
             return true
         }
@@ -1591,8 +1590,8 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled()
         // Default: agentInstallNudgeDismissed == false
         var persistCallCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             persistCallCount += 1
             return true
         }
@@ -1613,11 +1612,11 @@ struct VMInstanceTests {
         // preference nothing restores — a dropped channel is not enough to
         // reverse it.
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.configuration.agentInstallNudgeDismissed = true
+        instance.hostState.agentInstallNudgeDismissed = true
 
         var persistCallCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             persistCallCount += 1
             return true
         }
@@ -1634,7 +1633,7 @@ struct VMInstanceTests {
         // The badge still escalates — that is the whole point of #706.
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
-        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+        #expect(instance.hostState.agentInstallNudgeDismissed == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(persistCallCount == persistsAfterHello)
     }
@@ -1729,8 +1728,8 @@ struct VMInstanceTests {
         // What the library answers when the write threw or the mutation was
         // refused: the new value stands in memory, and a caller that needs
         // memory and disk to agree has to be told they do not.
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return false
         }
 
@@ -1753,8 +1752,8 @@ struct VMInstanceTests {
     func recordObservedPersistsOnChange() {
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.0")
         var savedConfig: VMConfiguration?
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             savedConfig = instance.configuration
             return true
         }
@@ -1773,8 +1772,8 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(
             name: "Fresh", guestOS: .macOS, phase: .running(sessionID: UUID()))
         var saveCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             saveCount += 1
             return true
         }
@@ -1792,8 +1791,8 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
         var saveCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             saveCount += 1
             return true
         }
@@ -1816,8 +1815,8 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
         var saveCount = 0
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             saveCount += 1
             return true
         }
@@ -1835,8 +1834,8 @@ struct VMInstanceTests {
         // one — Unknown beats stale.
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
 
@@ -1851,8 +1850,8 @@ struct VMInstanceTests {
         // lastSeen must differ from the reported version so the persist guard
         // doesn't short-circuit before the auto-eject hook.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         var fired = 0
@@ -1870,8 +1869,8 @@ struct VMInstanceTests {
         // sentinel, so "0.0.1" genuinely classifies as outdated.
         try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         var fired = 0
@@ -1890,8 +1889,8 @@ struct VMInstanceTests {
         // same-version reconnect — even when an OS-version change makes the
         // write itself go through.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: bundled)
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         var fired = 0

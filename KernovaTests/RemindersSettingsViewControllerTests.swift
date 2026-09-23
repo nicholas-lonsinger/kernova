@@ -329,7 +329,7 @@ struct RemindersSettingsViewControllerTests {
     func disabledPerVMRowKeepsItsState() throws {
         let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
         defer { controller.viewDidDisappear() }
-        viewModel.instances[0].configuration.agentInstallNudgeDismissed = true
+        viewModel.instances[0].hostState.agentInstallNudgeDismissed = true
         viewModel.agentInstallPromptDisabled = true
         controller.viewWillAppear()
 

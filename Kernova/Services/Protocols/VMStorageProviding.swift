@@ -8,6 +8,10 @@ protocol VMStorageProviding: Sendable {
     func listVMBundles() throws -> [URL]
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration
     func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws
+    /// Reads the bundle's host state, answering the defaults for a bundle that
+    /// holds none and throwing for a file that cannot be read.
+    func loadHostState(from bundleURL: URL) throws -> VMHostState
+    func saveHostState(_ hostState: VMHostState, to bundleURL: URL) throws
     func createVMBundle(_ configuration: VMConfiguration, at bundleURL: URL) throws
     func publishBundle(from stagedURL: URL, to bundleURL: URL) throws
     @discardableResult

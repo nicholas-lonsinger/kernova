@@ -388,7 +388,7 @@ final class SidebarViewController: NSViewController {
                     showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                         for: instance,
                         installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
-                    showsEphemeralAccessory: instance.configuration.ephemeralModeEnabled
+                    showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled
                 )
             }.max() ?? 0
 

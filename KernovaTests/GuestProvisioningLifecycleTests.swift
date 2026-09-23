@@ -37,8 +37,8 @@ struct GuestProvisioningLifecycleTests {
         }
         // Wired as the library wires it, so a configuration write reaches the
         // configuration the way it does in the app.
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         return instance

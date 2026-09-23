@@ -41,6 +41,23 @@ final class VMInstance {
     /// wrote there.
     var configuration: VMConfiguration
 
+    /// Kernova's own state for this VM, mirrored from `host-state.json`.
+    ///
+    /// Changed through ``VMLibrary/updateSettings(of:mutate:)``, which keeps
+    /// this and the file in step. A snapshot revert installs a new
+    /// ``configuration`` and leaves this as it was.
+    var hostState = VMHostState()
+
+    /// ``configuration`` and ``hostState`` as one value; a set assigns only the
+    /// half that changed.
+    var settings: VMSettings {
+        get { VMSettings(configuration: configuration, hostState: hostState) }
+        set {
+            if newValue.configuration != configuration { configuration = newValue.configuration }
+            if newValue.hostState != hostState { hostState = newValue.hostState }
+        }
+    }
+
     /// Where this VM is in its lifecycle — the one stored value its status, its
     /// failure message and every liveness predicate here are read off.
     ///
@@ -235,14 +252,14 @@ final class VMInstance {
     /// whole session, not just at the moment of boot.
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
-    /// Performs a host-side mutation of this instance's configuration and routes
-    /// it through the library's `updateConfiguration` pipeline (persist + apply
-    /// live policy), answering whether the result reached disk.
+    /// Performs a host-side mutation of this instance's settings and routes it
+    /// through the library's `updateSettings` pipeline (persist + apply live
+    /// policy), answering whether the result reached disk.
     ///
     /// Wired by `VMLibrary.wirePersistence(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> Bool)?
+    var onUpdateSettings: (@MainActor ((inout VMSettings) -> Void) -> Bool)?
 
     /// Fired when the guest agent handshakes a new version that is current
     /// (matches or exceeds what the host bundles) — i.e. an install/update just
@@ -271,21 +288,26 @@ final class VMInstance {
     /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
-    /// Applies a configuration mutation, routing it through the persistence
-    /// pipeline when `onUpdateConfiguration` is wired.
+    /// Applies a settings mutation, routing it through the persistence pipeline
+    /// when `onUpdateSettings` is wired.
     ///
-    /// - Returns: whether the new configuration reached disk, on the terms
-    ///   `VMLibrary.updateConfiguration(of:mutate:)` states — a caller that
-    ///   needs memory and disk to agree reads it. An instance with no
-    ///   persistence wired has no bundle to disagree with, so it answers
-    ///   `true`.
+    /// - Returns: whether the new settings reached disk, on the terms
+    ///   `VMLibrary.updateSettings(of:mutate:)` states — a caller that needs
+    ///   memory and disk to agree reads it. An instance with no persistence
+    ///   wired has no bundle to disagree with, so it answers `true`.
     @discardableResult
-    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        guard let onUpdateConfiguration else {
-            mutate(&configuration)
+    func performSettingsMutation(_ mutate: (inout VMSettings) -> Void) -> Bool {
+        guard let onUpdateSettings else {
+            mutate(&settings)
             return true
         }
-        return onUpdateConfiguration(mutate)
+        return onUpdateSettings(mutate)
+    }
+
+    /// ``performSettingsMutation(_:)`` for a mutation of the configuration alone.
+    @discardableResult
+    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
+        performSettingsMutation { mutate(&$0.configuration) }
     }
 
     /// The current install/version/liveness state of the guest agent for this VM.
@@ -783,8 +805,8 @@ final class VMInstance {
     /// The one read every ephemeral path gates on, so a mode left on with a
     /// baseline that has gone reverts nothing rather than failing at power-off.
     var ephemeralBaselineSnapshot: VMSnapshot? {
-        guard configuration.ephemeralModeEnabled,
-            let id = configuration.ephemeralBaselineSnapshotID
+        guard hostState.ephemeralModeEnabled,
+            let id = hostState.ephemeralBaselineSnapshotID
         else { return nil }
         return snapshotManifest.snapshot(id: id)
     }
@@ -1485,12 +1507,12 @@ final class VMInstance {
                 // reversing a preference nothing restores needs better evidence
                 // than one dropped channel.
                 if !armed.hasSeenAgentThisSession,
-                    self.configuration.agentInstallNudgeDismissed
+                    self.hostState.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performConfigurationMutation {
-                        $0.agentInstallNudgeDismissed = false
-                        $0.lastSeenGuestOSVersion = nil
+                    self.performSettingsMutation {
+                        $0.hostState.agentInstallNudgeDismissed = false
+                        $0.configuration.lastSeenGuestOSVersion = nil
                     }
                 }
             }

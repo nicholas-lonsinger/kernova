@@ -104,7 +104,7 @@ struct AppPreferences {
     /// VM, defaulting to `false`.
     ///
     /// Suppresses only the gentle `.waiting` prompt, matching the scope of the
-    /// per-VM `VMConfiguration.agentInstallNudgeDismissed` flag it overrides.
+    /// per-VM `VMHostState.agentInstallNudgeDismissed` flag it overrides.
     /// Read and written through `VMLibraryViewModel.agentInstallPromptDisabled`,
     /// whose `@Observable` mirror is what wakes the panes that render it.
     var agentInstallPromptDisabled: Bool {

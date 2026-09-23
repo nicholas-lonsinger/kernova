@@ -321,7 +321,8 @@ struct VMOverviewSummaryTests {
         #expect(ephemeral(instance)?.isEnabled == true)
 
         // A VM already in the mode can always be taken back out of it.
-        let stuck = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: nil) }
+        let stuck = makeInstance()
+        stuck.hostState.applyEphemeralMode(enabled: true, baseline: nil)
         #expect(ephemeral(stuck)?.isEnabled == true)
         #expect(ephemeral(stuck)?.isOn == true)
     }

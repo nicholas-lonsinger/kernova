@@ -9,7 +9,6 @@ struct VMConfigurationCloneTests {
         name: String = "My VM",
         guestOS: VMGuestOS = .linux,
         bootMode: VMBootMode = .efi,
-        displayPreference: VMDisplayPreference = .fullscreen,
         sharedDirectories: [SharedDirectory]? = nil,
         hardwareModelData: Data? = nil
     ) -> VMConfiguration {
@@ -17,7 +16,6 @@ struct VMConfigurationCloneTests {
             name: name,
             guestOS: guestOS,
             bootMode: bootMode,
-            displayPreference: displayPreference,
             hardwareModelData: hardwareModelData,
             sharedDirectories: sharedDirectories
         )
@@ -165,38 +163,6 @@ struct VMConfigurationCloneTests {
         let hwData = Data([0x01, 0x02, 0x03])
         let clone = makeConfig(hardwareModelData: hwData).clonedForNewInstance(existingNames: [])
         #expect(clone.hardwareModelData == hwData)
-    }
-
-    // MARK: - Reset Fields
-
-    @Test("Clone resets displayPreference to inline")
-    func cloneResetsDisplayPreference() {
-        let clone = makeConfig(displayPreference: .fullscreen).clonedForNewInstance(existingNames: [])
-        #expect(clone.displayPreference == .inline)
-    }
-
-    @Test("Clone resets lastFullscreenDisplayID to nil")
-    func cloneResetsLastFullscreenDisplayID() {
-        var config = makeConfig()
-        config.lastFullscreenDisplayID = 4_280_803_137
-        let clone = config.clonedForNewInstance(existingNames: [])
-        #expect(clone.lastFullscreenDisplayID == nil)
-    }
-
-    @Test("Clone resets agentInstallNudgeDismissed to false")
-    func cloneResetsAgentInstallNudgeDismissed() {
-        var config = makeConfig()
-        config.agentInstallNudgeDismissed = true
-        let clone = config.clonedForNewInstance(existingNames: [])
-        #expect(clone.agentInstallNudgeDismissed == false)
-    }
-
-    @Test("Clone resets startsAutomaticallyOnLaunch to false")
-    func cloneResetsStartsAutomaticallyOnLaunch() {
-        var config = makeConfig()
-        config.startsAutomaticallyOnLaunch = true
-        let clone = config.clonedForNewInstance(existingNames: [])
-        #expect(clone.startsAutomaticallyOnLaunch == false)
     }
 
     // MARK: - Shared Directories

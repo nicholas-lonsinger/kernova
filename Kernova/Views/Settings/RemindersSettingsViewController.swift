@@ -245,7 +245,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
                 for instance in viewModel.instances {
                     _ = instance.id
                     _ = instance.name
-                    _ = instance.configuration.agentInstallNudgeDismissed
+                    _ = instance.hostState.agentInstallNudgeDismissed
                 }
             },
             apply: { [weak self] in
@@ -340,7 +340,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         vmOverrideCaption.isHidden = !showOverrideCaption
 
         for (instance, toggle, label) in vmSwitches {
-            toggle.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
+            toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
             toggle.isEnabled = !overridden
             // AppKit fades the disabled switch but not its label, which leaves
             // the row half-lit; gray the text in step so the row reads as inert.

@@ -298,12 +298,12 @@ struct VMSettingsOverviewTests {
     func cardSwitchWritesAndPanelFollows() throws {
         let (vc, instance, viewModel) = makeController()
         let toggle = try #require(cardSwitch(.autoStart, in: try card(.general, in: vc)))
-        #expect(instance.configuration.startsAutomaticallyOnLaunch == false)
+        #expect(instance.hostState.startsAutomaticallyOnLaunch == false)
 
         toggle.state = .on
         toggle.sendAction(toggle.action, to: toggle.target)
 
-        #expect(instance.configuration.startsAutomaticallyOnLaunch == true)
+        #expect(instance.hostState.startsAutomaticallyOnLaunch == true)
         reapply(vc, (instance, viewModel))
         vc.showCategory(.general)
         let panelSwitch = try #require(

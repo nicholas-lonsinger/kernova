@@ -245,7 +245,7 @@ struct VMSettingsSharingPanelTests {
 
         toggle.state = .off
         toggle.sendAction(toggle.action, to: toggle.target)
-        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+        #expect(instance.hostState.agentInstallNudgeDismissed == true)
     }
 
     /// The app-wide preference is not overridable per VM, so the switch goes
@@ -264,7 +264,7 @@ struct VMSettingsSharingPanelTests {
         #expect(!toggle.isEnabled)
         #expect(visibleLabel(VMSettingsSharingPanelViewController.installPromptDisabledCaption, in: vc.view))
         // Overridden, not rewritten: the row still shows this VM's own choice.
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
         #expect(toggle.state == .on)
 
         viewModel.agentInstallPromptDisabled = false

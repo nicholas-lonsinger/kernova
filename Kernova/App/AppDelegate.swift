@@ -556,7 +556,7 @@ extension AppDelegate: MainMenuHosting {
 
 extension AppDelegate: DisplayBootGeometryProviding {
     func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
-        switch instance.configuration.displayPreference {
+        switch instance.hostState.displayPreference {
         case .popOut:
             // `start` opens the display window before consulting this, and
             // `setFrameAutosaveName` restores the saved frame at init, so the

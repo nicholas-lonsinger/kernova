@@ -123,6 +123,11 @@ final class VMLibraryViewModel {
         library.updateConfiguration(of: instance, mutate: mutate)
     }
 
+    @discardableResult
+    func updateSettings(of instance: VMInstance, mutate: (inout VMSettings) -> Void) -> Bool {
+        library.updateSettings(of: instance, mutate: mutate)
+    }
+
     // MARK: - Command Forwarding
 
     // Headless reads and gates the UI enables its commands from, each
@@ -676,7 +681,7 @@ final class VMLibraryViewModel {
     /// bring-up's own readying, and a gesture in the library is not a request
     /// to be taken to another window.
     private func focusInlineDisplay(for instance: VMInstance) {
-        guard instance.configuration.displayPreference == .inline else { return }
+        guard instance.hostState.displayPreference == .inline else { return }
         selectedID = instance.id
         deliverInlineFocus(to: instance)
     }
@@ -1220,23 +1225,24 @@ final class VMLibraryViewModel {
     /// Sets whether this VM's agent-install nudge is dismissed and persists the
     /// choice.
     ///
-    /// The single write path for the per-VM `agentInstallNudgeDismissed` flag:
-    /// `true` silences the `.waiting` nudge, `false` re-arms it.
+    /// The single path a user's choice for the per-VM
+    /// `agentInstallNudgeDismissed` flag takes: `true` silences the `.waiting`
+    /// nudge, `false` re-arms it.
     func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance) {
-        guard instance.configuration.agentInstallNudgeDismissed != dismissed else { return }
+        guard instance.hostState.agentInstallNudgeDismissed != dismissed else { return }
         #log(
             Self.logger, .notice,
             "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
         )
-        updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
+        updateSettings(of: instance) { $0.hostState.agentInstallNudgeDismissed = dismissed }
     }
 
     /// Re-arms the agent-install nudge everywhere: clears the app-wide
     /// suppression *and* every VM's dismissed flag, so each VM's `.waiting`
     /// nudge can surface again.
     ///
-    /// Each VM's flag lives in its own bundle configuration and is persisted
-    /// individually; VMs already armed no-op.
+    /// Each VM's flag lives in its own bundle and is persisted individually;
+    /// VMs already armed no-op.
     func resetAllAgentInstallNudges() {
         agentInstallPromptDisabled = false
         for instance in instances {
@@ -1255,7 +1261,7 @@ final class VMLibraryViewModel {
         instances
             .filter {
                 $0.configuration.guestOS == .macOS
-                    && $0.configuration.startsAutomaticallyOnLaunch
+                    && $0.hostState.startsAutomaticallyOnLaunch
             }
             .map(\.name)
     }
@@ -1277,7 +1283,7 @@ final class VMLibraryViewModel {
     /// goes through the verbs rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
     func startAutomaticVMsForLaunch() async {
-        let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
+        let marked = instances.filter { $0.hostState.startsAutomaticallyOnLaunch }
         guard !marked.isEmpty else {
             #log(Self.logger, .debug, "Launch auto-start: no VMs are marked to start automatically")
             return
@@ -1311,7 +1317,7 @@ final class VMLibraryViewModel {
             // previous iteration's boot is what can make the next one a
             // duplicate-identity conflict. The marking is this pass's own
             // criterion; what the VM's state admits is the catalog's.
-            guard instance.configuration.startsAutomaticallyOnLaunch,
+            guard instance.hostState.startsAutomaticallyOnLaunch,
                 let step = capabilities.standingBringUp(for: instance)
             else {
                 if capabilities.owesGuestAccountAnswer(instance) {
