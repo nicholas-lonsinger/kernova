@@ -184,9 +184,9 @@ final class MacOSInstallService {
                 #log(logger, .error, "Restore image path is a directory: '\(reportedPath, privacy: .private)'")
                 throw MacOSInstallError.restoreImageNotAFile(path: reportedPath)
             case .notReadable, .notWritable:
-                // `resolveFile` only throws these when `requireWritable` is set,
-                // which we don't — VZ opening the file is the authoritative
-                // readability test.
+                // `resolveFile` never throws `.notReadable`, and throws
+                // `.notWritable` only under `requireWritable`, which this call
+                // doesn't set — VZ opening the file is the readability test.
                 #log(logger, .fault, "Unexpected \(String(describing: error), privacy: .public) for restore image")
                 assertionFailure("Unexpected PathValidation failure for restore image: \(error)")
                 throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
