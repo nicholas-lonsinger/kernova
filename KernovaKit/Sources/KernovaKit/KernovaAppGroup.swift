@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import KernovaLogging
 import Security
@@ -13,9 +14,6 @@ import Security
 public enum KernovaAppGroup {
     /// What both entitlement files claim behind `$(TeamIdentifierPrefix)`.
     public static let identifierSuffix = "app.kernova"
-
-    /// The command socket's leaf name inside the group container.
-    public static let socketFileName = "kernova.sock"
 
     /// What the command-line tool is called, on disk and on a command line.
     public static let commandLineToolName = "kernova"
@@ -49,22 +47,35 @@ public enum KernovaAppGroup {
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier)
     }
 
-    /// Where the command socket lives, `nil` when there is no container to
-    /// hold it.
-    public static func socketURL() -> URL? {
-        containerURL()?.appendingPathComponent(socketFileName, isDirectory: false)
+    /// The command socket of the copy of Kernova at `appBundle`, as the
+    /// filesystem path the socket calls take, `nil` when there is no container
+    /// to hold it.
+    ///
+    /// Every copy answers on its own socket, named for its bundle's resolved
+    /// path: the app passes its own bundle and the tool the bundle it is
+    /// inside, so the two ends name one socket and no two copies share one.
+    public static func socketPath(forAppBundle appBundle: URL) -> String? {
+        guard let container = containerURL() else { return nil }
+        return socketPath(forAppBundle: appBundle, in: container)
     }
 
-    /// The command socket's filesystem path, which is the form the socket calls
-    /// take.
-    ///
-    /// Both ends read it here, so neither can bind or dial a path the other
-    /// spelled differently.
-    public static func socketPath() -> String? {
-        socketURL()?.withUnsafeFileSystemRepresentation { representation in
-            representation.map { String(cString: $0) }
-        }
+    /// ``socketPath(forAppBundle:)`` inside `container`.
+    static func socketPath(forAppBundle appBundle: URL, in container: URL) -> String? {
+        let bundlePath = appBundle.resolvingSymlinksInPath().standardizedFileURL.path
+        let name = SHA256.hash(data: Data(bundlePath.utf8))
+            .prefix(socketNameDigestBytes)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return container.appendingPathComponent("\(name).sock", isDirectory: false)
+            .withUnsafeFileSystemRepresentation { representation in
+                representation.map { String(cString: $0) }
+            }
     }
+
+    /// Leading bytes of the bundle-path digest a socket's name carries: enough
+    /// to keep every copy on a Mac apart, and few enough that the whole path
+    /// fits `sun_path` under a long account name.
+    private static let socketNameDigestBytes = 6
 
     private static let resolved: String? = {
         guard let task = SecTaskCreateFromSelf(nil),

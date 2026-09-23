@@ -134,7 +134,7 @@ final class AppResidencyController: WindowResidencyHosting {
         let socket = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
-            socketPath: KernovaAppGroup.socketPath(),
+            socketPath: KernovaAppGroup.socketPath(forAppBundle: Bundle.main.bundleURL),
             awaitReady: { await readiness.ready() },
             onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() })
         socket.start()

@@ -4,8 +4,8 @@ Read this before checking a change in the running app, against a guest or throug
 
 ## Launching the build
 
-Verify only a build that is the one Kernova running. An `open`, by path or by bundle identifier, starts a new instance beside a running copy, and the newest instance takes over the `kernova` control socket while both load the same VM library.
-A running copy you did not launch belongs to the maintainer or another session, so ask before quitting it. Quit your own with `kernova quit`: ⌘Q only closes its windows while it keeps running in the menu bar.
+Drive a build with the `kernova` tool inside it, `Kernova.app/Contents/Helpers/kernova`: each copy of Kernova answers only the tool in its own bundle, and the one on `PATH` links into whichever copy installed it. An `open`, by path or by bundle identifier, starts a new instance beside a running copy, and every copy loads the same VM library.
+A running copy you did not launch belongs to the maintainer or another session, so ask before quitting it. Quit your own with its tool's `kernova quit`: ⌘Q only closes its windows while it keeps running in the menu bar.
 
 ## Against a guest
 

@@ -112,8 +112,6 @@ final class VMCommandSocketListener {
             return
         }
         self.listener = listener
-        // Two copies of the app signed by the same team share this path, and
-        // the second to bind wins after unlinking the first's socket file.
         #log(
             Self.logger, .notice,
             "Listening for VM commands at \(socketPath, privacy: .public)")
