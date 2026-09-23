@@ -89,7 +89,9 @@ Every review finding — your own reading of adjacent code included — gets one
 | **Annotate** | A last resort: a `RATIONALE:` comment only for a concern a review actually raised or an alternative actually tried and failed — one a reviewer *would* raise is not enough; `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar) |
 | **Dismiss** | Everything else — a finding that fails the severity bar and doesn't clear the annotation bar |
 
-**The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). A path that needs a contrived sequence, a theoretical interleaving, or a state no supported flow produces is not reachable. A refactor or coverage finding clears it only by a concrete cost of leaving it.
+**The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). A path no supported flow can produce is not reachable. A refactor or coverage finding clears it only by a concrete cost of leaving it.
+
+**An improbable defect is fixed by design or not at all.** A race or edge case that truly exists but that a user would almost never hit does not earn a patch: one more check, gate, or flag adds weight and moves no metric a user sees. It is **Fix now** or **Fix later** only as a redesign that removes it by construction, and **Dismiss** when no such design is in view.
 
 **Triage converges.** Each review round leaves less open work than the last, so an issue is the rare outcome: being out of scope never earns **Fix later** on its own. A finding in code this change wrote or reworked is **Fix now** or **Dismiss**. When a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain: dismiss rather than filing the next link, and don't annotate it.
 
