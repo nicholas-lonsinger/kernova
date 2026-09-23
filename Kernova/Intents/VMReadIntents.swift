@@ -33,7 +33,7 @@ struct GetVMStateIntent: AppIntent {
 struct GetVMIPAddressIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Virtual Machine IP Address"
     static let description: IntentDescription? = IntentDescription(
-        "Answers the address Kernova reserved for a virtual machine's guest, if it has one.",
+        "Answers the address Kernova last saw a virtual machine's guest use on its network, if it has seen one.",
         categoryName: "Virtual Machines",
         resultValueName: "IP Address")
 

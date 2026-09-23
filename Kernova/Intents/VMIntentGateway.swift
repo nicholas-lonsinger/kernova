@@ -117,7 +117,7 @@ final class VMIntentGateway {
 
     func ipAddress(of id: UUID) async throws -> String? {
         try await perform(.ipAddress, on: id) {
-            try self.commands.ipAddress(of: .id(id)).reservedAddress
+            try self.commands.ipAddress(of: .id(id)).address
         }
     }
 

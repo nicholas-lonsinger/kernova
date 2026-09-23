@@ -28,7 +28,7 @@ struct SettingsTabViewControllerTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         for index in 1...vmCount {
             viewModel.instances.append(

@@ -173,17 +173,12 @@ struct VMInstanceTests {
     @Test("tearDownSession is idempotent")
     func tearDownSessionIdempotent() {
         let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: UUID()))
-        var tornDown = 0
-        instance.onSessionTornDown = { tornDown += 1 }
         instance.tearDownSession(restingAt: .suspended)
         instance.tearDownSession(restingAt: .suspended)
 
         #expect(instance.status == .paused)
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
-        // The hook fires on every call, context or not — the library uses it
-        // for work that can only run while nothing holds the bundle.
-        #expect(tornDown == 2)
     }
 
     @Test("A removable-media reconcile debt is marked and cleared only for the live session")
@@ -840,151 +835,6 @@ struct VMInstanceTests {
         instance.applyLivePolicy(oldConfig: old, newConfig: instance.configuration)
 
         #expect(device.appliedPlans == [.nat])
-    }
-
-    // MARK: - mayHoldAttachment
-
-    /// The window between a session being created and its recovery coordinator
-    /// being built: the configuration build has already attached the VM to the
-    /// app-managed network, so answering from the absent coordinator would
-    /// invite `rebuildNetworkIfIdle` to recreate the network under it.
-    @Test("A live session holds its configured network before its coordinator exists")
-    func mayHoldAttachmentBeforeTheCoordinatorIsBuilt() {
-        let instance = VMInstanceFixture.make(phase: .starting(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-        #expect(instance.networkAttachmentCoordinator == nil)
-
-        #expect(instance.mayHoldAttachment(on: .shared))
-        #expect(!instance.mayHoldAttachment(on: .hostOnly))
-    }
-
-    @Test(
-        "A sessionless phase holds its network only while a session context is open",
-        arguments: [
-            VMLifecyclePhase.installing(sessionID: nil),
-            VMLifecyclePhase.starting(sessionID: nil),
-            VMLifecyclePhase.restoringSavedState(sessionID: nil),
-        ])
-    func mayHoldAttachmentNeedsASessionContext(phase: VMLifecyclePhase) {
-        let instance = VMInstanceFixture.make(phase: phase)
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-
-        // A download, or a lock-contention retry's backoff: transitioning,
-        // with no build behind it.
-        #expect(!instance.mayHoldAttachment(on: .shared))
-
-        // The configuration build runs inside the context, and takes the
-        // attachment before anything can be read back.
-        instance.beginSessionContext()
-        #expect(instance.mayHoldAttachment(on: .shared))
-        #expect(!instance.mayHoldAttachment(on: .hostOnly))
-
-        instance.tearDownSession(restingAt: .stopped)
-        #expect(!instance.mayHoldAttachment(on: .shared))
-    }
-
-    @Test(
-        "Opening a session context asks to join the app-managed network the configuration names",
-        arguments: [
-            (VMNetworkMode.shared, true, [VmnetNetworkKind.shared]),
-            (VMNetworkMode.hostOnly, true, [VmnetNetworkKind.hostOnly]),
-            (VMNetworkMode.bridged, true, []),
-            (VMNetworkMode.shared, false, []),
-        ])
-    func beginSessionContextAsksToJoin(
-        mode: VMNetworkMode, networkEnabled: Bool, joined expected: [VmnetNetworkKind]
-    ) {
-        let instance = VMInstanceFixture.make(phase: .starting(sessionID: nil))
-        instance.configuration.networkEnabled = networkEnabled
-        instance.configuration.networkMode = mode
-        var joined: [VmnetNetworkKind] = []
-        instance.onJoiningVmnetNetwork = { joined.append($0) }
-
-        instance.beginSessionContext()
-
-        #expect(joined == expected)
-        instance.tearDownSession(restingAt: .stopped)
-    }
-
-    @Test("A live session with networking off holds nothing")
-    func mayHoldAttachmentWithNetworkingOff() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = false
-        instance.configuration.networkMode = .shared
-
-        #expect(!instance.mayHoldAttachment(on: .shared))
-        #expect(!instance.mayHoldAttachment(on: .hostOnly))
-    }
-
-    /// Once the coordinator exists its mirror of the installed attachment is
-    /// authoritative — a live mode switch leaves it disagreeing with the
-    /// configuration in both directions until the swap lands, and an
-    /// unentitled build realizes Shared as plain NAT, on no app-managed
-    /// network at all.
-    @Test(
-        "The coordinator's applied attachment answers once it exists",
-        arguments: [
-            (NetworkAttachmentPlan.sharedVmnet, true),
-            (NetworkAttachmentPlan.hostOnly, false),
-            (NetworkAttachmentPlan.nat, false),
-        ])
-    func mayHoldAttachmentReadsTheAppliedPlan(plan: NetworkAttachmentPlan, holdsShared: Bool) {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
-        _ = attachNetworkCoordinator(to: instance, device: MockNetworkDeviceControl(plan: plan))
-
-        #expect(instance.mayHoldAttachment(on: .shared) == holdsShared)
-        #expect(instance.mayHoldAttachment(on: .hostOnly) == (plan == .hostOnly))
-    }
-
-    @Test("suspectsDefectiveNetwork answers from the coordinator, and claims nothing without one")
-    func suspectsDefectiveNetworkReadsTheCoordinator() async {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .hostOnly
-        // Only a live coordinator can claim a network defective.
-        #expect(!instance.suspectsDefectiveNetwork(on: .hostOnly))
-
-        let device = MockNetworkDeviceControl()
-        device.refusedPlans = [.hostOnly]
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.materializeFails = true
-        let coordinator = attachNetworkCoordinator(
-            to: instance, device: device, vmnetNetworks: vmnet)
-        coordinator.activate()
-
-        #expect(instance.suspectsDefectiveNetwork(on: .hostOnly))
-        #expect(!instance.suspectsDefectiveNetwork(on: .shared))
-        await coordinator.vmnetMaterializationTaskForTesting?.value
-        coordinator.stop()
-    }
-
-    @Test("onNetworkArbitrationNeeded fires on going pending and on a defect report")
-    func networkArbitrationHookFiresOnBothTriggers() async {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .hostOnly
-        var arbitrations = 0
-        instance.onNetworkArbitrationNeeded = { arbitrations += 1 }
-        let device = MockNetworkDeviceControl()
-        device.refusedPlans = [.hostOnly]
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.materializeFails = true
-        let coordinator = attachNetworkCoordinator(
-            to: instance, device: device, vmnetNetworks: vmnet)
-
-        coordinator.activate()
-
-        // Going pending released whatever attachment this VM held, and the
-        // ladder burning out reports the network suspect: two reasons for the
-        // library to re-run its pass.
-        #expect(instance.networkAttachmentPending)
-        #expect(arbitrations == 2)
-        await coordinator.vmnetMaterializationTaskForTesting?.value
-        coordinator.stop()
     }
 
     @Test("tearDownSession stops network recovery and clears the pending flag")

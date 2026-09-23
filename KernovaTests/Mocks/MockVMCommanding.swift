@@ -60,7 +60,7 @@ final class MockVMCommanding: VMCommanding {
     /// The library `list()` answers with, and what the recorded verbs address.
     var library: [VMSummary] = []
     /// The address `ipAddress(of:)` answers with.
-    var reservedAddress: GuestIPAddress = .unavailable
+    var guestAddress: GuestIPAddress = .unavailable
     /// The snapshot `takeSnapshot` answers with, built from its arguments when
     /// left unset.
     var snapshotToReturn: SnapshotSummary?
@@ -91,8 +91,6 @@ final class MockVMCommanding: VMCommanding {
     var snapshotBytes: [UUID: UInt64] = [:]
     /// What `sharedDirectories(of:)` answers per VM.
     var sharedDirectoriesByVM: [UUID: [SharedDirectorySummary]] = [:]
-    /// What `portForwardingRules(of:)` answers per VM.
-    var portForwardingRulesByVM: [UUID: [PortForwardingRule]] = [:]
     /// What `usbAccessories(of:)` answers per VM.
     var usbAccessoriesByVM: [UUID: [USBAccessorySummary]] = [:]
     /// What `availableUSBAccessories()` answers with.
@@ -112,7 +110,6 @@ final class MockVMCommanding: VMCommanding {
     private(set) var snapshotsSelectors: [VMSelector] = []
     private(set) var snapshotOnDiskBytesSelectors: [VMSelector] = []
     private(set) var sharedDirectoriesSelectors: [VMSelector] = []
-    private(set) var portForwardingRulesSelectors: [VMSelector] = []
     private(set) var usbAccessoriesSelectors: [VMSelector] = []
     private(set) var availableUSBAccessoriesCallCount = 0
     private(set) var usbPairingsSelectors: [VMSelector?] = []
@@ -176,8 +173,6 @@ final class MockVMCommanding: VMCommanding {
     private(set) var addSharedDirectoryCalls: [(selector: VMSelector, path: String, readOnly: Bool)] = []
     private(set) var removeSharedDirectoryCalls: [(selector: VMSelector, directory: UUID)] = []
     private(set) var removeSharedDirectoryPathCalls: [(selector: VMSelector, path: String)] = []
-    private(set) var addPortForwardingRuleCalls: [(selector: VMSelector, rule: PortForwardingRule)] = []
-    private(set) var removePortForwardingRuleCalls: [(selector: VMSelector, claim: PortForwardingHostClaim)] = []
     private(set) var attachUSBAccessoryCalls: [(selector: VMSelector, accessory: UInt64)] = []
     private(set) var detachUSBAccessoryCalls: [(selector: VMSelector, device: UUID)] = []
     private(set) var configurationCalls: [(selector: VMSelector, keys: [String]?)] = []
@@ -191,14 +186,12 @@ final class MockVMCommanding: VMCommanding {
     // MARK: - Error injection
 
     var infoError: (any Error)?
-    var portForwardingEditError: (any Error)?
     var configurationError: (any Error)?
     var setConfigurationError: (any Error)?
     var ipAddressError: (any Error)?
     var snapshotsError: (any Error)?
     var snapshotOnDiskBytesError: (any Error)?
     var sharedDirectoriesError: (any Error)?
-    var portForwardingRulesError: (any Error)?
     var usbAccessoriesError: (any Error)?
     var availableUSBAccessoriesError: (any Error)?
     var usbPairingsError: (any Error)?
@@ -298,7 +291,7 @@ final class MockVMCommanding: VMCommanding {
             diskSizeInGB: 64,
             networkMode: nil,
             macAddress: nil,
-            ipAddress: reservedAddress,
+            ipAddress: guestAddress,
             agentStatus: "notInstalled",
             hasSavedState: false,
             isEphemeral: false,
@@ -310,7 +303,7 @@ final class MockVMCommanding: VMCommanding {
         ipAddressSelectors.append(selector)
         if let ipAddressError { throw ipAddressError }
         _ = try resolve(selector)
-        return reservedAddress
+        return guestAddress
     }
 
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
@@ -330,12 +323,6 @@ final class MockVMCommanding: VMCommanding {
         sharedDirectoriesSelectors.append(selector)
         if let sharedDirectoriesError { throw sharedDirectoriesError }
         return sharedDirectoriesByVM[try resolve(selector).id] ?? []
-    }
-
-    func portForwardingRules(of selector: VMSelector) throws -> [PortForwardingRule] {
-        portForwardingRulesSelectors.append(selector)
-        if let portForwardingRulesError { throw portForwardingRulesError }
-        return portForwardingRulesByVM[try resolve(selector).id] ?? []
     }
 
     func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
@@ -693,18 +680,6 @@ final class MockVMCommanding: VMCommanding {
     ) throws {
         setSharedDirectoryReadOnlyCalls.append((selector, directory, readOnly))
         if let sharedDirectoryEditError { throw sharedDirectoryEditError }
-    }
-
-    // MARK: - Port Forwarding
-
-    func addPortForwardingRule(_ selector: VMSelector, rule: PortForwardingRule) throws {
-        addPortForwardingRuleCalls.append((selector, rule))
-        if let portForwardingEditError { throw portForwardingEditError }
-    }
-
-    func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws {
-        removePortForwardingRuleCalls.append((selector, claim))
-        if let portForwardingEditError { throw portForwardingEditError }
     }
 
     // MARK: - USB Accessories

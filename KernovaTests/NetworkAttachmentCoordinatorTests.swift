@@ -35,19 +35,6 @@ struct NetworkAttachmentCoordinatorTests {
         let eligibility: EligibilityBox
         let choiceBox: ChoiceBox
         let pendingChanges: PendingRecorder
-        let defectReports: DefectReportRecorder
-        let joins: JoinRecorder
-    }
-
-    /// Records each network the session asked to join, and how many plans the
-    /// device had applied at that moment — standing in for the library's
-    /// replace-before-join the real wiring runs.
-    @MainActor
-    private final class JoinRecorder {
-        private(set) var joins: [(kind: VmnetNetworkKind, appliedBefore: Int)] = []
-        func record(_ kind: VmnetNetworkKind, appliedBefore: Int) {
-            joins.append((kind: kind, appliedBefore: appliedBefore))
-        }
     }
 
     /// Records every pending-state callback, standing in for
@@ -56,20 +43,6 @@ struct NetworkAttachmentCoordinatorTests {
     private final class PendingRecorder {
         private(set) var values: [Bool] = []
         func record(_ value: Bool) { values.append(value) }
-    }
-
-    /// Counts the suspected-defective-network reports, standing in for the
-    /// library arbitration pass `VMInstance.onNetworkArbitrationNeeded` runs.
-    @MainActor
-    private final class DefectReportRecorder {
-        private(set) var count = 0
-        /// Run at each report, so a test can drive the arbiter's answer from
-        /// inside the report the way the real wiring does.
-        var onReport: (@MainActor () -> Void)?
-        func record() {
-            count += 1
-            onReport?()
-        }
     }
 
     private func makeHarness(
@@ -88,8 +61,6 @@ struct NetworkAttachmentCoordinatorTests {
         let eligibility = EligibilityBox()
         let choiceBox = ChoiceBox(choice)
         let pendingChanges = PendingRecorder()
-        let defectReports = DefectReportRecorder()
-        let joins = JoinRecorder()
         let coordinator = NetworkAttachmentCoordinator(
             vmName: "Test VM",
             device: device,
@@ -101,14 +72,11 @@ struct NetworkAttachmentCoordinatorTests {
             clock: clock,
             isEligible: { eligibility.isEligible },
             choice: { choiceBox.choice },
-            onPendingChange: { pendingChanges.record($0) },
-            onNetworkDefectSuspected: { defectReports.record() },
-            onJoiningVmnetNetwork: { joins.record($0, appliedBefore: device.appliedPlans.count) })
+            onPendingChange: { pendingChanges.record($0) })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
             vmnet: vmnet, observer: observer, clock: clock, eligibility: eligibility,
-            choiceBox: choiceBox, pendingChanges: pendingChanges,
-            defectReports: defectReports, joins: joins)
+            choiceBox: choiceBox, pendingChanges: pendingChanges)
     }
 
     // MARK: - Session start
@@ -169,26 +137,6 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.activate()
 
         #expect(h.device.appliedPlans == [.sharedVmnet])
-    }
-
-    @Test("A Shared ladder burning out reports the shared network suspect, dropping nothing")
-    func sharedLadderExhaustionReportsTheSharedNetwork() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
-            entitled: true,
-            retryDelays: [])
-        h.device.refusedPlans = [.sharedVmnet]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-
-        // Every Shared VM shares the one network, so dropping it is the
-        // library arbiter's call, never this session's.
-        #expect(h.vmnet.invalidatedKinds.isEmpty)
-        #expect(h.defectReports.count == 1)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .shared)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-        h.coordinator.stop()
     }
 
     @Test("A live switch between vmnet-backed modes supersedes the in-flight materialization")
@@ -264,220 +212,6 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.device.appliedPlans == [.hostOnly])
         #expect(!h.coordinator.isPending)
         #expect(h.vmnet.materializeCount == 1)
-    }
-
-    @Test("Ladder exhaustion reports the network suspect once per pending episode")
-    func ladderExhaustionReportsTheNetworkOnce() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.defectReports.count == 1)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // A later trigger while still pending exhausts the ladder again but
-        // must not report a second time — one report per episode is what
-        // bounds the recreate churn.
-        h.observer.fire()
-        #expect(h.defectReports.count == 1)
-        #expect(h.vmnet.invalidatedKinds.isEmpty)
-        h.coordinator.stop()
-    }
-
-    @Test("Attaching withdraws the suspicion, and the next episode can report again")
-    func attachingWithdrawsTheSuspicion() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // The session recovers on its own before any arbiter acted: the claim
-        // is withdrawn rather than queued, so nothing recreates the network.
-        h.device.refusedPlans = []
-        h.vmnet.materializeFails = false
-        h.observer.fire()
-        #expect(!h.coordinator.isPending)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
-
-        // A fresh pending episode is free to report again.
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-        h.device.attachmentWasDisconnected()
-        h.observer.fire()
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        #expect(h.defectReports.count == 2)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-        h.coordinator.stop()
-    }
-
-    @Test("The arbiter's recreate withdraws the suspicion and reattaches the session")
-    func recreateNudgeReattachesTheSession() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // The arbiter dropped the network and the recreate comes up healthy.
-        // The retry ladder is spent, so this nudge is the only wake-up left.
-        h.vmnet.materializedKinds = []
-        h.vmnet.materializeFails = false
-        h.device.refusedPlans = []
-        h.coordinator.vmnetNetworkWasInvalidated(.hostOnly)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        #expect(h.device.appliedPlans == [.hostOnly])
-        #expect(!h.coordinator.isPending)
-    }
-
-    @Test("A recreate of the other kind leaves this session's suspicion standing")
-    func recreateNudgeForAnotherKindIsIgnored() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        let materializedBefore = h.vmnet.materializeRequestedKinds.count
-        h.coordinator.vmnetNetworkWasInvalidated(.shared)
-
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        #expect(h.vmnet.materializeRequestedKinds.count == materializedBefore)
-        h.coordinator.stop()
-    }
-
-    @Test("A recreate that comes up just as defective is not reported again")
-    func aStillDefectiveRecreateIsNotReportedTwice() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.defectReports.count == 1)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // The arbiter recreated the network; the claim is consumed by that.
-        h.coordinator.vmnetNetworkWasInvalidated(.hostOnly)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // The recreate is just as defective — the attachment still will not
-        // hold — so the ladder burns out again. Reporting here would be a
-        // recreate loop over a network nothing can fix.
-        h.observer.fire()
-
-        #expect(h.coordinator.isPending)
-        #expect(h.defectReports.count == 1)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
-        h.coordinator.stop()
-    }
-
-    @Test("A live switch to a mode on no app-managed network withdraws the claim")
-    func aSwitchOffTheSuspectNetworkWithdrawsTheClaim() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // Bridged with no usable interface resolves to nothing, so the session
-        // never attaches and `setPending(false)` never runs — the claim has to
-        // retire on the resolved network changing, or the arbiter would keep
-        // recreating a network this VM left.
-        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0")
-        h.coordinator.configurationChanged()
-
-        #expect(h.coordinator.isPending)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
-        #expect(h.defectReports.count == 1)
-        h.coordinator.stop()
-    }
-
-    @Test("A live switch to the other vmnet mode restores the report budget")
-    func aSwitchBetweenVmnetModesRestoresTheReportBudget() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            entitled: true,
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly, .sharedVmnet]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // One report per episode bounds churn on one network, not on every
-        // network the session may move onto.
-        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
-        h.coordinator.configurationChanged()
-
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .shared)
-        #expect(h.defectReports.count == 2)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-        h.coordinator.stop()
-    }
-
-    @Test("An ineligible session drops the arbiter's nudge")
-    func recreateNudgeIsDroppedWhileIneligible() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        // A save-suspend: still active, but the reconcile a materialization
-        // would trigger is dropped on eligibility, so the task would spin for
-        // nothing. Activation at the next `.running` re-enters.
-        h.eligibility.isEligible = false
-        h.vmnet.materializeFails = false
-        h.coordinator.vmnetNetworkWasInvalidated(.hostOnly)
-
-        #expect(h.coordinator.vmnetMaterializationTaskForTesting == nil)
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        h.coordinator.stop()
-    }
-
-    @Test("A stopped session withdraws its suspicion")
-    func stopWithdrawsTheSuspicion() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            retryDelays: [])
-        h.device.refusedPlans = [.hostOnly]
-        h.vmnet.materializeFails = true
-
-        h.coordinator.activate()
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == .hostOnly)
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
-
-        h.coordinator.stop()
-
-        #expect(h.coordinator.suspectedDefectiveVmnetKind == nil)
     }
 
     @Test("A bridged VM with no usable interface goes pending, then a link event reattaches it")
@@ -728,51 +462,6 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
     }
 
-    @Test("A live switch onto another app-managed network asks to join it before attaching")
-    func liveSwitchAsksToJoinBeforeAttaching() {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
-            devicePlan: .sharedVmnet, entitled: true)
-        h.coordinator.activate()
-        // Already on the network its mode resolves to, so there is nothing to join.
-        #expect(h.joins.joins.isEmpty)
-
-        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
-        h.coordinator.configurationChanged()
-        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
-        h.coordinator.configurationChanged()
-
-        #expect(h.joins.joins.map { $0.kind } == [.hostOnly, .shared])
-        #expect(h.joins.joins.map { $0.appliedBefore } == [0, 1])
-        #expect(h.device.appliedPlans == [.hostOnly, .sharedVmnet])
-    }
-
-    @Test("A reattach to the network the session was on never asks to join, so a rejected one stays on the ladder")
-    func reattachToTheSameNetworkNeverAsksToJoin() async {
-        let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
-            devicePlan: .hostOnly,
-            retryDelays: [1, 2])
-        h.coordinator.activate()
-
-        h.device.plan = nil
-        h.coordinator.attachmentWasDisconnected(error: TestFailure("link down"))
-        for rung in 1...2 {
-            h.device.plan = nil
-            h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
-            guard let retry = h.coordinator.retryTaskForTesting else {
-                Issue.record("Expected a scheduled retry on rung \(rung)")
-                return
-            }
-            await retry.value
-            #expect(h.device.appliedPlans.count == rung + 1)
-        }
-
-        // A join could replace the network under every rejected attach and
-        // reset the ladder each time; the reattaches walk it instead.
-        #expect(h.joins.joins.isEmpty)
-    }
-
     @Test("Switching to a Host Only network that won't materialize detaches rather than staying Shared")
     func refusedHostOnlySwitchDetaches() {
         let h = makeHarness(
@@ -863,6 +552,41 @@ struct NetworkAttachmentCoordinatorTests {
         h.observer.fire()
 
         #expect(h.device.appliedPlans == [.bridged("en0")])
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("A ladder exhausted on a materialized vmnet network rests pending until the next link event")
+    func exhaustedLadderOnMaterializedNetworkRestsPending() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            entitled: true,
+            retryDelays: [1])
+        h.coordinator.activate()
+        #expect(h.device.appliedPlans == [.sharedVmnet])
+
+        // Each attach onto the network fails straight away, reported through a
+        // disconnect inside the burst window; the one rung paces the retry.
+        h.device.plan = nil
+        h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
+        guard let retry = h.coordinator.retryTaskForTesting else {
+            Issue.record("Expected a scheduled retry")
+            return
+        }
+        await retry.value
+        #expect(h.device.appliedPlans.count == 2)
+
+        // Exhausted: nothing retries, and nothing rematerializes the network.
+        h.device.plan = nil
+        h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
+        #expect(h.coordinator.retryTaskForTesting == nil)
+        #expect(h.coordinator.vmnetMaterializationTaskForTesting == nil)
+        #expect(h.vmnet.materializeCount == 0)
+        #expect(h.device.appliedPlans.count == 2)
+        #expect(h.coordinator.isPending)
+
+        h.observer.fire()
+
+        #expect(h.device.appliedPlans.count == 3)
         #expect(!h.coordinator.isPending)
     }
 

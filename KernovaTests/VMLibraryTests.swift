@@ -25,6 +25,7 @@ struct VMLibraryTests {
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        arpTable: ScriptedARPTable = ScriptedARPTable(),
         isVMNetworkingEntitled: Bool = true
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
         let library = VMLibrary(
@@ -43,7 +44,9 @@ struct VMLibraryTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
-            isVMNetworkingEntitled: isVMNetworkingEntitled
+            arpTable: arpTable,
+            isVMNetworkingEntitled: isVMNetworkingEntitled,
+            canObserveGuestAddresses: true
         )
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
@@ -294,6 +297,36 @@ struct VMLibraryTests {
 
         #expect(failures.showError == true)
         #expect(failures.errorMessage != nil)
+    }
+
+    // MARK: - Guest Addresses
+
+    @Test("A running VM switched live onto Shared is watched until its address is seen")
+    func liveSwitchOntoSharedWatchesTheGuest() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        let table = ScriptedARPTable([
+            .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
+        ])
+        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet, arpTable: table)
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.macAddress = "aa:bb:cc:dd:ee:01"
+        }
+        library.instances.append(instance)
+        library.guestAddresses.watch()
+        // Bridged is nothing the table answers for, so nothing is read.
+        #expect(library.guestAddresses.readTaskForTesting == nil)
+
+        library.updateConfiguration(of: instance) { $0.networkMode = .shared }
+
+        let loop = try #require(library.guestAddresses.readTaskForTesting)
+        try await waitForChange {
+            library.guestAddresses.address(for: instance) == .observed("192.168.64.4")
+        }
+        loop.cancel()
+        await loop.value
     }
 
     // MARK: - Selected Instance
@@ -771,7 +804,7 @@ struct VMLibraryTests {
             ),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             isVMNetworkingEntitled: true,
             usbPairingStore: store
         )

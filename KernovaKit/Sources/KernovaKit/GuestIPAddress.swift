@@ -5,26 +5,63 @@ import Foundation
 /// address.
 ///
 /// The three non-address cases are distinct questions with distinct answers: a
-/// guest that will never have an address the app can state, one whose address
-/// belongs to somebody else's DHCP, and one whose reservation exists but whose
-/// network has not published its addressing yet. Collapsing them to `nil`
-/// leaves a caller unable to tell "there will never be one" from "not yet",
-/// which is the difference between refusing and waiting.
+/// guest the app cannot see an address for at all, one whose address belongs to
+/// somebody else's DHCP, and one the app is watching but has not seen on its
+/// network. Collapsing them to `nil` leaves a caller unable to tell "there will
+/// be none" from "not yet", which is the difference between refusing and
+/// waiting.
 public enum GuestIPAddress: Codable, Sendable, Hashable {
-    /// Nothing assigns the guest an address the app can state — the row is
-    /// absent rather than empty.
+    /// Nothing the app can see states the guest's address — the row is absent
+    /// rather than empty.
     case unavailable
     /// Bridged: the guest asks the network, so there is nothing deterministic.
     case externallyAssigned
-    /// A reservation exists but the network's addressing is not known yet.
-    case pending
-    /// The address the app reserved for this guest.
-    case reserved(String)
+    /// The guest is running on an app-managed network, and the host has not
+    /// seen it use an address there.
+    case notObserved
+    /// The address the host last saw the guest use on its network.
+    case observed(String)
 
-    /// The address itself, `nil` unless the app reserved one — what a surface
+    /// The address itself, `nil` unless one was observed — what a surface
     /// answering with data alone reports, where the other cases are prose.
-    public var reservedAddress: String? {
-        guard case .reserved(let address) = self else { return nil }
+    public var address: String? {
+        guard case .observed(let address) = self else { return nil }
         return address
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, address
+    }
+
+    private enum State: String, Codable {
+        case unavailable, externallyAssigned, notObserved, observed
+    }
+
+    private var state: State {
+        switch self {
+        case .unavailable: .unavailable
+        case .externallyAssigned: .externallyAssigned
+        case .notObserved: .notObserved
+        case .observed: .observed
+        }
+    }
+
+    /// Reads the shape ``encode(to:)`` writes.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(State.self, forKey: .state) {
+        case .unavailable: self = .unavailable
+        case .externallyAssigned: self = .externallyAssigned
+        case .notObserved: self = .notObserved
+        case .observed: self = .observed(try container.decode(String.self, forKey: .address))
+        }
+    }
+
+    /// Writes the case as `state`, beside the `address` only an observed one
+    /// carries — the object `--format json` prints.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state, forKey: .state)
+        try container.encodeIfPresent(address, forKey: .address)
     }
 }

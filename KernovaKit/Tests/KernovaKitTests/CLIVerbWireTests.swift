@@ -11,13 +11,13 @@ import Testing
 struct CLIVerbWireTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .reserved("192.168.64.4"))
+        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"))
 
     private var info: VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .reserved("192.168.64.4"),
+            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.4"),
             agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova")
     }
@@ -53,11 +53,11 @@ struct CLIVerbWireTests {
     func ipAsksForTheAddress() throws {
         let exchanged = try CLIWire.exchange(
             ["ip", "Alpha"],
-            answering: VMCommandResponse(result: .ipAddress(.reserved("192.168.64.4"))),
+            answering: VMCommandResponse(result: .ipAddress(.observed("192.168.64.4"))),
             tag: "ip")
 
         #expect(exchanged.sent == [.ipAddress(.idOrName("Alpha"))])
-        #expect(try exchanged.answer.payload() == .ipAddress(.reserved("192.168.64.4")))
+        #expect(try exchanged.answer.payload() == .ipAddress(.observed("192.168.64.4")))
     }
 
     // MARK: - Lifecycle

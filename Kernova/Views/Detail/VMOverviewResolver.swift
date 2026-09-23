@@ -66,9 +66,10 @@ extension GuestIPAddress {
     /// The address as a surface states it, `nil` where there is nothing to say.
     var displayText: String? {
         switch self {
-        case .unavailable, .pending: nil
+        case .unavailable: nil
         case .externallyAssigned: "Assigned by your network"
-        case .reserved(let address): address
+        case .notObserved: "Not seen on the network"
+        case .observed(let address): address
         }
     }
 }
@@ -236,15 +237,7 @@ final class VMOverviewResolver {
                 entitled: entitlements.hasVMNetworking,
                 interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [])
         }
-        resolved.ipAddress = viewModel.reservedAddress(for: config)
-        // Rules ride the app-managed shared network, and reach the guest at the
-        // address its MAC reserves: an unentitled build attaches system NAT,
-        // which forwards nothing, the other modes carry no forwarding at all,
-        // and without a MAC there is no reservation to forward to.
-        let forwards =
-            config.networkEnabled && config.networkMode == .shared
-            && entitlements.hasVMNetworking && config.macAddress != nil
-        resolved.portForwardingRuleCount = forwards ? config.portForwardingRules.count : nil
+        resolved.ipAddress = viewModel.guestAddress(for: instance)
     }
 
     /// Reads the boot disk's capacity off the main thread. The key tags the

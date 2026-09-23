@@ -56,8 +56,9 @@ version.
   `RemovableMediaDeviceService`, and `USBAccessoryService` (macOS 27; optional
   on `VMLifecycleCoordinator` — `nil` is the capability's absence).
 - Network: `VmnetNetworkService` (process-wide), `NetworkAttachmentCoordinator`
-  (one per session, held by `VMSessionContext`), and `VMNetworkSlotRegistry`,
-  sequenced by `VMLibrary`.
+  (one per session, held by `VMSessionContext`), and `GuestAddressObserver`
+  (over `HostARPTableReader`) and `VMMACAddressRegistry`, sequenced by
+  `VMLibrary`.
 - Vsock, macOS guests: `KernovaVsockPort` and `VsockListenerHost`; per VM, a
   `VsockAdmissionGate` and two `VsockDataConnectionSink`s held by `VMInstance`;
   per session, `VsockFeatureCoordinator` (held by `VMSessionContext`) over

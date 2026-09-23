@@ -51,7 +51,7 @@ struct DetailAlertsPresenterTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
         )
         return (DetailAlertsPresenter(viewModel: viewModel), viewModel)
     }

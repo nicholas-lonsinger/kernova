@@ -7,12 +7,14 @@ import Testing
 /// Shared fixtures and view-tree lookups for the settings pane's suites — the
 /// shell's own and the six per-panel ones.
 
-/// The library the pane reads through. `vmnetNetworks` and `entitled` reach the
-/// slot registry, which is what answers every surface's IP address row.
+/// The library the pane reads through. `vmnetNetworks`, `arpTable` and
+/// `entitled` reach the guest-address observer, which is what answers every
+/// surface's IP address row.
 @MainActor
 func makeSettingsViewModel(
     preferences: AppPreferences,
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitled: Bool = true
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
@@ -24,7 +26,9 @@ func makeSettingsViewModel(
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
-        isVMNetworkingEntitled: entitled
+        arpTable: arpTable,
+        isVMNetworkingEntitled: entitled,
+        canObserveGuestAddresses: true
     )
 }
 

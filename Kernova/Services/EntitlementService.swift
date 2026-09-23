@@ -66,8 +66,26 @@ struct EntitlementService: Sendable {
         if #available(macOS 27.0, *) { hasAccessoryAccess } else { false }
     }
 
+    /// Whether reading the host's ARP table is authorized
+    /// (`com.apple.developer.networking.topology-observation`).
+    ///
+    /// Resolved once, for the same reason as `hasVMNetworking`.
+    let hasTopologyObservation: Bool
+
+    /// Whether this process can read the host's ARP table, which is where a
+    /// guest's address is observed — the single value every address surface
+    /// reads.
+    ///
+    /// macOS 27 returns the table empty to an app without the key
+    /// (https://developer.apple.com/forums/thread/822025?page=2).
+    var supportsGuestAddressObservation: Bool {
+        if #available(macOS 27.0, *) { hasTopologyObservation } else { true }
+    }
+
     init(reader: any EntitlementReading = ProcessEntitlementReader()) {
         hasVMNetworking = reader.hasEntitlement("com.apple.vm.networking")
         hasAccessoryAccess = reader.hasEntitlement("com.apple.developer.accessory-access.usb")
+        hasTopologyObservation = reader.hasEntitlement(
+            "com.apple.developer.networking.topology-observation")
     }
 }

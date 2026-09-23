@@ -43,8 +43,6 @@ struct VMOverviewResolved: Sendable {
     var networkModeTitle: String?
     /// What the guest's address resolves to for the mode it is on.
     var ipAddress: GuestIPAddress = .unavailable
-    /// Forwarded-rule count, `nil` wherever forwarding does not apply.
-    var portForwardingRuleCount: Int?
     /// The boot disk's capacity, once its off-main read lands.
     var bootDiskBytes: UInt64?
     /// What each snapshot occupies, once the off-main size read lands.
@@ -145,19 +143,11 @@ enum VMOverviewSummary {
             }
             // The mode names the row, so the address it hands the guest is the
             // value beside it rather than a line of its own.
-            let address = resolved.ipAddress.displayText
-            var rows = [
+            return [
                 Row(
-                    label: mode, value: address ?? "",
-                    copy: address.map { RowCopy(value: $0, name: "Copy IP Address") })
+                    label: mode, value: resolved.ipAddress.displayText ?? "",
+                    copy: resolved.ipAddress.address.map { RowCopy(value: $0, name: "Copy IP Address") })
             ]
-            if let count = resolved.portForwardingRuleCount {
-                rows.append(
-                    Row(
-                        label: "Port forwarding",
-                        value: count == 1 ? "1 rule" : "\(count) rules"))
-            }
-            return rows
         case .sharing:
             // Sharing states its facts in the closing line instead — see `note`.
             return []

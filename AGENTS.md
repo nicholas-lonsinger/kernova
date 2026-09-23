@@ -25,7 +25,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: `VMCreationViewModel.steps`.
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `buildNetworkSection()`.
 - **Outcome names in the UI; vendor terms at the platform boundary.** Where Apple's own UI names the thing, keep Apple's term at that boundary and the outcome-describing domain term everywhere else. Worked case: `NetworkModeChoice.title(entitled:interfaces:)`.
-- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `PortForwardingRule`.
+- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `GuestIPAddress`.
 
 ## Build & Test
 

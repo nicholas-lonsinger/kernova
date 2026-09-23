@@ -37,12 +37,3 @@ public struct ConfigurationEntry: Codable, Sendable, Hashable {
         self.value = value
     }
 }
-
-/// One change to a VM's host→guest port mappings.
-///
-/// Removal names the host-side claim rather than the whole rule: a network
-/// carries one rule per (transport, host port), so that pair identifies it.
-public enum PortForwardingEdit: Codable, Sendable, Hashable {
-    case add(rule: PortForwardingRule)
-    case remove(claim: PortForwardingHostClaim)
-}

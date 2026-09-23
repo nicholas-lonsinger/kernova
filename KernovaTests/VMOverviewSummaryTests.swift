@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -129,18 +130,12 @@ struct VMOverviewSummaryTests {
     func networkFoldsModeAndAddress() {
         let instance = makeInstance()
         let resolved = VMOverviewResolved(
-            networkModeTitle: "Shared Network", ipAddress: .reserved("192.168.66.4"),
-            portForwardingRuleCount: 1)
-        let row = rows(.network, instance, resolved: resolved).first
-        #expect(row?.label == "Shared Network")
-        #expect(row?.value == "192.168.66.4")
-        #expect(row?.copy == VMOverviewSummary.RowCopy(value: "192.168.66.4", name: "Copy IP Address"))
-        #expect(value("Port forwarding", .network, instance, resolved: resolved) == "1 rule")
-        #expect(
-            value(
-                "Port forwarding", .network, instance,
-                resolved: VMOverviewResolved(
-                    networkModeTitle: "Shared Network", portForwardingRuleCount: 3)) == "3 rules")
+            networkModeTitle: "Shared Network", ipAddress: .observed("192.168.66.4"))
+        let network = rows(.network, instance, resolved: resolved)
+        #expect(network.count == 1)
+        #expect(network.first?.label == "Shared Network")
+        #expect(network.first?.value == "192.168.66.4")
+        #expect(network.first?.copy == VMOverviewSummary.RowCopy(value: "192.168.66.4", name: "Copy IP Address"))
     }
 
     @Test("With no address yet the mode row stands alone, offering nothing to copy")
@@ -153,6 +148,22 @@ struct VMOverviewSummaryTests {
         #expect(row?.copy == nil)
     }
 
+    @Test("A guest not yet seen, or bridged, says so beside the mode with nothing to copy")
+    func networkRowStatesProseWithoutCopy() {
+        let instance = makeInstance()
+        for (address, text) in [
+            (GuestIPAddress.notObserved, "Not seen on the network"),
+            (.externallyAssigned, "Assigned by your network"),
+        ] {
+            let row = rows(
+                .network, instance,
+                resolved: VMOverviewResolved(networkModeTitle: "Shared Network", ipAddress: address)
+            ).first
+            #expect(row?.value == text)
+            #expect(row?.copy == nil)
+        }
+    }
+
     @Test("A VM with networking off states one Mode row and nothing else")
     func networkOffStatesOneRow() {
         let off = makeInstance { $0.networkEnabled = false }
@@ -160,7 +171,7 @@ struct VMOverviewSummaryTests {
             rows(
                 .network, off,
                 resolved: VMOverviewResolved(
-                    networkModeTitle: "None", ipAddress: .reserved("192.168.66.4")))
+                    networkModeTitle: "None", ipAddress: .observed("192.168.66.4")))
                 == [VMOverviewSummary.Row(label: "Mode", value: "None")])
         // Nothing resolved yet reads the same way.
         #expect(rows(.network, makeInstance()) == [VMOverviewSummary.Row(label: "Mode", value: "None")])

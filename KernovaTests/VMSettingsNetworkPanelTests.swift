@@ -22,10 +22,20 @@ struct VMSettingsNetworkPanelTests {
 
     private func makeViewModel(
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        arpTable: ScriptedARPTable = ScriptedARPTable(),
         entitled: Bool = true
     ) -> VMLibraryViewModel {
         makeSettingsViewModel(
-            preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled)
+            preferences: preferences, vmnetNetworks: vmnetNetworks, arpTable: arpTable,
+            entitled: entitled)
+    }
+
+    /// A library whose Shared and Host Only networks stand on known subnets,
+    /// over `arpTable` as the host's table.
+    private func makeAddressedViewModel(_ arpTable: ScriptedARPTable) -> VMLibraryViewModel {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0"), .hostOnly: .scripted("192.168.128.0")]
+        return makeViewModel(vmnetNetworks: vmnet, arpTable: arpTable)
     }
 
     // MARK: - Network mode picker
@@ -39,7 +49,6 @@ struct VMSettingsNetworkPanelTests {
         mode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
         macAddress: String? = "aa:bb:cc:dd:ee:ff",
-        portForwardingRules: [PortForwardingRule] = [],
         interfaces: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
         entitled: Bool = true,
         isReadOnly: Bool = false,
@@ -53,12 +62,11 @@ struct VMSettingsNetworkPanelTests {
             $0.networkMode = mode
             $0.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
             $0.macAddress = macAddress
-            $0.portForwardingRules = portForwardingRules
         }
         if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
-        // The pane always shows a VM the library holds, and the library's slot
-        // declaration is what makes an address derivable — so `vmnetNetworks`
-        // reaches the panel through the library, never the panel directly.
+        // The pane always shows a VM the library holds, and the library's
+        // observer is what answers its address — so `vmnetNetworks` reaches the
+        // panel through the library, never the panel directly.
         let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
         registerSettingsInstance(instance, in: library)
         let vc = makeSettingsPane(
@@ -84,63 +92,48 @@ struct VMSettingsNetworkPanelTests {
 
     // MARK: - IP Address row
 
-    @Test("An entitled Shared VM shows the address its slot reserves")
-    func entitledSharedVMShowsReservedAddress() throws {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.10"]
-        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+    @Test("A running Shared VM reads not seen, then fills in the address the host saw, on both surfaces")
+    func runningSharedVMFillsInTheObservedAddress() async throws {
+        let arpTable = ScriptedARPTable()
+        let viewModel = makeAddressedViewModel(arpTable)
+        let (vc, _) = makeNetworkController(
+            isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
 
+        #expect(visibleLabel("Not seen on the network", in: vc.view))
+
+        arpTable.table = [.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]
+        await viewModel.library.guestAddresses.readForTesting()
+
+        try await waitForChange { visibleLabel("192.168.64.10", in: vc.view) }
         #expect(visibleLabel("IP address", in: vc.view))
-        #expect(visibleLabel("192.168.64.10", in: vc.view))
-    }
-
-    @Test("An entitled Host Only VM shows the address it holds on that network")
-    func entitledHostOnlyVMShowsItsAddress() throws {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.128.5"]
-        let (vc, _) = makeNetworkController(mode: .hostOnly, vmnetNetworks: vmnet)
-
-        #expect(visibleLabel("192.168.128.5", in: vc.view))
-    }
-
-    @Test("A not-yet-derivable address renders as a placeholder, then fills in on its own")
-    func pendingAddressShowsPlaceholderAndFillsIn() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        // A machine that has never created this network: nothing derives an
-        // address until the registry learns its addressing.
-        vmnet.knownAddressingKinds = []
-        let viewModel = makeViewModel(vmnetNetworks: vmnet)
-        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet, viewModel: viewModel)
-
-        #expect(visibleLabel("—", in: vc.view))
-        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        await viewModel.library.networkSlots.addressingLearnTaskForTesting(.shared)?.value
-        // The learn's generation bump reaches the pane through its observation
-        // loop, which applies on the next main-actor turn.
-        for _ in 0..<5 { await Task.yield() }
-
-        #expect(vmnet.materializeCount == 1)
-        #expect(visibleLabel("192.168.64.9", in: vc.view))
-        // The Network card states the same address: nothing else re-renders it
-        // for an idle stopped VM, so the fill-in has to reach both.
+        // The Network card states the same address: nothing else re-renders it,
+        // so the fill-in has to reach both.
         vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
-        #expect(findLabel(withText: "192.168.64.9", in: card) != nil)
+        #expect(findLabel(withText: "192.168.64.10", in: card) != nil)
     }
 
-    @Test("A failed learn leaves the placeholder without spinning the refresh loop")
-    func failedLearnLeavesPlaceholder() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.knownAddressingKinds = []
-        vmnet.materializeFails = true
-        let viewModel = makeViewModel(vmnetNetworks: vmnet)
-        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet, viewModel: viewModel)
+    @Test("A running Host Only VM shows the address the host saw it use on that network")
+    func runningHostOnlyVMShowsItsAddress() async throws {
+        let viewModel = makeAddressedViewModel(
+            ScriptedARPTable([.scripted("192.168.128.5", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]))
+        let (vc, _) = makeNetworkController(
+            mode: .hostOnly, isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
 
-        await viewModel.library.networkSlots.addressingLearnTaskForTesting(.shared)?.value
-        for _ in 0..<5 { await Task.yield() }
+        await viewModel.library.guestAddresses.readForTesting()
 
-        #expect(visibleLabel("—", in: vc.view))
-        #expect(vmnet.materializeCount == 1)
+        try await waitForChange { visibleLabel("192.168.128.5", in: vc.view) }
+    }
+
+    @Test("A stopped VM shows no IP Address row, whatever the host table still lists")
+    func stoppedVMHidesTheIPAddressRow() async throws {
+        let viewModel = makeAddressedViewModel(
+            ScriptedARPTable([.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]))
+        let (vc, _) = makeNetworkController(viewModel: viewModel)
+
+        await viewModel.library.guestAddresses.readForTesting()
+
+        #expect(!visibleLabel("IP address", in: vc.view))
     }
 
     @Test("A bridged VM's row reads Assigned by your network")
@@ -790,145 +783,6 @@ struct VMSettingsNetworkPanelTests {
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         #expect(popUp.isEnabled)
         #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == true)
-    }
-
-    // MARK: - Port Forwarding
-
-    private static let webRule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
-    private static let sshRule = PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
-
-    @Test("An entitled Shared VM lists its forwarding rules and the Add Rule row")
-    func sharedVMListsForwardingRules() {
-        let (vc, _) = makeNetworkController(portForwardingRules: [Self.webRule, Self.sshRule])
-
-        #expect(visibleLabel("Port forwarding", in: vc.view))
-        #expect(visibleLabel("TCP", in: vc.view))
-        #expect(visibleLabel("Host 8080 → Guest 80", in: vc.view))
-        #expect(visibleLabel("Host 2222 → Guest 22", in: vc.view))
-        #expect(findButton(titled: "Add Rule…", in: vc.view) != nil)
-    }
-
-    @Test("A VM with no rules still offers Add Rule")
-    func sharedVMWithoutRulesOffersAddRule() {
-        let (vc, _) = makeNetworkController()
-
-        #expect(visibleLabel("Port forwarding", in: vc.view))
-        #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == true)
-    }
-
-    @Test("Modes and builds that cannot forward show no Port Forwarding rows")
-    func nonForwardingModesHideTheRows() {
-        // Host Only reaches only this Mac, None has no device, and an
-        // unentitled build attaches system NAT — none of them forwards.
-        let (hostOnly, _) = makeNetworkController(
-            mode: .hostOnly, portForwardingRules: [Self.webRule])
-        #expect(!visibleLabel("Port forwarding", in: hostOnly.view))
-
-        let (none, _) = makeNetworkController(
-            networkEnabled: false, portForwardingRules: [Self.webRule])
-        #expect(!visibleLabel("Port forwarding", in: none.view))
-
-        let (unentitled, _) = makeNetworkController(
-            portForwardingRules: [Self.webRule], entitled: false)
-        #expect(!visibleLabel("Port forwarding", in: unentitled.view))
-    }
-
-    @Test("Removing a rule writes the configuration without it")
-    func removingARuleWritesTheRemainder() throws {
-        let (vc, instance) = makeNetworkController(
-            portForwardingRules: [Self.webRule, Self.sshRule])
-        let remove = try #require(removeRuleButtons(in: vc.view).first)
-
-        remove.performClick(nil)
-
-        #expect(instance.configuration.portForwardingRules == [Self.sshRule])
-        #expect(!visibleLabel("Host 8080 → Guest 80", in: vc.view))
-        #expect(visibleLabel("Host 2222 → Guest 22", in: vc.view))
-    }
-
-    @Test("An added rule goes through the verb that owns the host-port claim")
-    func addingARuleGoesThroughTheVerb() throws {
-        let viewModel = makeViewModel()
-        let holder = makeSettingsInstance(guestOS: .linux)
-        holder.configuration.portForwardingRules = [Self.webRule]
-        viewModel.instances = [holder]
-        let (vc, instance) = makeNetworkController(viewModel: viewModel)
-        let panel = try #require(networkPanel(in: vc))
-        let sheet = PortForwardingRuleSheetContentViewController(takenHostClaims: [])
-
-        // The pane writes through the verb rather than the array, so the one
-        // enforcement path decides — even for a claim the sheet was not told
-        // about.
-        panel.portForwardingRuleSheet(sheet, didAdd: Self.webRule)
-        #expect(instance.configuration.portForwardingRules.isEmpty)
-
-        panel.portForwardingRuleSheet(sheet, didAdd: Self.sshRule)
-        #expect(instance.configuration.portForwardingRules == [Self.sshRule])
-        #expect(visibleLabel("Host 2222 → Guest 22", in: vc.view))
-    }
-
-    @Test("A running VM's rule controls are locked")
-    func runningVMLocksTheRuleControls() {
-        let (vc, _) = makeNetworkController(
-            portForwardingRules: [Self.webRule], isReadOnly: true, phase: .running(sessionID: UUID()))
-
-        #expect(removeRuleButtons(in: vc.view).allSatisfy { !$0.isEnabled })
-        #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
-    }
-
-    @Test("A running VM's rule controls stay locked however the route was opened")
-    func runningVMLocksTheRuleControlsWhateverTheRoute() {
-        // The model gate, not the route: the verb behind Add Rule and Remove
-        // refuses on the VM's own state, so the controls must read the same.
-        let (vc, _) = makeNetworkController(
-            portForwardingRules: [Self.webRule], isReadOnly: false,
-            phase: .running(sessionID: UUID()))
-
-        #expect(removeRuleButtons(in: vc.view).allSatisfy { !$0.isEnabled })
-        #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
-    }
-
-    @Test("A VM leaving its session re-enables the rule controls")
-    func leavingTheSessionReenablesTheRuleControls() {
-        let viewModel = makeViewModel()
-        let (vc, instance) = makeNetworkController(
-            portForwardingRules: [Self.webRule], isReadOnly: true,
-            phase: .running(sessionID: UUID()), viewModel: viewModel)
-        #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == false)
-
-        instance.enter(.stopped)
-        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
-
-        #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == true)
-        #expect(removeRuleButtons(in: vc.view).allSatisfy { $0.isEnabled })
-    }
-
-    @Test("Host port claims cover every VM's rules, whatever mode each VM is in")
-    func hostPortClaimsSpanEveryMode() {
-        let viewModel = makeViewModel()
-        // A rule persists across a mode switch and takes its host port back on
-        // the way in, so a Host Only VM still holds the claim.
-        let hostOnly = makeSettingsInstance(guestOS: .linux)
-        hostOnly.configuration.networkMode = .hostOnly
-        hostOnly.configuration.portForwardingRules = [Self.sshRule]
-        let disabled = makeSettingsInstance(guestOS: .linux)
-        disabled.configuration.networkEnabled = false
-        disabled.configuration.portForwardingRules = [
-            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53)
-        ]
-        viewModel.instances = [hostOnly, disabled]
-
-        _ = makeNetworkController(portForwardingRules: [Self.webRule], viewModel: viewModel)
-
-        #expect(
-            viewModel.takenHostPortClaims == [
-                Self.webRule.hostClaim, Self.sshRule.hostClaim,
-                PortForwardingHostClaim(transport: .udp, hostPort: 5353),
-            ])
-    }
-
-    private func removeRuleButtons(in view: NSView) -> [NSButton] {
-        allSubviews(NSButton.self, in: view) { $0.toolTip == "Remove Rule" }
     }
 
     // MARK: - Lock treatment

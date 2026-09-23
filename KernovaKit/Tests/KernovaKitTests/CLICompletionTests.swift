@@ -17,7 +17,7 @@ private final class ConnectionCount {
 struct CLICompletionTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .reserved("192.168.64.4"))
+        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"))
     private let beta = VMSummary(
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
         name: "Beta", status: "stopped", ipAddress: .unavailable)
@@ -25,10 +25,6 @@ struct CLICompletionTests {
     private let shares = [
         SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
         SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
-    ]
-    private let rules = [
-        PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
-        PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
     ]
     private let accessories = [
         USBAccessorySummary(
@@ -79,28 +75,11 @@ struct CLICompletionTests {
         #expect(trailing?.vm == "Alpha")
     }
 
-    @Test("A share and a forward removal each recover the virtual machine named before them")
+    @Test("A share removal recovers the virtual machine named before it")
     func removalCompletionsReadTheVM() throws {
         let share = CompletionLine.vmSubject(
             in: ["kernova", "share", "remove", "Alpha", ""], completingAt: 4)
         #expect(share?.vm == "Alpha")
-        #expect(share?.command is KernovaCommand.Share.Remove)
-
-        let forward = CompletionLine.vmSubject(
-            in: ["kernova", "forward", "remove", "Alpha", ""], completingAt: 4)
-        #expect(forward?.vm == "Alpha")
-        #expect(forward?.command is KernovaCommand.Forward.Remove)
-    }
-
-    @Test("A forward removal's transport flag is read back off the line with its machine")
-    func forwardRemovalReadsItsTransport() throws {
-        let tcp = CompletionLine.vmSubject(
-            in: ["kernova", "forward", "remove", "Alpha", ""], completingAt: 4)
-        #expect((tcp?.command as? KernovaCommand.Forward.Remove)?.udp == false)
-
-        let udp = CompletionLine.vmSubject(
-            in: ["kernova", "forward", "remove", "Alpha", "--udp", ""], completingAt: 5)
-        #expect((udp?.command as? KernovaCommand.Forward.Remove)?.udp == true)
     }
 
     @Test("--id is read off the line, wherever it sits")
@@ -171,17 +150,14 @@ struct CLICompletionTests {
         #expect(
             CompletionLine.vmSubject(
                 in: ["kernova", "snapshot", "revert", ""], completingAt: 3) == nil)
-        // The list verbs take the machine and nothing of the machine's, and
-        // both removals reached before their machine was typed name none.
+        // The list verb takes the machine and nothing of the machine's, and
+        // a removal reached before its machine was typed names none.
         #expect(
             CompletionLine.vmSubject(
                 in: ["kernova", "share", "list", "Alpha", ""], completingAt: 4) == nil)
         #expect(
             CompletionLine.vmSubject(
                 in: ["kernova", "share", "remove", ""], completingAt: 3) == nil)
-        #expect(
-            CompletionLine.vmSubject(
-                in: ["kernova", "forward", "remove", ""], completingAt: 3) == nil)
     }
 
     // MARK: - Asking the app
@@ -199,10 +175,6 @@ struct CLICompletionTests {
         #expect(
             CompletionSource.sharedDirectoryPaths(
                 ofVM: "Alpha", byIdentifier: false, in: unreachable
-            ).isEmpty)
-        #expect(
-            CompletionSource.portMappings(
-                ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: unreachable
             ).isEmpty)
         #expect(
             CompletionSource.usbAccessoryDevices(
@@ -278,39 +250,6 @@ struct CLICompletionTests {
             ])
     }
 
-    @Test("A forward removal offers only the mappings on the transport it will drop from")
-    func portMappingsAreFilteredByTransport() throws {
-        let tcp = try TestCommandSocket(tag: "cmp-fwd-tcp")
-        defer { tcp.close() }
-        tcp.serve([[VMCommandResponse(result: .portForwardingRules(rules))]])
-        #expect(
-            CompletionSource.portMappings(
-                ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: context(to: tcp))
-                == ["8080:80"])
-        #expect(tcp.requests().map(\.verb) == [.portForwardingRules(.idOrName("Alpha"))])
-
-        let udp = try TestCommandSocket(tag: "cmp-fwd-udp")
-        defer { udp.close() }
-        udp.serve([[VMCommandResponse(result: .portForwardingRules(rules))]])
-        #expect(
-            CompletionSource.portMappings(
-                ofVM: "Alpha", byIdentifier: false, transport: .udp, in: context(to: udp))
-                == ["5353:53"])
-    }
-
-    @Test("A mapping's colon is escaped for zsh, which reads an unescaped one as the description")
-    func portMappingsKeepTheirColonForZsh() throws {
-        let listener = try TestCommandSocket(tag: "cmp-fwd-zsh")
-        defer { listener.close() }
-        listener.serve([[VMCommandResponse(result: .portForwardingRules(rules))]])
-
-        let mappings = CompletionSource.portMappings(
-            ofVM: "Alpha", byIdentifier: false, transport: .udp,
-            in: context(to: listener, asking: .zsh))
-
-        #expect(mappings == ["5353\\:53:UDP"])
-    }
-
     @Test("A USB detachment offers only what the named machine is actually holding")
     func usbDevicesComeFromTheMachine() throws {
         let listener = try TestCommandSocket(tag: "cmp-usb-held")
@@ -378,12 +317,9 @@ struct CLICompletionTests {
             ofVM: "Alpha", byIdentifier: true, in: counting)
         let paths = CompletionSource.sharedDirectoryPaths(
             ofVM: "Alpha", byIdentifier: true, in: counting)
-        let mappings = CompletionSource.portMappings(
-            ofVM: "Alpha", byIdentifier: true, transport: .tcp, in: counting)
 
         #expect(names.isEmpty)
         #expect(paths.isEmpty)
-        #expect(mappings.isEmpty)
         // The selector is refused client-side, so the app is never reached.
         #expect(opened.value == 0)
     }
@@ -408,14 +344,6 @@ struct CLICompletionTests {
         #expect(
             CompletionSource.sharedDirectoryPaths(
                 ofVM: "Alpha", byIdentifier: false, in: context(to: shares)
-            ).isEmpty)
-
-        let forwards = try TestCommandSocket(tag: "cmp-refused-fw")
-        defer { forwards.close() }
-        forwards.serve([[refusal]])
-        #expect(
-            CompletionSource.portMappings(
-                ofVM: "Alpha", byIdentifier: false, transport: .tcp, in: context(to: forwards)
             ).isEmpty)
     }
 

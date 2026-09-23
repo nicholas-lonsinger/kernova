@@ -40,7 +40,7 @@ struct VMCapabilityCatalogTests {
             lifecycle: lifecycle,
             fileSystem: MockFileSystem(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             isVMNetworkingEntitled: true
         )
         return Harness(
@@ -68,7 +68,7 @@ struct VMCapabilityCatalogTests {
     /// The configuration edits every at-rest phase adds, named once — the
     /// settings whose values are pinned by a live session or a saved state.
     private static let atRestConfiguration: Set<VMCapability> = [
-        .editConfiguration, .editPortForwarding, .switchNetworkMode,
+        .editConfiguration, .switchNetworkMode,
     ]
 
     // MARK: - Applicability by state
@@ -162,7 +162,7 @@ struct VMCapabilityCatalogTests {
     /// Everything a saved state pins, because VZ restores one only into the
     /// configuration it was written under.
     private static let pinnedBySavedState: Set<VMCapability> = [
-        .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editPortForwarding,
+        .editStorageDisks, .editRemovableMedia, .editSharedDirectories,
         .editConfiguration, .switchNetworkMode, .clone,
     ]
 

@@ -62,20 +62,6 @@ enum CompletionSource {
         return sharedDirectoryPaths(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
     }
 
-    /// The mappings a `forward remove` argument offers, of whichever virtual
-    /// machine the line already named and on the transport it asked for.
-    ///
-    /// A rule is addressed by transport as well as by ports, so offering the
-    /// other transport's mappings would offer values the verb then refuses.
-    static let portMapping = CompletionKind.custom { words, index, _ in
-        guard let subject = CompletionLine.vmSubject(in: words, completingAt: index) else {
-            return []
-        }
-        let udp = (subject.command as? KernovaCommand.Forward.Remove)?.udp ?? false
-        return portMappings(
-            ofVM: subject.vm, byIdentifier: subject.byIdentifier, transport: udp ? .udp : .tcp)
-    }
-
     /// The accessories a `usb attach` argument offers: the ones no guest is
     /// holding, which is the same set whichever machine the line named.
     static let availableUSBAccessory = CompletionKind.custom { _, _, _ in availableUSBAccessories() }
@@ -156,23 +142,6 @@ enum CompletionSource {
         return shares.map {
             candidate(
                 $0.path, describedBy: $0.readOnly ? "read-only" : "read-write",
-                for: context.shell)
-        }
-    }
-
-    /// Every mapping the virtual machine `vm` names forwards on `transport`, by
-    /// the `<host-port>:<guest-port>` text `forward remove` takes back.
-    static func portMappings(
-        ofVM vm: String, byIdentifier: Bool, transport: PortForwardingTransport,
-        in context: CompletionContext = .live
-    ) -> [String] {
-        guard let selector = try? SelectorParsing.selector(from: vm, forcingID: byIdentifier),
-            case .portForwardingRules(let rules)? = answer(
-                to: .portForwardingRules(selector), in: context)
-        else { return [] }
-        return rules.filter { $0.transport == transport }.map {
-            candidate(
-                PortMapping.text(for: $0), describedBy: $0.transport.displayName,
                 for: context.shell)
         }
     }

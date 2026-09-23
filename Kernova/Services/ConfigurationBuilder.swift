@@ -625,8 +625,8 @@ struct ConfigurationBuilder: Sendable {
     }
 
     /// The Shared Network attachment: the app-managed vmnet shared network in
-    /// an entitled build — whose DHCP reservations back the IP display — and
-    /// the system NAT attachment otherwise. A vmnet network that cannot be
+    /// an entitled build, and the system NAT attachment otherwise. A vmnet
+    /// network that cannot be
     /// materialized builds the device detached (`nil`) like the Host Only
     /// path, and attachment recovery retries once the session runs.
     private func sharedAttachment(config: VMConfiguration) -> VZNetworkDeviceAttachment? {

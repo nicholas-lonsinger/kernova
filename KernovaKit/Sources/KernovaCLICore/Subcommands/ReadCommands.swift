@@ -105,9 +105,9 @@ extension KernovaCommand {
 
         /// The guest's address, waiting for one only where waiting can help.
         ///
-        /// `--wait` polls: a reserved address is published by the vmnet layer,
-        /// which emits no library event, so there is no signal to await. Only
-        /// `pending` is worth waiting on — `unavailable` and
+        /// `--wait` polls: the app reads the address off the host's table on a
+        /// timer and emits no library event for it, so there is no signal to
+        /// await. Only `notObserved` is worth waiting on — `unavailable` and
         /// `externallyAssigned` are answers rather than delays, and polling
         /// them to the deadline would turn a clear refusal into a long silence.
         private func resolve() throws -> GuestIPAddress {
@@ -118,7 +118,7 @@ extension KernovaCommand {
                 let answer = try client.send(request).payload()
                 client.close()
                 guard case .ipAddress(let address) = answer else { throw answer.unexpectedAnswer }
-                guard wait, case .pending = address else { return address }
+                guard wait, case .notObserved = address else { return address }
                 guard Date() < deadline else {
                     throw CLIFailure(
                         .timedOut,
@@ -129,27 +129,22 @@ extension KernovaCommand {
         }
 
         /// How often `--wait` asks again.
-        ///
-        /// A reservation lands when the network materializes, a one-off at VM
-        /// start rather than something that drifts, so a slow cadence costs a
-        /// script nothing.
         private static let pollInterval: TimeInterval = 1
 
         /// The one line an address prints, or the refusal it stands for.
         ///
-        /// Only `.reserved` is an address. The other three are answers to a
-        /// different question — there will never be one, somebody else assigns
-        /// it, not yet — so each refuses rather than printing prose a script
-        /// would parse as an address.
+        /// Only `.observed` is an address. The other three are answers to a
+        /// different question — Kernova can see none, somebody else assigns
+        /// it, not seen yet — so each refuses rather than printing prose a
+        /// script would parse as an address.
         static func line(for address: GuestIPAddress, vm: String) throws -> String {
             switch address {
-            case .reserved(let value):
+            case .observed(let value):
                 return value
-            case .pending:
+            case .notObserved:
                 throw CLIFailure(
                     .refusedByState,
-                    "\u{201C}\(vm)\u{201D} has a reservation, but its network has not published "
-                        + "an address yet.")
+                    "Kernova has not seen \u{201C}\(vm)\u{201D} on its network.")
             case .externallyAssigned:
                 throw CLIFailure(
                     .refusedByState,
@@ -158,7 +153,7 @@ extension KernovaCommand {
             case .unavailable:
                 throw CLIFailure(
                     .refusedByState,
-                    "Nothing assigns \u{201C}\(vm)\u{201D} an address Kernova can state.")
+                    "Kernova has no address for \u{201C}\(vm)\u{201D}.")
             }
         }
     }

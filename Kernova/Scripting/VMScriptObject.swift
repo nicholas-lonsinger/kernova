@@ -58,7 +58,7 @@ final class VMScriptObject: NSObject {
 
     @objc var macAddress: String? { info.macAddress }
 
-    @objc var ipAddress: String? { info.ipAddress.reservedAddress }
+    @objc var ipAddress: String? { info.ipAddress.address }
 
     @objc var agentStatus: String { info.agentStatus }
 

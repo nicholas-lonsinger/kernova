@@ -32,6 +32,26 @@ struct EntitlementServiceTests {
                 .hasAccessoryAccess)
     }
 
+    @Test("hasTopologyObservation is true exactly when the signature claims the observation key")
+    func topologyObservationReflectsReader() {
+        let key = "com.apple.developer.networking.topology-observation"
+        #expect(EntitlementService(reader: MockEntitlementReader(granted: [key])).hasTopologyObservation)
+        #expect(!EntitlementService(reader: MockEntitlementReader()).hasTopologyObservation)
+        #expect(
+            !EntitlementService(reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+                .hasTopologyObservation)
+    }
+
+    @Test("Observing guest addresses follows the observation key on macOS 27")
+    func guestAddressObservationFollowsTheKey() {
+        guard #available(macOS 27.0, *) else { return }
+        let key = "com.apple.developer.networking.topology-observation"
+        #expect(
+            EntitlementService(reader: MockEntitlementReader(granted: [key]))
+                .supportsGuestAddressObservation)
+        #expect(!EntitlementService(reader: MockEntitlementReader()).supportsGuestAddressObservation)
+    }
+
     @Test("The process reader reports an unclaimed key as absent")
     func processReaderUnclaimedKeyIsAbsent() {
         #expect(!ProcessEntitlementReader().hasEntitlement("app.kernova.test.never-claimed"))

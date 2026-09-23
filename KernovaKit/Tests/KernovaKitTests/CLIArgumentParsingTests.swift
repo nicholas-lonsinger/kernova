@@ -231,10 +231,6 @@ struct CLIArgumentParsingTests {
         #expect(try parse(["share", "add", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Add)
         #expect(
             try parse(["share", "remove", "Alpha", "/tmp/Work"]) is KernovaCommand.Share.Remove)
-        #expect(try parse(["forward", "list", "Alpha"]) is KernovaCommand.Forward.List)
-        #expect(try parse(["forward", "add", "Alpha", "8080:80"]) is KernovaCommand.Forward.Add)
-        #expect(
-            try parse(["forward", "remove", "Alpha", "8080:80"]) is KernovaCommand.Forward.Remove)
     }
 
     @Test("Each list verb reads its virtual machine and asks for that machine's own list")
@@ -243,25 +239,11 @@ struct CLIArgumentParsingTests {
             try parse(["share", "list", "Alpha"]) as? KernovaCommand.Share.List)
         #expect(shares.vm == "Alpha")
         #expect(try shares.verb() == .sharedDirectories(.idOrName("Alpha")))
-
-        let forwards = try #require(
-            try parse(["forward", "list", "Alpha"]) as? KernovaCommand.Forward.List)
-        #expect(forwards.vm == "Alpha")
-        #expect(!forwards.udp)
-        #expect(try forwards.verb() == .portForwardingRules(.idOrName("Alpha")))
-
-        // The transport rides the same flag `forward remove` takes, and picks
-        // among the rules one read answers rather than asking a second time.
-        let udp = try #require(
-            try parse(["forward", "list", "Alpha", "--udp"]) as? KernovaCommand.Forward.List)
-        #expect(udp.udp)
-        #expect(try udp.verb() == .portForwardingRules(.idOrName("Alpha")))
     }
 
     @Test("Every list verb refuses without the virtual machine it lists")
     func listVerbsNeedAVM() {
         #expect(throws: (any Error).self) { try parse(["share", "list"]) }
-        #expect(throws: (any Error).self) { try parse(["forward", "list"]) }
     }
 
     // MARK: - USB accessories
@@ -435,69 +417,6 @@ struct CLIArgumentParsingTests {
                 == .editSharedDirectory(.idOrName("Alpha"), .removePath(path: "/tmp/Work")))
     }
 
-    @Test("A mapping is read as host:guest, on TCP unless --udp says otherwise")
-    func forwardParsesItsMapping() throws {
-        let tcp = try #require(
-            try parse(["forward", "add", "Alpha", "8080:80"]) as? KernovaCommand.Forward.Add)
-        #expect(!tcp.udp)
-        #expect(
-            try tcp.verb()
-                == .editPortForwarding(
-                    .idOrName("Alpha"),
-                    .add(rule: PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80))))
-
-        let udp = try #require(
-            try parse(["forward", "add", "Alpha", "5353:53", "--udp"])
-                as? KernovaCommand.Forward.Add)
-        #expect(udp.udp)
-        #expect(
-            try udp.verb()
-                == .editPortForwarding(
-                    .idOrName("Alpha"),
-                    .add(rule: PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53))))
-    }
-
-    @Test("A rule is dropped by its host-side claim, which the transport is half of")
-    func forwardRemoveNamesTheHostClaim() throws {
-        let tcp = try #require(
-            try parse(["forward", "remove", "Alpha", "8080:80"]) as? KernovaCommand.Forward.Remove)
-        #expect(
-            try tcp.verb()
-                == .editPortForwarding(
-                    .idOrName("Alpha"),
-                    .remove(claim: PortForwardingHostClaim(transport: .tcp, hostPort: 8080))))
-
-        let udp = try #require(
-            try parse(["forward", "remove", "Alpha", "5353:53", "--udp"])
-                as? KernovaCommand.Forward.Remove)
-        #expect(
-            try udp.verb()
-                == .editPortForwarding(
-                    .idOrName("Alpha"),
-                    .remove(claim: PortForwardingHostClaim(transport: .udp, hostPort: 5353))))
-    }
-
-    @Test("Every port a mapping names is one a service can answer on")
-    func mappingsRefuseAPortNoServiceAnswersOn() throws {
-        #expect(
-            try PortMapping.rule(from: "1:65535", transport: .tcp)
-                == PortForwardingRule(transport: .tcp, hostPort: 1, guestPort: 65535))
-
-        // Port 0 addresses no service, so it is refused rather than clamped
-        // into the range like the rest.
-        for mapping in ["8080", "8080:", ":80", "8080:80:90", "a:80", "0:80", "80:0", "70000:80"] {
-            do {
-                _ = try PortMapping.rule(from: mapping, transport: .tcp)
-                Issue.record("expected a usage refusal for \u{201C}\(mapping)\u{201D}")
-            } catch let failure as CLIFailure {
-                #expect(failure.code == .usage)
-                #expect(failure.message.contains(mapping))
-            } catch {
-                Issue.record("expected a CLIFailure, got \(error)")
-            }
-        }
-    }
-
     @Test("--id reads a configuration verb's virtual machine as an identifier")
     func configurationVerbsCarryTheIDFlag() throws {
         let identifier = UUID()
@@ -633,7 +552,7 @@ struct CLIArgumentParsingTests {
     func ipRefusesANonAddressInEveryFormat() throws {
         // `--format json` renders the same value the table would; it must not
         // turn a refusal into a success just because JSON could describe it.
-        for absent: GuestIPAddress in [.pending, .externallyAssigned, .unavailable] {
+        for absent: GuestIPAddress in [.notObserved, .externallyAssigned, .unavailable] {
             #expect(throws: CLIFailure.self) {
                 try KernovaCommand.IP.line(for: absent, vm: "Alpha")
             }
@@ -641,7 +560,7 @@ struct CLIArgumentParsingTests {
             // is what both formats share, which is why it runs first.
             #expect(throws: Never.self) { try JSONRenderer.render(absent) }
         }
-        #expect(try KernovaCommand.IP.line(for: .reserved("10.0.0.2"), vm: "Alpha") == "10.0.0.2")
+        #expect(try KernovaCommand.IP.line(for: .observed("10.0.0.2"), vm: "Alpha") == "10.0.0.2")
     }
 
     @Test("Each wait condition reads exactly one kind of state")

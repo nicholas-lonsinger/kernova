@@ -36,8 +36,6 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case snapshotSizes([UUID: UInt64])
         /// The folders a VM shares with its guest.
         case sharedDirectories([SharedDirectorySummary])
-        /// A VM's host→guest port mappings.
-        case portForwardingRules([PortForwardingRule])
         /// USB accessories — the ones a VM holds, or the ones available to
         /// attach. Each summary says which it is.
         case usbAccessories([USBAccessorySummary])

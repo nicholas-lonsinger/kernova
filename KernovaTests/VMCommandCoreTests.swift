@@ -23,6 +23,7 @@ struct VMCommandCoreTests {
         let snapshots: MockVMSnapshotStore
         let fileSystem: MockFileSystem
         let vmnet: MockVmnetNetworkProvider
+        let arpTable: ScriptedARPTable
         let authority: MockSandboxSourceAuthority
     }
 
@@ -36,6 +37,7 @@ struct VMCommandCoreTests {
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let vmnet = MockVmnetNetworkProvider()
+        let arpTable = ScriptedARPTable()
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualization,
             installService: install,
@@ -52,7 +54,9 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnet,
-            isVMNetworkingEntitled: true
+            arpTable: arpTable,
+            isVMNetworkingEntitled: true,
+            canObserveGuestAddresses: true
         )
         let core = VMCommandCore(
             library: library,
@@ -69,7 +73,7 @@ struct VMCommandCoreTests {
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
             virtualization: virtualization, snapshots: snapshots, fileSystem: fileSystem,
-            vmnet: vmnet, authority: authority)
+            vmnet: vmnet, arpTable: arpTable, authority: authority)
     }
 
     private struct SuspendingHarness {
@@ -104,7 +108,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             isVMNetworkingEntitled: true
         )
         let core = VMCommandCore(
@@ -269,29 +273,30 @@ struct VMCommandCoreTests {
         #expect(info.networkMode == nil)
     }
 
-    @Test("A stopped VM's reserved address answers info and the ip verb alike")
-    func theReservedAddressAnswersEveryHeadlessRead() throws {
+    @Test("A running VM's observed address answers info and the ip verb alike")
+    func theObservedAddressAnswersEveryHeadlessRead() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Addressed")
-        // Through the declaration path, which is what claims the slot the
-        // address derives from — no surface reserves one by reading.
+        harness.vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        let instance = makeInstance(in: harness, name: "Addressed", phase: .running(sessionID: UUID()))
         harness.library.updateConfiguration(of: instance) {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:01"
         }
-        #expect(harness.vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
 
-        // Nothing derives an address until the network's addressing is known,
-        // and no headless read invents one meanwhile — the wait is reported as
-        // `pending` rather than as an absence.
-        #expect(try harness.core.info(.id(instance.id)).ipAddress == .pending)
-        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .pending)
+        // Running on the network but not yet seen there, and no headless read
+        // invents an address meanwhile — the wait is reported as `notObserved`
+        // rather than as an absence.
+        #expect(try harness.core.info(.id(instance.id)).ipAddress == .notObserved)
+        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .notObserved)
 
-        harness.vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:01": "192.168.64.4"]
+        harness.arpTable.table = [
+            .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
+        ]
+        await harness.library.guestAddresses.readForTesting()
 
-        #expect(try harness.core.info(.id(instance.id)).ipAddress == .reserved("192.168.64.4"))
-        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .reserved("192.168.64.4"))
+        #expect(try harness.core.info(.id(instance.id)).ipAddress == .observed("192.168.64.4"))
+        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .observed("192.168.64.4"))
     }
 
     @Test("snapshots answers the manifest newest first")
@@ -687,7 +692,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: stopped) == [
                 .info, .ipAddress, .snapshots, .start, .reveal, .takeSnapshot, .deleteSnapshot,
                 .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
-                .editSharedDirectory, .editPortForwarding, .setConfiguration, .clone, .rename,
+                .editSharedDirectory, .setConfiguration, .clone, .rename,
                 .delete, .showInFinder,
             ])
 
@@ -1064,7 +1069,7 @@ struct VMCommandCoreTests {
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             isVMNetworkingEntitled: true
         )
         let core = VMCommandCore(

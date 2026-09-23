@@ -41,7 +41,7 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
         preferences: preferences,
-        vmnetNetworks: MockVmnetNetworkProvider()
+        vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
     )
 }
 

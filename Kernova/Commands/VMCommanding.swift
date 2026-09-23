@@ -50,9 +50,6 @@ protocol VMCommanding: AnyObject {
     /// The folders the VM shares with its guest, in the order it carries them.
     func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary]
 
-    /// The VM's host→guest port mappings, in the order it carries them.
-    func portForwardingRules(of selector: VMSelector) throws -> [PortForwardingRule]
-
     /// The external (non-bundle) files referenced by the VM that the delete
     /// sheet offers to trash, each annotated with whether it is still there and
     /// which other VMs name the same file.
@@ -357,15 +354,6 @@ protocol VMCommanding: AnyObject {
     func setSharedDirectoryReadOnly(
         _ selector: VMSelector, directory: UUID, readOnly: Bool
     ) throws
-
-    // MARK: - Port Forwarding
-
-    /// Adds one host→guest mapping, refusing a host port another rule in the
-    /// library already claims.
-    func addPortForwardingRule(_ selector: VMSelector, rule: PortForwardingRule) throws
-
-    /// Drops the rule claiming `claim`.
-    func removePortForwardingRule(_ selector: VMSelector, claim: PortForwardingHostClaim) throws
 
     // MARK: - USB Accessories
 
