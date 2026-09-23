@@ -32,17 +32,17 @@ enum EphemeralModeCopy {
     static func baselineCaption(for kind: VMSnapshotKind) -> String {
         switch kind {
         case .warm:
-            "Shutting down returns this virtual machine to the suspended session the baseline "
-                + "captured, and starting it resumes from there."
+            "Shutting down returns this virtual machine to the suspended session and settings "
+                + "the baseline captured, and starting it resumes from there."
         case .cold:
-            "Shutting down returns this virtual machine to the baseline's disks and leaves it "
-                + "stopped."
+            "Shutting down returns this virtual machine to the baseline's disks and settings "
+                + "and leaves it stopped."
         }
     }
 
     static let popoverParagraphs: [InfoPopoverParagraph] = [
         .body(
-            "Returns this virtual machine to its baseline snapshot every time it shuts down. Everything changed inside the guest during the session is discarded."
+            "Returns this virtual machine to its baseline snapshot every time it shuts down. Everything changed during the session, inside the guest and in its settings, is discarded."
         ),
         .body(
             "Suspending keeps the session — including when Kernova quits and suspends running VMs. The session still reverts at its next shutdown."
@@ -55,7 +55,8 @@ enum EphemeralModeCopy {
     /// The Startup card's caption for the toggle.
     static let settingsCaption =
         "An ephemeral virtual machine returns to its baseline snapshot every time it shuts down, "
-        + "discarding everything changed inside the guest. Suspending keeps the session."
+        + "discarding everything changed inside the guest and in its settings. Suspending keeps "
+        + "the session."
 
     /// The caption shown instead while the VM has no snapshot to stand as a
     /// baseline.
