@@ -60,7 +60,7 @@ struct ClipboardDirectoryTransferTests {
     ///
     /// The single write is what makes the interleaving deterministic: the
     /// receiver's first fill takes the whole stream, so a cancellation fired from
-    /// its first progress report lands with nothing left to arrive. The park
+    /// the first bytes it takes lands with nothing left to arrive. The park
     /// holds the connection open, so what ends the transfer is the cancellation
     /// rather than the peer's own end of stream.
     private func receiverForBufferedStream(
@@ -89,16 +89,16 @@ struct ClipboardDirectoryTransferTests {
                 }))
     }
 
-    /// Starts `receiver`, cancelling it from its first progress report of any
-    /// kind.
-    private func startCancellingOnFirstProgress(
+    /// Starts `receiver`, cancelling it from the first bytes it takes off the
+    /// wire.
+    private func startCancellingOnFirstArrival(
         _ receiver: ClipboardTransferReceiver, _ collector: TransferCollector, _ transferID: UInt64
     ) {
         let cancelled = Box(false)
         receiver.start(
             onComplete: { collector.complete(transferID, $0) },
             onAbort: { collector.abort($0) },
-            onProgress: { [weak receiver] _, _ in
+            onActivity: { [weak receiver] in
                 guard !cancelled.value else { return }
                 cancelled.value = true
                 receiver?.cancel()
@@ -286,15 +286,15 @@ struct ClipboardDirectoryTransferTests {
                     $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
                 }))
 
-        // Cancel from inside the stream, on the first report the *extract* made,
-        // so a whole pacing quantum of tree is on disk when the pull gives up —
+        // Cancel from inside the stream, on the extract's first figure, so a
+        // whole pacing quantum of tree is on disk when the pull gives up —
         // rather than wherever the runner happened to schedule the test next.
         let cancelled = Box(false)
         receiver.start(
             onComplete: { collector.complete(transferID, $0) },
             onAbort: { collector.abort($0) },
-            onProgress: { [weak receiver] extracted, _ in
-                guard extracted > 0, !cancelled.value else { return }
+            onProgress: { [weak receiver] _, _ in
+                guard !cancelled.value else { return }
                 cancelled.value = true
                 receiver?.cancel()
             })
@@ -323,7 +323,7 @@ struct ClipboardDirectoryTransferTests {
             stream: try wholeStream(
                 transferID: transferID, payload: truncated,
                 ending: .aborted(rawCode: ClipboardStreamAbortCode.readError.rawValue)))
-        startCancellingOnFirstProgress(receiver, harness.collector, transferID)
+        startCancellingOnFirstArrival(receiver, harness.collector, transferID)
         try await settle(harness, transferID)
 
         // The cut archive fails the extract and the sender's own reason is right
@@ -352,7 +352,7 @@ struct ClipboardDirectoryTransferTests {
             plan: folderPlan(named: "Project", advertised: bytes.count),
             stream: try wholeStream(
                 transferID: transferID, payload: bytes, ending: .complete(digest: sha256(bytes))))
-        startCancellingOnFirstProgress(receiver, harness.collector, transferID)
+        startCancellingOnFirstArrival(receiver, harness.collector, transferID)
         try await settle(harness, transferID)
 
         // A whole archive already in hand unpacks to a whole tree under a trailer

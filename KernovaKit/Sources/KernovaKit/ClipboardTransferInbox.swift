@@ -3,11 +3,12 @@ import KernovaLogging
 
 /// The transfers this side is waiting for, one data connection each.
 ///
-/// A pull registers what it expects with ``awaitTransfer(_:plan:onComplete:onAbort:onProgress:)``
+/// A pull registers what it expects with ``awaitTransfer(_:plan:onComplete:onAbort:onProgress:onActivity:)``
 /// before the transfer can arrive, then either opens the connection itself
 /// (``open(transferID:generation:maxAcceptByteCount:dial:)``, when this side
-/// dials) or adopts one its listener accepted (``adopt(fd:reply:)``). Callbacks
-/// fire off the owning actor, on the transfer's own queue, exactly once.
+/// dials) or adopts one its listener accepted (``adopt(fd:reply:)``). Every
+/// callback fires off the owning actor, and the terminal fires exactly once,
+/// on the transfer's own queue.
 final class ClipboardTransferInbox: @unchecked Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferInbox")
@@ -18,6 +19,7 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         let onComplete: @Sendable (ClipboardContent.Representation) -> Void
         let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
         let onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)?
+        let onActivity: (@Sendable () -> Void)?
     }
 
     private let staging: ClipboardFileStaging
@@ -77,17 +79,22 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     /// One live registration per id: callers sharing a `transfer_id` share the
     /// pull that owns it (`LazyPullCoordinator`), so an overwrite here would be
     /// a second pull nobody asked for.
+    ///
+    /// `onProgress` and `onActivity` are the receiver's own two signals,
+    /// forwarded as its `start` documents them.
     func awaitTransfer(
         _ transferID: UInt64,
         plan: ClipboardTransferReceiver.Plan,
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
-        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil
+        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil,
+        onActivity: (@Sendable () -> Void)? = nil
     ) {
         let displaced: Bool = lock.withLock {
             let prior = awaiters.updateValue(
                 Awaiter(
-                    plan: plan, onComplete: onComplete, onAbort: onAbort, onProgress: onProgress),
+                    plan: plan, onComplete: onComplete, onAbort: onAbort, onProgress: onProgress,
+                    onActivity: onActivity),
                 forKey: transferID)
             return prior != nil
         }
@@ -199,7 +206,10 @@ final class ClipboardTransferInbox: @unchecked Sendable {
                 self?.finish(transferID) { $0.onAbort(info) }
             },
             onProgress: { [weak self] received, total in
-                self?.progress(transferID, received: received, total: total)
+                self?.awaiter(transferID)?.onProgress?(received, total)
+            },
+            onActivity: { [weak self] in
+                self?.awaiter(transferID)?.onActivity?()
             })
     }
 
@@ -215,9 +225,8 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         #endif
     }
 
-    private func progress(_ transferID: UInt64, received: Int, total: Int) {
-        let awaiter = lock.withLock { awaiters[transferID] }
-        awaiter?.onProgress?(received, total)
+    private func awaiter(_ transferID: UInt64) -> Awaiter? {
+        lock.withLock { awaiters[transferID] }
     }
 
     /// Interrupts every live receiver whose id matches `predicate`, and fires

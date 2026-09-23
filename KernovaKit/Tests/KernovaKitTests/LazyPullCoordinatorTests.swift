@@ -187,26 +187,26 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test("progress re-arms the inactivity window so a slow-but-live pull is not timed out")
-    func progressReArmsTheBackstop() async throws {
+    @Test("arriving bytes alone re-arm the inactivity window while the figure stays flat")
+    func activityReArmsTheBackstop() async throws {
         // Drives the window boundary through the seam instead of a real
         // wall-clock wait, so the test proves the re-arm branch fires
         // deterministically — not that a producer happens to beat a real timer
-        // on a shared CI runner (#571: the prior version raced real time and
-        // flaked under scheduler jitter).
+        // on a shared CI runner.
         let coordinator = LazyPullCoordinator()
-        async let outcome = runPull(coordinator, transferID: 11)
+        let figures = ProgressCounter()
+        async let outcome = runPull(
+            coordinator, transferID: 11, onProgress: { figures.bump(bytes: $0, total: $1) })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        coordinator.progress(11, bytesReceived: 4096, totalBytes: 1 << 20)
-        // The window that saw the chunk re-arms rather than giving the pull up
-        // (#500 — a slow-but-live transfer must not time out).
+        coordinator.recordActivity(11)
         coordinator.elapseBackstopWindowForTesting(11)
         #expect(coordinator.pendingSlotCountForTesting == 1)
+        #expect(figures.value == 0)
 
         coordinator.deliver(11, inlineRep("slow but alive"))
         guard case .delivered(let rep) = await outcome else {
-            Issue.record("Expected .delivered — progress should have prevented the timeout")
+            Issue.record("Expected .delivered — the arrival should have prevented the timeout")
             return
         }
         #expect(rep.inMemoryData == Data("slow but alive".utf8))
@@ -231,15 +231,18 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test("progress for an unknown or resolved pull is a harmless no-op")
+    @Test("progress and activity for an unknown or resolved pull are harmless no-ops")
     func progressNoOpWhenAbsent() async throws {
         let coordinator = LazyPullCoordinator()
-        coordinator.progress(404, bytesReceived: 1, totalBytes: 2)  // nobody waiting
+        // Nobody waiting.
+        coordinator.progress(404, bytesReceived: 1, totalBytes: 2)
+        coordinator.recordActivity(404)
         async let outcome = runPull(coordinator, transferID: 12)
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
         coordinator.deliver(12, inlineRep("done"))
-        // Late progress after the slot resolves must not crash or hang.
+        // Late signals after the slot resolves must not crash or hang.
         coordinator.progress(12, bytesReceived: 1, totalBytes: 2)
+        coordinator.recordActivity(12)
         guard case .delivered = await outcome else {
             Issue.record("Expected .delivered")
             return
@@ -701,11 +704,12 @@ struct LazyPullCoordinatorTests {
         defer { harness.tearDown() }
 
         let progress = ProgressCounter()
+        let arrivals = Tally()
         let box = RepBox()
         let gate = AsyncGate()
-        // A payload spanning several socket reads: the cadence is one report per
-        // read the receiver takes, which is what a parked pull re-arms its
-        // inactivity backstop on.
+        // A raw payload spanning several socket reads: its wire bytes are the
+        // payload, so each read the receiver takes is both an arrival and a
+        // figure.
         let bytes = patternedBytes(
             count: 3 * ClipboardStreamTuning.dataReadBufferBytes + 7, multiplier: 7, offset: 1)
         harness.inbox.awaitTransfer(
@@ -718,7 +722,8 @@ struct LazyPullCoordinatorTests {
                 box.setAbort(info)
                 gate.notify()
             },
-            onProgress: { received, total in progress.bump(bytes: received, total: total) })
+            onProgress: { received, total in progress.bump(bytes: received, total: total) },
+            onActivity: { arrivals.bump() })
 
         let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
         serve(rep, transferID: 1, generation: 1, on: harness)
@@ -726,11 +731,75 @@ struct LazyPullCoordinatorTests {
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == bytes)
         #expect(progress.value > 1)
+        #expect(arrivals.value == progress.value)
         // The callback carries cumulative bytes: monotonic, constant total, final
         // == the full payload.
         #expect(progress.isMonotonic)
         #expect(progress.lastTotal == bytes.count)
         #expect(progress.lastBytesReceived == bytes.count)
+    }
+
+    @Test("an archive's arriving bytes keep its pull alive before the extract has a figure")
+    func archiveArrivalsKeepThePullAlive() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let advertised = 4 * 1024 * 1024
+        let (scratch, source) = try makeBulkyTree(named: "Bulky", byteCount: advertised)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        // Incompressible and short of one pacing quantum, so the extract cannot
+        // reach its first figure from what arrives.
+        let prefix = try clipboardArchiveBytes(ofDirectoryAt: source)
+            .prefix(ClipboardStreamTuning.extractPacingBytes / 4)
+
+        let coordinator = LazyPullCoordinator()
+        let inbox = harness.inbox
+        let transferID: UInt64 = 0x71
+        let plan = folderPlan(named: "Bulky", advertised: advertised)
+        let figures = ProgressCounter()
+        let arrivals = Tally()
+        let arrived = AsyncGate()
+        async let outcome = runPull(
+            coordinator, transferID: transferID,
+            onProgress: { figures.bump(bytes: $0, total: $1) },
+            retire: { inbox.cancelAwait(transferID) },
+            start: {
+                inbox.awaitTransfer(
+                    transferID, plan: plan,
+                    onComplete: { coordinator.deliver(transferID, $0) },
+                    onAbort: { coordinator.abort(transferID, $0) },
+                    onProgress: {
+                        coordinator.progress(transferID, bytesReceived: $0, totalBytes: $1)
+                    },
+                    onActivity: {
+                        coordinator.recordActivity(transferID)
+                        arrivals.bump()
+                        arrived.notify()
+                    })
+                // The peer sends the prefix and then holds the connection open,
+                // so the transfer stays mid-stream until the pull ends.
+                harness.openPull(transferID: transferID, generation: 1) { far, _ in
+                    defer { ClipboardDataConnection.end(fd: far) }
+                    try? writeTransferReply(
+                        fd: far, transferID: transferID, isArchive: true, isInline: false,
+                        totalBytes: 0)
+                    try? ClipboardDataConnection.write(fd: far, prefix)
+                    var parked = [UInt8](repeating: 0, count: 1)
+                    _ = parked.withUnsafeMutableBytes { raw in
+                        try? ClipboardDataConnection.read(fd: far, into: raw)
+                    }
+                }
+            })
+        try await arrived.wait { arrivals.value > 0 }
+
+        coordinator.elapseBackstopWindowForTesting(transferID)
+        #expect(coordinator.pendingSlotCountForTesting == 1)
+        #expect(figures.value == 0)
+
+        coordinator.failAll()
+        guard case .cancelled = await outcome else {
+            Issue.record("Expected .cancelled once the pull was called off")
+            return
+        }
     }
 
     @Test("a registered awaiter is woken by the abort its own transfer raised")
