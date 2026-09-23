@@ -25,8 +25,7 @@ struct VMLibraryTests {
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
-        arpTable: ScriptedARPTable = ScriptedARPTable(),
-        isVMNetworkingEntitled: Bool = true
+        arpTable: ScriptedARPTable = ScriptedARPTable()
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
         let library = VMLibrary(
             storageService: storageService,
@@ -45,8 +44,7 @@ struct VMLibraryTests {
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
-            isVMNetworkingEntitled: isVMNetworkingEntitled,
-            canObserveGuestAddresses: true
+            entitlements: .entitled
         )
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
@@ -805,7 +803,7 @@ struct VMLibraryTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true,
+            entitlements: .entitled,
             usbPairingStore: store
         )
         library.onFailure = { [failures] title, message in

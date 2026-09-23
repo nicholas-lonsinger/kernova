@@ -1102,7 +1102,8 @@ final class VMInstance {
         sessionContext.session = session
         setPhase(promoted)
         await setupNetworkAttachmentCoordinator(
-            for: session, in: sessionContext, vmnetNetworks: result.vmnetNetworks)
+            for: session, in: sessionContext, vmnetNetworks: result.vmnetNetworks,
+            entitlements: result.entitlements)
         return session
     }
 
@@ -1110,7 +1111,7 @@ final class VMInstance {
     /// prior one.
     private func setupNetworkAttachmentCoordinator(
         for session: VMSession, in context: VMSessionContext,
-        vmnetNetworks networks: any VmnetNetworkProviding
+        vmnetNetworks networks: any VmnetNetworkProviding, entitlements: EntitlementService
     ) async {
         context.networkAttachmentCoordinator?.stop()
         context.networkAttachmentCoordinator = nil
@@ -1127,6 +1128,7 @@ final class VMInstance {
             interfaces: HostBridgedInterfaceProvider(),
             linkObserver: HostNetworkLinkObserver(),
             vmnetNetworks: networks,
+            isVMNetworkingEntitled: entitlements.hasVMNetworking,
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
             onPendingChange: { [weak context] pending in

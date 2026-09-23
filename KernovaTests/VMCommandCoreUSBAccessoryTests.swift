@@ -53,7 +53,7 @@ struct VMCommandCoreUSBAccessoryTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true,
+            entitlements: .entitled,
             usbPairingStore: MockUSBAccessoryPairingStore()
         )
         let core = VMCommandCore(

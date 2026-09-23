@@ -103,7 +103,6 @@ final class VMOverviewResolver {
     /// Fires when an async read lands, naming the category whose value moved.
     var onCategoryResolved: ((VMSettingsCategory) -> Void)?
 
-    private let entitlements: EntitlementService
     private let bridgedInterfaces: any BridgedInterfaceProviding
     private let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
 
@@ -138,13 +137,11 @@ final class VMOverviewResolver {
     init(
         instance: VMInstance,
         viewModel: VMLibraryViewModel,
-        entitlements: EntitlementService,
         bridgedInterfaces: any BridgedInterfaceProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus
     ) {
         self.instance = instance
         self.viewModel = viewModel
-        self.entitlements = entitlements
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.micPermission = micPermissionStatus()
@@ -234,7 +231,7 @@ final class VMOverviewResolver {
         if choice != titledNetworkChoice {
             titledNetworkChoice = choice
             resolved.networkModeTitle = choice.title(
-                entitled: entitlements.hasVMNetworking,
+                entitled: viewModel.entitlements.hasVMNetworking,
                 interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [])
         }
         resolved.ipAddress = viewModel.guestAddress(for: instance)

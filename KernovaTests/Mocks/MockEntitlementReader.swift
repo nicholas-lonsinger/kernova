@@ -7,3 +7,16 @@ struct MockEntitlementReader: EntitlementReading {
 
     func hasEntitlement(_ key: String) -> Bool { granted.contains(key) }
 }
+
+extension EntitlementService {
+    /// The shipping signature's answer: every restricted key claimed.
+    static let entitled = EntitlementService(
+        reader: MockEntitlementReader(granted: [
+            "com.apple.vm.networking",
+            "com.apple.developer.accessory-access.usb",
+            "com.apple.developer.networking.topology-observation",
+        ]))
+
+    /// The default signing's answer: no restricted key claimed.
+    static let unentitled = EntitlementService(reader: MockEntitlementReader())
+}

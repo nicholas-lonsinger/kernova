@@ -38,12 +38,12 @@ struct ProcessEntitlementReader: EntitlementReading {
 /// Answers what this build's signature authorizes, so feature UI can degrade
 /// gracefully in builds signed without a restricted entitlement.
 ///
-/// The answer is a property of the signature, not the code: the default
-/// signing omits `com.apple.vm.networking` so profile-less builds run.
+/// The answer is a property of the signature, not the code, and under test the
+/// process is the test host, whose signing follows the machine: a gitignored
+/// `Config/Local.xcconfig` can opt into the restricted keys the default signing
+/// omits. An answer read from the process makes a test's outcome depend on
+/// where it runs.
 struct EntitlementService: Sendable {
-    /// The process-wide instance over the real signature reader.
-    @MainActor static let shared = EntitlementService()
-
     /// Whether VZ networking beyond NAT — bridged, host-only, and app-managed
     /// vmnet networks — is authorized (`com.apple.vm.networking`).
     ///
@@ -82,7 +82,7 @@ struct EntitlementService: Sendable {
         if #available(macOS 27.0, *) { hasTopologyObservation } else { true }
     }
 
-    init(reader: any EntitlementReading = ProcessEntitlementReader()) {
+    init(reader: any EntitlementReading) {
         hasVMNetworking = reader.hasEntitlement("com.apple.vm.networking")
         hasAccessoryAccess = reader.hasEntitlement("com.apple.developer.accessory-access.usb")
         hasTopologyObservation = reader.hasEntitlement(

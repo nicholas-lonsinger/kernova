@@ -41,7 +41,7 @@ struct VMCapabilityCatalogTests {
             fileSystem: MockFileSystem(),
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true
+            entitlements: .entitled
         )
         return Harness(
             catalog: VMCapabilityCatalog(library: library), library: library, lifecycle: lifecycle,

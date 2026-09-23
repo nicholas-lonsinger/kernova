@@ -77,7 +77,6 @@ final class VMSettingsViewController: NSViewController {
         viewModel: VMLibraryViewModel,
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
-        entitlements: EntitlementService = .shared,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },
@@ -90,7 +89,7 @@ final class VMSettingsViewController: NSViewController {
         self.activationCenter = activationCenter
         self.panelContext = VMSettingsPanelContext(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
-            bridgedInterfaces: bridgedInterfaces, entitlements: entitlements,
+            bridgedInterfaces: bridgedInterfaces,
             micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
             activationCenter: activationCenter)
         super.init(nibName: nil, bundle: nil)

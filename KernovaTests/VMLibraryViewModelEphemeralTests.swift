@@ -85,7 +85,7 @@ struct VMLibraryViewModelEphemeralTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()

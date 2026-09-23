@@ -242,7 +242,7 @@ final class AppResidencyController: WindowResidencyHosting {
             bundlePath: Bundle.main.bundlePath,
             build: Self.buildNumber,
             configuration: Self.buildConfiguration,
-            vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking,
+            vmNetworkingEntitled: viewModel.entitlements.hasVMNetworking,
             launch: provenance)
         #log(Self.logger, .notice, "Kernova resident app ready — \(line, privacy: .public)")
         syncStatusItem()

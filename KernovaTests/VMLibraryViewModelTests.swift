@@ -30,8 +30,7 @@ struct VMLibraryViewModelTests {
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
-        isVMNetworkingEntitled: Bool = true
+        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any RemovableMediaAttaching
@@ -50,7 +49,7 @@ struct VMLibraryViewModelTests {
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
             arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: isVMNetworkingEntitled
+            entitlements: .entitled
         )
         vm.presenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, removableMediaDeviceService)
@@ -71,7 +70,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         vm.presenter = presenter
         return (vm, suspending)
@@ -676,7 +675,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         vm.presenter = presenter
         return vm
@@ -2566,7 +2565,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS)
@@ -3358,7 +3357,7 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Race VM")
@@ -5199,7 +5198,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -5288,7 +5287,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
@@ -5715,7 +5714,7 @@ struct VMLibraryViewModelTests {
             usbAccessoryService: MockUSBAccessoryService(),
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Work")

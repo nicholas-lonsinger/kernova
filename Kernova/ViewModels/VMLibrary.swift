@@ -185,8 +185,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
-        isVMNetworkingEntitled: Bool,
-        canObserveGuestAddresses: Bool = EntitlementService.shared.supportsGuestAddressObservation,
+        entitlements: EntitlementService,
         usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore(),
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore()
@@ -200,8 +199,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         self.preferences = preferences
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
         let guestAddresses = GuestAddressObserver(
-            reader: arpTable, vmnetNetworks: vmnetNetworks, canObserve: canObserveGuestAddresses,
-            isVMNetworkingEntitled: isVMNetworkingEntitled)
+            reader: arpTable, vmnetNetworks: vmnetNetworks,
+            canObserve: entitlements.supportsGuestAddressObservation,
+            isVMNetworkingEntitled: entitlements.hasVMNetworking)
         self.guestAddresses = guestAddresses
         self.macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
 

@@ -11,8 +11,8 @@ final class MacOSInstallService {
     private let configBuilder: ConfigurationBuilder
     private let storageService = VMStorageService()
 
-    init(vmnetNetworks: any VmnetNetworkProviding) {
-        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks)
+    init(vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService) {
+        configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
     }
 
     // MARK: - Installation

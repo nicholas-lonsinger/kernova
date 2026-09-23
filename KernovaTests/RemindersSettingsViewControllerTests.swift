@@ -30,7 +30,7 @@ struct RemindersSettingsViewControllerTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable()
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
     }
 

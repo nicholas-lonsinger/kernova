@@ -46,7 +46,7 @@ struct VMCommandCoreAttachmentTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            isVMNetworkingEntitled: true
+            entitlements: .entitled
         )
         let core = VMCommandCore(
             library: library,
