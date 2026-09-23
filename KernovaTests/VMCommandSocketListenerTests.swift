@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import System
 import Testing
 
 @testable import Kernova
@@ -87,7 +88,7 @@ struct VMCommandSocketListenerTests {
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: commands),
             authorizer: authorizer,
-            socketPath: path,
+            socketPath: .success(path),
             awaitReady: { await readiness.wait() },
             onSurfaceRequested: {
                 surfaceCount.increment()
@@ -328,12 +329,17 @@ struct VMCommandSocketListenerTests {
 
     // MARK: - Degraded builds
 
-    @Test("A build with no group container publishes no socket")
-    func noContainerBindsNothing() {
+    @Test(
+        "A build with no group container, or a bundle it cannot look up, publishes no socket",
+        arguments: [
+            KernovaAppGroup.SocketPathFailure.noContainer,
+            .unresolvableBundle(.noSuchFileOrDirectory),
+        ])
+    func unnamedSocketBindsNothing(failure: KernovaAppGroup.SocketPathFailure) {
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
             authorizer: MockPeerAuthorizer(),
-            socketPath: nil,
+            socketPath: .failure(failure),
             awaitReady: {},
             onSurfaceRequested: {})
         listener.start()
@@ -347,7 +353,7 @@ struct VMCommandSocketListenerTests {
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
             authorizer: nil,
-            socketPath: path,
+            socketPath: .success(path),
             awaitReady: {},
             onSurfaceRequested: {})
         listener.start()

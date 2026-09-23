@@ -2,28 +2,6 @@ import AppKit
 import Foundation
 import KernovaAppRegistry
 
-/// The app bundle a helper executable is embedded in.
-enum EnclosingAppBundle {
-    /// The innermost ancestor directory whose name ends in `.app`, or `nil` when
-    /// the executable is not inside one.
-    ///
-    /// Symlinks are resolved first, because the installed tool is one: Settings
-    /// → Advanced puts a link in `/usr/local/bin`, and `Bundle.main.executableURL`
-    /// answers the path it was invoked through rather than the file behind it.
-    ///
-    /// Ancestors only: an executable whose own name ends in `.app` is a file,
-    /// not the bundle it would be launched as.
-    static func locate(executable: URL) -> URL? {
-        var candidate = executable.resolvingSymlinksInPath().deletingLastPathComponent()
-        while true {
-            if candidate.pathExtension == "app" { return candidate }
-            let parent = candidate.deletingLastPathComponent()
-            guard parent.path != candidate.path else { return nil }
-            candidate = parent
-        }
-    }
-}
-
 /// Launching the app this tool is embedded in — the one place here that reaches
 /// AppKit.
 enum AppLaunch {
@@ -35,14 +13,7 @@ enum AppLaunch {
     /// rather than spending its whole deadline on an app that will never come.
     static var reportedFailure: CLIFailure? { failure.value }
 
-    /// The app bundle this copy of the tool is inside, or `nil` for a copy that
-    /// is not inside one.
-    static var enclosingBundle: URL? {
-        guard let executable = Bundle.main.executableURL else { return nil }
-        return EnclosingAppBundle.locate(executable: executable)
-    }
-
-    /// Asks Launch Services for the enclosing bundle, hidden and unactivated.
+    /// Asks Launch Services for the app at `app`, hidden and unactivated.
     ///
     /// Answers as soon as the request is away, not when the app is up.
     ///
@@ -65,17 +36,9 @@ enum AppLaunch {
     ///
     /// `deadline` is the caller's whole budget, shared with the connect that
     /// follows, so what the two spend together is what the caller was told.
-    static func launchEnclosingApp(by deadline: Date) -> Result<Void, CLIFailure> {
-        guard let bundle = enclosingBundle else {
-            return .failure(
-                CLIFailure(
-                    .unavailable,
-                    "This copy of kernova is not inside a Kernova.app, so it cannot start the "
-                        + "app. Install the tool from Kernova's Settings \u{2192} Advanced."))
-        }
-
+    static func launch(_ app: URL, by deadline: Date) {
         AppRegistryWait.awaitDeregistration(
-            ofBundleAt: bundle, scope: .exitedProcesses, by: deadline)
+            ofBundleAt: app, scope: .exitedProcesses, by: deadline)
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.hides = true
@@ -86,13 +49,12 @@ enum AppLaunch {
         configuration.addsToRecentItems = false
 
         let box = failure
-        NSWorkspace.shared.openApplication(at: bundle, configuration: configuration) { _, error in
+        NSWorkspace.shared.openApplication(at: app, configuration: configuration) { _, error in
             guard let error else { return }
             box.store(
                 CLIFailure(
                     .unavailable, "Kernova could not be started: \(error.localizedDescription)"))
         }
-        return .success(())
     }
 
     /// Holds what the launch reported, written from the completion handler's
