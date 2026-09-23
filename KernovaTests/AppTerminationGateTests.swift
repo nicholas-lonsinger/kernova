@@ -134,7 +134,7 @@ struct AppTerminationGateTests {
         #expect(spy.endings == [.deferredReply])
     }
 
-    @Test("A resident app that stays in the status bar downgrades a quit to a GUI close")
+    @Test("A resident app that stays in the menu bar downgrades a quit to a GUI close")
     func residentQuitClosesTheGUI() async throws {
         let spy = SoftQuitSpy()
         let (controller, viewModel) = makeController(residency: spy)
@@ -148,8 +148,8 @@ struct AppTerminationGateTests {
         try await spy.closed.wait { spy.closeCount == 1 }
     }
 
-    @Test("A resident app that does not stay in the status bar terminates")
-    func residentQuitWithoutStatusBarTerminates() {
+    @Test("A resident app that does not stay in the menu bar terminates")
+    func residentQuitWithoutMenuBarTerminates() {
         let spy = SoftQuitSpy()
         let (controller, viewModel) = makeController(residency: spy)
         viewModel.keepInMenuBarOnQuit = false
@@ -192,7 +192,7 @@ struct AppTerminationGateTests {
         #expect(!AppTerminationController.isQuitEvent(makeEvent(kAEMiscStandards, kAEQuitApplication)))
     }
 
-    @Test("A terminate-and-save classification outranks staying in the status bar, and never clears")
+    @Test("A terminate-and-save classification outranks staying in the menu bar, and never clears")
     func terminateAndSaveLatches() {
         let spy = SoftQuitSpy()
         let (controller, viewModel) = makeController(residency: spy)

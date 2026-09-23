@@ -339,7 +339,7 @@ final class VMLibraryViewModel {
     }
 
     /// Whether closing the last window (or a GUI-origin quit) leaves Kernova
-    /// resident in the status bar instead of quitting it.
+    /// resident in the menu bar instead of quitting it.
     ///
     /// The single write path for `AppPreferences.keepInMenuBarOnQuit`, mirrored
     /// here because `AppDelegate` reconciles the status item and the activation
@@ -350,7 +350,7 @@ final class VMLibraryViewModel {
             guard keepInMenuBarOnQuit != oldValue else { return }
             #log(
                 Self.logger, .notice,
-                "Setting keep in status bar=\(self.keepInMenuBarOnQuit, privacy: .public)"
+                "Setting keep in menu bar=\(self.keepInMenuBarOnQuit, privacy: .public)"
             )
             preferences.keepInMenuBarOnQuit = keepInMenuBarOnQuit
         }

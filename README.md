@@ -28,7 +28,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Snapshots** — live memory snapshots, instant copy-on-write, repeatable revert | ✅ | ✅ |
 | **Ephemeral mode** — auto-revert to a baseline at every shutdown | ✅ | ✅ |
 | **Clone** VMs and **import** `.kernova` bundles — instant APFS copies on the same volume | ✅ | ✅ |
-| **Headless** operation from the status bar, **auto-start** at login | ✅ | ✅ |
+| **Headless** operation from the menu bar, **auto-start** at login | ✅ | ✅ |
 | **Shared folders** over VirtioFS | ✅ | ✅ |
 | **NAT**, **bridged**, **host-only** networking | ✅ | ✅ |
 | **Hot-plug** removable media (ISOs, disk images) | ✅ | ✅ |
@@ -52,7 +52,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Snapshots** | Named restore points with notes, taken running, suspended, or stopped — the first two capture memory too. Copy-on-write with the VM's own disks, so a snapshot is near-instant and adds little on disk. Revert is repeatable. |
 | **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot. Suspend keeps the session; a sidebar badge marks the throwaway VM. |
 | **Clone & import** | Clone with a fresh machine identity, or keep it (setting or ⌥-menu). Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
-| **Headless** | A status-bar item keeps VMs running after the last window closes and lists each one with its status. Quit save-suspends; sleep pauses, wake resumes. |
+| **Headless** | A menu bar item keeps VMs running after the last window closes and lists each one with its status. Quit save-suspends; sleep pauses, wake resumes. |
 | **Auto-start** | Per-VM boot (or resume) whenever Kernova opens — with Open at Login, the Mac comes up with them running. |
 
 > [!TIP]
@@ -93,7 +93,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 
 | | |
 |---|---|
-| **Guest agent** (macOS) | A lightweight in-guest helper installed from an attachable disk. Talks to the host over **vsock**; its own status-bar menu shows the connection, what's shared, and when an update is available. |
+| **Guest agent** (macOS) | A lightweight in-guest helper installed from an attachable disk. Talks to the host over **vsock**; its own menu bar item shows the connection, what's shared, and when an update is available. |
 | **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress in a clipboard window. Opt-in **Automatic Passthrough** syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
 | **Drag-and-drop** (macOS) | Drop files from Finder onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. |
 | **Log forwarding** (macOS) | Opt-in, live-toggleable: the guest's `os.Logger` records appear in **Console.app** under `app.kernova.guest`. |
@@ -111,9 +111,9 @@ Pure AppKit in the **Liquid Glass** design language — a source-list sidebar wi
 
 | Settings pane (⌘,) | Holds |
 |---|---|
-| **General** | Open at Login · keep running in the status bar |
+| **General** | Open at Login · keep running in the menu bar |
 | **Clipboard** | Maximum paste size |
-| **Reminders** | Status-bar quit reminder · guest-agent install nudge, app-wide and per VM |
+| **Reminders** | Menu bar quit reminder · guest-agent install nudge, app-wide and per VM |
 | **Advanced** | Always show ⌥-gated commands · block duplicate machine IDs from booting · new machine ID for clones · install the CLI and shell completions |
 
 ## Automation

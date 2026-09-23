@@ -67,7 +67,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// The menu-bar status item — the "Kernova is running" affordance and the way
     /// to summon the GUI while headless.
     ///
-    /// Present exactly while *Continue running in Status Bar* is on
+    /// Present exactly while *Continue running in the menu bar* is on
     /// (``syncStatusItem()``).
     private var statusItemController: HostAgentStatusItemController?
 
@@ -210,7 +210,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// A launch that asked for no window — hidden — and a login launch are the
     /// same request: have Kernova running, not be shown it. Both come up as the
     /// status-item app, which is the affordance that then reaches the GUI. With
-    /// *Continue running in Status Bar* off there is no status item, so a
+    /// *Continue running in the menu bar* off there is no status item, so a
     /// headless process would be unreachable and every launch presents instead
     /// — behind the hide for a hidden one, where the Dock icon is what reaches
     /// it.
@@ -337,7 +337,7 @@ final class AppResidencyController: WindowResidencyHosting {
     }
 
     /// Creates or removes the status item so it exists exactly while
-    /// *Continue running in Status Bar* is on.
+    /// *Continue running in the menu bar* is on.
     ///
     /// Idempotent, so the observation loop can call it on every wake.
     private func syncStatusItem() {
@@ -629,8 +629,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// reminder — in that order.
     ///
     /// `.accessory` is asserted rather than reconciled: this path has just
-    /// closed every window and is only reached with *Continue running in Status
-    /// Bar* on (``AppTerminationController/shouldTerminateOnQuit``), so it knows
+    /// closed every window and is only reached with *Continue running in the
+    /// menu bar* on (``AppTerminationController/shouldTerminateOnQuit``), so it knows
     /// the answer the reconcile would have to infer — and while the app is
     /// hidden the reconcile infers nothing, which would leave a window-less app
     /// holding a Dock icon that only an unhide could clear.
@@ -699,7 +699,7 @@ final class AppResidencyController: WindowResidencyHosting {
 
     /// Decides the reconcile's outcome.
     ///
-    /// With *Continue running in Status Bar* off there is neither a Dock icon nor
+    /// With *Continue running in the menu bar* off there is neither a Dock icon nor
     /// a status item, so a headless app would be unreachable — the last window
     /// close quits instead of demoting.
     ///
@@ -712,7 +712,7 @@ final class AppResidencyController: WindowResidencyHosting {
     ///   icon a presented one had, and a background close landing mid-hide (a VM
     ///   shutting down empties its display window) is answered by
     ///   ``unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)``. What *Continue
-    ///   running in Status Bar* governs is the last close, not a hide.
+    ///   running in the menu bar* governs is the last close, not a hide.
     /// - **Work in flight.** Termination trashes partial bundles
     ///   (`cancelAndCleanupPreparingInstances`) and hard-aborts a VM that is
     ///   mid-save, mid-restore, mid-start or mid-install — `applicationShouldTerminate`
@@ -768,7 +768,7 @@ final class AppResidencyController: WindowResidencyHosting {
         /// Show the Dock icon — windows came back with the app.
         case showDockIcon
         /// Drop to a status-item-only app: the last window closed during the
-        /// hide, which is the close *Continue running in Status Bar* answers.
+        /// hide, which is the close *Continue running in the menu bar* answers.
         case goHeadless
         /// Put the library back on screen — nothing survived the hide, and with
         /// no status item a headless app would be unreachable.
