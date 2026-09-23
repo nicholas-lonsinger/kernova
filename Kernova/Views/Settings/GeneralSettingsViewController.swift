@@ -8,9 +8,9 @@ import ServiceManagement
 ///   `LoginItemService`. `.status` is the source of truth (never persisted): the
 ///   switch is synced from it on appear and whenever the app regains focus, so a
 ///   change made in System Settings → Login Items is reflected without a restart.
-/// - *Continue running in Status Bar*, backed by `AppPreferences` through the
+/// - *Continue running in the menu bar*, backed by `AppPreferences` through the
 ///   view model's observable mirror. Governs whether a GUI-origin quit (⌘Q) or a
-///   last-window close leaves Kernova resident in the status bar, or quits the
+///   last-window close leaves Kernova resident in the menu bar, or quits the
 ///   app outright.
 @MainActor
 final class GeneralSettingsViewController: NSViewController {
@@ -46,7 +46,7 @@ final class GeneralSettingsViewController: NSViewController {
         ])
         let loginCaption = makeGroupedFormCaption(
             "Open Kernova automatically when you log in. With Continue running in "
-                + "Status Bar on, it opens in the Status Bar with no window.")
+                + "the menu bar on, it opens in the menu bar with no window.")
         let openLoginItemsButton = NSButton(
             title: "Open Login Items Settings…", target: self,
             action: #selector(openLoginItemsSettings))
@@ -55,12 +55,12 @@ final class GeneralSettingsViewController: NSViewController {
         openLoginItemsButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Continue running in Status Bar", control: keepInMenuBarSwitch)
+            makeGroupedFormCardRow("Continue running in the menu bar", control: keepInMenuBarSwitch)
         ])
         let menuBarCaption = makeGroupedFormCaption(
-            "Quitting (⌘Q) or closing all windows will keep Kernova running in the Status Bar. To "
-                + "fully quit, either Quit directly from the Status Icon or with Quit Kernova "
-                + "(⌥⌘Q). With this off, Kernova has no Status Bar icon and quits when you close "
+            "Quitting (⌘Q) or closing all windows will keep Kernova running in the menu bar. To "
+                + "fully quit, either Quit directly from the menu bar item or with Quit Kernova "
+                + "(⌥⌘Q). With this off, Kernova has no menu bar item and quits when you close "
                 + "its last window.")
 
         let section = NSStackView(views: [

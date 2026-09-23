@@ -153,7 +153,7 @@ final class AppTerminationController: NSObject {
 
     /// Whether a pending quit should actually terminate the resident app.
     ///
-    /// While *Continue running in Status Bar* is on (the default), GUI-origin quits (⌘Q,
+    /// While *Continue running in the menu bar* is on (the default), GUI-origin quits (⌘Q,
     /// "Close All Windows", the Dock's Quit) only close the GUI and leave the app
     /// resident with its VMs running headless.
     var shouldTerminateOnQuit: Bool {
