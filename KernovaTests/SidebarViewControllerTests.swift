@@ -12,7 +12,7 @@ import Testing
 /// drag-reorder index math, and the status-dependent context menu. Pure
 /// layout/rendering is left to manual verification, per the project's testing
 /// guidance.
-@Suite("Sidebar Tests", .serialized, .admissionGated)
+@Suite("Sidebar Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct SidebarViewControllerTests {
     /// Shared by the view model (selection/order) and the sidebar's own use of
@@ -302,7 +302,6 @@ struct SidebarViewControllerTests {
 
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = cell
-        defer { window.close() }
 
         #expect(label.currentEditor() != nil)
         #expect(cell.isRenaming)
@@ -317,7 +316,6 @@ struct SidebarViewControllerTests {
         let cell = makeRenamingRow(instance: instance) { commits.append(($0, $1)) }
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = cell
-        defer { window.close() }
         let label = try nameLabel(in: cell)
 
         label.currentEditor()?.string = "Renamed"
@@ -342,7 +340,6 @@ struct SidebarViewControllerTests {
         let cell = makeRenamingRow(instance: instance) { _, _ in commits += 1 }
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = cell
-        defer { window.close() }
         let label = try nameLabel(in: cell)
         label.currentEditor()?.string = "Half-typed"
         label.stringValue = "Half-typed"

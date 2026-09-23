@@ -14,13 +14,12 @@ import Testing
 /// menu's borderless window closes before the menu action fires, and letting it
 /// run the reconcile flipped the app back to `.accessory` mid-summon, leaving
 /// the summoned app last in the ⌘-Tab switcher.
-@Suite("AppResidencyController.windowCloseAffectsActivationPolicy", .serialized, .admissionGated)
+@Suite("AppResidencyController.windowCloseAffectsActivationPolicy", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct AppResidencyWindowCloseTests {
     @Test("A titled window's close runs the reconcile")
     func titledWindow() {
         let window = makeTestWindow(styleMask: [.titled, .closable])
-        defer { window.close() }
 
         #expect(AppResidencyController.windowCloseAffectsActivationPolicy(window))
     }
@@ -28,7 +27,6 @@ struct AppResidencyWindowCloseTests {
     @Test("A borderless window's close does not run the reconcile")
     func borderlessWindow() {
         let window = makeTestWindow(styleMask: [.borderless])
-        defer { window.close() }
 
         #expect(!AppResidencyController.windowCloseAffectsActivationPolicy(window))
     }

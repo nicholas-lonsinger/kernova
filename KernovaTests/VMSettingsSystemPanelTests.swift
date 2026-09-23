@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The System panel's own behavior, drilled into through the shell.
-@Suite("VM Settings System Panel Tests", .serialized, .admissionGated)
+@Suite("VM Settings System Panel Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsSystemPanelTests {
     private let preferences = makeTestPreferences()

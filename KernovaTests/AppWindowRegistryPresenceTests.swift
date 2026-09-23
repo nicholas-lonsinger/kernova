@@ -11,9 +11,10 @@ import Testing
 /// presentation owes.
 ///
 /// Only the tracked windows are exercised for presence: the `NSApp.windows` scan
-/// `hasUserWindow(countingMiniaturized:)` layers on top sees every other suite's
-/// windows in the shared test host, so it has no deterministic answer here.
-@Suite("AppWindowRegistry presence", .serialized, .admissionGated)
+/// `hasUserWindow(countingMiniaturized:)` layers on top also sees the windows of
+/// every test running alongside this one in the shared test host, so it has no
+/// deterministic answer here.
+@Suite("AppWindowRegistry presence", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct AppWindowRegistryPresenceTests {
     private let preferences = makeTestPreferences()
@@ -57,9 +58,8 @@ struct AppWindowRegistryPresenceTests {
     @Test("The library window counts, however miniaturized windows are treated")
     func libraryShown() throws {
         let registry = makeRegistry()
-        defer { registry.closeAll() }
         registry.showLibrary(bringToFront: true)
-        hideFromScreen(try #require(registry.libraryWindow))
+        adoptAppWindow(try #require(registry.libraryWindow))
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
@@ -68,10 +68,9 @@ struct AppWindowRegistryPresenceTests {
     @Test("A miniaturized library window counts only when miniaturized windows do")
     func libraryMiniaturized() async throws {
         let registry = makeRegistry()
-        defer { registry.closeAll() }
         registry.showLibrary(bringToFront: true)
         let window = try #require(registry.libraryWindow)
-        hideFromScreen(window)
+        adoptAppWindow(window)
 
         // AppKit reports the miniaturize a runloop turn later — the window is
         // still `isVisible` when `miniaturize(_:)` returns — so the wait is
@@ -91,9 +90,8 @@ struct AppWindowRegistryPresenceTests {
     @Test("The Settings window counts on its own")
     func settingsShown() throws {
         let registry = makeRegistry()
-        defer { registry.closeAll() }
         registry.showSettings(nil)
-        hideFromScreen(try #require(registry.settingsWindow))
+        adoptAppWindow(try #require(registry.settingsWindow))
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
     }
@@ -101,11 +99,10 @@ struct AppWindowRegistryPresenceTests {
     @Test("Closing a clipboard window deregisters it")
     func clipboardWindowCloseDeregisters() throws {
         let registry = makeRegistry()
-        defer { registry.closeAll() }
         let instance = makeClipboardEligibleInstance()
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
-        hideFromScreen(window)
+        adoptAppWindow(window)
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: false))
 
         // `close()` dispatches `windowWillClose` synchronously, which is what
@@ -118,14 +115,13 @@ struct AppWindowRegistryPresenceTests {
     @Test("Showing a clipboard window asks residency to prepare, and its close deregisters it")
     func clipboardWindowDrivesResidency() throws {
         let registry = makeRegistry()
-        defer { registry.closeAll() }
         let host = StubResidencyHost()
         registry.residency = host
         let instance = makeClipboardEligibleInstance()
 
         registry.showClipboard(for: instance)
         let window = try #require(registry.clipboardWindow(for: instance.instanceID))
-        hideFromScreen(window)
+        adoptAppWindow(window)
 
         #expect(host.prepareCount == 1)
 
@@ -140,7 +136,6 @@ struct AppWindowRegistryPresenceTests {
     @Test("A VM whose state refuses the clipboard opens no window")
     func clipboardRefusedForIneligibleVM() {
         let registry = makeRegistry()
-        defer { registry.closeAll() }
         let instance = VMInstanceFixture.make(name: "Stopped VM")
 
         registry.showClipboard(for: instance)

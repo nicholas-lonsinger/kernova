@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VM Settings Overview Tests", .serialized, .admissionGated)
+@Suite("VM Settings Overview Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsOverviewTests {
     private let preferences = makeTestPreferences()

@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The Storage panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Storage Panel Tests", .serialized, .admissionGated)
+@Suite("VM Settings Storage Panel Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsStoragePanelTests {
     private let preferences = makeTestPreferences()
@@ -289,8 +289,7 @@ struct VMSettingsStoragePanelTests {
     @Test("Edit Notes on the context menu begins inline editing on the row")
     func attachmentMenuEditNotesBeginsEditing() {
         let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        let window = showInTestWindow(vc.view, size: NSSize(width: 600, height: 800))
-        defer { window.close() }
+        showInTestWindow(vc.view, size: NSSize(width: 600, height: 800))
         let row = storageRow(in: vc.view)
         let menu = row?.contextMenu?()
         let editNotes = menu?.items.first { $0.title == "Edit Notes" }

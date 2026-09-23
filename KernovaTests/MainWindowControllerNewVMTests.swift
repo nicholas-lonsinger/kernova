@@ -7,7 +7,7 @@ import Testing
 /// Covers how `MainWindowController` takes New VM out of the toolbar while the
 /// sidebar is collapsed and puts it back: in the live toolbar, around a
 /// customization the user made, and around the customize palette.
-@Suite("MainWindowController New VM toolbar item", .admissionGated)
+@Suite("MainWindowController New VM toolbar item", .admissionGated, .scopedWindows)
 @MainActor
 struct MainWindowControllerNewVMTests {
     private let autosave = WindowAutosaveScope.unsaved()
@@ -30,7 +30,7 @@ struct MainWindowControllerNewVMTests {
             viewModel: makeLibraryViewModel(preferences: preferences),
             autosaveScope: autosave)
         let window = try #require(controller.window)
-        hideFromScreen(window)
+        adoptAppWindow(window)
         let split = try #require(window.contentViewController as? NSSplitViewController)
         return Subject(
             controller: controller,
@@ -44,7 +44,6 @@ struct MainWindowControllerNewVMTests {
     @Test("Collapsing the sidebar takes New VM out of the toolbar, and expanding puts it back")
     func collapseRemovesNewVM() throws {
         let subject = try makeSubject()
-        defer { subject.window.close() }
         let canonical = subject.layout
         try #require(canonical.firstIndex(of: newVM) == 1)
 
@@ -62,7 +61,6 @@ struct MainWindowControllerNewVMTests {
     @Test("Expanding returns New VM to its own slot in a customized layout, not beside the sidebar toggle")
     func expandRestoresCustomizedSlot() throws {
         let subject = try makeSubject()
-        defer { subject.window.close() }
         let index = try #require(subject.layout.firstIndex(of: newVM))
         subject.toolbar.removeItem(at: index)
         subject.toolbar.insertItem(withItemIdentifier: NSToolbarItem.Identifier(newVM), at: 0)
@@ -84,7 +82,6 @@ struct MainWindowControllerNewVMTests {
     @Test("A New VM the user removed stays out through a collapse and an expand")
     func customizationRemovalStaysOut() throws {
         let subject = try makeSubject()
-        defer { subject.window.close() }
         let index = try #require(subject.layout.firstIndex(of: newVM))
         subject.toolbar.removeItem(at: index)
 
@@ -103,7 +100,6 @@ struct MainWindowControllerNewVMTests {
         preferences.mainToolbarNewVMCollapseIndex = 1
 
         let subject = try makeSubject()
-        defer { subject.window.close() }
 
         try #require(!subject.sidebar.isCollapsed)
         #expect(subject.layout.contains(newVM))
@@ -115,7 +111,6 @@ struct MainWindowControllerNewVMTests {
     @Test("The customize palette shows New VM while the sidebar is collapsed, and the collapse returns when it closes")
     func paletteShowsCanonicalLayout() async throws {
         let subject = try makeSubject()
-        defer { subject.window.close() }
         let canonical = subject.layout
         subject.sidebar.isCollapsed = true
         try #require(!subject.layout.contains(newVM))
@@ -123,7 +118,7 @@ struct MainWindowControllerNewVMTests {
         subject.window.orderFront(nil)
         subject.toolbar.runCustomizationPalette(nil)
         let palette = try #require(subject.window.attachedSheet)
-        hideFromScreen(palette)
+        adoptAppWindow(palette)
         try #require(subject.toolbar.customizationPaletteIsRunning)
 
         #expect(subject.layout == canonical)
