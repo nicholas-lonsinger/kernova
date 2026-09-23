@@ -200,8 +200,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         cancel.bezelStyle = .push
         cancel.keyEquivalent = "\u{1B}"
 
-        // No ellipsis on the action button itself (project HIG); the ellipsis
-        // lives on the menu item and footer link that open this sheet.
+        // No ellipsis on the action button itself; the ellipsis lives on the menu
+        // item and footer link that open this sheet.
         let confirm = NSButton(title: "Take Snapshot", target: self, action: #selector(confirmTapped))
         confirm.bezelStyle = .push
         confirm.keyEquivalent = "\r"

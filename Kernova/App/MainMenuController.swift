@@ -515,7 +515,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // The ⌥⌘R shortcut is shared with "Resume" — unambiguous because a VM is
         // never both stopped and paused, and recovery precedes Resume in menu order.
         let recoveryItem = vmMenu.addItem(
-            withTitle: "Start in Recovery Mode",
+            withTitle: "Start in Recovery Mode…",
             action: #selector(AppDelegate.startVMInRecovery(_:)), keyEquivalent: "r")
         recoveryItem.keyEquivalentModifierMask = [.command, .option]
         let pauseItem = vmMenu.addItem(
