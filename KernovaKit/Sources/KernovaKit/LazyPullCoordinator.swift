@@ -124,9 +124,9 @@ final class LazyPullCoordinator: @unchecked Sendable {
         /// Set when the slot ended while `start` was still running: the starting
         /// thread owes the `retire` nothing could run yet.
         var retireOwed = false
-        /// Set by `progress`, consumed by each backstop tick: a window that saw a
-        /// chunk re-arms instead of timing the pull out.
-        var progressed = false
+        /// Set by `recordActivity`, consumed by each backstop tick: a window that
+        /// saw bytes arrive re-arms instead of timing the pull out.
+        var sawActivity = false
         var backstop: DispatchSourceTimer?
 
         init(transferID: UInt64, timeout: TimeInterval, retire: @escaping @Sendable () -> Void) {
@@ -158,7 +158,7 @@ final class LazyPullCoordinator: @unchecked Sendable {
     ///   - transferID: correlates this pull with its `ClipboardRequest` and the
     ///     streamed reply.
     ///   - timeout: the inactivity window, honored only when this call starts the
-    ///     pull; a joiner takes the starter's. Each chunk's `progress` re-arms it,
+    ///     pull; a joiner takes the starter's. Every `recordActivity` re-arms it,
     ///     so a healthy transfer of any size never times out.
     ///   - onProgress: this waiter's byte-progress hook, fanned out from
     ///     `progress`.
@@ -260,19 +260,29 @@ final class LazyPullCoordinator: @unchecked Sendable {
         return survives
     }
 
-    /// Records that a chunk landed: re-arms the inactivity backstop and fans the
-    /// byte counts out to every waiter's `onProgress`.
+    /// Fans one transfer's payload figure out to every waiter's `onProgress`.
     ///
-    /// Off-actor and idempotent; progress for a resolved or unknown pull is a
-    /// no-op. The fanout runs under the slot's lock together with that check, so
-    /// a chunk landing after the pull's terminal cannot reopen a readout the
-    /// terminal closed.
+    /// Off-actor; progress for a resolved or unknown pull is a no-op. The fanout
+    /// runs under the slot's lock together with that check, so a figure landing
+    /// after the pull's terminal cannot reopen a readout the terminal closed.
     func progress(_ transferID: UInt64, bytesReceived: Int, totalBytes: Int) {
         guard let slot = lock.withLock({ slots[transferID] }) else { return }
         slot.lock.withLock {
             guard !slot.resolved else { return }
-            slot.progressed = true
             for waiter in slot.waiters { waiter.onProgress?(bytesReceived, totalBytes) }
+        }
+    }
+
+    /// Records that bytes arrived for `transferID`, so the inactivity backstop
+    /// re-arms at its next window boundary rather than timing the pull out.
+    ///
+    /// Off-actor and idempotent; activity for a resolved or unknown pull is a
+    /// no-op.
+    func recordActivity(_ transferID: UInt64) {
+        guard let slot = lock.withLock({ slots[transferID] }) else { return }
+        slot.lock.withLock {
+            guard !slot.resolved else { return }
+            slot.sawActivity = true
         }
     }
 
@@ -360,8 +370,8 @@ final class LazyPullCoordinator: @unchecked Sendable {
         if started { slot.retire() }
     }
 
-    /// Arms the slot's inactivity backstop: a window that sees no chunk resolves
-    /// the pull `.timedOut`.
+    /// Arms the slot's inactivity backstop: a window that sees no bytes arrive
+    /// resolves the pull `.timedOut`.
     private func armBackstop(_ slot: Slot) {
         let timer = DispatchSource.makeTimerSource(queue: backstopQueue)
         timer.schedule(deadline: .now() + slot.timeout, repeating: slot.timeout)
@@ -388,13 +398,13 @@ final class LazyPullCoordinator: @unchecked Sendable {
         timer?.cancel()
     }
 
-    /// One backstop window boundary: re-arm if a chunk landed inside it, else
+    /// One backstop window boundary: re-arm if bytes arrived inside it, else
     /// give the pull up.
     private func backstopFired(_ slot: Slot) {
         let expired = slot.lock.withLock { () -> Bool in
             guard !slot.resolved else { return false }
-            guard !slot.progressed else {
-                slot.progressed = false
+            guard !slot.sawActivity else {
+                slot.sawActivity = false
                 return false
             }
             return true

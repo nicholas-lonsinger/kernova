@@ -863,11 +863,10 @@ public final class ClipboardInboundOffers {
             plan: plan.receivePlan,
             onComplete: { [coordinator] in coordinator.deliver(plan.transferID, $0) },
             onAbort: { [coordinator] in coordinator.abort(plan.transferID, $0) },
-            // Re-arms the inactivity backstop and feeds every waiter's readout, so
-            // a large still-streaming transfer is never cut off mid-flight.
             onProgress: { [coordinator] bytes, total in
                 coordinator.progress(plan.transferID, bytesReceived: bytes, totalBytes: total)
-            })
+            },
+            onActivity: { [coordinator] in coordinator.recordActivity(plan.transferID) })
         // Read here rather than snapshotted with the plan: the statfs behind it
         // belongs off the main thread.
         let ceiling =

@@ -12,9 +12,11 @@ import KernovaLogging
 /// representation is mapped back and delivered as a resident `.inMemory`
 /// payload, so inline content has no Kernova-imposed size cap.
 ///
-/// Everything runs on the transfer's own serial queue, so the owning actor is
-/// never blocked, and the 33-byte trailer is verified — size and SHA-256 both —
-/// before anything is delivered.
+/// Everything runs off the owning actor, driven from the transfer's own serial
+/// queue, so the actor is never blocked, and the 33-byte trailer is verified —
+/// size and SHA-256 both — before anything is delivered. Each running signal
+/// has exactly one producer — the payload figure the stage that counts the
+/// payload, arriving bytes the wire reader — so the figure only ever climbs.
 final class ClipboardTransferReceiver: @unchecked Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferReceiver")
@@ -104,12 +106,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     private let lock = NSLock()
     private var descriptor: Int32?
     private var isCancelled = false
-    /// The extract's live uncompressed total, so progress is reported in the
-    /// unit the offer's figure is stated in rather than in compressed bytes.
-    private var extracted: ArchiveByteCounter?
-    /// The size a raw payload declared, which its progress is reported against.
-    private var declaredTotalBytes = 0
-    private var onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)?
     #if DEBUG
     private var trailerSearchCount = 0
     #endif
@@ -164,14 +160,26 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     ///
     /// Exactly one of `onComplete` and `onAbort` fires, off the caller's actor,
     /// on the transfer's queue, after the connection is closed.
+    ///
+    /// - Parameters:
+    ///   - onComplete: the representation that arrived, its trailer verified.
+    ///   - onAbort: why the transfer stopped.
+    ///   - onProgress: the cumulative `(bytesReceived, totalBytes)` in the unit
+    ///     the offer's figure is stated in, fired where the payload is counted
+    ///     — by the wire reader for a raw payload, whose wire bytes are the
+    ///     payload, and by the extract's output guard for an archive.
+    ///   - onActivity: bytes arrived off the wire, fired by the wire reader for
+    ///     every payload and carrying no figure.
     func start(
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
-        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil
+        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil,
+        onActivity: (@Sendable () -> Void)? = nil
     ) {
-        lock.withLock { self.onProgress = onProgress }
         queue.async { [self] in
-            run(onComplete: onComplete, onAbort: onAbort)
+            run(
+                onComplete: onComplete, onAbort: onAbort, onProgress: onProgress,
+                onActivity: onActivity)
         }
     }
 
@@ -198,7 +206,9 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
 
     private func run(
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
-        onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void
+        onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
+        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)?,
+        onActivity: (@Sendable () -> Void)?
     ) {
         let signpost = ClipboardSignposts.transfers.beginInterval(
             "Clipboard receive", id: ClipboardSignposts.transfers.makeSignpostID())
@@ -217,7 +227,10 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         // a cancellation's `shutdown(2)` and this `close(2)` macOS accepts and
         // discards the peer's writes, so only "terminal fired" proves the peer
         // can no longer stream into the void.
-        let outcome = Result { try receive(fd: fd, beganAt: beganAt) }
+        let outcome = Result {
+            try receive(
+                fd: fd, beganAt: beganAt, onProgress: onProgress, onActivity: onActivity)
+        }
         closeConnection(fd)
         switch outcome {
         case .success(let representation): onComplete(representation)
@@ -284,22 +297,29 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     }
 
     /// Reads the reply, the payload and the trailer, and delivers what arrived.
-    private func receive(fd: Int32, beganAt: EngineInstant) throws
-        -> ClipboardContent.Representation
-    {
+    private func receive(
+        fd: Int32, beganAt: EngineInstant,
+        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)?,
+        onActivity: (@Sendable () -> Void)?
+    ) throws -> ClipboardContent.Representation {
         let reply = try readReply(fd: fd)
         guard reply.refusalCode.isEmpty else {
             throw ReceiveStop(rawCode: reply.refusalCode, message: reply.refusalMessage)
         }
-        lock.withLock { declaredTotalBytes = Int(clamping: reply.totalBytes) }
-        let reader = ClipboardPayloadReader(fd: fd) { [weak self] received in
-            self?.report(received)
-        }
+        let totalBytes = Int(clamping: reply.totalBytes)
         let firstByteAt = clock.now
+        let reader: ClipboardPayloadReader
         let outcome: (representation: ClipboardContent.Representation, byteCount: Int)
         if reply.isArchive {
-            outcome = try receiveArchive(reply: reply, reader: reader)
+            reader = ClipboardPayloadReader(fd: fd) { _ in onActivity?() }
+            outcome = try receiveArchive(reply: reply, reader: reader) { extracted in
+                onProgress?(extracted, totalBytes)
+            }
         } else {
+            reader = ClipboardPayloadReader(fd: fd) { received in
+                onActivity?()
+                onProgress?(received, totalBytes)
+            }
             outcome = try receiveRaw(reply: reply, reader: reader)
         }
         if let onTransferTimed {
@@ -377,8 +397,11 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
 
     // MARK: - Archived payloads
 
+    /// Extracts the archive `reader` carries, reporting what the extract has
+    /// written to `onProgress`.
     private func receiveArchive(
-        reply: Kernova_V1_ClipboardTransferReply, reader: ClipboardPayloadReader
+        reply: Kernova_V1_ClipboardTransferReply, reader: ClipboardPayloadReader,
+        onProgress: @escaping @Sendable (_ extracted: Int) -> Void
     ) throws -> (representation: ClipboardContent.Representation, byteCount: Int) {
         let advertised = plan.advertisedByteCount
         guard staging.hasCapacity(forByteCount: advertised) else { throw diskFull(needed: advertised) }
@@ -396,7 +419,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         }
 
         let counted = ArchiveByteCounter()
-        lock.withLock { extracted = counted }
         let refusal = ArchiveRefusalBox()
         let staging = self.staging
         let guarded = refusal.guarding { [self] written in
@@ -404,7 +426,7 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             // emits any of it, so arriving wire bytes are a poor clock for a
             // bar stated in payload units: report from the output instead, at
             // the guard's own cadence.
-            report(written)
+            onProgress(written)
             guard !cancelled else { throw cancellationStop }
             // Paced by the payload being *written*, not by the archive arriving:
             // compression can reach ~100:1, so a guard clocked on wire bytes
@@ -569,17 +591,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
                 throw ReceiveStop(code: .digestMismatch, message: "SHA-256 mismatch at the trailer")
             }
         }
-    }
-
-    /// Reports arriving bytes to the pull, in the unit the offer's figure is in.
-    private func report(_ receivedBytes: Int) {
-        let (handler, extracted, declared) = lock.withLock {
-            (onProgress, self.extracted, declaredTotalBytes)
-        }
-        // For an archive the wire count is compressed while every readout's
-        // denominator is the offer's uncompressed figure, so report what the
-        // extract has written instead — same unit, same scale.
-        handler?(extracted?.value ?? receivedBytes, declared)
     }
 
     private func diskFull(needed: Int?) -> ReceiveStop {
