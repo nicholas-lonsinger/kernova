@@ -50,11 +50,13 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT := xcrun swift-format
 
-# The skill scripts' fixture suites. Each drives its script through every
-# verdict against recorded fixtures — no Xcode, no network, seconds to run —
-# which is what lets `lint` gate them, and the pre-push hook with it.
-SKILL_TESTS := .agents/skills/freshen-main/tests/run.sh \
-               .agents/skills/make-verdict/tests/run.sh
+# The fixture suites for the skill scripts and Tools/lib. Each drives its code
+# through every verdict against recorded fixtures — no Xcode, no network,
+# seconds to run — which is what lets `lint` gate them, and the pre-push hook
+# with it.
+FIXTURE_TESTS := .agents/skills/freshen-main/tests/run.sh \
+                 .agents/skills/make-verdict/tests/run.sh \
+                 Tools/tests/worktrees.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
@@ -201,7 +203,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the skill fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, and the KernovaKit package reference
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, and the KernovaKit package reference
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -211,7 +213,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the skill fi
 	else \
 		echo 'lint: shellcheck not installed — skipping shell static analysis (brew install shellcheck)'; \
 	fi
-	@for t in $(SKILL_TESTS); do bash "$$t" || exit 1; done
+	@for t in $(FIXTURE_TESTS); do bash "$$t" || exit 1; done
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh
@@ -242,16 +244,8 @@ dead-code: ## Scan for unused code with Periphery (drives its own build; minutes
 doctor: ## Check the local toolchain, signing, optional tooling, and repo setup
 	@Tools/doctor.sh
 
-# Diagnoses ghost Launch Services registrations, orphaned DerivedData build
-# arenas in the global ~/Library location, orphaned processes, and prunable
-# git worktrees left behind by torn-down worktrees (the post-checkout hook
-# sweeps registrations and arenas on new checkouts; this reports whatever
-# remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
-# outrank the installed /Applications copy in the LaunchServices
-# CFBundleVersion election. `ghosts` only reports; `clean-ghosts` also
-# unregisters/kills/prunes/evicts, prompting only for live competing copies.
-ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
+ghosts: ## Report stale/competing Kernova Launch Services registrations, processes, worktrees, and build arenas
 	@Tools/ghosts.sh
 
-clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/evicts what it finds
+clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/trashes/evicts what it finds
 	@Tools/ghosts.sh --fix

@@ -24,6 +24,10 @@
 #     on disk (the file was deleted out from under a still-running process)
 #   - `git worktree list` entries marked `prunable` (administrative metadata
 #     for a worktree whose directory is already gone)
+#   - Directories under the primary checkout's .claude/worktrees/ that no
+#     `git worktree list` entry names: anything writing into a removed
+#     worktree's path after `git worktree remove` recreates the directory,
+#     and git, holding no registration for it, never lists it again
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
 #     CFBundleVersion outranks the installed /Applications copy — unlike the
 #     dead-path ghosts above, Launch Services elects these by highest
@@ -72,6 +76,8 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 # and exit long before the report body, and they label paths too.
 # shellcheck source=lib/output.sh
 . "$REPO_ROOT/Tools/lib/output.sh"
+# shellcheck source=lib/worktrees.sh
+. "$REPO_ROOT/Tools/lib/worktrees.sh"
 
 # ---- path display -------------------------------------------------------------
 
@@ -331,7 +337,7 @@ printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
 # the Makefile front door anyway (make swallows `--fix` as one of its own
 # options and bails), so echoing it back only suggests an argument the reader
 # cannot actually pass to `make ghosts`.
-[ "$FIX" = 1 ] && printf '%s(repair mode: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
+[ "$FIX" = 1 ] && printf '%s(repair mode: will unregister, kill, prune, trash, and evict)%s\n' "$c_dim" "$c_reset"
 
 # ---- Launch Services ghost registrations -------------------------------------
 
@@ -416,6 +422,28 @@ else
         else
             detail 'git worktree prune failed'
         fi
+    fi
+fi
+
+if read_worktree_layout "$REPO_ROOT"; then
+    orphan_dirs=()
+    while IFS= read -r dir; do
+        orphan_dirs+=("$dir")
+    done < <(orphaned_worktree_dirs)
+
+    if [ "${#orphan_dirs[@]}" -eq 0 ]; then
+        pass 'No orphaned directories under .claude/worktrees/'
+    else
+        for dir in "${orphan_dirs[@]}"; do
+            ghost "Orphaned worktree directory: $(pretty_path "$dir")"
+            if [ "$FIX" = 1 ]; then
+                if trash "$dir" 2>/dev/null; then
+                    fixed "trashed: $(pretty_path "$dir")"
+                else
+                    detail "trash failed for $(pretty_path "$dir")"
+                fi
+            fi
+        done
     fi
 fi
 
