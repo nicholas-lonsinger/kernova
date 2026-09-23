@@ -174,7 +174,7 @@ end tell
 
 ## Building Kernova
 
-Kernova builds from source with **Xcode 26** and **Swift 6**. After cloning:
+Kernova builds from source with **Xcode 27** and **Swift 6**. After cloning:
 
 ```bash
 make setup   # one-time per clone; idempotent, rerun any time
