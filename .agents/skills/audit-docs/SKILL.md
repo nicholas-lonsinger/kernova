@@ -219,12 +219,19 @@ from.
 
 A `fix mechanism` verdict names whatever enforces or presents the rule at the
 point of use: lint, a hook, a CI check, a repo setting, a template the
-platform shows when the thing is created. Two constraints on what gets
+platform shows when the thing is created. Four constraints on what gets
 proposed:
 
 - A tool never silently changes what an author wrote. When a check could
   rewrite or block, prefer the instruction plus a validating check, see how
   the instruction goes, and tighten on evidence.
+- A mechanism acts only on what its caller owns. One that would quit,
+  delete, or rewrite something the maintainer or another session may hold —
+  a running app, a VM, a checkout — is a procedure step that stops to ask,
+  not a mechanism.
+- The observation a mechanism rests on is reproduced before it is built:
+  a memory records what one session saw, often through one tool, and the
+  mechanism inherits its premise.
 - A gap in the machinery itself — a layer table that cannot classify a doc,
   a routing test with no answer — is closed in the same pass with a
   property-defined addition, not flagged and left.
