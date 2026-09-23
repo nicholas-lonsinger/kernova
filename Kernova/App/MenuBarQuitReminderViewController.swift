@@ -24,7 +24,7 @@ final class MenuBarQuitReminderViewController: NSViewController {
         installCalloutStack(rows: [
             makeCalloutHeadline("Kernova is still running in the menu bar."),
             makeCalloutBody(
-                "Your virtual machines keep running. Quit Kernova fully from this menu-bar icon."),
+                "Your virtual machines keep running. Quit Kernova fully from this menu bar item."),
             makeLinkButton(
                 "Stop Reminding Me", target: self, action: #selector(stopRemindingTapped)),
         ])

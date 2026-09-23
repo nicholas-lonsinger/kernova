@@ -59,8 +59,8 @@ final class GeneralSettingsViewController: NSViewController {
         ])
         let menuBarCaption = makeGroupedFormCaption(
             "Quitting (⌘Q) or closing all windows will keep Kernova running in the menu bar. To "
-                + "fully quit, either Quit directly from the menu bar icon or with Quit Kernova "
-                + "(⌥⌘Q). With this off, Kernova has no menu bar icon and quits when you close "
+                + "fully quit, either Quit directly from the menu bar item or with Quit Kernova "
+                + "(⌥⌘Q). With this off, Kernova has no menu bar item and quits when you close "
                 + "its last window.")
 
         let section = NSStackView(views: [
