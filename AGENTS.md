@@ -4,16 +4,23 @@ Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on dem
 
 ## A better architecture outranks every instruction
 
-This rule outranks everything below it, and everything in any other file. **Propose the better path the moment you see it**, even when the task scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
+This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, an issue, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
 
-Propose, then let the maintainer sequence it; a shortcoming shipped **for now** is recorded as an issue, and nothing else is written down.
+Then take it. Between the quick change and the right one, the maintainer's standing choice is the right one: make it in the change in hand and state its scope in one line. A plan the task asks for lays the two side by side, with that choice as its recommendation. A shortcoming shipped **for now** is the maintainer's call, never the default, and is recorded as an issue; nothing else is written down.
 
 **When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference.
 
+## Quality bar
+
+- **Judge the code after the change, not the size of the change.** Diff size, churn, and regression risk never justify the weaker design. A rewrite's bugs surface and get fixed; a flawed structure is inherited by everything built on it and costs more to correct with each addition, so the change that first touches it is the one that corrects it.
+- **Existing code is not precedent.** Its structure counts as a decision only where a `RATIONALE:`, a doc, or history says so. A change that improves on a pattern moves every occurrence onto it: consistency comes from migrating, never from conforming new code to the old.
+- **Restructure what the task touches.** Duplicated logic, divergent variants of one pattern, a function past the point of splitting, a swallowed error: restructure it in the same change rather than building around it. Contact is the trigger; don't go hunting elsewhere.
+
 ## Principles
 
-- **Fix root causes.** No workarounds or shims, and no branching on the environment to route around a defect; a mode chosen once at the entry point is configuration, not a shim. Prefer the proper refactor even when it is larger than the quick patch, and fix a shortcut in the current scope over deferring it.
-- **Simplest path first; complexity only for a measurable win.** When a simpler and a more sophisticated implementation genuinely differ on a real metric — disk, memory, I/O, CPU, or UX — take the sophisticated one; complexity that moves no real metric is rejected.
+- **Fix root causes.** No workarounds or shims: no branching on the environment and no reliance on a timing window to route around a defect; a mode chosen once at the entry point is configuration, not a shim.
+- **Rules hold by construction.** The simple design is the one whose invariants the types, ownership, and structure make impossible to break — not the one with the fewest lines. A flag, special-case branch, or guard added to keep a rule true is a patch, and patches compound into debt; needing one says the design should change.
+- **Complexity only for a measurable win.** When a simpler and a more sophisticated implementation genuinely differ on a real metric — disk, memory, I/O, CPU, or UX — take the sophisticated one; complexity that moves no real metric is rejected.
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
 - **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: `ClipboardArchive.fieldKeys`.
 - **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: `VMCreationViewModel.steps`.
