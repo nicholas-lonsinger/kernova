@@ -74,10 +74,8 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # Stop the agent and wait for launchd to drop the label.
     bootout_and_wait "${LABEL}"
 
-    # RATIONALE: rm, not trash — the same exception Tools/ghosts.sh's
-    # evict_dd_arena takes. A trashed app bundle is still a valid on-disk copy
-    # that Launch Services can rediscover and re-elect until the Trash is
-    # emptied, so trashing the agent would leave the uninstall incomplete.
+    # A trashed app bundle stays a valid on-disk copy that Launch Services can
+    # rediscover and re-elect until the Trash is emptied.
     rm -rf "${INSTALL_DIR:?}/${APP_NAME}"
     # Also remove the pre-rename app bundle name if a stale copy lingers, and
     # any staging/backup leftovers from an interrupted install.

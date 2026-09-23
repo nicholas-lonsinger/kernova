@@ -8,11 +8,10 @@ import AppKit
 @MainActor
 final class SettingsWindowController: NSWindowController {
     convenience init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
-        // RATIONALE: deliberately *not* `NSWindow.withStableContentSize`, which the
-        // main and clipboard windows use. That factory pins a fixed initial content
-        // size, and this window has no single correct one — it is non-resizable and
-        // its height is whatever the selected pane publishes as `preferredContentSize`,
-        // re-applied by `SettingsTabViewController` on every tab switch.
+        // `NSWindow.withStableContentSize` pins a fixed initial content size, and
+        // this window has none: its height is whatever the selected pane publishes
+        // as `preferredContentSize`, re-applied by `SettingsTabViewController` on
+        // every tab switch.
         let window = NSWindow(
             contentViewController: SettingsTabViewController(viewModel: viewModel))
         window.title = "Settings"
@@ -20,11 +19,11 @@ final class SettingsWindowController: NSWindowController {
         // The controller is a singleton reused across opens, so the window must
         // survive being closed (don't deallocate it out from under the reference).
         window.isReleasedWhenClosed = false
-        // RATIONALE: the autosaved frame is kept for its *position* only — a saved
-        // frame also restores a height, which for this non-resizable window is stale
-        // the moment the pane list or a pane's content changes (observed stretching
-        // the first pane's cards over the excess). AppKit has no position-only
-        // autosave, so `SettingsTabViewController` re-asserts the height on appear.
+        // A saved frame also restores a height, which for this non-resizable window
+        // goes stale when the pane list or a pane's content changes (observed
+        // stretching the first pane's cards over the excess). AppKit has no
+        // position-only autosave, so `SettingsTabViewController` re-asserts the
+        // height on appear.
         window.setFrameAutosaveName(autosaveScope.settingsFrame)
         self.init(window: window)
     }

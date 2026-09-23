@@ -8,10 +8,10 @@ import AppKit
 /// taking the row away. The inset buffer card below is what delineates it.
 @MainActor
 final class ClipboardCommandBarView: NSView {
-    // RATIONALE: No keyEquivalent on any button — a Cmd+V / Cmd+C equivalent
-    // would intercept performKeyEquivalent before a focused NSTextView ever
-    // sees the keystroke, breaking normal text editing. Keyboard access flows
-    // through the responder chain (`paste(_:)` / `copy(_:)`) instead.
+    // A Cmd+V / Cmd+C key equivalent on these buttons would take
+    // `performKeyEquivalent` before a focused NSTextView sees the keystroke,
+    // breaking text editing; keyboard access goes through the responder chain
+    // (`paste(_:)` / `copy(_:)`).
     let pasteButton: NSButton
     let copyButton: NSButton
     let clearButton: NSButton

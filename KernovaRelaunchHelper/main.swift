@@ -155,11 +155,6 @@ enum Relauncher {
             #log(logger, .notice, "Relaunched Kernova successfully")
             exit(0)
         }
-        // RATIONALE: the helper is app-sandbox + inherit
-        // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open`
-        // inherits that sandbox and reaches LaunchServices through the same
-        // mediated path `NSWorkspace` already took — it adds no capability this
-        // open lacks.
         #log(logger, .error, "Failed to relaunch Kernova: \(failure, privacy: .public)")
         exit(1)
     }

@@ -4,16 +4,22 @@ Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on dem
 
 ## A better architecture outranks every instruction
 
-This rule outranks everything below it, and everything in any other file. **Propose the better path the moment you see it**, even when the task scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
-
-Propose, then let the maintainer sequence it; a shortcoming shipped **for now** is recorded as an issue, and nothing else is written down.
+This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, an issue, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
 
 **When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference.
 
+## Quality bar
+
+- **The right change is the default.** Between the quick change and the right one, make the right one in the change in hand and state its scope in one line; a plan the task asks for lays out both and recommends it. Only the maintainer's explicit choice ships a shortcoming *for now*, recorded as an issue. Taking the better path never skips a sign-off the maintainer requires.
+- **Judge the code after the change, not the size of the change.** Diff size, churn, and regression risk never justify the weaker design; risk is met by testing the change.
+- **Existing code is not precedent.** A pattern binds only while a stated reason for it — a doc, a comment's cited evidence, a PR that argued for it — still holds. A change that improves on a pattern moves every occurrence onto it.
+- **Fix what the change builds on.** Duplicated logic, divergent variants of one pattern, a function too large to extend cleanly, a swallowed error: where the task changes code, fix these there in the same change rather than building around them. Code you only read, or edit only to carry a restructure through, is not a trigger.
+- **Fix root causes.** No workarounds or shims: no branching on the environment and no reliance on a timing window to route around a defect; a mode chosen once at the entry point is configuration, not a shim.
+- **Rules hold by construction.** The simple design is the one whose types, ownership, and structure make its invariants impossible to break — not the one with the fewest lines. A flag, special-case branch, or guard that keeps Kernova's own state consistent is a patch: needing one means the design changes, and shipping the patch instead is a *for now* call. Checking what Kernova does not own — input, files, the guest, the platform — is design.
+- **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX.
+
 ## Principles
 
-- **Fix root causes.** No workarounds or shims, and no branching on the environment to route around a defect; a mode chosen once at the entry point is configuration, not a shim. Prefer the proper refactor even when it is larger than the quick patch, and fix a shortcut in the current scope over deferring it.
-- **Simplest path first; complexity only for a measurable win.** When a simpler and a more sophisticated implementation genuinely differ on a real metric — disk, memory, I/O, CPU, or UX — take the sophisticated one; complexity that moves no real metric is rejected.
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
 - **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: `ClipboardArchive.fieldKeys`.
 - **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: `VMCreationViewModel.steps`.
@@ -73,20 +79,21 @@ A file the user can see is deleted with `FileManager.trashItem`, never `removeIt
 
 ### Review Feedback Handling
 
-Every review finding — your own reading of adjacent code included — gets one of four triage categories:
+Every review finding — your own reading of adjacent code included — gets one of three triage categories:
 
 | Category | What it means |
 |---|---|
-| **Fix now** | Valid, in scope, reasonable effort — fix it as part of the current work |
-| **Fix later** | Valid but out of scope or too large — file a GitHub issue immediately from `.github/ISSUE_TEMPLATE/review-debt.md` |
-| **Annotate** | A last resort: a `RATIONALE:` comment only for a concern a review actually raised or an alternative actually tried and failed — one a reviewer *would* raise is not enough; `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar) |
-| **Dismiss** | Everything else — a finding that fails the severity bar and doesn't clear the annotation bar |
+| **Fix now** | Clears the severity bar and is not separate work — fix it in this change, however much restructuring that takes |
+| **Fix later** | Clears the severity bar and is separate work: different code or logic whose fix would make this change about two things — file a GitHub issue immediately from `.github/ISSUE_TEMPLATE/review-debt.md` |
+| **Dismiss** | Everything else; a dead-code-scan false positive is dismissed with `// periphery:ignore - <reason>` on the symbol |
 
-A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). When a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain: dismiss rather than filing the next link, and don't annotate it.
+**The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins. The general cost of debt clears nothing.
 
-**An existing `RATIONALE:` is evidence, not authority.** If the code looks wrong today, investigate — it is a head start on where to look, never a reason to stop looking. Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it; one citing no evidence and no date is unverified, worth no more than an ordinary comment.
+**An improbable defect is fixed by design or not at all.** A defect a user would almost never hit earns no added check, gate, or flag — only a redesign that removes it by construction, as **Fix now** or **Fix later**. When a search for that redesign finds none, it is **Dismiss**, unless it can lose user data — a disk image, a save file, a user's file — which is **Fix later** with its traced path.
 
-A research note has the same standing — verify its claims against current production code before acting on them.
+**Triage converges.** A finding in code this change wrote or reworked is never **Fix later**. A later review round reviews only what the previous round's fixes changed, and raises only defects. When a chain has moved from defects in the code to meta-findings about prior fixes, stop it: dismiss rather than filing the next link.
+
+**A comment or research note is evidence, not authority.** If the code looks wrong today, investigate — a claim is a head start on where to look, never a reason to stop looking. Re-check a comment's claim whenever you edit the code it covers, then correct or delete it; verify a research note's claims against current production code before acting on them.
 
 ## Documentation and Comments
 
@@ -101,7 +108,7 @@ Write to that baseline — nothing the reader already holds, and no why unless i
 | Code | Behavior |
 | A symbol's `///` | The contract a caller needs, plus at most one non-obvious constraint |
 | A test | Any constraint an assertion can state |
-| `RATIONALE:` | Why the obvious-looking fix is wrong here |
+| A `//` comment | Why the obvious-looking code is wrong here, as a fact with its evidence — never as a decision |
 | AGENTS.md | Rules that must fire without a lookup |
 | A principles doc | Rules constraining *future* decisions — never a description of what was built |
 | ARCHITECTURE.md | What exists and how pieces connect — never what a component does internally |
@@ -137,15 +144,13 @@ When you add to a durable doc, read the whole document, not the diff, and decide
 
 ### When this fires
 
-Before committing, with the diff in view — in the same pass as the `## Notes` disclosure for `RATIONALE:` additions.
+Before committing, with the diff in view.
 
 ## Git Workflow
 
 A PR's head branch is `<type>/<short-description>` — `<type>` one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `style`; two to four kebab-case words — from the first push: renaming a branch under an open PR closes the PR ([GitHub Docs: Renaming a branch](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-branches-in-your-repository/renaming-a-branch)).
 
 An AI agent ends its commit message with a `Co-authored-by` trailer naming the model that wrote the change — name and version, nothing else — at the vendor's no-reply address: `Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>`, added explicitly, once; a subagent's commit names the subagent's model.
-
-A change that adds a `RATIONALE:` comment lists each one's file, symbol, and cited evidence under `## Notes` in the commit and PR body; no approval gate governs annotations, this disclosure replaces it.
 
 Merge with `gh pr merge <N> --squash --body …`. The repo's squash default leaves the body empty, so `--body` carries one short paragraph describing the merged state, not the route to it, and then one `Co-authored-by` trailer per model that contributed to the branch.
 

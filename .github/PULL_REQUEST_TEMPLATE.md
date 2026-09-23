@@ -14,4 +14,4 @@
 
 ## Notes
 
-<!-- Optional: caveats and follow-ups. Required when the change adds a RATIONALE: comment — list each one's file, symbol, and cited evidence. Delete this section when it is neither. -->
+<!-- Optional: caveats and follow-ups. Delete this section when there are none. -->

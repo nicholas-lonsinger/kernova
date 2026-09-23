@@ -144,10 +144,9 @@ final class ScopedAccess {
     /// `true` when the system asked for the bookmark to be re-created.
     let isStale: Bool
 
-    // RATIONALE: `startAccessingSecurityScopedResource()` returning false is
-    // NORMAL for paths that need no scope (inside the container, or covered
-    // by the downloads entitlement) — this exists only to balance the matching
-    // stop call, not to signal an error.
+    // `startAccessingSecurityScopedResource()` returns false for a path that
+    // needs no scope (inside the container, or covered by the downloads
+    // entitlement), so this balances the matching stop call and signals no error.
     private let didStart: Bool
     private var released = false
 

@@ -291,8 +291,6 @@ struct VsockGuestLogServiceTests {
         // instance, so `start()` does not resume the closed channel.
         service.start()
 
-        // RATIONALE: negative assertion ("prove nothing was consumed") — a fixed
-        // observation window, not a wait timeout.
         try await Task.sleep(for: .milliseconds(200))
         #expect(emitter.snapshot().isEmpty)
     }

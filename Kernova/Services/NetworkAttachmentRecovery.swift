@@ -250,13 +250,11 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
     }
 }
 
-// RATIONALE (2026-08-13): `SCDynamicStore` invokes these on the store's
-// dispatch queue, so they must be `nonisolated` file-scope functions, never
-// closure literals formed inside the `@MainActor` class: the compiler gives
-// such a literal main-actor isolation plus a dynamic check, which traps
-// (`EXC_BREAKPOINT` in `dispatch_assert_queue`) the moment a real link event
-// fires — observed on the first host-only VM boot, which reconfigures host
-// interfaces and fires the event immediately.
+// `SCDynamicStore` invokes these on the store's dispatch queue. A closure
+// literal formed inside the `@MainActor` class gets main-actor isolation plus a
+// dynamic check, which traps (`EXC_BREAKPOINT` in `dispatch_assert_queue`) when
+// a real link event fires — observed on a host-only VM's first boot, which
+// reconfigures host interfaces and fires the event immediately.
 
 private nonisolated func hostLinkObserverRetain(_ info: UnsafeRawPointer) -> UnsafeRawPointer {
     _ = Unmanaged<AnyObject>.fromOpaque(info).retain()

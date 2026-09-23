@@ -1,13 +1,13 @@
 ---
 name: Review Debt
-about: A finding from code review that is valid but out of scope for the change under review
+about: A code-review finding that clears the severity bar and is separate work from the change under review
 title: ""
 labels: ["Review Debt"]
 ---
 
 ## Found during
 
-<!-- PR #N, or the file under review. -->
+<!-- PR #N, or the file under review — and, for a PR, why its fix would make that PR about two things. -->
 
 ## Description
 
@@ -15,7 +15,7 @@ labels: ["Review Debt"]
 
 ## Reached by
 
-<!-- The user gesture or supported automated flow that produces this, traced — never "a caller could". For a refactor or coverage finding, what leaving it costs. Nothing to write here means the finding fails the severity bar: dismiss it instead of filing. -->
+<!-- The user gesture or supported automated flow that produces this, traced — never "a caller could". For a refactor finding, the Quality bar or Principles rule the code breaks; for a coverage finding, the new or changed behavior no test pins. Nothing to write here means the finding fails the severity bar: dismiss it instead of filing. -->
 
 ## Location
 
@@ -23,7 +23,7 @@ labels: ["Review Debt"]
 
 ## Suggested fix
 
-<!-- One line if a fix is obvious; otherwise delete this section. A wiring plan written now is stale at pickup. -->
+<!-- One line if a fix is obvious; otherwise delete this section. A defect users would almost never hit is filed only with the redesign that removes it by construction, or, when it can lose user data, its traced path. A wiring plan written now is stale at pickup. -->
 
 ## Hypothesis (unverified — re-verify before acting)
 

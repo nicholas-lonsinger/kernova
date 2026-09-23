@@ -62,23 +62,21 @@ final class TransientStatusItemPopover: NSObject {
         // Re-arm cleanly if a prior callout is still up.
         dismissTask?.cancel()
 
-        // RATIONALE: detach the dropdown while a popover is anchored. With
-        // `statusItem.menu` assigned, `NSPopover.show(relativeTo:)` against the
-        // status-item button pops the assigned menu open by itself (macOS 26,
-        // observed on every soft quit with the cursor nowhere near the item), and
-        // that open dismisses the popover through the controller's
-        // `menuNeedsUpdate` within a frame. Every dismissal path restores it.
+        // With `statusItem.menu` assigned, `NSPopover.show(relativeTo:)` against
+        // the status-item button pops the menu open by itself (observed on macOS 26
+        // on every soft quit, the cursor nowhere near the item), and that open
+        // dismisses the popover through the controller's `menuNeedsUpdate` within
+        // a frame. Every dismissal path restores the menu.
         statusItem.menu = nil
         button.target = self
         button.action = #selector(statusItemTapped)
 
-        // RATIONALE: `.applicationDefined`, not the default `.transient` — both
-        // callouts have to outlive the app deactivating, and a `.transient`
-        // popover auto-closes on deactivation (see `PopoverPresenter`'s `onClose`
-        // doc): a soft quit deactivates the app moments after the reminder shows,
-        // and acting on a clipboard refusal means switching to another app to
-        // retry the paste. Lifetime is bounded instead by `duration`, a click on
-        // the status item, and the content's own link.
+        // A `.transient` popover closes when the app deactivates (see
+        // `PopoverPresenter`'s `onClose` doc), and both callouts outlive that: a
+        // soft quit deactivates the app moments after the reminder shows, and
+        // acting on a clipboard refusal means switching to another app to retry
+        // the paste. `duration`, a click on the status item, and the content's own
+        // link bound the lifetime instead.
         presenter.show(
             content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
 

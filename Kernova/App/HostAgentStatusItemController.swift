@@ -246,10 +246,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // The glyph is the whole signal for a sighted user; the description is
         // the whole of it for VoiceOver, so it changes with the glyph.
         let description = hasStartFailures ? "Kernova, a virtual machine failed to start" : "Kernova"
-        // RATIONALE: deliberately not the shared `NSImage.systemSymbol(_:…)` helper.
-        // Its release fallback is a zero-size `NSImage()`, which would render the
-        // status-item button invisible — and the status item is the *only* way to
-        // find (or quit) the headless agent.
+        // The shared `NSImage.systemSymbol(_:…)` helper's release fallback is a
+        // zero-size `NSImage()`, which renders the status-item button invisible,
+        // and the status item is the only way to find or quit the headless agent.
         guard
             let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         else {

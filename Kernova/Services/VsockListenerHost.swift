@@ -190,13 +190,12 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
 
     /// Enlarges the socket send buffer to unlock host→guest streaming throughput.
     ///
-    /// RATIONALE: throughput is gated by the *writer's* send buffer, and this fd
-    /// is born at XNU's 8 KiB `net.local.stream.sendspace` default — the host
-    /// writer then ping-pongs with the VM helper process every 8 KiB, capping
-    /// host→guest at ~0.7 GiB/s. 1 MiB lifts that ~9×, with the knee at 256 KiB —
-    /// measured 2026-07-13 on an M1 Max, see
-    /// `docs/research/2026-07-13-vsock-transport-throughput.md`. Host-only: the
-    /// guest→host writer lives in Apple's VM helper process, unreachable per-fd.
+    /// Throughput is gated by the *writer's* send buffer, and this fd is born at
+    /// XNU's 8 KiB `net.local.stream.sendspace` default — the host writer then
+    /// ping-pongs with the VM helper process every 8 KiB, capping host→guest at
+    /// ~0.7 GiB/s. 1 MiB lifts that ~9×, with the knee at 256 KiB
+    /// (`docs/research/2026-07-13-vsock-transport-throughput.md`). The guest→host
+    /// writer lives in Apple's VM helper process, unreachable per-fd.
     private func applySendBuffer(_ fd: Int32) {
         var size = Int32(Self.sendBufferBytes)
         let rc = setsockopt(

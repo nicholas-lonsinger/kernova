@@ -66,12 +66,10 @@ final class MacOSInstallService {
         )
 
         instance.adoptBuildResult(result)
-        // RATIONALE (2026-08-31): `attachSession` runs *before* the cancellation
-        // check below on purpose. A cancel in this window unwinds with
-        // `instance.session` set, which `VMCommandCore.runGuestSetup`'s `catch
-        // is CancellationError` tears down. Checking first would leave the
-        // open session context — its pipes and its security scopes — with no
-        // matching VM.
+        // A cancel caught by the check below unwinds with `instance.session` set,
+        // which `VMCommandCore.runGuestSetup`'s `catch is CancellationError` tears
+        // down. One caught before `attachSession` would leave the open session
+        // context — its pipes and its security scopes — with no matching VM.
         guard let session = await instance.attachSession(from: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -156,10 +154,10 @@ final class MacOSInstallService {
     /// Resolves the restore image through symlinks, mapping `PathValidation.Failure`
     /// to ``MacOSInstallError``.
     ///
-    /// RATIONALE: VZ rejects a restore image whose path traverses a symlink in
-    /// *any* component and never resolves it itself — `VZMacOSRestoreImage.load`
-    /// fails `VZErrorInvalidRestoreImage` on a file `FileManager` calls readable,
-    /// and `VZMacOSInstaller.init` is documented to *raise an exception*. Under the
+    /// VZ rejects a restore image whose path traverses a symlink in *any*
+    /// component and never resolves it itself — `VZMacOSRestoreImage.load` fails
+    /// `VZErrorInvalidRestoreImage` on a file `FileManager` calls readable, and
+    /// `VZMacOSInstaller.init` is documented to *raise an exception*. Under the
     /// sandbox `.downloadsDirectory` is itself a symlink.
     static func resolveRestoreImage(at url: URL) throws -> URL {
         let path = url.path(percentEncoded: false)
@@ -170,12 +168,9 @@ final class MacOSInstallService {
         } catch {
             // Report the symlink-resolved path: `errorDescription` reaches the user,
             // and the raw path is the container's `Downloads` spelling, not the
-            // `~/Downloads/…` they know.
-            //
-            // RATIONALE: resolve the *parent* and re-attach the file name.
-            // `resolvingSymlinksInPath()` is existence-dependent — it returns the
-            // path untouched when the last component is missing, which is exactly
-            // the `.notFound` case here.
+            // `~/Downloads/…` they know. `resolvingSymlinksInPath()` returns a path
+            // untouched when its last component is missing — the `.notFound` case
+            // — so the parent is resolved and the file name re-attached.
             let reportedPath =
                 url.deletingLastPathComponent()
                 .resolvingSymlinksInPath()
@@ -189,9 +184,9 @@ final class MacOSInstallService {
                 #log(logger, .error, "Restore image path is a directory: '\(reportedPath, privacy: .private)'")
                 throw MacOSInstallError.restoreImageNotAFile(path: reportedPath)
             case .notReadable, .notWritable:
-                // `resolveFile` only throws these when `requireWritable` is set,
-                // which we don't — VZ opening the file is the authoritative
-                // readability test.
+                // `resolveFile` never throws `.notReadable`, and throws
+                // `.notWritable` only under `requireWritable`, which this call
+                // doesn't set — VZ opening the file is the readability test.
                 #log(logger, .fault, "Unexpected \(String(describing: error), privacy: .public) for restore image")
                 assertionFailure("Unexpected PathValidation failure for restore image: \(error)")
                 throw MacOSInstallError.restoreImageNotFound(path: reportedPath)

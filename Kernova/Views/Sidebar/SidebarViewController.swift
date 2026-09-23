@@ -676,14 +676,11 @@ extension SidebarViewController {
             if capabilities.isApplicable(.startInRecovery, to: instance)
                 && !preferences.alwaysShowAdvancedOptions
             {
-                // RATIONALE: Zero-height dummy item at index 0 anchors the context menu so
-                // it doesn't jump downward when "Start" collapses into its Recovery
-                // alternate on ⌥-hold. When an isAlternate pair sits at the very top,
-                // hiding the primary collapses the visible top down to index 1, but
-                // AppKit's menu-positioning engine still anchors the window on index 0's
-                // original coordinates — every visible row shifts down by one item's
-                // height. A permanent top anchor gives the pair below it the same physics
-                // as a mid-menu pair.
+                // With an isAlternate pair at the very top, hiding the primary on
+                // ⌥-hold collapses the visible top to index 1 while AppKit still
+                // anchors the menu window on index 0's original coordinates, so every
+                // row shifts down by one item's height. This zero-height item at
+                // index 0 gives the "Start" pair a mid-menu pair's positioning.
                 let dummy = NSMenuItem()
                 dummy.view = NSView(frame: .zero)
                 menu.addItem(dummy)

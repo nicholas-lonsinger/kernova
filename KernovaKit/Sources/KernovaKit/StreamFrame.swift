@@ -73,9 +73,10 @@ public struct StreamFrameDecoder: Sendable {
     /// Extracts the next complete frame payload from the buffer, if available.
     ///
     /// - Returns: The payload (without the length prefix) of the next frame, as
-    ///   a slice aliasing the decoder's buffer — consume it before the next
-    ///   `feed`/`nextFrame` — or `nil` if the buffer does not yet hold a
-    ///   complete frame.
+    ///   a slice aliasing the decoder's buffer — consume or copy it before the
+    ///   next `feed`/`nextFrame`, and index it through its own indices, since
+    ///   its `startIndex` is not zero — or `nil` if the buffer does not yet hold
+    ///   a complete frame.
     /// - Throws: `StreamFrameError.frameTooLarge` if a frame's declared size
     ///   exceeds `StreamFrame.maxPayloadSize`; the stream is then corrupt and the
     ///   decoder should be discarded.
@@ -97,13 +98,6 @@ public struct StreamFrameDecoder: Sendable {
 
         let payloadStart = buffer.startIndex + readOffset + StreamFrame.lengthPrefixSize
         let payloadEnd = buffer.startIndex + readOffset + totalFrameSize
-        // RATIONALE: return a slice aliasing `buffer` rather than copying the
-        // payload out, removing the per-frame copy on the common path; on
-        // the rare frames where `compactIfNeeded` shifts, the live slice turns that
-        // shift into a copy-on-write. A caller MUST consume or copy the slice
-        // before the next `feed`/`nextFrame`; `Data`'s copy-on-write keeps that a
-        // performance contract, not a safety one. The slice carries a non-zero
-        // `startIndex` — index it through its own indices, never absolute offsets.
         let payload = buffer[payloadStart..<payloadEnd]
         readOffset += totalFrameSize
 
@@ -136,12 +130,11 @@ public struct StreamFrameDecoder: Sendable {
             readOffset = 0
             return
         }
-        // RATIONALE: gate the shift on `readOffset >= unread`, not just the fixed
-        // threshold. A chunk frame is ~65.5 KiB — already past
-        // `compactionThreshold` on its own — so a bare threshold guard would
-        // memmove the whole unread tail after *every* frame, moving far more than
-        // it reclaims. The price is a buffer growing to ~2× the live bytes
-        // between compactions.
+        // A chunk frame (~65.5 KiB) alone passes `compactionThreshold`, so a
+        // threshold-only guard memmoves the whole unread tail after every frame,
+        // moving far more than it reclaims. Also requiring `readOffset >= unread`
+        // bounds each move by what it reclaims, and lets the buffer grow to ~2×
+        // the live bytes between compactions.
         let unread = buffer.count - readOffset
         if readOffset >= max(StreamFrameDecoder.compactionThreshold, unread) {
             let unreadStart = buffer.startIndex + readOffset

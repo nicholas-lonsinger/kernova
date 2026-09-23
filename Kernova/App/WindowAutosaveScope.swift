@@ -9,11 +9,10 @@ struct WindowAutosaveScope: Sendable {
 
     let mainToolbar: NSToolbar.Identifier
 
-    // RATIONALE (2026-09-18): one toolbar identifier shared by every VM's
-    // display window, unlike the per-VM frame name — "Toolbars with the same
-    // identifier are implicitly synchronized so that they maintain the same
-    // state" (NSToolbar.h, `initWithIdentifier:`), so a customized layout applies
-    // to all display windows and persists as a single configuration.
+    /// Shared by every VM's display window, unlike the per-VM frame name.
+    /// "Toolbars with the same identifier are implicitly synchronized so that
+    /// they maintain the same state" (NSToolbar.h, `initWithIdentifier:`), so a
+    /// customized layout applies to all display windows as one configuration.
     let displayToolbar: NSToolbar.Identifier
 
     /// The app's own windows.
