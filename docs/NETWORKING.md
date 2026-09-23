@@ -2,6 +2,8 @@
 
 Read this before changing how a guest attaches to a network or is reached from one.
 
+**Each networking mechanism is the maintainer's call.** A mechanism the tree does not hold, a new entitlement, or a change to how a VM's MAC address is chosen or kept is proposed with its evidence and waits for the maintainer's explicit yes before it enters a plan, a branch, or a brief — even when that evidence shows it is required.
+
 ## Principles
 
 ### 1. Exposure is the user's choice; recovery restores it, never widens or substitutes

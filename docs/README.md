@@ -6,7 +6,8 @@ Deep-dive documentation, read on demand; [AGENTS.md](../AGENTS.md) at the repo r
 |----------|--------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Making a structural change — the component map: which type owns a behavior, and the seams between them |
 | [CLIPBOARD.md](CLIPBOARD.md) | Designing or extending host↔guest copy/paste — the two rules every clipboard design is held to: no Kernova-imposed size bound, and pay on consume |
-| [NETWORKING.md](NETWORKING.md) | Changing how a guest attaches to a network or is reached from one — exposure, entry-time refusal, IP-display, MAC-uniqueness, and network-membership principles |
+| [LIVE-VERIFICATION.md](LIVE-VERIFICATION.md) | Checking a change in the running app — against a guest, or through App Intents from Spotlight and Shortcuts |
+| [NETWORKING.md](NETWORKING.md) | Changing how a guest attaches to a network or is reached from one — the maintainer's sign-off on each new mechanism, and the exposure, entry-time refusal, IP-display, MAC-uniqueness, and network-membership principles |
 | [RELEASING.md](RELEASING.md) | Cutting a release — the ordered TestFlight and Developer ID steps, each naming the file that explains its mechanism |
 | [research/](research/) | Dated research write-ups that ground design decisions |
 

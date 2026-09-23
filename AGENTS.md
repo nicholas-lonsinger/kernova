@@ -23,7 +23,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
 - **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: `ClipboardArchive.fieldKeys`.
 - **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: `VMCreationViewModel.steps`.
-- **Stable or absent, never propped up.** A capability that works only while a mechanism holds platform state open, or that rests on platform behavior no vendor documents, ships degraded to what the platform sanctions, behind the guest agent, or not at all. A design that holds only under conditions — an ordering that must hold, a wait placed just so, behavior observed on one OS build — is a no.
+- **Stable or absent, never propped up.** A capability that works only while a mechanism holds platform state open, or that rests on platform behavior no vendor documents, ships degraded to what the platform sanctions, behind the guest agent, or not at all. A design that holds only under conditions — an ordering that must hold, behavior observed on one OS build — is a no.
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `buildNetworkSection()`.
 - **Outcome names in the UI; vendor terms at the platform boundary.** Where Apple's own UI names the thing, keep Apple's term at that boundary and the outcome-describing domain term everywhere else. Worked case: `NetworkModeChoice.title(entitled:interfaces:)`.
 - **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `GuestIPAddress`.
@@ -62,6 +62,10 @@ Apple's level table ([Generating Log Messages from Your Code](https://developer.
 
 An optional-returning API called with a compile-time constant gets `assertionFailure` beside its fallback — a silent fallback masks the typo for good.
 
+### Guest scope
+
+A new host↔guest feature scopes to macOS guests: its issue or design states the Linux gap as fact, and carries no Linux open question and no partial Linux mechanism. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
+
 ### Current-Only Surfaces
 
 No compatibility path is written for any shape that is not the current one.
@@ -71,8 +75,6 @@ No compatibility path is written for any shape that is not the current one.
 **The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and the `MARKETING_VERSION` bump is the whole remedy.
 
 Nothing refuses an older agent, either: it keeps every feature it can still run, and the version mismatch surfaces the update affordance while nothing else acts on it.
-
-Live verification against a guest takes an offered agent update before observing anything: what an older agent does is not what the build does.
 
 ### File Operations
 
@@ -88,13 +90,14 @@ Every review finding — your own reading of adjacent code included — gets one
 | **Fix later** | Clears the severity bar and is separate work: different code or logic whose fix would make this change about two things — file a GitHub issue immediately from `.github/ISSUE_TEMPLATE/review-debt.md` |
 | **Dismiss** | Everything else; a dead-code-scan false positive is dismissed with `// periphery:ignore - <reason>` on the symbol |
 
-**The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins. The general cost of debt clears nothing.
+**The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action).
+A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins; a documentation finding, only by naming the Documentation and Comments rule the text breaks. The general cost of debt clears nothing.
 
 **An improbable defect is fixed by design or not at all.** A defect a user would almost never hit earns no added check, gate, or flag — only a redesign that removes it by construction, as **Fix now** or **Fix later**. When a search for that redesign finds none, it is **Dismiss**, unless it can lose user data — a disk image, a save file, a user's file — which is **Fix later** with its traced path.
 
 **Triage converges.** A finding in code this change wrote or reworked is never **Fix later**. A later review round reviews only what the previous round's fixes changed, and raises only defects. When a chain has moved from defects in the code to meta-findings about prior fixes, stop it: dismiss rather than filing the next link.
 
-**A comment or research note is evidence, not authority.** If the code looks wrong today, investigate — a claim is a head start on where to look, never a reason to stop looking. Re-check a comment's claim whenever you edit the code it covers, then correct or delete it; verify a research note's claims against current production code before acting on them.
+**A comment, research note, issue, or PR is evidence, not authority.** If the code looks wrong today, investigate — a claim is a head start on where to look, never a reason to stop looking. Re-check a comment's claim whenever you edit the code it covers, then correct or delete it; verify a research note's claims against current production code before acting on them, and grep for a mechanism an issue or PR names before describing it as present.
 
 ## Documentation and Comments
 
@@ -111,6 +114,7 @@ Write to that baseline — nothing the reader already holds, and no why unless i
 | A test | Any constraint an assertion can state |
 | A `//` comment | Why the obvious-looking code is wrong here, as a fact with its evidence — never as a decision |
 | AGENTS.md | Rules that must fire without a lookup |
+| An agent's own entry point beside its AGENTS.md import (`CLAUDE.md`) | What holds only under that agent's harness while working here |
 | A principles doc | Rules constraining *future* decisions — never a description of what was built |
 | ARCHITECTURE.md | What exists and how pieces connect — never what a component does internally |
 | A runbook | The procedure you follow while doing it |
@@ -118,6 +122,7 @@ Write to that baseline — nothing the reader already holds, and no why unless i
 | A GitHub issue | Known gaps, planned work, triage |
 | The PR body | The argument, the route taken, rejected alternatives |
 | The squash commit body | The merged change |
+| An agent's memory | What no row above can hold — the maintainer's own machine, accounts, and private arrangements; a fact true in every repository goes to the agent's user scope |
 | **Nowhere** | Everything else. The common destination, not a failure |
 
 ### Routing
@@ -145,7 +150,7 @@ When you add to a durable doc, read the whole document, not the diff, and decide
 
 ### When this fires
 
-Before committing, with the diff in view.
+Before committing, with the diff in view, and before writing to an agent's memory.
 
 ## Git Workflow
 
