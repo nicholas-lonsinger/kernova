@@ -468,10 +468,10 @@ extension CommandErrorDTO {
             "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
             switch reason {
-            case .macAddressInUse(let address):
-                "\u{201C}\(other.name)\u{201D} already uses \(address). "
-                    + "Each virtual machine needs its own MAC address. "
-                    + "Change or delete \u{201C}\(other.name)\u{201D} first to move this address to \u{201C}\(vm.name)\u{201D}."
+            case .macAddressInUse(let address, let configured, let snapshots):
+                Self.macAddressInUseMessage(
+                    address, vm: vm.name, holder: other.name, configured: configured,
+                    snapshots: snapshots)
             case .machineIdentity:
                 "\u{201C}\(vm.name)\u{201D} has the same machine ID as \u{201C}\(other.name)\u{201D}, which is active. "
                     + "Two virtual machines with the same machine ID must not run at once. "
@@ -500,5 +500,34 @@ extension CommandErrorDTO {
     private static func deadlineText(_ seconds: TimeInterval) -> String {
         seconds == seconds.rounded()
             ? String(format: "%.0f", seconds) : String(format: "%.1f", seconds)
+    }
+
+    /// What ``ConflictReason/macAddressInUse(address:configured:snapshots:)``
+    /// tells the user: where `holder` holds the address, and what frees it.
+    private static func macAddressInUseMessage(
+        _ address: String, vm: String, holder: String, configured: Bool, snapshots: [String]
+    ) -> String {
+        let holder = "\u{201C}\(holder)\u{201D}"
+        let destination = "to move this address to \u{201C}\(vm)\u{201D}."
+        let rule = "Each virtual machine needs its own MAC address. "
+        guard !snapshots.isEmpty else {
+            return "\(holder) already uses \(address). " + rule
+                + "Change or delete \(holder) first \(destination)"
+        }
+        let quoted = snapshots.map { "\u{201C}\($0)\u{201D}" }
+        let held = quoted.count == 1 ? "a snapshot, \(quoted[0])," : "snapshots \(listed(quoted))"
+        let those = quoted.count == 1 ? "that snapshot" : "those snapshots"
+        guard configured else {
+            return "\(holder) has \(held) taken with \(address). " + rule
+                + "Delete \(those) first \(destination)"
+        }
+        return "\(holder) already uses \(address), and has \(held) taken with it. " + rule
+            + "Delete \(holder), or change its address and delete \(those), \(destination)"
+    }
+
+    /// `items` as a sentence lists them: "A", "A and B", "A, B and C".
+    private static func listed(_ items: [String]) -> String {
+        guard let last = items.last, items.count > 1 else { return items.first ?? "" }
+        return items.dropLast().joined(separator: ", ") + " and " + last
     }
 }

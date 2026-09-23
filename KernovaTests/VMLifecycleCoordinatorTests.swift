@@ -586,17 +586,14 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("latestDestination-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
-        let instance = VMInstanceFixture.make()
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
             try await coordinator.installMacOS(on: instance, context: context)
@@ -689,14 +686,11 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSTransientFailureReturnsToInitialBoot() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         installService.installError = makeInstallVMLimitExceededError()
-        let instance = VMInstanceFixture.make()
-        instance.enter(.failed(message: "stale message from an earlier failure"))
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        instance.enter(.failed(message: "stale message from an earlier failure"))
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: (any Error).self) {
             try await coordinator.installMacOS(on: instance, context: context)
@@ -711,16 +705,10 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS clears installContext on successful completion")
     func installMacOSClearsInstallContextOnSuccess() async throws {
         let (coordinator, _, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-        instance.configuration.installContext = MacOSInstallContext(
-            source: .localFile, localIPSWPath: "/tmp/restore.ipsw"
-        )
-        // Wire the dispatcher so performConfigurationMutation actually mutates.
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
-        let context = instance.configuration.installContext!
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         try await coordinator.installMacOS(on: instance, context: context)
 
@@ -732,10 +720,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSRecordsTheInstalledImage() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         installService.installedImage = .macOSRestoreImage(version: "15.6.1", build: "24G90")
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
@@ -750,10 +736,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSFailureRecordsNoImage() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         installService.installError = MacOSInstallError.unsupportedRestoreImage
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
@@ -768,7 +752,6 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("cancelPreservesContext-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = CancellationError()
-        let instance = VMInstanceFixture.make()
         // Already naming the file the resolved image derives, so nothing but the
         // cancel can touch the context.
         let originalContext = MacOSInstallContext(
@@ -777,11 +760,9 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
-        instance.configuration.installContext = originalContext
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = originalContext }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: CancellationError.self) {
             try await coordinator.installMacOS(on: instance, context: originalContext)
@@ -798,7 +779,6 @@ struct VMLifecycleCoordinatorTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("freshDownloadTrash-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        let instance = VMInstanceFixture.make()
 
         // The persisted destination is the one the resolved image derives, so
         // the file the user confirmed replacing is the file the download writes.
@@ -810,11 +790,9 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: destination.path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         try await coordinator.installMacOS(on: instance, context: context)
 
@@ -835,7 +813,6 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("freshDownloadMoved-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
-        let instance = VMInstanceFixture.make()
 
         let persisted = temp.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
@@ -843,11 +820,9 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: persisted.path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
             try await coordinator.installMacOS(on: instance, context: context)
@@ -878,7 +853,6 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("freshDownloadOnce-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
-        let instance = VMInstanceFixture.make()
 
         // Honored, not lapsed: the persisted destination is already the one the
         // resolved image derives.
@@ -889,11 +863,9 @@ struct VMLifecycleCoordinatorTests {
             ).path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
             try await coordinator.installMacOS(on: instance, context: context)
@@ -925,17 +897,14 @@ struct VMLifecycleCoordinatorTests {
             )
         )
 
-        let instance = VMInstanceFixture.make()
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: destination.path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         do {
             try await coordinator.installMacOS(on: instance, context: context)
@@ -958,7 +927,6 @@ struct VMLifecycleCoordinatorTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("rejectNonIPSW-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        let instance = VMInstanceFixture.make()
         // Path doesn't end in .ipsw — guard must fire before any trash attempt.
         let context = MacOSInstallContext(
             source: .catalogVersion,
@@ -967,11 +935,9 @@ struct VMLifecycleCoordinatorTests {
             requestedFreshDownload: true,
             remoteURL: Self.pinnedRestoreImageURL
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         do {
             try await coordinator.installMacOS(on: instance, context: context)
@@ -990,7 +956,6 @@ struct VMLifecycleCoordinatorTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("noFreshDownload-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        let instance = VMInstanceFixture.make()
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -998,11 +963,9 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
-        instance.configuration.installContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         try await coordinator.installMacOS(on: instance, context: context)
 
@@ -1069,7 +1032,6 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("networkFailure-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
-        let instance = VMInstanceFixture.make()
         // Already naming the file the resolved image derives, so the retry
         // context that survives is the one that went in.
         let originalContext = MacOSInstallContext(
@@ -1078,11 +1040,9 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
-        instance.configuration.installContext = originalContext
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
-        }
+        let instance = VMInstanceFixture.make { $0.installContext = originalContext }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         do {
             try await coordinator.installMacOS(on: instance, context: originalContext)
@@ -1109,6 +1069,8 @@ struct VMLifecycleCoordinatorTests {
         /// The bytes the download writes and the digest they hash to.
         let contents: Data
         let digest: String
+        let library: VMLibrary
+        let storage: MockVMStorageService
     }
 
     private func makeLinuxFixture() throws -> LinuxFixture {
@@ -1136,22 +1098,25 @@ struct VMLifecycleCoordinatorTests {
             fileSystem: fileSystem,
             downloadsDirectory: downloads
         )
+        let storage = MockVMStorageService()
         return LinuxFixture(
             coordinator: coordinator, resolveService: resolveService,
             downloadService: downloadService, fileSystem: fileSystem, downloads: downloads,
-            contents: contents, digest: digest)
+            contents: contents, digest: digest,
+            library: makeWiredLibrary(storage: storage), storage: storage)
     }
 
-    /// A Linux VM carrying `context`, with the configuration dispatcher wired so
-    /// `performConfigurationMutation` is observable.
-    private func makeLinuxInstance(context: LinuxInstallContext) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: "Debian")
-        instance.configuration.linuxInstallContext = context
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
-            return true
+    /// A Linux VM carrying `context`, registered in `fixture`'s library.
+    private func makeLinuxInstance(
+        context: LinuxInstallContext, in fixture: LinuxFixture,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        let instance = VMInstanceFixture.make(name: "Debian") {
+            $0.linuxInstallContext = context
+            mutate(&$0)
         }
         instance.enter(.initialBoot)
+        fixture.library.register(instance, storage: fixture.storage)
         return instance
     }
 
@@ -1160,7 +1125,8 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let entry = makeLinuxCatalogEntry()
-        let instance = makeLinuxInstance(context: LinuxInstallContext(source: .catalogEntry(entry)))
+        let instance = makeLinuxInstance(
+            context: LinuxInstallContext(source: .catalogEntry(entry)), in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(
             on: instance, context: LinuxInstallContext(source: .catalogEntry(entry)))
@@ -1205,7 +1171,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(
             source: .catalogEntry(
                 makeLinuxCatalogEntry(distribution: "Ubuntu Desktop", version: "26.04 LTS")))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1219,7 +1185,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = makeCustomURLContext(fixture: fixture, verified: true)
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1233,7 +1199,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.downloadService.downloadError = DownloadError.downloadFailed(
             URLError(.notConnectedToInternet))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         _ = try? await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1245,10 +1211,11 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
         let existing = StorageDisk(
             path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
-        instance.configuration.storageDisks = [existing]
+        let instance = makeLinuxInstance(context: context, in: fixture) {
+            $0.storageDisks = [existing]
+        }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1262,8 +1229,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
-        instance.configuration.storageDisks = []
+        let instance = makeLinuxInstance(context: context, in: fixture) { $0.storageDisks = [] }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1281,7 +1247,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.downloadService.downloadError = DownloadError.downloadFailed(
             URLError(.notConnectedToInternet))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1305,7 +1271,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()),
             downloadDestinationPath: stale.path(percentEncoded: false))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1356,7 +1322,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(
             sha256: String(repeating: "a", count: 64))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -1394,7 +1360,7 @@ struct VMLifecycleCoordinatorTests {
         try Data("not the image the mirror published".utf8).write(to: destination)
 
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1416,7 +1382,7 @@ struct VMLifecycleCoordinatorTests {
         let usersBytes = Data("the user's own ISO".utf8)
         try usersBytes.write(to: usersFile)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1442,7 +1408,7 @@ struct VMLifecycleCoordinatorTests {
         let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
         try Data("the user's own ISO".utf8).write(to: usersFile)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1465,13 +1431,13 @@ struct VMLifecycleCoordinatorTests {
         let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
         try fixture.contents.write(to: usersFile)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         var observedSteps: [Int] = []
         let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(mutate) ?? true
+            return persist?(unsaved, mutate) ?? false
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1507,7 +1473,7 @@ struct VMLifecycleCoordinatorTests {
         let usersBytes = Data(repeating: 0x41, count: fixture.contents.count)
         try usersBytes.write(to: usersFile)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1534,7 +1500,7 @@ struct VMLifecycleCoordinatorTests {
         try fixture.contents.write(
             to: fixture.downloads.appendingPathComponent(resolved.filename))
         let context = makeCustomURLContext(fixture: fixture, verified: false)
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1557,7 +1523,7 @@ struct VMLifecycleCoordinatorTests {
         try fixture.contents.write(to: destination)
         fixture.downloadService.downloadedContents = nil
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1582,7 +1548,7 @@ struct VMLifecycleCoordinatorTests {
         try fixture.contents.write(
             to: fixture.downloads.appendingPathComponent(resolved.filename))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1611,7 +1577,7 @@ struct VMLifecycleCoordinatorTests {
             fixture.resolveService.resolveResult.destinationFilename)
         try fixture.contents.write(to: destination)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1628,7 +1594,7 @@ struct VMLifecycleCoordinatorTests {
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.resolveService.resolveError = CancellationError()
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: CancellationError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1647,7 +1613,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.downloadService.downloadError = NSError(
             domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: nil)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: CancellationError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1663,7 +1629,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
             pattern: "debian-13.*-arm64-netinst.iso")
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: LinuxImageResolveError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1681,16 +1647,16 @@ struct VMLifecycleCoordinatorTests {
             DownloadProgress(bytesWritten: 10, totalBytes: 100, bytesPerSecond: 5)
         ]
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         // Sampled at each configuration write, the two points in the pipeline
         // whose step is known: the destination is persisted while Download
         // runs, and the ISO is attached once Verify has finished.
         var observedSteps: [Int] = []
         let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(mutate) ?? true
+            return persist?(unsaved, mutate) ?? false
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1717,7 +1683,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = makeCustomURLContext(fixture: fixture, verified: true)
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
 
@@ -1743,13 +1709,13 @@ struct VMLifecycleCoordinatorTests {
         // told the user.
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(sha256: nil)
         let context = makeCustomURLContext(fixture: fixture, verified: false)
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         var observedSteps: [Int] = []
         let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(mutate) ?? true
+            return persist?(unsaved, mutate) ?? false
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1772,7 +1738,7 @@ struct VMLifecycleCoordinatorTests {
             source: .customURL(
                 CustomLinuxImage(
                     url: fixture.resolveService.resolveResult.isoURL, sha256: wrong)))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1800,7 +1766,7 @@ struct VMLifecycleCoordinatorTests {
                 CustomLinuxImage(
                     url: URL(string: "http://mirror.example/alpine-3.22-aarch64.iso")!,
                     sha256: nil)))
-        let instance = makeLinuxInstance(context: context)
+        let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: LinuxImageURLError.self) {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)

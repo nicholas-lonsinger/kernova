@@ -47,7 +47,7 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 ///
 /// Every one resolves through a ``VMSelector``, refuses through
 /// ``VMCommandCore/require(_:on:)``, and writes through
-/// ``VMLibrary/updateConfiguration(of:mutate:)``. Consent is a parameter:
+/// ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``. Consent is a parameter:
 /// trashing the file behind an attachment refuses without it.
 extension VMCommandCore {
     // MARK: - Storage Disks
@@ -308,7 +308,7 @@ extension VMCommandCore {
         // The write above is a real hop: a suspend or quit landing during it
         // moves the VM to a phase the entry cannot be attached in, and the
         // configuration write refuses. The file is the user's and stays.
-        let accepted = library.updateConfiguration(of: instance) { config in
+        let accepted = library.updateConfiguration(of: instance, ifNotSaved: .discard) { config in
             config.removableMedia = (config.removableMedia ?? []) + [item]
         }
         guard accepted else {
@@ -572,7 +572,7 @@ extension VMCommandCore {
         #log(
             Self.logger, .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        let accepted = library.updateConfiguration(of: instance) { config in
+        let accepted = library.updateConfiguration(of: instance, ifNotSaved: .discard) { config in
             let pruned = (config.removableMedia ?? []).filter { $0.path != path }
             config.removableMedia = pruned.isEmpty ? nil : pruned
         }

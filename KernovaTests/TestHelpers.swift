@@ -31,6 +31,76 @@ func makeTestPreferences() -> AppPreferences {
     AppPreferences(defaults: makeTestDefaults())
 }
 
+// MARK: - Configuration edits
+
+/// A real `VMLibrary` over mocks, holding `instances` wired as every
+/// construction site wires one — what a test changes a VM's configuration
+/// through once the VM exists, since only the library writes it.
+///
+/// A manifest an instance already holds is kept, where wiring alone would
+/// replace it with the store's. The caller keeps the library alive for as long
+/// as it edits: each instance reaches it weakly.
+///
+/// `lifecycle`, when given, stands in for the one built over `virtualization`
+/// and `removableMedia`, for a test that drives it directly.
+@MainActor
+func makeWiredLibrary(
+    holding instances: [VMInstance] = [],
+    storage: MockVMStorageService = MockVMStorageService(),
+    snapshotStore: any VMSnapshotStoring = MockVMSnapshotStore(),
+    virtualization: any VirtualizationProviding = MockVirtualizationService(),
+    removableMedia: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
+    preferences: AppPreferences = makeTestPreferences(),
+    lifecycle: VMLifecycleCoordinator? = nil
+) -> VMLibrary {
+    let fileSystem = MockFileSystem()
+    let library = VMLibrary(
+        storageService: storage,
+        snapshotStore: snapshotStore,
+        lifecycle: lifecycle
+            ?? VMLifecycleCoordinator(
+                virtualizationService: virtualization,
+                installService: MockMacOSInstallService(),
+                ipswService: MockIPSWService(),
+                removableMediaDeviceService: removableMedia,
+                linuxImageResolveService: MockLinuxImageResolveService(),
+                downloadService: MockDownloadService(),
+                fileSystem: fileSystem,
+                downloadsDirectory: nil),
+        fileSystem: fileSystem,
+        preferences: preferences,
+        vmnetNetworks: MockVmnetNetworkProvider(),
+        arpTable: ScriptedARPTable(),
+        entitlements: .entitled)
+    for instance in instances {
+        library.register(instance, storage: storage)
+    }
+    return library
+}
+
+extension VMLibrary {
+    /// Wires `instance` and adds it to the library, with its configuration in
+    /// `storage`'s bundles as a load would have found it.
+    func register(_ instance: VMInstance, storage: MockVMStorageService) {
+        storage.bundles[instance.bundleURL] = instance.configuration
+        let manifest = instance.snapshotManifest
+        wirePersistence(for: instance)
+        if !manifest.isEmpty { instance.snapshotManifest = manifest }
+        instances.append(instance)
+    }
+
+    /// Applies `mutate` to `instance`'s configuration as setup a test relies
+    /// on, recording an issue when the write is refused or does not land.
+    func editConfiguration(
+        of instance: VMInstance,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ mutate: (inout VMConfiguration) -> Void
+    ) {
+        let landed = updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
+        #expect(landed, "the configuration edit did not land", sourceLocation: sourceLocation)
+    }
+}
+
 /// A `VMIndexRecord` over an in-memory store, holding `indexed` as an earlier
 /// run's record of what it wrote to Spotlight.
 @MainActor

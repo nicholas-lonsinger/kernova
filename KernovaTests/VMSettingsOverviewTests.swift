@@ -15,15 +15,22 @@ struct VMSettingsOverviewTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(guestOS: VMGuestOS, macAddress: String? = nil) -> VMInstance {
-        VMInstanceFixture.make(guestOS: guestOS) { $0.macAddress = macAddress }
+    private func makeInstance(
+        name: String = "Test VM", guestOS: VMGuestOS, macAddress: String? = nil,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        VMInstanceFixture.make(name: name, guestOS: guestOS) {
+            $0.macAddress = macAddress
+            mutate(&$0)
+        }
     }
 
-    private func makeController(guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false) -> (
-        VMSettingsViewController, VMInstance, VMLibraryViewModel
-    ) {
+    private func makeController(
+        guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: guestOS)
+        let instance = makeInstance(guestOS: guestOS, mutate: mutate)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -315,9 +322,7 @@ struct VMSettingsOverviewTests {
 
     @Test("Cancelling the passthrough confirmation puts the panel's switch back")
     func cancelledPassthroughRevertsEverySurface() throws {
-        let (vc, instance, viewModel) = makeController()
-        instance.configuration.clipboardSharingEnabled = true
-        reapply(vc, (instance, viewModel))
+        let (vc, instance, _) = makeController { $0.clipboardSharingEnabled = true }
         vc.showCategory(.sharing)
         let panelToggle = try #require(
             firstSubview(NSSwitch.self, in: vc.view) {
@@ -346,9 +351,11 @@ struct VMSettingsOverviewTests {
 
         // Turned on where the toggle still lives — the panel, or the clipboard
         // window — and shared a folder with the guest.
-        instance.configuration.clipboardSharingEnabled = true
-        instance.configuration.clipboardPassthroughEnabled = true
-        instance.configuration.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
+        viewModel.library.editConfiguration(of: instance) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+            $0.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
+        }
         reapply(vc, (instance, viewModel))
 
         #expect(summaryLine(in: sharing) == "Passthrough on \u{00B7} 1 shared folder")
@@ -537,8 +544,7 @@ struct VMSettingsOverviewTests {
     func duplicateMACRaisesTheCardWarning() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        let other = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        other.configuration.name = "Twin"
+        let other = makeInstance(name: "Twin", guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
         viewModel.instances = [instance, other]
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)

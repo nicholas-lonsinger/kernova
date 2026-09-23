@@ -43,9 +43,9 @@ func makeLibraryViewModel(
 @MainActor
 func makeMenuInstance(
     guestOS: VMGuestOS = .macOS, name: String = "Menu VM",
-    phase: VMLifecyclePhase = .stopped
+    phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
 ) -> VMInstance {
-    VMInstanceFixture.make(name: name, guestOS: guestOS, phase: phase)
+    VMInstanceFixture.make(name: name, guestOS: guestOS, phase: phase, mutate: mutate)
 }
 
 /// One menu item carrying `action`, as the menu bar builds it.

@@ -71,10 +71,11 @@ struct VMLibraryViewModelSnapshotTests {
     /// A VM registered in `viewModel`'s library — every verb addresses a VM by
     /// selector, so one outside the library resolves to nothing.
     private func makeInstance(
-        in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .running(sessionID: UUID())
+        in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .running(sessionID: UUID()),
+        name: String = "Snapshot VM", _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
-            name: "Snapshot VM", phase: phase, preferences: preferences)
+            name: name, phase: phase, preferences: preferences, mutate: mutate)
         viewModel.instances.append(instance)
         return instance
     }
@@ -218,13 +219,60 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: sessionID))
 
         await #expect(throws: VirtualizationError.self) {
-            try await harness.virtualization.takeSnapshot(
+            _ = try await harness.virtualization.takeSnapshot(
                 instance, snapshot: VMSnapshot(name: "Mis-stamped", kind: .cold),
                 store: harness.snapshots)
         }
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
         #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
+    @Test("A snapshot is listed carrying the MAC address it was taken with")
+    func takenSnapshotCarriesItsMACAddress() async {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel) { $0.macAddress = "aa:bb:cc:dd:ee:04" }
+
+        await harness.viewModel.takeSnapshot(instance, name: "Clean install").value
+
+        #expect(instance.snapshotManifest.snapshots.map(\.macAddress) == ["aa:bb:cc:dd:ee:04"])
+    }
+
+    @Test("An Ephemeral baseline keeps the address it was taken with from every other VM")
+    func ephemeralBaselineReservesItsAddress() async throws {
+        let harness = makeHarness()
+        let ephemeral = makeInstance(in: harness.viewModel, phase: .stopped, name: "Ephemeral") {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:05"
+        }
+        await harness.viewModel.takeSnapshot(ephemeral, name: "Baseline").value
+        let baseline = try #require(ephemeral.snapshotManifest.snapshots.first)
+        // The VM itself may leave the address, which its baseline still holds.
+        #expect(
+            harness.viewModel.updateConfiguration(of: ephemeral, ifNotSaved: .discard) {
+                $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
+                $0.macAddress = "aa:bb:cc:dd:ee:06"
+            })
+        let other = makeInstance(in: harness.viewModel, phase: .stopped, name: "Other") {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:07"
+        }
+
+        let took = harness.viewModel.updateConfiguration(of: other, ifNotSaved: .discard) {
+            $0.macAddress = "aa:bb:cc:dd:ee:05"
+        }
+
+        #expect(took == false)
+        #expect(other.configuration.macAddress == "aa:bb:cc:dd:ee:07")
+        #expect(presenter.errorTitles == ["MAC Address In Use"])
+        #expect(presenter.errorMessage?.contains("\u{201C}Baseline\u{201D}") == true)
+
+        // The power-off revert puts the VM back on the baseline's address,
+        // which nothing else took meanwhile.
+        await harness.viewModel.revert(ephemeral, to: baseline)
+        #expect(ephemeral.configuration.macAddress == "aa:bb:cc:dd:ee:05")
+        #expect(ephemeral.configuration.ephemeralModeEnabled)
+        #expect(harness.viewModel.vmNamesSharingMACAddress(with: ephemeral).isEmpty)
     }
 
     @Test("Taking a snapshot captures it and lists it as current")

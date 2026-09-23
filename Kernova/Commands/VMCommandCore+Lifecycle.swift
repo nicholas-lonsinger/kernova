@@ -332,11 +332,9 @@ extension VMCommandCore {
         let scale = hiDPI ? surface.backingScaleFactor : 1
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: surface.pointSize, backingScaleFactor: scale)
-        let previous = instance.configuration
-        if !library.updateConfiguration(of: instance, mutate: { $0.displayResolution = resolution }) {
-            // Assigned directly rather than through the funnel: disk still holds
-            // `previous`, so re-persisting it is a second chance to fail.
-            instance.configuration = previous
+        if !library.updateConfiguration(
+            of: instance, ifNotSaved: .discard, mutate: { $0.displayResolution = resolution })
+        {
             #log(
                 Self.logger, .warning,
                 "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"

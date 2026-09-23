@@ -209,5 +209,9 @@ public enum ConflictReason: Codable, Sendable, Hashable {
     /// It travels here because it is the address the caller asked for, which
     /// the VM being refused does not carry: nothing else in the refusal names
     /// which one collided.
-    case macAddressInUse(address: String)
+    ///
+    /// `configured` says whether the holder's configuration carries the
+    /// address, and `snapshots` names the holder's snapshots taken with it,
+    /// each of which a revert puts back on it; at least one of the two holds.
+    case macAddressInUse(address: String, configured: Bool, snapshots: [String])
 }

@@ -67,10 +67,11 @@ struct DetailAlertsPresenterTests {
 
     /// An attachment-free Linux VM: `externalAttachments` returns `[]` without
     /// the off-main probe, so resolution finishes fast.
-    private func makeInstance(name: String = "Test VM", in viewModel: VMLibraryViewModel)
-        -> VMInstance
-    {
-        let instance = VMInstanceFixture.make(name: name)
+    private func makeInstance(
+        name: String = "Test VM", in viewModel: VMLibraryViewModel,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        let instance = VMInstanceFixture.make(name: name, mutate: mutate)
         viewModel.library.instances.append(instance)
         return instance
     }
@@ -512,13 +513,14 @@ struct DetailAlertsPresenterTests {
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()
-        let vm = makeInstance(in: viewModel)
+        let baseline = VMSnapshot(name: "Clean install")
+        let vm = makeInstance(in: viewModel) {
+            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        }
         vm.enter(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
-        let baseline = VMSnapshot(name: "Clean install")
         vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
-        vm.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
 
         let alert = presenter.forceStopAlertForTesting(vm)
 

@@ -250,8 +250,9 @@ struct MainMenuRebuildTests {
 
     @Test("The clipboard item follows the active VM's clipboard availability")
     func clipboardItemFollowsActiveInstance() throws {
-        let instance = makeMenuInstance(guestOS: .linux, phase: .running(sessionID: UUID()))
-        instance.configuration.clipboardSharingEnabled = true
+        let instance = makeMenuInstance(guestOS: .linux, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
         let fixture = makeFixture(instance: instance)
         let windowMenu = try #require(submenu(titled: "Window", in: fixture.mainMenu))
         let clipboardItem = try #require(windowMenu.items.first { $0.title == "Clipboard" })

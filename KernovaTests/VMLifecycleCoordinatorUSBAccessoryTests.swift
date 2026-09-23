@@ -165,7 +165,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: 11, serial: "0373")
 
         let snapshot = VMSnapshot(name: "Snap", kind: .warm)
-        try await coordinator.takeSnapshot(
+        _ = try await coordinator.takeSnapshot(
             instance, snapshot: snapshot, store: MockVMSnapshotStore())
 
         // The handle it went off under names nothing now; it goes back on under
@@ -188,7 +188,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
+            _ = try? await coordinator.takeSnapshot(
                 instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
@@ -214,7 +214,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
         service.answersMissingAccessoryImmediately = true
 
-        try await coordinator.takeSnapshot(
+        _ = try await coordinator.takeSnapshot(
             instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
             store: MockVMSnapshotStore())
 
@@ -235,7 +235,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization.onTakeSnapshot = captureEjecting(
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
-        try await coordinator.takeSnapshot(
+        _ = try await coordinator.takeSnapshot(
             instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
             store: MockVMSnapshotStore())
 
@@ -260,7 +260,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "AAA")
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
+            _ = try? await coordinator.takeSnapshot(
                 instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
@@ -293,7 +293,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
+            _ = try? await coordinator.takeSnapshot(
                 instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
@@ -385,7 +385,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.suspendNextAttach = true
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
+            _ = try? await coordinator.takeSnapshot(
                 instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()

@@ -9,23 +9,25 @@ enum RegisteredVMInstanceFixture {
     /// hooks a verb answers — the power-off that starts an Ephemeral revert,
     /// above all — are actually connected.
     ///
-    /// `snapshots` seeds a non-empty manifest *after* `wirePersistence`, which
-    /// overwrites `snapshotManifest` from the (empty, unseeded) mock store's
-    /// `loadManifest`.
+    /// `snapshots` seeds the manifest, which ``VMLibrary/register(_:storage:)``
+    /// keeps over the store's. `mutate` runs after networking is turned off,
+    /// so it can turn it back on.
     @discardableResult
     static func register(
         name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, snapshots: [VMSnapshot] = [],
-        library: VMLibrary, storage: MockVMStorageService, preferences: AppPreferences
+        library: VMLibrary, storage: MockVMStorageService, preferences: AppPreferences,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
             name: name, guestOS: guestOS, phase: phase, preferences: preferences,
-            mutate: { $0.networkEnabled = false })
-        storage.bundles[instance.bundleURL] = instance.configuration
-        library.wirePersistence(for: instance)
+            mutate: {
+                $0.networkEnabled = false
+                mutate(&$0)
+            })
         if !snapshots.isEmpty {
             instance.snapshotManifest = VMSnapshotManifest(snapshots: snapshots)
         }
-        library.instances.append(instance)
+        library.register(instance, storage: storage)
         return instance
     }
 }

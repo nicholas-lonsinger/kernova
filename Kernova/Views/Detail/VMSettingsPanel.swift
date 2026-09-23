@@ -147,7 +147,7 @@ extension VMSettingsPanel {
     ///   already moved can put it back when the view model refused.
     @discardableResult
     func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        viewModel.updateConfiguration(of: instance, mutate: mutate)
+        viewModel.updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
     }
 
     /// Hands a toggle this panel shares with an overview card to the shell, so

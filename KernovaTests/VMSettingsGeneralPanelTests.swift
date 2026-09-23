@@ -104,9 +104,10 @@ struct VMSettingsGeneralPanelTests {
         lastSeenGuestOSVersion: String? = nil
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: guestOS)
-        instance.configuration.installedImage = installedImage
-        instance.configuration.lastSeenGuestOSVersion = lastSeenGuestOSVersion
+        let instance = makeSettingsInstance(guestOS: guestOS) {
+            $0.installedImage = installedImage
+            $0.lastSeenGuestOSVersion = lastSeenGuestOSVersion
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -244,7 +245,7 @@ struct VMSettingsGeneralPanelTests {
         let (vc, instance, viewModel) = makeOSRowsController(guestOS: .macOS)
         #expect(!visibleLabel("OS version", in: vc.view))
 
-        instance.configuration.lastSeenGuestOSVersion = "26.6"
+        viewModel.library.editConfiguration(of: instance) { $0.lastSeenGuestOSVersion = "26.6" }
         vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
 
         #expect(visibleLabel("OS version", in: vc.view))
@@ -256,8 +257,9 @@ struct VMSettingsGeneralPanelTests {
     @Test("The Startup toggle reflects the configuration")
     func autoStartSwitchReflectsConfiguration() {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux)
-        instance.configuration.startsAutomaticallyOnLaunch = true
+        let instance = makeSettingsInstance(guestOS: .linux) {
+            $0.startsAutomaticallyOnLaunch = true
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -327,12 +329,13 @@ struct VMSettingsGeneralPanelTests {
         snapshots: [VMSnapshot], ephemeral: Bool, isReadOnly: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux)
+        let instance = makeSettingsInstance(guestOS: .linux) {
+            if ephemeral, let baseline = snapshots.first {
+                $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
+            }
+        }
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: snapshots, currentID: snapshots.first?.id)
-        if ephemeral, let baseline = snapshots.first {
-            instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -554,17 +557,16 @@ struct VMSettingsGeneralPanelTests {
         VMSettingsViewController, VMInstance
     ) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: guestOS)
-        var library = [instance]
-        var remaining = markedMacOSVMs
-        if guestOS == .macOS, remaining > 0 {
-            instance.configuration.startsAutomaticallyOnLaunch = true
-            remaining -= 1
+        let marksItself = guestOS == .macOS && markedMacOSVMs > 0
+        let instance = makeSettingsInstance(guestOS: guestOS) {
+            $0.startsAutomaticallyOnLaunch = marksItself
         }
-        for index in 0..<remaining {
-            let other = makeSettingsInstance(guestOS: .macOS)
-            other.configuration.name = "Marked \(index)"
-            other.configuration.startsAutomaticallyOnLaunch = true
+        var library = [instance]
+        for index in 0..<(markedMacOSVMs - (marksItself ? 1 : 0)) {
+            let other = makeSettingsInstance(guestOS: .macOS) {
+                $0.name = "Marked \(index)"
+                $0.startsAutomaticallyOnLaunch = true
+            }
             library.append(other)
         }
         viewModel.instances = library

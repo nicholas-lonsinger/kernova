@@ -33,13 +33,10 @@ final class VMInstance {
 
     let instanceID: UUID
 
-    /// Changed through ``VMLibrary/updateConfiguration(of:mutate:)``, which
-    /// persists the new value and applies live policy.
-    ///
-    /// A direct assignment is only for a value disk already holds: a rollback
-    /// to what is still on disk, or the configuration a snapshot restore just
-    /// wrote there.
-    var configuration: VMConfiguration
+    /// Written only by ``VMLibrary``, through
+    /// ``replaceConfiguration(with:key:)``; each library entry point that
+    /// writes it states what it persists and what it refuses.
+    private(set) var configuration: VMConfiguration
 
     /// Where this VM is in its lifecycle — the one stored value its status, its
     /// failure message and every liveness predicate here are read off.
@@ -235,14 +232,14 @@ final class VMInstance {
     /// whole session, not just at the moment of boot.
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
-    /// Performs a host-side mutation of this instance's configuration and routes
-    /// it through the library's `updateConfiguration` pipeline (persist + apply
-    /// live policy), answering whether the result reached disk.
+    /// Routes a host-side mutation of this instance's configuration through
+    /// ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``, answering what
+    /// that answers.
     ///
     /// Wired by `VMLibrary.wirePersistence(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> Bool)?
+    var onUpdateConfiguration: (@MainActor (VMLibrary.UnsavedConfiguration, (inout VMConfiguration) -> Void) -> Bool)?
 
     /// Fired when the guest agent handshakes a new version that is current
     /// (matches or exceeds what the host bundles) — i.e. an install/update just
@@ -271,21 +268,25 @@ final class VMInstance {
     /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
-    /// Applies a configuration mutation, routing it through the persistence
-    /// pipeline when `onUpdateConfiguration` is wired.
+    /// Applies a configuration mutation through ``onUpdateConfiguration``.
     ///
     /// - Returns: whether the new configuration reached disk, on the terms
-    ///   `VMLibrary.updateConfiguration(of:mutate:)` states — a caller that
-    ///   needs memory and disk to agree reads it. An instance with no
-    ///   persistence wired has no bundle to disagree with, so it answers
-    ///   `true`.
+    ///   ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)`` states. An
+    ///   instance no library has wired changes nothing and answers `false`.
     @discardableResult
-    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        guard let onUpdateConfiguration else {
-            mutate(&configuration)
-            return true
-        }
-        return onUpdateConfiguration(mutate)
+    func performConfigurationMutation(
+        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
+        _ mutate: (inout VMConfiguration) -> Void
+    ) -> Bool {
+        onUpdateConfiguration?(unsaved, mutate) ?? false
+    }
+
+    /// Replaces ``configuration``; `key` is what confines the call to
+    /// ``VMLibrary``.
+    func replaceConfiguration(
+        with configuration: VMConfiguration, key _: VMLibrary.ConfigurationWriteKey
+    ) {
+        self.configuration = configuration
     }
 
     /// The current install/version/liveness state of the guest agent for this VM.
@@ -1488,7 +1489,7 @@ final class VMInstance {
                     self.configuration.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performConfigurationMutation {
+                    self.performConfigurationMutation(ifNotSaved: .keep) {
                         $0.agentInstallNudgeDismissed = false
                         $0.lastSeenGuestOSVersion = nil
                     }
@@ -1529,7 +1530,7 @@ final class VMInstance {
         // re-fire `VMDirectoryWatcher` reconcile.
         let agentVersionChanged = configuration.lastSeenAgentVersion != info.agentVersion
         if agentVersionChanged || configuration.lastSeenGuestOSVersion != info.osVersion {
-            performConfigurationMutation {
+            performConfigurationMutation(ifNotSaved: .keep) {
                 $0.lastSeenAgentVersion = info.agentVersion
                 $0.lastSeenGuestOSVersion = info.osVersion
             }

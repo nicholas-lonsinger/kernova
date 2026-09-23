@@ -37,15 +37,34 @@ struct VMSnapshot: Codable, Sendable, Equatable, Identifiable {
     var notes: String
     var kind: VMSnapshotKind
 
+    /// The MAC address of the configuration the snapshot was captured under,
+    /// which a revert puts the VM back on.
+    ///
+    /// Not in the manifest: the snapshot's own `config.json` holds it, and
+    /// ``VMSnapshotStoring/loadManifest(bundleURL:)`` reads it from there.
+    var macAddress: String?
+
     init(
         id: UUID = UUID(), name: String, createdAt: Date = Date(), notes: String = "",
-        kind: VMSnapshotKind = .warm
+        kind: VMSnapshotKind = .warm, macAddress: String? = nil
     ) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.notes = notes
         self.kind = kind
+        self.macAddress = macAddress
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, createdAt, notes, kind
+    }
+
+    /// This snapshot as a capture written under `configuration` lists it.
+    func captured(under configuration: VMConfiguration) -> VMSnapshot {
+        var captured = self
+        captured.macAddress = configuration.macAddress
+        return captured
     }
 
     // Custom `init(from:)` for `kind`, whose default differs from what

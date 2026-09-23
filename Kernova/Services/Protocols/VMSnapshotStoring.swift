@@ -37,6 +37,9 @@ struct VMSnapshotRestorePlan: Sendable {
 protocol VMSnapshotStoring: Sendable {
     /// Reads the manifest, answering an empty one for a bundle that holds no
     /// snapshots or whose manifest can't be read.
+    ///
+    /// Each snapshot carries the ``VMSnapshot/macAddress`` its own
+    /// configuration records.
     func loadManifest(bundleURL: URL) -> VMSnapshotManifest
 
     func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws

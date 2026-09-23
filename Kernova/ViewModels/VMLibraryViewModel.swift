@@ -118,9 +118,10 @@ final class VMLibraryViewModel {
     @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
+        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
         mutate: (inout VMConfiguration) -> Void
     ) -> Bool {
-        library.updateConfiguration(of: instance, mutate: mutate)
+        library.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
     }
 
     // MARK: - Command Forwarding
@@ -1228,7 +1229,9 @@ final class VMLibraryViewModel {
             Self.logger, .notice,
             "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
         )
-        updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
+        updateConfiguration(of: instance, ifNotSaved: .discard) {
+            $0.agentInstallNudgeDismissed = dismissed
+        }
     }
 
     /// Re-arms the agent-install nudge everywhere: clears the app-wide

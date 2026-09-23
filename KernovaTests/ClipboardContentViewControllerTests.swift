@@ -410,6 +410,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     @Test("toggling passthrough live moves the switch and the actions without reopening")
     func liveToggleUpdatesFooterAndActions() async throws {
         let (vc, instance) = makeConnectedController()
+        let library = makeWiredLibrary(holding: [instance])
         #expect(vc.areCommandActionsEnabledForTesting == true)
 
         // Driven through the production `ObservationLoop`, not
@@ -422,11 +423,11 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         // state and a button's `isEnabled`, plain AppKit properties with no
         // Observable or `AsyncGate` signal to arm against; the loop's internal
         // re-arm hop is not test-facing.
-        instance.configuration.clipboardPassthroughEnabled = true
+        library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
         try await waitUntil { vc.isPassthroughSwitchOnForTesting }
         #expect(vc.areCommandActionsEnabledForTesting == false)
 
-        instance.configuration.clipboardPassthroughEnabled = false
+        library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
         try await waitUntil { !vc.isPassthroughSwitchOnForTesting }
         #expect(vc.areCommandActionsEnabledForTesting == true)
     }
@@ -435,6 +436,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     func responderChainGatedByPassthrough() {
         let service = FakeClipboardService(content: ClipboardContent(text: "some content"))
         let instance = makeClipboardInstance(passthroughEnabled: true)
+        let library = makeWiredLibrary(holding: [instance])
         instance.sessionContext?.clipboardService = service
         let vc = makeController(instance: instance)
         _ = vc.view
@@ -447,7 +449,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         #expect(vc.validateUserInterfaceItem(pasteItem) == false)
         #expect(vc.validateUserInterfaceItem(copyItem) == false)
 
-        instance.configuration.clipboardPassthroughEnabled = false
+        library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
         vc.simulateObservationForTesting()
 
         #expect(vc.validateUserInterfaceItem(pasteItem) == true)
@@ -469,6 +471,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
         let service = FakeClipboardService(content: .empty)
         let instance = makeClipboardInstance(passthroughEnabled: true)
+        let library = makeWiredLibrary(holding: [instance])
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
@@ -481,7 +484,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         // Positive control: the same action does take the text in once
         // passthrough is off, so the assertion above is the gate, not a broken
         // intake path.
-        instance.configuration.clipboardPassthroughEnabled = false
+        library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
         vc.paste(nil)
         #expect(service.clipboardContent == ClipboardContent(text: "from the Mac"))
     }
@@ -496,6 +499,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance(passthroughEnabled: true)
+        let library = makeWiredLibrary(holding: [instance])
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
@@ -516,7 +520,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         #expect(registry.countForTesting == 0)
 
         // Positive control: ungated, the same action does publish.
-        instance.configuration.clipboardPassthroughEnabled = false
+        library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
         vc.copy(nil)
         #expect(vc.isCopyingToMacForTesting == true)
 
@@ -818,7 +822,9 @@ struct ClipboardPassthroughSwitchTests {
         #expect(vc.isPassthroughSwitchOnForTesting == false)
 
         // The settings pane's write path, landing on the same model.
-        _ = viewModel.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
+        _ = viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) {
+            $0.clipboardPassthroughEnabled = true
+        }
 
         // Genuine no-signal predicate — the observed effect is an `NSSwitch`'s
         // state, a plain AppKit property with no Observable or `AsyncGate`

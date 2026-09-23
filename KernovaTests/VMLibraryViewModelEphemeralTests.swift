@@ -214,7 +214,9 @@ struct VMLibraryViewModelEphemeralTests {
     @Test("A mode left on with a baseline the manifest lost reverts nothing")
     func danglingBaselineRevertsNothing() async throws {
         let harness = try await makeHarness()
-        harness.instance.configuration.ephemeralBaselineSnapshotID = UUID()
+        harness.viewModel.library.editConfiguration(of: harness.instance) {
+            $0.ephemeralBaselineSnapshotID = UUID()
+        }
 
         await harness.viewModel.stop(harness.instance)
         await settleEphemeralRevert(harness)
@@ -336,7 +338,9 @@ struct VMLibraryViewModelEphemeralTests {
     @Test("Turning the mode off releases the baseline for deletion")
     func turningTheModeOffReleasesTheBaseline() async throws {
         let harness = try await makeHarness()
-        harness.instance.configuration.applyEphemeralMode(enabled: false, baseline: nil)
+        harness.viewModel.library.editConfiguration(of: harness.instance) {
+            $0.applyEphemeralMode(enabled: false, baseline: nil)
+        }
 
         await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.baseline)
             .value

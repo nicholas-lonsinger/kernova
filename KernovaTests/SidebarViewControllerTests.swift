@@ -118,8 +118,9 @@ struct SidebarViewControllerTests {
 
     @Test("Agent indicator suppressed once the install nudge is dismissed")
     func agentSuppressedWhenDismissed() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.configuration.agentInstallNudgeDismissed = true
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.agentInstallNudgeDismissed = true
+        }
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -130,8 +131,9 @@ struct SidebarViewControllerTests {
         let fresh = VMInstanceFixture.make(guestOS: .macOS, phase: .stopped)
         #expect(visibleAgentStatus(for: fresh) == nil)
 
-        let seen = VMInstanceFixture.make(guestOS: .macOS, phase: .stopped)
-        seen.configuration.lastSeenAgentVersion = "1.2.3"
+        let seen = VMInstanceFixture.make(guestOS: .macOS, phase: .stopped) {
+            $0.lastSeenAgentVersion = "1.2.3"
+        }
         #expect(visibleAgentStatus(for: seen) == nil)
     }
 
@@ -160,8 +162,10 @@ struct SidebarViewControllerTests {
     /// would silently drop the "didn't reconnect" affordance.
     @Test("Agent indicator surfaces .expectedMissing on a running VM")
     func agentExpectedMissingVisibleWhenRunning() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.configuration.lastSeenAgentVersion = "1.2.3"
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.lastSeenAgentVersion = "1.2.3"
+        }
+        let library = makeWiredLibrary(holding: [instance])
         instance.beginSessionContext().agentExpectedButMissing = true
         #expect(
             visibleAgentStatus(for: instance)
@@ -170,7 +174,7 @@ struct SidebarViewControllerTests {
 
         // Even a dismissed install nudge doesn't suppress it — the dismissal
         // gate is scoped to `.waiting`.
-        instance.configuration.agentInstallNudgeDismissed = true
+        library.editConfiguration(of: instance) { $0.agentInstallNudgeDismissed = true }
         #expect(
             visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
@@ -196,8 +200,9 @@ struct SidebarViewControllerTests {
     /// "update available" affordances app-wide.
     @Test("The app-wide preference leaves the louder agent states alone")
     func agentLouderStatesSurviveAppWideDisable() {
-        let missing = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        missing.configuration.lastSeenAgentVersion = "1.2.3"
+        let missing = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.lastSeenAgentVersion = "1.2.3"
+        }
         missing.beginSessionContext().agentExpectedButMissing = true
         #expect(
             SidebarVMRowCellView.visibleAgentStatus(for: missing, installPromptDisabled: true)

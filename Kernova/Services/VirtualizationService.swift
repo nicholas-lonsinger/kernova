@@ -521,7 +521,7 @@ final class VirtualizationService {
     /// worst, or stopped.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+    ) async throws -> VMSnapshot {
         #log(
             Self.logger, .debug,
             "takeSnapshot: kind=\(snapshot.kind.rawValue, privacy: .public), status=\(instance.status.displayName, privacy: .public)"
@@ -536,23 +536,23 @@ final class VirtualizationService {
         }
         switch mode {
         case .live:
-            try await takeWarmSnapshot(instance, snapshot: snapshot, store: store)
+            return try await takeWarmSnapshot(instance, snapshot: snapshot, store: store)
         case .suspended:
-            try await takeSuspendedSnapshot(instance, snapshot: snapshot, store: store)
+            return try await takeSuspendedSnapshot(instance, snapshot: snapshot, store: store)
         case .stopped:
-            try await takeColdSnapshot(instance, snapshot: snapshot, store: store)
+            return try await takeColdSnapshot(instance, snapshot: snapshot, store: store)
         }
     }
 
     /// The guest's memory plus the bundle's disks, from a live VM.
     private func takeWarmSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+    ) async throws -> VMSnapshot {
         guard instance.canSave, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
         }
-        try await Self.captureWarmSnapshot(
+        return try await Self.captureWarmSnapshot(
             instance, snapshot: snapshot, store: store, session: session, sessionID: session.id)
     }
 
@@ -563,10 +563,11 @@ final class VirtualizationService {
     /// this settles on — the one place a capture can hand the VM back to a
     /// session that is no longer there — is reachable without the virtualization
     /// entitlement a real `VZVirtualMachine` needs.
+    @discardableResult
     static func captureWarmSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
         session: any VMSnapshotSessionOperating, sessionID: UUID
-    ) async throws {
+    ) async throws -> VMSnapshot {
         let wasRunning = instance.phase == .running(sessionID: sessionID)
         let bundleURL = instance.bundleURL
         let configuration = instance.configuration
@@ -613,6 +614,7 @@ final class VirtualizationService {
                     "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)', which lost its session mid-capture — leaving it \(instance.status.displayName, privacy: .public)"
                 )
             }
+            return snapshot.captured(under: configuration)
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
@@ -637,7 +639,7 @@ final class VirtualizationService {
     /// (``VMLifecyclePhase/terminationMustWaitOut``).
     private func takeColdSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+    ) async throws -> VMSnapshot {
         guard instance.phase == .stopped else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
@@ -662,6 +664,7 @@ final class VirtualizationService {
                 Self.logger, .notice,
                 "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
+            return snapshot.captured(under: configuration)
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
@@ -688,7 +691,7 @@ final class VirtualizationService {
     /// (``VMLifecyclePhase/terminationMustWaitOut``).
     private func takeSuspendedSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+    ) async throws -> VMSnapshot {
         // The slot, not the phase: ``VMInstance/snapshotCaptureMode`` offers this
         // capture to any VM resting on one, and a guard that read the phase
         // would refuse a capture the surface had already taken consent for.
@@ -718,6 +721,7 @@ final class VirtualizationService {
                 Self.logger, .notice,
                 "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
+            return snapshot.captured(under: configuration)
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
@@ -840,7 +844,8 @@ final class VirtualizationService {
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` — the files are
     /// in place by then, so the caller records the revert as having landed.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
     ) async throws {
         #log(
             Self.logger, .debug,
@@ -880,8 +885,8 @@ final class VirtualizationService {
         }
         instance.tearDownSession(restingAt: .revertingToSnapshot)
 
+        let written = restore
         do {
-            let written = restore
             try await Task.detached {
                 try store.restore(bundleURL: bundleURL, snapshotID: snapshotID, plan: written)
             }.value
@@ -896,7 +901,7 @@ final class VirtualizationService {
 
         // The saved state only loads back into the configuration it was written
         // under, so the VM takes the captured settings along with the disks.
-        instance.configuration = restore.configuration
+        adopt(written)
 
         // A warm revert leaves the snapshot's saved state in the bundle and a
         // cold one leaves none, so the write that just landed is what says

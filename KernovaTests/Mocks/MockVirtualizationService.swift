@@ -175,7 +175,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// they started.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+    ) async throws -> VMSnapshot {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
         // Stands in for what a real warm capture does to the VM mid-flight —
@@ -189,9 +189,10 @@ final class MockVirtualizationService: VirtualizationProviding {
         // The store is exercised for real so a test can assert on the files the
         // capture writes; the VZ saved state has no stand-in, so only the disk
         // copies land.
+        let configuration = instance.configuration
         if let prepared = try? store.prepareSnapshot(
             bundleURL: instance.bundleURL, snapshotID: snapshot.id,
-            configuration: instance.configuration)
+            configuration: configuration)
         {
             try? store.captureDisks(
                 bundleURL: instance.bundleURL, snapshotID: snapshot.id,
@@ -199,6 +200,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         takenSnapshots.append(snapshot)
         instance.enter(phases.resting)
+        return snapshot.captured(under: configuration)
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn
@@ -206,7 +208,8 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// the snapshot captured — cold-paused on a warm snapshot's saved state and
     /// settings, stopped on a cold snapshot's disks.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
     ) async throws {
         let plan = try store.planRestore(
             bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind)
@@ -220,7 +223,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         try store.restore(
             bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
-        instance.configuration = restore.configuration
+        adopt(restore)
         revertedSnapshots.append(snapshot)
         // A warm snapshot's own saved state is what the VM comes back on, and a
         // cold one leaves the bundle without a slot. The store mock copies no

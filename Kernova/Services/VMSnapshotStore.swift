@@ -54,10 +54,13 @@ struct VMSnapshotStore: VMSnapshotStoring {
     // MARK: - Manifest
 
     func loadManifest(bundleURL: URL) -> VMSnapshotManifest {
-        let url = VMBundleLayout(bundleURL: bundleURL).snapshotManifestURL
-        guard let data = try? Data(contentsOf: url) else { return VMSnapshotManifest() }
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        guard let data = try? Data(contentsOf: layout.snapshotManifestURL) else {
+            return VMSnapshotManifest()
+        }
+        var manifest: VMSnapshotManifest
         do {
-            return try VMConfiguration.makeJSONDecoder().decode(VMSnapshotManifest.self, from: data)
+            manifest = try VMConfiguration.makeJSONDecoder().decode(VMSnapshotManifest.self, from: data)
         } catch {
             #log(
                 Self.logger, .error,
@@ -65,6 +68,25 @@ struct VMSnapshotStore: VMSnapshotStoring {
             )
             return VMSnapshotManifest()
         }
+        for index in manifest.snapshots.indices {
+            manifest.snapshots[index].macAddress = Self.capturedMACAddress(
+                in: layout.snapshotLayout(id: manifest.snapshots[index].id))
+        }
+        return manifest
+    }
+
+    /// The `macAddress` of the configuration a snapshot directory holds, or
+    /// `nil` when it holds none or carries no address.
+    ///
+    /// Decodes that one key rather than the whole configuration, so a snapshot
+    /// whose configuration no longer decodes still reserves its address.
+    private static func capturedMACAddress(in snapshotLayout: VMBundleLayout) -> String? {
+        struct CapturedAddress: Decodable {
+            let macAddress: String?
+        }
+        guard let data = try? Data(contentsOf: snapshotLayout.configURL) else { return nil }
+        return (try? VMConfiguration.makeJSONDecoder().decode(CapturedAddress.self, from: data))?
+            .macAddress
     }
 
     func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws {

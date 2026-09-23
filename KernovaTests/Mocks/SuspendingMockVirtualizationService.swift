@@ -149,14 +149,16 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+    ) async throws -> VMSnapshot {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
         instance.enter(phases.resting)
+        return snapshot.captured(under: instance.configuration)
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
     ) async throws {
         if shouldSuspendOnRevert {
             await suspendIfNeeded()

@@ -70,12 +70,14 @@ struct VMSettingsSharingPanelTests {
 
     /// Builds a controller over a config with the given clipboard-sharing state,
     /// so passthrough-enablement gating can be exercised.
-    private func makeController(guestOS: VMGuestOS, sharingEnabled: Bool) -> (
-        VMSettingsViewController, VMInstance
-    ) {
+    private func makeController(
+        guestOS: VMGuestOS, sharingEnabled: Bool,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(guestOS: guestOS) {
             $0.clipboardSharingEnabled = sharingEnabled
+            mutate(&$0)
         }
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -162,8 +164,9 @@ struct VMSettingsSharingPanelTests {
         // Sharing off with the passthrough flag still set is what turning
         // sharing off leaves behind, and turning it back on starts passthrough
         // running — so it asks the same question the passthrough switch does.
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: false)
-        instance.configuration.clipboardPassthroughEnabled = true
+        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: false) {
+            $0.clipboardPassthroughEnabled = true
+        }
 
         let toggle = try #require(firstSwitch(action: "clipboardToggled", in: vc.view))
         toggle.state = .on
@@ -284,8 +287,9 @@ struct VMSettingsSharingPanelTests {
         _ directories: [SharedDirectory], phase: VMLifecyclePhase = .stopped
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux, phase: phase)
-        instance.configuration.sharedDirectories = directories
+        let instance = makeSettingsInstance(guestOS: .linux, phase: phase) {
+            $0.sharedDirectories = directories
+        }
         registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: phase != .stopped)

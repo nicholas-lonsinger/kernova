@@ -133,6 +133,34 @@ struct VMSnapshotStoreTests {
         #expect(store.loadManifest(bundleURL: fixture.bundleURL) == manifest)
     }
 
+    @Test("A loaded snapshot carries the MAC address of the configuration it was taken under")
+    func loadedManifestCarriesEachSnapshotsMACAddress() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        var configuration = fixture.configuration
+        configuration.macAddress = "aa:bb:cc:dd:ee:01"
+        // Listed carrying some other address, which the manifest must not keep.
+        let captured = VMSnapshot(
+            name: "Captured", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            macAddress: "aa:bb:cc:dd:ee:09")
+        let unrecorded = VMSnapshot(
+            name: "No settings", createdAt: Date(timeIntervalSince1970: 1_700_000_100))
+        _ = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: captured.id, configuration: configuration)
+        try store.saveManifest(
+            VMSnapshotManifest(snapshots: [captured, unrecorded]), bundleURL: fixture.bundleURL)
+
+        let loaded = store.loadManifest(bundleURL: fixture.bundleURL)
+
+        #expect(loaded.snapshot(id: captured.id)?.macAddress == "aa:bb:cc:dd:ee:01")
+        #expect(loaded.snapshot(id: unrecorded.id) == unrecorded)
+        // The snapshot's own configuration is where the address lives; the
+        // manifest never records a second copy of it.
+        let manifestData = try Data(contentsOf: fixture.layout.snapshotManifestURL)
+        #expect(!String(decoding: manifestData, as: UTF8.self).contains("macAddress"))
+    }
+
     @Test("A corrupt manifest reads as empty rather than throwing")
     func corruptManifestReadsEmpty() throws {
         let fixture = try makeFixture()

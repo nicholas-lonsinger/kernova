@@ -227,11 +227,11 @@ final class VMDisplayPlacementController {
         case .popInFromHeadless:
             // There is no window to close — just return the display slot to the
             // main window.
-            viewModel.updateConfiguration(of: instance) { $0.displayPreference = .inline }
+            viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) { $0.displayPreference = .inline }
             instance.displayMode = .inline
             viewModel.presenter?.focusGuestDisplay(for: instance)
         case .popOut:
-            viewModel.updateConfiguration(of: instance) { $0.displayPreference = .popOut }
+            viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) { $0.displayPreference = .popOut }
             openDisplayWindow(for: instance, show: .front(fullscreen: false))
         }
     }
@@ -241,7 +241,7 @@ final class VMDisplayPlacementController {
             existing.window?.toggleFullScreen(nil)
             return
         }
-        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .fullscreen }
+        viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) { $0.displayPreference = .fullscreen }
         openDisplayWindow(for: instance, show: .front(fullscreen: true))
     }
 
@@ -369,7 +369,7 @@ final class VMDisplayPlacementController {
     private func apply(_ placement: Placement, to instance: VMInstance) {
         instance.displayMode = placement.mode
         if let preference = placement.persistPreference {
-            viewModel.updateConfiguration(of: instance) { $0.displayPreference = preference }
+            viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) { $0.displayPreference = preference }
         }
     }
 
@@ -396,7 +396,7 @@ final class VMDisplayPlacementController {
             self.pendingCloseReasons.removeValue(forKey: vmID)
             guard self.windows.removeValue(forKey: vmID) != nil else { return }
 
-            self.viewModel.updateConfiguration(of: instance) { config in
+            self.viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) { config in
                 if let displayID = context.lastDisplayID {
                     config.lastFullscreenDisplayID = displayID
                 }

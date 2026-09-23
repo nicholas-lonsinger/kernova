@@ -83,7 +83,9 @@ extension VMInstance {
         }
 
         if !heals.isEmpty {
-            performConfigurationMutation { config in
+            // Kept even when it does not reach disk: the configuration build
+            // that follows reads these paths, and the files have moved.
+            performConfigurationMutation(ifNotSaved: .keep) { config in
                 for heal in heals {
                     config.healExternalReference(
                         heal.reference, movedTo: heal.path, bookmark: heal.bookmark)

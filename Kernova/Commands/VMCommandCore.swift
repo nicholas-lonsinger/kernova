@@ -343,15 +343,13 @@ final class VMCommandCore: VMCommanding {
     /// Applies `mutate` to the VM's configuration, refusing when the result did
     /// not reach disk.
     ///
-    /// The one write convention every verb in the core shares. A failed save
-    /// leaves the new value in memory and the old one on disk, so the next
-    /// library read takes it back — answering `ok` would report a change the
-    /// user is about to lose. A mutation the write funnel *refused* returns the
-    /// same `false` and is refused here too, having changed nothing.
+    /// The one write convention every verb in the core shares: a change that
+    /// was refused, or whose save failed, changes nothing, and the verb says
+    /// so.
     func writeConfiguration(
         of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
     ) throws {
-        guard library.updateConfiguration(of: instance, mutate: mutate) else {
+        guard library.updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate) else {
             throw CommandError.operationFailed(
                 verb: verb,
                 message:

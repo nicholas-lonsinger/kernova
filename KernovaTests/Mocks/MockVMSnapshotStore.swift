@@ -75,8 +75,18 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
 
     // MARK: - VMSnapshotStoring
 
+    /// Carries each snapshot's MAC address from the configuration this store
+    /// captured or was seeded with, as the real store reads it from the
+    /// snapshot's own `config.json`.
     func loadManifest(bundleURL: URL) -> VMSnapshotManifest {
-        lock.withLock { state.manifests[bundleURL] ?? VMSnapshotManifest() }
+        lock.withLock {
+            var manifest = state.manifests[bundleURL] ?? VMSnapshotManifest()
+            for index in manifest.snapshots.indices {
+                manifest.snapshots[index].macAddress =
+                    state.capturedConfigurations[manifest.snapshots[index].id]?.macAddress
+            }
+            return manifest
+        }
     }
 
     func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws {

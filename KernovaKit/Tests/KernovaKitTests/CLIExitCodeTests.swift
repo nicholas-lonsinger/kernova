@@ -37,7 +37,9 @@ struct CLIExitCodeTests {
             ),
             (
                 .conflict(
-                    vm: vm, with: vm, reason: .macAddressInUse(address: "aa:bb:cc:dd:ee:0f")),
+                    vm: vm, with: vm,
+                    reason: .macAddressInUse(
+                        address: "aa:bb:cc:dd:ee:0f", configured: true, snapshots: [])),
                 .refusedByState
             ),
             (.invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."), .usage),

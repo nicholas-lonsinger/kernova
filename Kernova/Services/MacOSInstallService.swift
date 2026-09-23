@@ -9,7 +9,6 @@ final class MacOSInstallService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MacOSInstallService")
 
     private let configBuilder: ConfigurationBuilder
-    private let storageService = VMStorageService()
 
     init(vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService) {
         configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
@@ -51,13 +50,15 @@ final class MacOSInstallService {
             hardwareModel: supportedConfig.hardwareModel
         )
 
-        instance.configuration.hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
-
-        let machineIDURL = instance.machineIdentifierURL
-        let machineIDData = try Data(contentsOf: machineIDURL)
-        instance.configuration.machineIdentifierData = machineIDData
-
-        try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
+        let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
+        let machineIDData = try Data(contentsOf: instance.machineIdentifierURL)
+        // Not a reason to stop the install when the save fails, which the
+        // write reports itself: the build below reads an identity the
+        // configuration lacks from the files written just above.
+        instance.performConfigurationMutation(ifNotSaved: .discard) {
+            $0.hardwareModelData = hardwareModelData
+            $0.machineIdentifierData = machineIDData
+        }
 
         instance.beginSessionContext()
         let result = try configBuilder.build(

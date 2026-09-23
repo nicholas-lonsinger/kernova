@@ -33,8 +33,9 @@ struct VMSettingsStoragePanelTests {
         VMSettingsViewController, VMInstance
     ) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux)
-        instance.configuration.storageDisks = [StorageDisk(path: path, label: "Scratch")]
+        let instance = makeSettingsInstance(guestOS: .linux) {
+            $0.storageDisks = [StorageDisk(path: path, label: "Scratch")]
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -243,12 +244,13 @@ struct VMSettingsStoragePanelTests {
     @Test("Every row of a two-disk VM offers Remove\u{2026}, Disk.asif included")
     func attachmentMenuOffersRemoveOnEveryDiskWithASibling() {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux)
-        let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
-        instance.configuration.storageDisks = [
-            main,
-            StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true),
-        ]
+        let instance = makeSettingsInstance(guestOS: .linux) {
+            let bundleURL = VMInstanceFixture.bundleURL(for: $0.id)
+            $0.storageDisks = [
+                StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: bundleURL)),
+                StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true),
+            ]
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -268,10 +270,11 @@ struct VMSettingsStoragePanelTests {
     @Test("A VM's only disk offers no Remove\u{2026}")
     func attachmentMenuOmitsRemoveOnTheSoleDisk() {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux)
-        instance.configuration.storageDisks = [
-            StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        ]
+        let instance = makeSettingsInstance(guestOS: .linux) {
+            $0.storageDisks = [
+                StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+            ]
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()

@@ -908,10 +908,7 @@ final class VMCreationViewModel {
         let bootMode = effectiveBootMode
 
         // Generate a stable MAC address so save/restore uses a consistent config
-        let macAddress: String? =
-            networkEnabled
-            ? VZMACAddress.randomLocallyAdministered().string
-            : nil
+        let macAddress: String? = networkEnabled ? GuestMACAddress.random() : nil
 
         let genericMachineIdentifierData: Data? =
             (bootMode == .efi || bootMode == .linuxKernel)

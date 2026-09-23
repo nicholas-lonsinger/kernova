@@ -47,10 +47,10 @@ extension VMCommandCore {
         #log(
             Self.logger, .debug,
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
-        guard library.updateConfiguration(of: instance, mutate: { $0.name = trimmed }) else {
-            // The new name is in memory but not on disk, so the next library
-            // read takes it back. Answering `ok` here would report a rename the
-            // user is about to lose.
+        guard
+            library.updateConfiguration(
+                of: instance, ifNotSaved: .discard, mutate: { $0.name = trimmed })
+        else {
             throw CommandError.operationFailed(
                 verb: .rename,
                 message:
@@ -107,6 +107,7 @@ extension VMCommandCore {
                     .value
                 try await diskImages.createDiskImage(
                     at: VMBundleLayout(bundleURL: staged).diskImageURL, sizeInGB: diskSizeInGB)
+                return configuration
             },
             onSuccess: { [weak self] in
                 #log(
@@ -151,7 +152,7 @@ extension VMCommandCore {
         let existingNames = library.instances.map(\.configuration.name)
         var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
 
-        clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
+        clonedConfig.macAddress = GuestMACAddress.random()
 
         if generateNewID {
             if clonedConfig.guestOS == .macOS {
@@ -284,37 +285,38 @@ extension VMCommandCore {
                 // `AdditionalDisks/<new-id>.asif` — without this remap, boot-time
                 // resolution looks for the source bundle's id and fails with
                 // `storageDiskNotFound`.
-                if !diskMapping.isEmpty {
-                    let remappedPaths: [UUID: String] = Dictionary(
-                        uniqueKeysWithValues: diskMapping.map { mapping in
-                            (
-                                mapping.clonedDisk.id,
-                                "AdditionalDisks/\(mapping.clonedDisk.id.uuidString).asif"
-                            )
-                        }
-                    )
-                    let remapped: [StorageDisk] =
-                        phantom.configuration.storageDisks?
-                        .filter { !skippedDiskIDs.contains($0.id) }
-                        .map { disk in
-                            guard let newPath = remappedPaths[disk.id] else { return disk }
-                            var updated = disk
-                            updated.path = newPath
-                            return updated
-                        } ?? []
-                    // An empty list would store `nil`, which re-synthesizes a
-                    // `Disk.asif` row for a file the copy never wrote — so a
-                    // clone left with no disk fails instead of publishing.
-                    guard !remapped.isEmpty else {
-                        throw CommandError.operationFailed(
-                            verb: .clone,
-                            message:
-                                "None of the disk files of \u{201C}\(sourceName)\u{201D} could be copied, so the clone would have no storage disk."
+                guard !diskMapping.isEmpty else { return config }
+                let remappedPaths: [UUID: String] = Dictionary(
+                    uniqueKeysWithValues: diskMapping.map { mapping in
+                        (
+                            mapping.clonedDisk.id,
+                            "AdditionalDisks/\(mapping.clonedDisk.id.uuidString).asif"
                         )
                     }
-                    phantom.configuration.setStorageDisks(remapped)
-                    try storage.saveConfiguration(phantom.configuration, to: staged)
+                )
+                let remapped: [StorageDisk] =
+                    config.storageDisks?
+                    .filter { !skippedDiskIDs.contains($0.id) }
+                    .map { disk in
+                        guard let newPath = remappedPaths[disk.id] else { return disk }
+                        var updated = disk
+                        updated.path = newPath
+                        return updated
+                    } ?? []
+                // An empty list would store `nil`, which re-synthesizes a
+                // `Disk.asif` row for a file the copy never wrote — so a
+                // clone left with no disk fails instead of publishing.
+                guard !remapped.isEmpty else {
+                    throw CommandError.operationFailed(
+                        verb: .clone,
+                        message:
+                            "None of the disk files of \u{201C}\(sourceName)\u{201D} could be copied, so the clone would have no storage disk."
+                    )
                 }
+                var remappedConfig = config
+                remappedConfig.setStorageDisks(remapped)
+                try storage.saveConfiguration(remappedConfig, to: staged)
+                return remappedConfig
             },
             onSuccess: {
                 #log(
@@ -398,6 +400,7 @@ extension VMCommandCore {
                     if arrivedMarkedForAutoStart {
                         try storage.saveConfiguration(sanitizedConfig, to: staged)
                     }
+                    return sanitizedConfig
                 },
                 onSuccess: { [weak self] in
                     // The phantom was wired before its bundle existed, so any
