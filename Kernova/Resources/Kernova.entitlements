@@ -44,6 +44,14 @@
 	     com.apple.NetworkSharing mach-lookup exactly when this key is present. -->
 	<key>com.apple.vm.networking</key>
 	<true/>
+	<!-- Reading the host's IPv4 ARP table (sysctl NET_RT_FLAGS/RTF_LLINFO,
+	     AF_INET), which macOS 27 returns empty to an app without it — DTS,
+	     https://developer.apple.com/forums/thread/822025?page=2. Xcode's
+	     "Network Topology Observation" capability. Restricted: an ad-hoc
+	     signature claiming it is killed at exec (observed 2026-09-22, macOS
+	     27.0 26A428), so it is absent from Kernova.Development.entitlements. -->
+	<key>com.apple.developer.networking.topology-observation</key>
+	<true/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 	<!-- Passing a host USB accessory through to a guest. The App Sandbox
@@ -55,7 +63,7 @@
 	     com.apple.vm.networking above: amfid kills an ad-hoc-signed binary
 	     claiming it ("adhoc signed but contains restricted entitlements"), so
 	     the default build signs with Kernova.Development.entitlements, this
-	     file minus both restricted keys. -->
+	     file minus its restricted keys. -->
 	<key>com.apple.developer.accessory-access.usb</key>
 	<true/>
 	<!-- The container the app and its `kernova` command-line tool meet in,

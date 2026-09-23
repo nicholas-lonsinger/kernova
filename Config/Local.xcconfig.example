@@ -15,7 +15,7 @@ DEVELOPMENT_TEAM = ABCDE12345
 CODE_SIGN_IDENTITY = Apple Development
 
 // Uncomment to opt the app into the full entitlement set, including the
-// restricted com.apple.vm.networking and com.apple.developer.accessory-access.usb
-// keys — only with both capabilities enabled on the team's App ID and a
-// certificate set above. A missing one fails the build naming itself.
+// restricted keys Tools/check-entitlements.sh names — only with each of those
+// capabilities enabled on the team's App ID and a certificate set above. A
+// missing one fails the build naming itself.
 // KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements
