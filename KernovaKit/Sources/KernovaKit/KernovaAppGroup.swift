@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import KernovaLogging
 import Security
+import System
 
 /// The app group the app and its command-line tool share, resolved from the
 /// running process's own signature.
@@ -47,29 +48,43 @@ public enum KernovaAppGroup {
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier)
     }
 
+    /// Why a copy of Kernova has no command socket to name.
+    public enum SocketPathFailure: Error, Sendable, Equatable {
+        /// This build resolves no app-group container to hold a socket.
+        case noContainer
+        /// The bundle's path could not be looked up, with the `errno` the
+        /// lookup failed with: nothing is there once that copy has moved or
+        /// been deleted.
+        case unresolvableBundle(Errno)
+    }
+
     /// The command socket of the copy of Kernova at `appBundle`, as the
-    /// filesystem path the socket calls take, `nil` when there is no container
-    /// to hold it.
+    /// filesystem path the socket calls take.
     ///
-    /// Every copy answers on its own socket, named for its bundle's resolved
-    /// path: the app passes its own bundle and the tool the bundle it is
-    /// inside, so the two ends name one socket and no two copies share one.
-    public static func socketPath(forAppBundle appBundle: URL) -> String? {
-        guard let container = containerURL() else { return nil }
-        return socketPath(forAppBundle: appBundle, in: container)
+    /// Every copy answers on its own socket, named for its bundle's
+    /// ``CanonicalPath``: the app passes its own bundle and the tool the bundle
+    /// it is inside, so the two ends name one socket however each spelled the
+    /// path, and no two copies share one.
+    public static func socketPath(forAppBundle appBundle: URL) throws(SocketPathFailure) -> String {
+        guard let container = containerURL() else { throw .noContainer }
+        return try socketPath(forAppBundle: appBundle, in: container)
     }
 
     /// ``socketPath(forAppBundle:)`` inside `container`.
-    static func socketPath(forAppBundle appBundle: URL, in container: URL) -> String? {
-        let bundlePath = appBundle.resolvingSymlinksInPath().standardizedFileURL.path
+    static func socketPath(
+        forAppBundle appBundle: URL, in container: URL
+    ) throws(SocketPathFailure) -> String {
+        let bundlePath: String
+        do throws(Errno) {
+            bundlePath = try CanonicalPath.of(appBundle)
+        } catch {
+            throw .unresolvableBundle(error)
+        }
         let name = SHA256.hash(data: Data(bundlePath.utf8))
             .prefix(socketNameDigestBytes)
             .map { String(format: "%02x", $0) }
             .joined()
-        return container.appendingPathComponent("\(name).sock", isDirectory: false)
-            .withUnsafeFileSystemRepresentation { representation in
-                representation.map { String(cString: $0) }
-            }
+        return container.appendingPathComponent("\(name).sock", isDirectory: false).path
     }
 
     /// Leading bytes of the bundle-path digest a socket's name carries: enough

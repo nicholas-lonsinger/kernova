@@ -31,11 +31,11 @@ enum CommandLineToolInstaller {
 
     /// Links `destination` to the bundled tool.
     ///
-    /// Nothing is replaced except this installer's own leftovers: a file
-    /// already there might be another tool, and a link might be one the user
-    /// pointed somewhere on purpose. A link into a Kernova bundle that no
-    /// longer exists — the app moved, or an older copy was deleted — is ours,
-    /// and repointing it is the whole reason somebody clicked Install again.
+    /// Nothing is replaced but a link into a Kernova bundle's tool, which is
+    /// ours whichever copy it names: a file already there might be another
+    /// tool, and any other link might be one the user pointed somewhere on
+    /// purpose. The tool drives the copy it links into, so pointing the link
+    /// here is the whole reason somebody clicked Install in this copy.
     ///
     /// - Throws: ``InstallFailure``.
     static func installSymlink(at destination: URL) throws {
@@ -45,7 +45,7 @@ enum CommandLineToolInstaller {
         switch occupant(at: destination) {
         case .nothing:
             break
-        case .staleKernovaLink:
+        case .staleKernovaLink, .thisCopysLink, .anotherCopysLink:
             do {
                 try manager.removeItem(at: destination)
             } catch {
@@ -71,13 +71,22 @@ enum CommandLineToolInstaller {
     enum Occupant: Equatable {
         /// The path is free.
         case nothing
-        /// A broken link this installer wrote for a bundle that has since moved.
+        /// A link into a Kernova bundle that is gone — the app moved, or that
+        /// copy was deleted.
         case staleKernovaLink
+        /// A link into this copy's own tool.
+        case thisCopysLink
+        /// A link into the tool of the copy of Kernova at `app`, which is the
+        /// copy a shell running it drives.
+        case anotherCopysLink(app: URL)
         /// Anything else, which is somebody's and is left alone.
         case somethingElse
     }
 
     /// What holds `destination`.
+    ///
+    /// A Kernova link is one in the shape this installer writes, into
+    /// `<name>.app/Contents/Helpers/kernova`.
     ///
     /// `attributesOfItem` rather than `fileExists`, which follows symlinks: a
     /// dangling link reads as absent through the latter, so the create would
@@ -87,19 +96,39 @@ enum CommandLineToolInstaller {
         let manager = FileManager.default
         let path = destination.path(percentEncoded: false)
         guard let attributes = try? manager.attributesOfItem(atPath: path) else { return .nothing }
-        guard attributes[.type] as? FileAttributeType == .typeSymbolicLink else {
-            return .somethingElse
-        }
-        guard let target = try? manager.destinationOfSymbolicLink(atPath: path) else {
-            return .somethingElse
-        }
-        // Only a link this installer could have written, and only one whose
-        // target is gone. A live link to another Kernova is that copy's, and a
-        // link somewhere else entirely is the user's.
-        guard target.hasSuffix("/Contents/Helpers/\(KernovaAppGroup.commandLineToolName)"),
-            !manager.fileExists(atPath: target)
+        guard attributes[.type] as? FileAttributeType == .typeSymbolicLink,
+            let written = try? manager.destinationOfSymbolicLink(atPath: path)
         else { return .somethingElse }
-        return .staleKernovaLink
+
+        // A relative target is followed from the link's own folder.
+        let tool = URL(
+            fileURLWithPath: written, relativeTo: destination.deletingLastPathComponent()
+        ).standardizedFileURL
+        let helpers = tool.deletingLastPathComponent()
+        let contents = helpers.deletingLastPathComponent()
+        let app = contents.deletingLastPathComponent()
+        guard tool.lastPathComponent == KernovaAppGroup.commandLineToolName,
+            helpers.lastPathComponent == "Helpers", contents.lastPathComponent == "Contents",
+            app.pathExtension == "app"
+        else { return .somethingElse }
+
+        guard manager.fileExists(atPath: tool.path(percentEncoded: false)) else {
+            return .staleKernovaLink
+        }
+        return isThisCopy(app) ? .thisCopysLink : .anotherCopysLink(app: app)
+    }
+
+    /// Whether `app` is the bundle this process runs from, however either path
+    /// is spelled.
+    ///
+    /// A bundle that cannot be looked up is not this one: at worst, a link
+    /// into this copy is treated as another copy's, whose repointing the user
+    /// is asked about.
+    private static func isThisCopy(_ app: URL) -> Bool {
+        guard let linked = try? CanonicalPath.of(app),
+            let running = try? CanonicalPath.of(Bundle.main.bundleURL)
+        else { return false }
+        return linked == running
     }
 
     /// The command that does by hand what the panel does.

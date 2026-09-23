@@ -13,9 +13,9 @@ enum CommandConnection {
     /// was.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable`` when this copy
-    ///   of the tool is not inside an app, or resolves no app-group container —
-    ///   an ad-hoc signature has none — so it can reach no app at all; when the
-    ///   launch itself is refused; or when the app does not answer in time.
+    ///   of the tool can reach no app at all — see ``enclosingApp()`` and
+    ///   ``openIfRunning(_:)``; when the launch itself is refused; or when the
+    ///   app does not answer in time.
     static func open(launchIfNeeded: Bool) throws -> VMCommandClient {
         let app = try enclosingApp()
         let socketPath = try socketPath(of: app)
@@ -27,15 +27,18 @@ enum CommandConnection {
         }
     }
 
-    /// A client connected to the Kernova this tool is inside when it is already
-    /// running, or `nil` when it is not — for the one verb that has nothing to
-    /// ask of an app that is not there.
+    /// A client connected to the Kernova at `app` — the one this tool is
+    /// inside, from ``enclosingApp()`` — when it is already running, or `nil`
+    /// when it is not: for the verbs that have nothing to ask of an app that is
+    /// not there.
     ///
-    /// A copy of the tool that can reach no app still throws, whether or not
-    /// one is running, which is a different answer from "there is nothing to
-    /// talk to".
-    static func openIfRunning() throws -> VMCommandClient? {
-        let socketPath = try socketPath(of: try enclosingApp())
+    /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable``, whether or not
+    ///   the app is running, when this copy of the tool can reach no app: its
+    ///   build resolves no app-group container — an ad-hoc signature has none —
+    ///   or `app` cannot be looked up. That is a different answer from "there is
+    ///   nothing to talk to".
+    static func openIfRunning(_ app: URL) throws -> VMCommandClient? {
+        let socketPath = try socketPath(of: app)
         return try? VMCommandClient(socketPath: socketPath)
     }
 
@@ -64,16 +67,25 @@ enum CommandConnection {
         _ = try client.send(verb).payload()
     }
 
-    /// Where the socket of the app at `app` lives, refusing a build that
-    /// resolves no app-group container.
+    /// Where the socket of the app at `app` lives.
     private static func socketPath(of app: URL) throws -> String {
-        guard let socketPath = KernovaAppGroup.socketPath(forAppBundle: app) else {
-            throw CLIFailure(
-                .unavailable,
-                "This copy of kernova is not signed to share Kernova's app group, so it cannot "
-                    + "reach the app. Install the tool from Kernova's Settings \u{2192} Advanced.")
+        do throws(KernovaAppGroup.SocketPathFailure) {
+            return try KernovaAppGroup.socketPath(forAppBundle: app)
+        } catch {
+            switch error {
+            case .noContainer:
+                throw CLIFailure(
+                    .unavailable,
+                    "This copy of kernova is not signed to share Kernova's app group, so it "
+                        + "cannot reach the app. Install the tool from Kernova's Settings "
+                        + "\u{2192} Advanced.")
+            case .unresolvableBundle(let lookup):
+                throw CLIFailure(
+                    .unavailable,
+                    "This copy of kernova could not look up the app it is inside, at "
+                        + "\(app.path): \(lookup.description).")
+            }
         }
-        return socketPath
     }
 
     /// Starts the app at `app` and retries the connect to its socket on

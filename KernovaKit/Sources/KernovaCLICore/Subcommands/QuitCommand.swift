@@ -21,7 +21,8 @@ extension KernovaCommand {
         /// Quits the app and returns once it has gone, or reports success when
         /// there is none to quit.
         func run() throws {
-            guard let client = try CommandConnection.openIfRunning() else { return }
+            let app = try CommandConnection.enclosingApp()
+            guard let client = try CommandConnection.openIfRunning(app) else { return }
             defer { client.close() }
             try client.post(.quit)
             let answer = try client.nextFrame()
@@ -31,7 +32,7 @@ extension KernovaCommand {
             // reach the dying instance, or spend the whole connect deadline
             // against one on its way out.
             if answer != nil { try Self.awaitExit(of: client) }
-            try Self.awaitDeregistration(of: client)
+            try Self.awaitDeregistration(of: client, at: app)
         }
 
         /// Blocks until Launch Services has released the Kernova this tool just
@@ -44,20 +45,19 @@ extension KernovaCommand {
         /// Services to open the app, on the line after this one.
         ///
         /// Keyed on the connection's peer; when the kernel will not name it, on
-        /// the app this tool is inside, whose socket is the one the connection
-        /// reached.
+        /// `app`, whose socket is the one the connection reached.
         ///
         /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when the
         ///   registration outlives the wait — the quit itself succeeded, and
         ///   the code says the promise did not.
-        static func awaitDeregistration(of client: VMCommandClient) throws {
+        static func awaitDeregistration(of client: VMCommandClient, at app: URL) throws {
             let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
             let released: Bool
             if let peer = client.peerProcessIdentifier {
                 released = AppRegistryWait.awaitDeregistration(ofProcess: peer, by: deadline)
             } else {
                 released = AppRegistryWait.awaitDeregistration(
-                    ofBundleAt: try CommandConnection.enclosingApp(), scope: .all, by: deadline)
+                    ofBundleAt: app, scope: .all, by: deadline)
             }
             guard released else {
                 throw CLIFailure(

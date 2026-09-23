@@ -9,8 +9,8 @@ import KernovaKit
 /// starts the app — nobody pressing it asked for that — and never waits long: a
 /// shell that has not come back is worse than a shell offering nothing.
 struct CompletionContext {
-    /// Opens a connection to a Kernova that is already running, `nil` when none
-    /// is.
+    /// Opens a connection to the Kernova this tool is inside when it is already
+    /// running, `nil` when it is not.
     let connect: () throws -> VMCommandClient?
 
     /// How long one round trip may take.
@@ -25,7 +25,8 @@ struct CompletionContext {
     /// Two seconds, because the wait lands on somebody with a key held down.
     static var live: CompletionContext {
         CompletionContext(
-            connect: CommandConnection.openIfRunning, deadline: 2,
+            connect: { try CommandConnection.openIfRunning(CommandConnection.enclosingApp()) },
+            deadline: 2,
             shell: CompletionShell.requesting)
     }
 }
