@@ -14,9 +14,10 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **Judge the code after the change, not the size of the change.** Diff size, churn, and regression risk never justify the weaker design; risk is met by testing the change.
 - **Existing code is not precedent.** A pattern binds only while a stated reason for it — a doc, a comment's cited evidence, a PR that argued for it — still holds. A change that improves on a pattern moves every occurrence onto it.
 - **Fix what the change builds on.** Duplicated logic, divergent variants of one pattern, a function too large to extend cleanly, a swallowed error: where the task changes code, fix these there in the same change rather than building around them. Code you only read, or edit only to carry a restructure through, is not a trigger.
-- **Fix root causes.** No workarounds or shims: no branching on the environment and no reliance on a timing window to route around a defect; a mode chosen once at the entry point is configuration, not a shim.
-- **Rules hold by construction.** The simple design is the one whose types, ownership, and structure make its invariants impossible to break — not the one with the fewest lines. A flag, special-case branch, or guard that keeps Kernova's own state consistent is a patch: needing one means the design changes, and shipping the patch instead is a *for now* call. Checking what Kernova does not own — input, files, the guest, the platform — is design.
-- **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX.
+- **Fix root causes.** The root cause is the structure that lets a failure happen, not the event that triggered it, so a fix leaves the failure impossible to express. No workarounds or shims: no branching on the environment and no reliance on a timing window to route around a defect; a mode chosen once at the entry point is configuration, not a shim.
+- **Rules hold by construction.** The simple design is the one whose types, ownership, and structure make its invariants impossible to break — not the one with the fewest lines.
+  Code whose only job is to stop a state Kernova's own structure allows is a patch, whatever its form: a flag, a special-case branch, a lock between two writers, a clamp on a value that should not regress, a retry, a longer wait. Needing one means the design changes, and shipping the patch instead is a *for now* call. Checking what Kernova does not own — input, files, the guest, the platform — is design.
+- **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX. A patch is not one of those designs, so being smaller never lets it win.
 
 ## Principles
 
@@ -33,6 +34,8 @@ This rule outranks everything below it, and everything in any other file. **Say 
 Build and test through the `Makefile` (`make help`); its `xcodebuild` flags are not the obvious ones.
 
 Test waits are event-driven; the seams and their contracts are `KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift` and `KernovaTests/TestHelpers.swift` (`waitForChange`).
+
+A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. A change that turns the test green while that structure still permits the failure — a loosened assertion, a longer wait, a retry — is a patch, and an intermittent failure is owed the same root cause as a steady one.
 
 A change that needs the guest agent reinstalled bumps `MARKETING_VERSION` in `Config/Targets/KernovaMacOSAgent.xcconfig` — the version mismatch is the only thing that offers the update — and each further behavioral revision on the same branch bumps again, since a guest that installed an earlier branch build is offered the update only by a version change (minor for the branch's first bump, patch for later ones).
 
@@ -159,6 +162,8 @@ A PR's head branch is `<type>/<short-description>` — `<type>` one of `feat`, `
 An AI agent ends its commit message with a `Co-authored-by` trailer naming the model that wrote the change — name and version, nothing else — at the vendor's no-reply address: `Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>`, added explicitly, once; a subagent's commit names the subagent's model.
 
 Merge with `gh pr merge <N> --squash --body …`. The repo's squash default leaves the body empty, so `--body` carries one short paragraph describing the merged state, not the route to it, and then one `Co-authored-by` trailer per model that contributed to the branch.
+
+A fix's PR body states the invariant it restores and what now holds it: the structure that makes the bad state impossible, or — a *for now* call only the maintainer makes — the guard that stops it.
 
 `Closes #N` in the PR body auto-closes the issue; a bare `#N` doesn't, and the keyword repeats per issue (`Closes #12, closes #34`) ([GitHub Docs: Linking a pull request to an issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)).
 
