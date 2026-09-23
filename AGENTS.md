@@ -84,12 +84,14 @@ Every review finding — your own reading of adjacent code included — gets one
 
 | Category | What it means |
 |---|---|
-| **Fix now** | Valid, in scope, reasonable effort — fix it as part of the current work |
-| **Fix later** | Valid but out of scope or too large — file a GitHub issue immediately from `.github/ISSUE_TEMPLATE/review-debt.md` |
+| **Fix now** | Clears the severity bar — fix it in the current change, however much restructuring that takes |
+| **Fix later** | Clears the severity bar *and* is separate work: different code or logic that needs its own context and would not fit in this change — file a GitHub issue immediately from `.github/ISSUE_TEMPLATE/review-debt.md` |
 | **Annotate** | A last resort: a `RATIONALE:` comment only for a concern a review actually raised or an alternative actually tried and failed — one a reviewer *would* raise is not enough; `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar) |
 | **Dismiss** | Everything else — a finding that fails the severity bar and doesn't clear the annotation bar |
 
-A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). When a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain: dismiss rather than filing the next link, and don't annotate it.
+**The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action). A path that needs a contrived sequence, a theoretical interleaving, or a state no supported flow produces is not reachable. A refactor or coverage finding clears it only by a concrete cost of leaving it.
+
+**Triage converges.** Each review round leaves less open work than the last, so an issue is the rare outcome: being out of scope never earns **Fix later** on its own. A finding in code this change wrote or reworked is **Fix now** or **Dismiss**. When a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain: dismiss rather than filing the next link, and don't annotate it.
 
 **An existing `RATIONALE:` is evidence, not authority.** If the code looks wrong today, investigate — it is a head start on where to look, never a reason to stop looking. Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it; one citing no evidence and no date is unverified, worth no more than an ordinary comment.
 

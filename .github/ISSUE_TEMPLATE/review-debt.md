@@ -1,6 +1,6 @@
 ---
 name: Review Debt
-about: A finding from code review that is valid but out of scope for the change under review
+about: A code-review finding that clears the severity bar and is separate work from the change under review
 title: ""
 labels: ["Review Debt"]
 ---
