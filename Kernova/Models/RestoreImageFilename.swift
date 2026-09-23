@@ -14,9 +14,9 @@ enum RestoreImageFilename {
     ///
     /// Apple's `UniversalMac_<version>_<build>_Restore.ipsw` convention passes
     /// through, because the build in such a name is the image's identity: two
-    /// picks of one build share a destination on purpose. Any other URL gets a
-    /// name unique to it, since a shared name lets an unrelated image already on
-    /// disk satisfy the download and install in place of the one chosen.
+    /// picks of one build share a destination. Any other URL gets a name unique
+    /// to it, since a shared name lets an unrelated image already on disk
+    /// satisfy the download and install in place of the one chosen.
     static func destination(for url: URL) -> String {
         guard let sanitized = sanitized(url.lastPathComponent),
             ProbedRestoreImage.parseFilename(sanitized).build != nil

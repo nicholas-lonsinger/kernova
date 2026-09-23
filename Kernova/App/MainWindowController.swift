@@ -213,9 +213,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Reinstates a collapse-removed New VM at the slot it came from.
     ///
     /// The index is clamped because a ⌘-drag move while the sidebar is collapsed
-    /// has no AppKit hook to keep it current. The insert deliberately runs with
-    /// autosave *live*: it returns the toolbar to the user's canonical layout,
-    /// which is exactly what should be persisted.
+    /// has no AppKit hook to keep it current. The insert runs with autosave
+    /// *live*: it returns the toolbar to the user's canonical layout, the one to
+    /// persist.
     private func restoreNewVMItem(in toolbar: NSToolbar, at index: Int) {
         newVMCollapseRemovalIndex = nil
         guard !toolbar.items.contains(where: { $0.itemIdentifier == Self.toolbarNewVM }) else {

@@ -128,9 +128,9 @@ enum VMLifecyclePhase: Sendable, Equatable {
     /// Whether the VM is mid-operation, so terminating would interrupt the work
     /// rather than suspend a settled VM.
     ///
-    /// The running and paused phases are excluded deliberately: termination
-    /// save-suspends those, which is their intended shutdown path. Exhaustive
-    /// rather than `default`, so a new phase has to choose a side.
+    /// The running and paused phases are excluded: termination save-suspends
+    /// those. Exhaustive rather than `default`, so a new phase has to choose
+    /// a side.
     var isTransitioning: Bool {
         switch self {
         case .starting, .installing, .saving, .capturingLive, .capturingAtRest,

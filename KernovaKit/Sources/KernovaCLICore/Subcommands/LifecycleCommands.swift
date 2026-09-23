@@ -234,8 +234,8 @@ extension KernovaCommand {
     struct Open: VerbCommand {
         /// What `kernova open --help` says.
         ///
-        /// The one verb here that deliberately surfaces something: it is what
-        /// somebody at the machine types when they want to see the guest.
+        /// The one verb here that surfaces something: it is what somebody
+        /// at the machine types when they want to see the guest.
         static let configuration = CommandConfiguration(
             commandName: "open",
             abstract: "Bring a running guest's display to the front.")

@@ -102,8 +102,8 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     ///
     /// Two units of one model are an ordinary thing to own, and a menu
     /// offering the same words twice says nothing about which is which. The
-    /// qualifier is deliberately not part of ``displayName``: it is a fact
-    /// about the list, not about the device.
+    /// qualifier is not part of ``displayName``: it is a fact about the
+    /// list, not about the device.
     static func listingNames(for accessories: [USBAccessoryInfo]) -> [UInt64: String] {
         let counts = accessories.reduce(into: [String: Int]()) { $0[$1.displayName, default: 0] += 1 }
         return accessories.reduce(into: [UInt64: String]()) { names, accessory in

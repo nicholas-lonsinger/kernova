@@ -81,11 +81,11 @@ extension ClipboardArchive {
 extension ClipboardArchive {
     /// The whole archive for `source`, held in memory.
     ///
-    /// The shape a transfer deliberately never uses — it streams the archive
-    /// past both ends without ever holding one — so this is for a caller that
-    /// needs the archive as a value: a fixture describing what a peer puts on
-    /// the wire, or a check of what arrived. Never call it on a payload whose
-    /// size is not known to be small.
+    /// The shape a transfer never uses — it streams the archive past both
+    /// ends without ever holding one — so this is for a caller that needs the
+    /// archive as a value: a fixture describing what a peer puts on the wire,
+    /// or a check of what arrived. Never call it on a payload whose size is
+    /// not known to be small.
     public static func archiveBytes(of source: ClipboardArchiveSource) throws -> Data {
         let sink = ClipboardArchiveDataSink()
         if let failure = ClipboardArchiveCodec.encode(

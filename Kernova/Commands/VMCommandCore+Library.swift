@@ -12,8 +12,8 @@ extension VMCommandCore {
     ///
     /// Uncapped, a large multi-select drop would spawn N concurrent blocking
     /// `FileManager` calls on Swift's cooperative pool and saturate it. The cap is
-    /// deliberately small — copies serialize at the device anyway, so a low bound
-    /// avoids cross-volume disk thrash without losing throughput.
+    /// small: copies serialize at the device anyway, so a low bound avoids
+    /// cross-volume disk thrash without losing throughput.
     private static let copyQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = 2
@@ -348,8 +348,8 @@ extension VMCommandCore {
     /// synchronously, and spawns the file copy — answering the existing row when the source is
     /// already in the library by UUID.
     ///
-    /// Synchronous by design, all the way to the copy `Task`: a batch's reservations — and two
-    /// overlapping triggers' — run atomically on the MainActor and see each other's phantoms in
+    /// Synchronous all the way to the copy `Task`: a batch's reservations — and two overlapping
+    /// triggers' — run atomically on the MainActor and see each other's phantoms in
     /// `instances`, which one suspension point between them would break. The copies then run
     /// concurrently.
     @discardableResult

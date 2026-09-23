@@ -3,9 +3,8 @@ import AppKit
 /// Placeholder shown for confidential clipboard content
 /// (`org.nspasteboard.ConcealedType`, the convention password managers use).
 ///
-/// The window deliberately never renders the secret bytes. The content still
-/// crosses the channel and pastes into the peer; only its on-screen display is
-/// suppressed.
+/// The window never renders the secret bytes. The content still crosses the
+/// channel and pastes into the peer; only its on-screen display is suppressed.
 @MainActor
 final class ClipboardConcealedPreviewView: NSView {
     init() {

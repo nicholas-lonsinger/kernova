@@ -276,7 +276,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Tears down the connection and the poll timer.
     ///
-    /// Receive staging is deliberately left in place — see `applyEnabledOnMain`.
+    /// Receive staging stays in place — see `applyEnabledOnMain`.
     func stop() {
         client.stop()
         DispatchQueue.main.async { [weak self] in
@@ -399,10 +399,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         guard currentCount != lastPasteboardChangeCount else { return }
         // Ahead of every read: reading a promised flavor *fires* its provider,
         // and this agent's own promise is still standing across a teardown and
-        // reconnect — where the change-count gate is deliberately unset, so this
-        // latch is what keeps the first poll of a connection from pulling the
-        // Mac's own content back and offering it as a guest copy. The publisher
-        // outlives the connections, so the latch does too.
+        // reconnect — where the change-count gate is unset, so this latch is
+        // what keeps the first poll of a connection from pulling the Mac's own
+        // content back and offering it as a guest copy. The publisher outlives
+        // the connections, so the latch does too.
         guard currentCount != MainActorBridge.sync({ publisher.lastWriteChangeCount }) else {
             lastPasteboardChangeCount = currentCount
             return
@@ -411,7 +411,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // Captured once, before any gate advances, and passed to every path that
         // can raise a menu notice: only a snapshot a poll on this connection
         // watched arrive is a gesture someone just made. The first poll of a
-        // connection deliberately re-evaluates whatever was already standing
+        // connection re-evaluates whatever was already standing
         // (`unobservedChangeCount`), and a notice for that pops the guest's
         // dropdown open with nobody having touched the clipboard.
         let watchedItArrive = lastPasteboardChangeCount != Self.unobservedChangeCount
@@ -459,7 +459,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     Self.logger, .notice,
                     "Copy held only files materialized from the host — not offered back (conn=\(self.connectionTag, privacy: .public))"
                 )
-                // Deliberate suppression, so nobody's copy came up short: the
+                // A suppression, so nobody's copy came up short: the
                 // pasteboard still moved on, and the offer it displaced is all
                 // that may be withdrawn.
                 noteSnapshotOfferedNothing(

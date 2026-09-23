@@ -23,8 +23,8 @@ struct GuestAccountIntent: Codable, Sendable, Equatable {
 /// The account Virtualization creates inside a macOS guest, complete with the
 /// password.
 ///
-/// Deliberately not `Codable`: that conformance is what would let the password
-/// reach a bundle's `config.json`. The other four values persist as
+/// Not `Codable`: that conformance is what would let the password reach a
+/// bundle's `config.json`. The other four values persist as
 /// ``GuestAccountIntent``, and the password is rejoined with them for the boot
 /// that carries it.
 struct GuestProvisioningCredentials: Sendable, CustomStringConvertible {
@@ -168,8 +168,8 @@ enum MacOSGuestProvisioning {
             try options.setGuestProvisioning(provisioningOptions(for: provisioning))
         } catch {
             // The framework's own description, domain and code — what the
-            // refusal shown to the user deliberately leaves out, and the only
-            // record of why a guest came up unprovisioned.
+            // refusal shown to the user leaves out, and the only record
+            // of why a guest came up unprovisioned.
             let nsError = error as NSError
             #log(
                 logger, .warning,

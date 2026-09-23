@@ -46,8 +46,7 @@ struct FileDigestTests {
 
     @Test("A file spanning several chunks digests the same as one read whole")
     func multipleChunks() async throws {
-        // Deliberately longer than `chunkByteCount`, which is the whole reason
-        // this reads incrementally rather than through `Data(contentsOf:)`.
+        // Longer than `chunkByteCount`, so the digest takes more than one read.
         var contents = Data(count: FileDigest.chunkByteCount + 7)
         for index in stride(from: 0, to: contents.count, by: 4096) {
             contents[index] = UInt8(index % 251)

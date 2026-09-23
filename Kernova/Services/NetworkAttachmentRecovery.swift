@@ -15,8 +15,8 @@ enum NetworkAttachmentPlan: Equatable, Sendable {
     /// build, where DHCP reservations back the IP display.
     case sharedVmnet
 
-    /// The mode this plan realizes. The bridged interface is deliberately
-    /// ignored: an attachment over any interface realizes Bridged.
+    /// The mode this plan realizes. The bridged interface is ignored:
+    /// an attachment over any interface realizes Bridged.
     var realizedMode: VMNetworkMode {
         switch self {
         case .nat, .sharedVmnet: .shared
@@ -447,9 +447,9 @@ final class NetworkAttachmentCoordinator {
     }
 
     /// VZ's attachment-disconnect callback: the framework has nil'd the
-    /// attachment. Benign by design — it also fires on initial boot, device
-    /// reset, and guest reboot — so it is never surfaced as a VM error; the
-    /// answer is always to reattach.
+    /// attachment. Benign — it also fires on initial boot, device reset,
+    /// and guest reboot — so it is never surfaced as a VM error; the answer
+    /// is always to reattach.
     func attachmentWasDisconnected(error: any Error) {
         #log(
             Self.logger, .warning,
@@ -698,8 +698,8 @@ final class NetworkAttachmentCoordinator {
             choice().flatMap(resolvePlan(for:))?.vmnetKind == kind
         else { return }
         // The recreate answers the claim, so it is withdrawn. `didReportNetworkDefect`
-        // deliberately stays set: a recreate that comes up just as defective
-        // must not report again and start a recreate loop.
+        // stays set: a recreate that comes up just as defective must not report again
+        // and start a recreate loop.
         reportedDefectiveVmnetKind = nil
         // Cancel first: the in-flight task's own ladder may already be spent,
         // and the single-flight guard would otherwise swallow this nudge.

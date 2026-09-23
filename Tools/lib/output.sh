@@ -52,7 +52,7 @@ warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
 # Data the reader came for — default foreground, never dim.
 value()   { printf '    %s\n' "$1"; }
 
-# An aside the reader can skip — dim by design.
+# An aside the reader can skip — dim.
 detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
 
 # Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.

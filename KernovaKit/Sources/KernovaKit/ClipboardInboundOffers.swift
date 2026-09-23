@@ -94,9 +94,9 @@ public final class ClipboardInboundOffers {
     /// Transfer ids of the synchronous pulls parked on this connection, so a
     /// cancel can stop the peer producing bytes for them.
     ///
-    /// Held off the main actor deliberately: a blocking fire clears its id from
-    /// whichever thread it holds, and the main hop that would cost is the one a
-    /// paste must not pay.
+    /// Held off the main actor: a blocking fire clears its id from whichever
+    /// thread it holds, and the main hop that would cost is the one a paste
+    /// must not pay.
     nonisolated private let syncPulls = InFlightSyncPulls()
 
     private let clock: any EngineClock
@@ -358,9 +358,9 @@ public final class ClipboardInboundOffers {
     /// Takes ownership of `fd`: a reply naming a transfer nothing is awaiting
     /// closes it, which is the refusal the peer sees.
     ///
-    /// `nonisolated` deliberately: this runs on the thread that read the reply,
-    /// because a paste fire parked on the pull it answers can be holding the
-    /// main thread.
+    /// `nonisolated`: this runs on the thread that read the reply, because a
+    /// paste fire parked on the pull it answers can be holding the main
+    /// thread.
     nonisolated public func adoptDataConnection(
         fd: Int32, reply: Kernova_V1_ClipboardTransferReply
     ) {
@@ -421,9 +421,9 @@ public final class ClipboardInboundOffers {
 
     /// Wakes every parked pull because the connection is over.
     ///
-    /// A clipboard offer and its materialization cache deliberately stay: a
-    /// pasteboard write this side published outlives the session behind it, and
-    /// every representation already pulled stays servable from the cache and the
+    /// A clipboard offer and its materialization cache stay: a pasteboard write
+    /// this side published outlives the session behind it, and every
+    /// representation already pulled stays servable from the cache and the
     /// staged files — docs/CLIPBOARD.md, "Pay on consume". A drop's entries go —
     /// nothing on this side advertises them, and the jobs they belonged to end
     /// with the channel.
@@ -1009,7 +1009,7 @@ public final class ClipboardInboundOffers {
                 .pasteTimeout, "The clipboard transfer timed out", generation: plan.generation, caller: caller)
         case .cancelled:
             // `.debug`, not `.warning`: a cancellation also covers the benign
-            // teardown and supersession, which are deliberately silent.
+            // teardown and supersession.
             #log(
                 Self.logger, .debug,
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) cancelled"

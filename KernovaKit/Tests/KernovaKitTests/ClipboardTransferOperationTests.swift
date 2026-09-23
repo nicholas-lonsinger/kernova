@@ -304,7 +304,7 @@ struct ClipboardTransferOperationTests {
 
         #expect(recorder.reports.count == settled)
         let finish = try #require(recorder.finish)
-        // Cancelled below 100 %, at the fraction it stopped on, by design.
+        // Cancelled below 100 %, at the fraction it stopped on.
         #expect(finish.finalSnapshot?.bytesTransferred == 300)
         if case .cancelled = finish.outcome {} else { Issue.record("expected a cancelled outcome") }
     }

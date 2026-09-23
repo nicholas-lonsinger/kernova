@@ -126,12 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// Starts the library read.
     ///
-    /// Deliberately here and not in `applicationDidFinishLaunching`: AppKit
-    /// delivers a launch document's `application(_:open:)` *between* the two, and
-    /// that path waits on `libraryLoad` — left unset, the wait would silently
-    /// pass through and re-import a bundle already in the library. Starting the
-    /// read costs nothing here; the task body only runs once the main actor
-    /// yields, and its file I/O is off the main actor either way.
+    /// Here and not in `applicationDidFinishLaunching`: AppKit delivers a launch
+    /// document's `application(_:open:)` *between* the two, and that path waits
+    /// on `libraryLoad` — left unset, the wait would silently pass through and
+    /// re-import a bundle already in the library. Starting the read costs nothing
+    /// here; the task body only runs once the main actor yields, and its file I/O
+    /// is off the main actor either way.
     func applicationWillFinishLaunching(_ notification: Notification) {
         libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
         // Before `lifecycle.start(provenance:)`, so an intent delivered during

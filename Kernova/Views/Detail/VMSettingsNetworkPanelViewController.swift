@@ -80,9 +80,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// entitlement is missing, and the vmnet and Wi-Fi limitations are stated
     /// at Apple's strength, on the surface the user picks a mode from.
     private func buildNetworkSection() -> NSView {
-        // Deliberately outside `lockableRows`: the picker is the live-switch
-        // surface while the VM runs, so `refreshNetwork()` owns its enablement
-        // and its row's dimming (and the section lock hint it makes moot).
+        // Outside `lockableRows`: the picker is the live-switch surface while
+        // the VM runs, so `refreshNetwork()` owns its enablement and its row's
+        // dimming (and the section lock hint it makes moot).
         networkModePopUp = makeNetworkModePopUp()
         let modeRow = makeGroupedFormCardRow("Mode", control: networkModePopUp)
         networkModeRow = modeRow
@@ -391,7 +391,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let popUp = NSPopUpButton()
         popUp.controlSize = .small
         // Otherwise AppKit re-derives each item's enabled state on every event,
-        // undoing the deliberately-disabled entries below.
+        // undoing the entries disabled below.
         popUp.autoenablesItems = false
         popUp.target = self
         popUp.action = #selector(networkModeChanged)
@@ -466,8 +466,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     /// Appends one Mode entry.
     ///
-    /// `choice` is deliberately non-optional: in an optional context Swift reads
-    /// the `.none` case as `nil`, which would strip the None entry's identity.
+    /// `choice` is non-optional: in an optional context Swift reads the
+    /// `.none` case as `nil`, which would strip the None entry's identity.
     private func addNetworkModeItem(
         _ title: String, choice: NetworkModeChoice, to menu: NSMenu, enabled: Bool = true
     ) {

@@ -795,9 +795,8 @@ extension VMCommandCore {
                 Self.logger, .warning,
                 "Failed to remove the file behind '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
             )
-            // Deliberately instance-less: the VM delete that shares this helper
-            // evicts its instance before the externals run, which is the whole
-            // point of doing them after the bundle.
+            // Instance-less: the VM delete that shares this helper has evicted
+            // its instance by the time the externals run.
             report(.operationFailed(verb: verb, message: message), on: nil)
         }
     }

@@ -128,9 +128,9 @@ final class SidebarVMRowCellView: NSTableCellView {
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
-        // The icon is deliberately not wired to `imageView`: its state color is
-        // baked into a non-template symbol image, so the source list's selection
-        // vibrancy leaves it alone instead of drawing it white.
+        // The icon is not wired to `imageView`: its state color is baked into a
+        // non-template symbol image, so the source list's selection vibrancy
+        // leaves it alone instead of drawing it white.
         textField = nameLabel
 
         NSLayoutConstraint.activate([

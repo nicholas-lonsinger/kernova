@@ -23,7 +23,7 @@
 #                              2.1.247), so post-checkout never fires for a
 #                              worktree it creates.
 #
-# Best-effort by design: always exits 0, so a failed step can never fail the
+# Best-effort: always exits 0, so a failed step can never fail the
 # checkout or session that triggered it, and `make doctor` / `make ghosts`
 # report whatever was left undone. Progress goes to stdout; a caller that
 # must stay quiet redirects it.

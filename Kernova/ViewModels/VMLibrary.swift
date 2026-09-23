@@ -51,9 +51,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Where each preparing write's tree currently sits, keyed by instance id —
     /// the staged path until publication renames it to the VM's own bundle URL.
     ///
-    /// Deliberately not on ``VMInstance``: it changes twice per write, and an
-    /// observed property would re-render every row's observers for a path no
-    /// surface shows. ``cancelAndCleanupPreparing()`` is the only reader.
+    /// Not on ``VMInstance``: it changes twice per write, and an observed
+    /// property would re-render every row's observers for a path no surface
+    /// shows. ``cancelAndCleanupPreparing()`` is the only reader.
     @ObservationIgnored private var writeLocations: [UUID: URL] = [:]
 
     // MARK: - Adapter Hooks
@@ -215,11 +215,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Fills the library from disk, then starts watching the VMs directory for
     /// changes made outside the app.
     ///
-    /// Called once, from `applicationWillFinishLaunching`. Deliberately not part
-    /// of `init`: everything the initializer does runs before `NSApplication.run()`,
-    /// so a library read there sits between process start and the first window.
-    /// The watcher starts only after the read applies — its callback re-reads
-    /// every bundle on the main actor, which must not race the initial load.
+    /// Called once, from `applicationWillFinishLaunching`. Not part of `init`:
+    /// everything the initializer does runs before `NSApplication.run()`, so a
+    /// library read there sits between process start and the first window. The
+    /// watcher starts only after the read applies — its callback re-reads every
+    /// bundle on the main actor, which must not race the initial load.
     ///
     /// Launch is also where an interrupted run's staged bundles are reclaimed.
     /// Nothing waits on those removals: a staged name is minted per write, so one
@@ -1039,8 +1039,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     ///
     /// `bundlesOnDisk` bounds it to the VMs this pass actually read: a bundle
     /// the scan could not see says nothing about the slot inside it, and the
-    /// eviction above deliberately leaves such a VM suspended rather than
-    /// reclaiming it.
+    /// eviction above leaves such a VM suspended.
     private func normalizeEmptiedSuspensions(inBundles bundlesOnDisk: Set<UUID>) {
         for instance in instances
         where bundlesOnDisk.contains(instance.id) && instance.isColdPaused

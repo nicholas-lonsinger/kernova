@@ -67,7 +67,7 @@ public final class LazyClipboardProviderRegistry: @unchecked Sendable {
     /// or finish signal instead of polling.
     ///
     /// Set it once before the registry is exercised; `releaseAllForTesting` is
-    /// teardown-only and deliberately doesn't fire it.
+    /// teardown-only and doesn't fire it.
     var onChangeForTesting: (() -> Void)?
 
     /// Releases every retained provider, breaking the registry↔provider retain

@@ -256,8 +256,8 @@ struct RestoreImageCatalogServiceTests {
         #expect(service.generatedAt != nil)
 
         // Every shipped invariant the parser enforces, asserted against the real
-        // resource rather than a fixture. Counts are deliberately absent: the
-        // catalog is regenerated on Apple's schedule.
+        // resource rather than a fixture. No count is asserted: the catalog is
+        // regenerated on Apple's schedule.
         #expect(Set(service.entries.map(\.build)).count == service.entries.count)
         for entry in service.entries {
             #expect(entry.url.scheme == "https")

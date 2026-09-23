@@ -40,10 +40,10 @@ struct VsockFeatureDescriptor {
 
     /// Whether a change to ``isEnabled`` may be applied to a running VM.
     ///
-    /// Separate from ``isEnabled`` on purpose: clipboard sharing is
-    /// install-time gated for every guest but live-toggled only for macOS ones,
-    /// and a single predicate would live-toggle vsock listeners on a Linux
-    /// guest whose sharing rides the SPICE console port.
+    /// Separate from ``isEnabled``: clipboard sharing is install-time gated for
+    /// every guest but live-toggled only for macOS ones, and a single predicate
+    /// would live-toggle vsock listeners on a Linux guest whose sharing rides
+    /// the SPICE console port.
     let appliesLive: @MainActor (VMConfiguration) -> Bool
 
     /// Reads this channel's service slot.

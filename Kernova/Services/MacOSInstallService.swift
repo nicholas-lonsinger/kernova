@@ -73,8 +73,8 @@ final class MacOSInstallService {
         guard let session = await instance.attachSession(from: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        // Deliberately short of `bringUpSession`: an installer boot runs no
-        // vsock listeners, since no guest agent can be there to meet them.
+        // Short of `bringUpSession`: an installer boot runs no vsock
+        // listeners, since no guest agent can be there to meet them.
         instance.startSerialReading()
         instance.startClipboardService()
 

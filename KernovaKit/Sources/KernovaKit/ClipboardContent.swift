@@ -256,8 +256,7 @@ public struct ClipboardContent: Equatable, Sendable {
     /// Content holding a single UTF-8 plain-text representation.
     ///
     /// The empty string normalizes to `.empty`: "empty text" and "no content" are
-    /// deliberately the same non-offerable value, resolved here rather than at
-    /// every call site.
+    /// the same non-offerable value.
     public init(text: String, isConcealed: Bool = false) {
         if text.isEmpty {
             self = .empty

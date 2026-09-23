@@ -896,9 +896,9 @@ struct SidebarViewControllerTests {
 /// A minimal source-list `NSOutlineView` holding one configured VM row, used to
 /// read back the font AppKit actually draws that row's name in once selected.
 ///
-/// Deliberately window-less and never displayed: `reloadData`, selecting the
-/// row and a layout pass are enough for AppKit to install the emphasized string,
-/// so the probe stays synchronous and needs no run-loop spin.
+/// Window-less and never displayed: `reloadData`, selecting the row and a layout
+/// pass are enough for AppKit to install the emphasized string, so the probe
+/// stays synchronous and needs no run-loop spin.
 @MainActor
 private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
     NSOutlineViewDelegate

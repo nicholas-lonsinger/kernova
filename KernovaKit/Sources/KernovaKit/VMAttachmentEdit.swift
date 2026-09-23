@@ -6,7 +6,7 @@ import Foundation
 /// refusal that reads out what a VM accepts names "Edit Storage Disks" once
 /// rather than six near-identical entries.
 ///
-/// Attaching a disk the user picked is deliberately absent — a pick carries a
+/// Attaching a disk the user picked is absent: a pick carries a
 /// security-scoped bookmark only an in-process open panel can mint.
 public enum StorageDiskEdit: Codable, Sendable, Hashable {
     /// Writes a new sparse image inside the VM's bundle and appends it.

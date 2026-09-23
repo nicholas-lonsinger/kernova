@@ -91,8 +91,7 @@ struct ISOFilenameGlob: Sendable {
 
     /// Whether `lhs` names an older image than `rhs`.
     ///
-    /// A version stating fewer components is the shorter of the two on purpose:
-    /// a missing component reads as zero, so `26.04` precedes `26.04.1`.
+    /// A missing component reads as zero, so `26.04` precedes `26.04.1`.
     private static func isOlder(
         _ lhs: (filename: String, version: [Int]), _ rhs: (filename: String, version: [Int])
     ) -> Bool {

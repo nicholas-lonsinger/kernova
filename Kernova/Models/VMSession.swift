@@ -464,9 +464,9 @@ actor VMSession {
     /// Builds an attachment on the queue via `make` and installs it on the
     /// VM's network device.
     ///
-    /// Fire-and-forget by design, and `nonisolated` so callers enqueue in
-    /// program order without suspending: an attachment install reports failure
-    /// only asynchronously, through a later disconnect callback, so there is
+    /// Fire-and-forget, and `nonisolated` so callers enqueue in program order
+    /// without suspending: an attachment install reports failure only
+    /// asynchronously, through a later disconnect callback, so there is
     /// nothing to await. `make` returning `nil` detaches the device — the
     /// honest state when what the caller's feasibility check saw vanished
     /// before this write ran — and `onBuildFailure` runs on the queue so the

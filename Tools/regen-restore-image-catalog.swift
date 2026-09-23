@@ -434,8 +434,7 @@ for stamp in timestamps {
             "https://web.archive.org/web/\(stamp)id_/\(feedURL.absoluteString)")
         body = await get(replay)
         if let body { try? body.write(to: cached) }
-        // Deliberately unhurried: the archive is a donated public service and
-        // this loop is the only thing in Kernova that touches it.
+        // Unhurried: web.archive.org is a donated public service.
         try? await Task.sleep(nanoseconds: 400_000_000)
     }
     guard let body, let feed = decodeFeed(body) else { continue }

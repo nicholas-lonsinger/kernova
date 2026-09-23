@@ -308,10 +308,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// The macOS account this VM still owes its guest, minus the password.
     ///
-    /// Outlives ``installContext`` on purpose: the install is over when the
-    /// image lands, and the account is owed until a boot has spent the one
-    /// window macOS reads it in — the boot chained onto a completed install, or
-    /// the next Start when something interrupted the two. Retracted by
+    /// Outlives ``installContext``: the install is over when the image lands,
+    /// and the account is owed until a boot has spent the one window macOS
+    /// reads it in — the boot chained onto a completed install, or the next
+    /// Start when something interrupted the two. Retracted by
     /// ``VMLibrary/retractGuestAccount(for:)``, which is what every ending goes
     /// through.
     var pendingGuestAccount: GuestAccountIntent?

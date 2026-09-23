@@ -51,8 +51,8 @@ private final class ArchiveBytesSource: ClipboardSequentialArchiveStream, @unche
 /// The archive codec on its own: a source — a folder, one file, or resident
 /// bytes — encoded whole by ``ClipboardArchive/archiveBytes(of:)`` and unpacked
 /// by ``ClipboardArchive/extract(_:into:)``, which together pin what an archived
-/// transfer preserves and what it deliberately drops. The connection that
-/// carries the archive is `ClipboardTransferStreamTests`.
+/// transfer preserves and what it drops. The connection that carries the archive
+/// is `ClipboardTransferStreamTests`.
 @Suite("ClipboardArchiveCodec", .admissionGated)
 struct ClipboardArchiveStreamTests {
     /// A unique scratch directory removed when the test ends.

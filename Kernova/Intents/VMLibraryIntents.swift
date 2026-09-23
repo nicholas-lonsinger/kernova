@@ -98,10 +98,10 @@ struct RenameVMIntent: AppIntent {
 
 /// Moves a VM's bundle to the Trash.
 ///
-/// The narrowest of the deletes the core offers, and deliberately so: no
-/// permanent delete, because bypassing the Trash is a choice the user makes at
-/// a sheet that spells out what it costs, and no external files, because a
-/// Shortcut never showed the user which files those are.
+/// The narrowest of the deletes the core offers: no permanent delete, because
+/// bypassing the Trash is a choice the user makes at a sheet that spells out
+/// what it costs, and no external files, because a Shortcut never showed the
+/// user which files those are.
 struct DeleteVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Delete Virtual Machine"
     static let description: IntentDescription? = IntentDescription(

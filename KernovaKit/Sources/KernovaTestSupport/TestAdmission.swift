@@ -78,11 +78,11 @@ final class TestAdmissionGate: @unchecked Sendable {
 /// **The bound is per process, which is the granularity the contention has.**
 /// `xcodebuild` runs a parallelizable target as several test-host clones, and
 /// each clone is its own process with its own main thread, so machine-wide
-/// concurrency is this width times the clone count. That is deliberate: what a
-/// test waits on is *its own* process's main actor, and bounding per process is
-/// what relieves it. A width chosen for one runner's core count therefore does
-/// not transfer to a runner with a different one, and a width at or above a
-/// clone's own case count is indistinguishable from pass-through.
+/// concurrency is this width times the clone count. What a test waits on is
+/// *its own* process's main actor, and bounding per process is what relieves
+/// it. A width chosen for one runner's core count therefore does not transfer
+/// to a runner with a different one, and a width at or above a clone's own
+/// case count is indistinguishable from pass-through.
 ///
 /// The width is read once, from the first source below that parses to a
 /// non-negative integer. Zero — and no source at all — means pass-through, so

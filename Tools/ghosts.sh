@@ -251,14 +251,13 @@ evict_dd_arena() {
 # app.kernova.* Launch Services registrations, evict DerivedData arenas
 # orphaned by removed checkouts, and exit. The post-checkout git hook runs it
 # on every new worktree, so that debris self-heals at the next worktree
-# creation. Best-effort by design: always exits 0 so a failed sweep can never
-# fail the checkout that triggered it, skips anything a process is still
-# running from, and skips the fix path's re-dump verification — `make ghosts`
-# still reports anything left behind. Unlike
-# --fix it terminates nothing: --fix kills processes whose own binary is
-# already deleted, while an arena's live blocker is the user's to quit under
-# either flag. The sweep runs unattended from a git hook, and the next
-# worktree creation sweeps again.
+# creation. Best-effort: always exits 0 so a failed sweep can never fail the
+# checkout that triggered it, skips anything a process is still running from,
+# and skips the fix path's re-dump verification — `make ghosts` still reports
+# anything left behind. Unlike --fix it terminates nothing: --fix kills
+# processes whose own binary is already deleted, while an arena's live
+# blocker is the user's to quit under either flag. The sweep runs unattended
+# from a git hook, and the next worktree creation sweeps again.
 if [ "$SWEEP" = 1 ]; then
     while IFS= read -r path; do
         [ -z "$path" ] && continue

@@ -270,8 +270,8 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
             if totalBytes > 0 { state.expected = totalBytes }
             state.observed = max(state.observed, min(bytesTransferred, state.expected))
             self.setUnit(unit, state)
-            // Deliberately does NOT touch `activeUnits`: a chunk callback fires on
-            // the transfer's own lane, so one can land *after* the transfer
+            // Does NOT touch `activeUnits`: a chunk callback fires on the
+            // transfer's own lane, so one can land *after* the transfer
             // finished, and re-adding the unit here would leave the operation
             // permanently "active" — the idle terminal would never fire and the
             // readout would stick on screen forever.

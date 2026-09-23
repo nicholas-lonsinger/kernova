@@ -102,7 +102,7 @@ struct ClipboardContentAppKitTests {
     func flatRTFDIsRichAndNeedsRTFD() {
         #expect(UTType.flatRTFD.conformsToRTFFamily)
         #expect(UTType.flatRTFD.needsRTFDDocumentType)
-        // The bundle form `com.apple.rtfd` is intentionally not modeled — it never
+        // The bundle form `com.apple.rtfd` is not modeled — it never
         // appears as an inline pasteboard flavor (the flat form does).
         #expect(!UTType.rtfd.conformsToRTFFamily)
     }

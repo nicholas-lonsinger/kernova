@@ -34,10 +34,10 @@ final class VMLifecycleCoordinator {
     ///
     /// One bound over the whole put-back rather than one per accessory: the
     /// waits run together. It covers the event arriving late — a detach's
-    /// re-assignment lands in well under a second — and deliberately does not
-    /// outlast an accessory that is not coming back, because the VM's operation
-    /// claim is held for the whole wait and a start arriving behind it would be
-    /// refused as busy.
+    /// re-assignment lands in well under a second — and does not outlast an
+    /// accessory that is not coming back, because the VM's operation claim is
+    /// held for the whole wait and a start arriving behind it would be refused
+    /// as busy.
     private let usbAccessoryReturnTimeout: Duration
 
     /// Trashes an image that failed verification.
@@ -684,9 +684,9 @@ final class VMLifecycleCoordinator {
                 // normal boot path, record the image this VM now carries, and
                 // clear `setupState` so the progress UI tears down before the
                 // caller chains an auto-boot. The account the VM was set up with
-                // is deliberately untouched: the boot that delivers it has not
-                // run yet, and anything interrupting the two must leave the next
-                // Start something to ask about.
+                // stays: the boot that delivers it has not run yet, and anything
+                // interrupting the two must leave the next Start something to ask
+                // about.
                 instance.performConfigurationMutation {
                     $0.installContext = nil
                     $0.installedImage = installedImage

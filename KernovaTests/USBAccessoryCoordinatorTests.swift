@@ -202,7 +202,7 @@ struct USBAccessoryCoordinatorTests {
 
         service.assign(accessory)
 
-        // Held for the host, and deliberately not offered to anything else: the
+        // Held for the host, and not offered to anything else: the
         // user already said where this one goes.
         #expect(recorder.requests.isEmpty)
         try await Task.sleep(for: .milliseconds(200))

@@ -27,8 +27,8 @@ struct VMSnapshotStore: VMSnapshotStoring {
     /// it boots and stores data on, plus the firmware state VZ mutates
     /// (`AuxiliaryStorage` on macOS, `EFIVariableStore` on EFI Linux). The
     /// bundle's identity files (`HardwareModel`, `MachineIdentifier`) are
-    /// deliberately absent — they never change, and a revert must not hand the
-    /// VM a different identity.
+    /// absent — they never change, and a revert must not hand the VM a
+    /// different identity.
     ///
     /// External disks are not captured: they are user-owned files outside the
     /// bundle, and copying them would double storage the user placed elsewhere

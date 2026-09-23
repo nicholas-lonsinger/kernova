@@ -26,8 +26,8 @@ public let testWaitBackstop: TimeInterval = 60
 /// OS activity exempting the test host from App Nap and idle timer throttling,
 /// begun by the first `armTestSessionActivity()` call — which reads this token
 /// precisely to run the lazy initializer — and held for the rest of the
-/// process's life. `.userInitiated` also deliberately keeps the machine from
-/// idle-sleeping mid-run: system sleep would blow every armed backstop.
+/// process's life. `.userInitiated` also keeps the machine from idle-sleeping
+/// mid-run: system sleep would blow every armed backstop.
 ///
 /// On an idle, display-off machine the OS can hold a windowless process's
 /// timers past the 60 s backstop, then release every armed wait at one
@@ -218,7 +218,7 @@ public final class AsyncGate: @unchecked Sendable {
     /// deadline backstop (`timeout` after the stopwatch's start) — whichever
     /// comes first.
     // `isolation` uses the Swift `isolated` keyword to pin this helper to the
-    // caller's actor, so it is intentionally never referenced by name.
+    // caller's actor, so it is never referenced by name.
     // periphery:ignore:parameters isolation
     private func armOnce(
         stopwatch: BackstopStopwatch,
@@ -259,7 +259,7 @@ public final class AsyncGate: @unchecked Sendable {
 // MARK: - waitUntil
 
 // `isolation` uses the Swift `isolated` keyword to inherit the caller's actor
-// isolation, so it is intentionally never referenced by name.
+// isolation, so it is never referenced by name.
 // periphery:ignore:parameters isolation
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` seconds
 /// elapse.

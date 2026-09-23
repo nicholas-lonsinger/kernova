@@ -392,11 +392,11 @@ final class ClipboardPassthroughCoordinator {
     /// the same content in the guest is suppressed by its digest dedup, so the
     /// content stays unreachable until unrelated content is copied.
     ///
-    /// Deliberately narrow. It fires only for an offer that was *refused over the
-    /// ceiling*, only while that offer is still the live one, only when the
-    /// ceiling actually rose, and only while the host pasteboard still holds what
-    /// we last put there — a pasteboard the user has written since is theirs, and
-    /// re-publishing over it would destroy their copy.
+    /// It fires only for an offer that was *refused over the ceiling*, only while
+    /// that offer is still the live one, only when the ceiling actually rose, and
+    /// only while the host pasteboard still holds what we last put there — a
+    /// pasteboard the user has written since is theirs, and re-publishing over it
+    /// would destroy their copy.
     func republishIfCeilingRaised() {
         guard isRunning, let refused = budgetRefusedOffer,
             let instance, let service = instance.clipboardService,

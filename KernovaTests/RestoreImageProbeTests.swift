@@ -198,9 +198,9 @@ struct MacOSVersionTests {
 
 /// Stub for the probe's requests.
 ///
-/// Deliberately its own class rather than `StubURLProtocol`: that one's handler
-/// is a global, and Swift Testing runs suites in parallel, so sharing it lets
-/// this suite and `DownloadServiceTests` clobber each other's handler.
+/// Its own class rather than `StubURLProtocol`: that one's handler is a
+/// global, and Swift Testing runs suites in parallel, so sharing it lets this
+/// suite and `DownloadServiceTests` clobber each other's handler.
 /// `.serialized` orders tests *within* a suite and does not prevent that.
 final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
     struct Reply {
@@ -345,8 +345,8 @@ struct RestoreImageProbeServiceTests {
     ///
     /// Laid out so the directory sits immediately before the end-of-directory
     /// record, and the whole thing is served as one blob: the probe's tail read
-    /// covers it, and the zip64 locator is deliberately absent so the 32-bit
-    /// fields are authoritative.
+    /// covers it, and the zip64 locator is absent, so the 32-bit fields are
+    /// authoritative.
     private func makeZipTail(containsVMA2: Bool) -> Data {
         let directory = makeCentralDirectory(containsVMA2: containsVMA2)
         var blob = directory

@@ -253,8 +253,8 @@ struct LinuxImageCatalogServiceTests {
         #expect(service.generatedAt != nil)
 
         // Every shipped invariant the parser enforces, asserted against the real
-        // resource rather than a fixture. Counts are deliberately absent: the
-        // catalog is regenerated whenever a distribution ships.
+        // resource rather than a fixture. No count is asserted: the catalog is
+        // regenerated whenever a distribution ships.
         #expect(Set(service.entries.map(\.id)).count == service.entries.count)
         for entry in service.entries {
             #expect(entry.directoryURL.scheme == "https")

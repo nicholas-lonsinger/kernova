@@ -33,10 +33,10 @@ enum ClipboardArchiveStreamError: Error, Equatable {
 /// implements; everything else is a hard error, because a codec asking a
 /// sequential transport to seek cannot be served.
 ///
-/// `close()` deliberately does **nothing**. AppleArchive surfaces an encode
-/// failure only from the stream closes, so end of stream has to be declared by
-/// the driver *after* every close has been checked — otherwise a consumer can
-/// see a clean end of stream for an archive whose final flush failed.
+/// `close()` does **nothing**. AppleArchive surfaces an encode failure only
+/// from the stream closes, so end of stream has to be declared by the driver
+/// *after* every close has been checked — otherwise a consumer can see a clean
+/// end of stream for an archive whose final flush failed.
 protocol ClipboardSequentialArchiveStream: ArchiveByteStreamProtocol, AnyObject {}
 
 extension ClipboardSequentialArchiveStream {
