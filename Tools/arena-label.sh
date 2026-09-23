@@ -54,13 +54,9 @@ esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The worktrees all live under the *primary* checkout's .claude/worktrees/,
-# which REPO_ROOT is not when this runs from inside a worktree — the first
-# `git worktree list` entry is the primary checkout.
-main_root=$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-[ -n "$main_root" ] || exit 1
-
-worktrees_root="$main_root/.claude/worktrees"
+# shellcheck source=lib/worktrees.sh
+. "$REPO_ROOT/Tools/lib/worktrees.sh"
+read_worktree_layout "$REPO_ROOT" || exit 1
 
 # Display-only: abbreviate $HOME to ~, matching Tools/ghosts.sh's pretty_path.
 pretty() { printf '%s' "${1/#$HOME/~}"; }
@@ -76,10 +72,11 @@ label_for_checkout() {
         "$worktrees_root"/*)
             name=${p#"$worktrees_root/"}
             name=${name%%/*}
-            # A worktree whose directory is gone still names itself here — that
+            # A worktree git no longer registers still names itself here — that
             # is the whole point for orphaned arenas, which outlive the
-            # worktree that created them.
-            if [ -d "$worktrees_root/$name" ]; then
+            # worktree that created them. Registration decides, not the
+            # directory: a write after `git worktree remove` can recreate it.
+            if worktree_registered "$worktrees_root/$name"; then
                 [ "$STATUS_ONLY" = 1 ] && { printf 'worktree-live'; return 0; }
                 printf 'worktree: %s' "$name"
             else

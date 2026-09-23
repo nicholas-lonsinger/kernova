@@ -46,8 +46,9 @@ marker="$git_dir/kernova-worktree-setup"
 # source and destination would be the same file.
 common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
 if [ "$git_dir" != "$common_dir" ] && [ -f .worktreeinclude ]; then
-    main_root=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-    if [ -n "$main_root" ] && [ -d "$main_root" ]; then
+    # shellcheck source=lib/worktrees.sh
+    . Tools/lib/worktrees.sh
+    if read_worktree_layout "$PWD" && [ -d "$main_root" ]; then
         while IFS= read -r path || [ -n "$path" ]; do
             case "$path" in '' | '#'*) continue ;; esac
             [ -e "$path" ] && continue            # never overwrite
