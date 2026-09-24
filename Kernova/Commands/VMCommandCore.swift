@@ -340,16 +340,16 @@ final class VMCommandCore: VMCommanding {
         return sourceAuthority
     }
 
-    /// Applies `mutate` to the VM's configuration, refusing when the result did
-    /// not reach disk.
+    /// Applies `mutate` to the VM's settings, refusing when the result did not
+    /// reach disk.
     ///
     /// The one write convention every verb in the core shares: a change that
     /// was refused, or whose save failed, changes nothing, and the verb says
     /// which.
-    func writeConfiguration(
-        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
+    func writeSettings(
+        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) -> Void
     ) throws {
-        switch library.updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate) {
+        switch library.updateSettings(of: instance, ifNotSaved: .discard, mutate: mutate) {
         case .saved:
             return
         case .refused(let refusal):
@@ -362,8 +362,15 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    /// The refusal a verb raises when the library turned its configuration
-    /// write away.
+    /// ``writeSettings(of:verb:_:)`` for a mutation of the configuration alone.
+    func writeConfiguration(
+        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
+    ) throws {
+        try writeSettings(of: instance, verb: verb) { mutate(&$0.configuration) }
+    }
+
+    /// The refusal a verb raises when the library turned its settings write
+    /// away.
     func refusalError(
         _ refusal: VMLibrary.ConfigurationRefusal, on instance: VMInstance
     ) -> CommandError {
@@ -419,7 +426,7 @@ final class VMCommandCore: VMCommanding {
             ipAddress: library.guestAddresses.address(for: instance),
             agentStatus: instance.agentStatus.wireName,
             hasSavedState: instance.hasSaveFile,
-            isEphemeral: config.ephemeralModeEnabled,
+            isEphemeral: instance.hostState.ephemeralModeEnabled,
             snapshotCount: instance.snapshotManifest.snapshots.count,
             bundlePath: instance.bundleURL.path(percentEncoded: false)
         )

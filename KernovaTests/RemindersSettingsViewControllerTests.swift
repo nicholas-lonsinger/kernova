@@ -12,7 +12,7 @@ import Testing
 /// controller, and a hug constraint that outranks the text's compression
 /// resistance resolves the shortfall by collapsing every section header and
 /// caption to zero height instead of scrolling.
-@Suite("Reminders Settings Tests", .serialized, .admissionGated)
+@Suite("Reminders Settings Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct RemindersSettingsViewControllerTests {
     private let preferences: AppPreferences
@@ -69,9 +69,7 @@ struct RemindersSettingsViewControllerTests {
     /// The window has to be up before the geometry settles: the cue only fires
     /// against a visible window, so measuring it off screen would count flashes
     /// the app never shows.
-    private func makeShownPane(vmCount: Int) -> (
-        controller: RemindersSettingsViewController, window: NSWindow
-    ) {
+    private func makeShownPane(vmCount: Int) -> RemindersSettingsViewController {
         let viewModel = makeViewModel()
         for index in 1...vmCount {
             viewModel.instances.append(makeInstance(name: "VM \(index)"))
@@ -80,13 +78,13 @@ struct RemindersSettingsViewControllerTests {
         // Measure while detached, exactly as the pane does before the tab
         // controller sizes the window, then hand the window that measurement.
         controller.viewWillAppear()
-        let window = showInTestWindow(controller.view, size: controller.preferredContentSize)
+        showInTestWindow(controller.view, size: controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
         // Stands in for the tab container's `viewDidAppear`. Ordering a window on
         // screen changes no geometry, so nothing re-runs the cue on its own — the
         // arrival hook is what spends the flash once there is something to see.
         controller.rearmScrollMoreCue()
-        return (controller, window)
+        return controller
     }
 
     /// Every switch in the pane wired to `action`, in row order.
@@ -245,11 +243,8 @@ struct RemindersSettingsViewControllerTests {
     /// flash again.
     @Test("Revealing the override caption flashes the scroller again")
     func revealingOverrideCaptionRearmsFlash() throws {
-        let (controller, window) = makeShownPane(vmCount: 9)
-        defer {
-            controller.viewDidDisappear()
-            window.orderOut(nil)
-        }
+        let controller = makeShownPane(vmCount: 9)
+        defer { controller.viewDidDisappear() }
         let indicator = try #require(controller.scrollMoreIndicatorForTesting)
 
         // A 9-VM pane overflows the height cap, so appearing flashes — exactly
@@ -292,11 +287,8 @@ struct RemindersSettingsViewControllerTests {
         // pre-appearance row build and measurement layout therefore both run
         // against real, overflowing geometry in a visible window.
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 400))
-        let window = showInTestWindow(host)
-        defer {
-            controller.viewDidDisappear()
-            window.orderOut(nil)
-        }
+        showInTestWindow(host)
+        defer { controller.viewDidDisappear() }
         controller.view.setFrameSize(NSSize(width: 520, height: 400))
         host.addSubview(controller.view)
         controller.viewWillAppear()
@@ -339,7 +331,7 @@ struct RemindersSettingsViewControllerTests {
     func disabledPerVMRowKeepsItsState() throws {
         let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
         defer { controller.viewDidDisappear() }
-        viewModel.library.editConfiguration(of: viewModel.instances[0]) {
+        viewModel.library.editHostState(of: viewModel.instances[0]) {
             $0.agentInstallNudgeDismissed = true
         }
         viewModel.agentInstallPromptDisabled = true

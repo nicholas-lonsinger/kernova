@@ -12,6 +12,7 @@ enum VMInstanceFixture {
         guestOS: VMGuestOS = .linux,
         phase: VMLifecyclePhase = .stopped,
         preferences: AppPreferences = .shared,
+        hostState: VMHostState = VMHostState(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         var config = VMConfiguration(
@@ -19,7 +20,7 @@ enum VMInstanceFixture {
         mutate(&config)
         return VMInstance(
             configuration: config, bundleURL: bundleURL(for: config.id), phase: phase,
-            preferences: preferences)
+            hostState: hostState, preferences: preferences)
     }
 
     /// The bundle a fixture VM with identifier `id` lives at — for a

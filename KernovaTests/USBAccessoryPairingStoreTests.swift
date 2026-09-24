@@ -48,13 +48,28 @@ struct USBAccessoryPairingStoreTests {
         }
     }
 
-    @Test("An unreadable file holds no pairings rather than throwing")
-    func corruptFileReadsAsEmpty() throws {
+    @Test("A file that does not decode is removed and holds no pairings")
+    func corruptFileIsRemoved() throws {
         try withBundle { bundleURL in
-            try Data("{ not json".utf8).write(
-                to: VMBundleLayout(bundleURL: bundleURL).usbPairingsURL)
+            let url = VMBundleLayout(bundleURL: bundleURL).usbPairingsURL
+            try Data("{ not json".utf8).write(to: url)
 
             #expect(store.load(bundleURL: bundleURL).isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        }
+    }
+
+    @Test("A file that cannot be opened is removed and holds no pairings")
+    func unopenableFileIsRemoved() throws {
+        try withBundle { bundleURL in
+            let url = VMBundleLayout(bundleURL: bundleURL).usbPairingsURL
+            try store.save(
+                USBAccessoryPairingSet(pairings: [pairing(key: "k")]), bundleURL: bundleURL)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0], ofItemAtPath: url.path(percentEncoded: false))
+
+            #expect(store.load(bundleURL: bundleURL).isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
         }
     }
 

@@ -21,7 +21,8 @@ extension KernovaCommand {
         /// Quits the app and returns once it has gone, or reports success when
         /// there is none to quit.
         func run() throws {
-            guard let client = try CommandConnection.openIfRunning() else { return }
+            let app = try CommandConnection.enclosingApp()
+            guard let client = try CommandConnection.openIfRunning(app) else { return }
             defer { client.close() }
             try client.post(.quit)
             let answer = try client.nextFrame()
@@ -31,7 +32,7 @@ extension KernovaCommand {
             // reach the dying instance, or spend the whole connect deadline
             // against one on its way out.
             if answer != nil { try Self.awaitExit(of: client) }
-            try Self.awaitDeregistration(of: client)
+            try Self.awaitDeregistration(of: client, at: app)
         }
 
         /// Blocks until Launch Services has released the Kernova this tool just
@@ -43,27 +44,20 @@ extension KernovaCommand {
         /// reach for `open -a Kernova`, or anything else that asks Launch
         /// Services to open the app, on the line after this one.
         ///
-        /// Keyed on the connection's peer, not on the tool's own bundle. The
-        /// socket reaches whichever Kernova holds the app group, which is not
-        /// always the copy this tool is embedded in — a build under
-        /// DerivedData answers a tool installed from elsewhere, and a
-        /// bundle-keyed wait would find no instance and return at once. When
-        /// the kernel will not name the peer the bundle is the only key left,
-        /// and a copy of the tool outside an app bundle has no key at all.
+        /// Keyed on the connection's peer; when the kernel will not name it, on
+        /// `app`, whose socket is the one the connection reached.
         ///
         /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when the
         ///   registration outlives the wait — the quit itself succeeded, and
         ///   the code says the promise did not.
-        static func awaitDeregistration(of client: VMCommandClient) throws {
+        static func awaitDeregistration(of client: VMCommandClient, at app: URL) throws {
             let deadline = Date(timeIntervalSinceNow: AppRegistryWait.defaultDeadline)
             let released: Bool
             if let peer = client.peerProcessIdentifier {
                 released = AppRegistryWait.awaitDeregistration(ofProcess: peer, by: deadline)
-            } else if let bundle = AppLaunch.enclosingBundle {
-                released = AppRegistryWait.awaitDeregistration(
-                    ofBundleAt: bundle, scope: .all, by: deadline)
             } else {
-                return
+                released = AppRegistryWait.awaitDeregistration(
+                    ofBundleAt: app, scope: .all, by: deadline)
             }
             guard released else {
                 throw CLIFailure(

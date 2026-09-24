@@ -230,6 +230,7 @@ final class VMSettingsViewController: NSViewController {
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.instance.configuration
+                _ = self.instance.hostState
                 _ = self.instance.status
                 _ = self.instance.snapshotManifest
                 _ = self.viewModel.activeRename
@@ -265,20 +266,6 @@ final class VMSettingsViewController: NSViewController {
         modelObservation = nil
         activationCenter.removeObserver(
             self, name: NSApplication.didBecomeActiveNotification, object: nil)
-    }
-
-    // MARK: - Write helpers (route through updateConfiguration)
-
-    /// - Returns: Whether the mutation was applied, so a caller whose control
-    ///   already moved can put it back — refused or unsaved alike, the
-    ///   configuration kept its old value.
-    @discardableResult
-    private func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        guard
-            case .saved = viewModel.updateConfiguration(
-                of: instance, ifNotSaved: .discard, mutate: mutate)
-        else { return false }
-        return true
     }
 }
 
@@ -485,24 +472,25 @@ extension VMSettingsViewController {
     /// The one write path for the auto-start flag, whichever surface's switch
     /// asked for it.
     private func setAutoStart(_ isOn: Bool) {
-        writeMirrored { $0.startsAutomaticallyOnLaunch = isOn }
+        writeMirrored { $0.hostState.startsAutomaticallyOnLaunch = isOn }
     }
 
     private func setEphemeralMode(_ isOn: Bool) {
         let manifest = instance.snapshotManifest
-        writeMirrored { config in
-            config.applyEphemeralMode(
+        writeMirrored { settings in
+            settings.hostState.applyEphemeralMode(
                 enabled: isOn,
                 baseline: manifest.defaultEphemeralBaseline(
-                    preferring: config.ephemeralBaselineSnapshotID))
+                    preferring: settings.hostState.ephemeralBaselineSnapshotID))
         }
     }
 
     /// Writes a setting that renders on more than one surface, re-rendering all
     /// of them when the view model refuses so no control is left showing a value
     /// the model does not hold.
-    private func writeMirrored(_ mutate: (inout VMConfiguration) -> Void) {
-        guard writeConfig(mutate) else {
+    private func writeMirrored(_ mutate: (inout VMSettings) -> Void) {
+        guard case .saved = viewModel.updateSettings(of: instance, ifNotSaved: .discard, mutate: mutate)
+        else {
             apply()
             return
         }
@@ -516,7 +504,7 @@ extension VMSettingsViewController {
     }
 
     private func setDropFiles(_ isOn: Bool) {
-        writeMirrored { $0.dropFilesEnabled = isOn }
+        writeMirrored { $0.configuration.dropFilesEnabled = isOn }
     }
 
     /// The clipboard flags' shared write path, which every surface offering

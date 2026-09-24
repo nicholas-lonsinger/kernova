@@ -15,7 +15,7 @@ struct VMConfigurationKeyRegistryTests {
     /// with, and resources inside this host's bounds, which CI runners set
     /// lower than a development Mac.
     private func makeConfiguration(guestOS: VMGuestOS = .macOS) -> VMConfiguration {
-        var config = VMConfiguration(
+        VMConfiguration(
             name: "Alpha", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
             cpuCount: guestOS.defaultCPUCount, memorySizeInGB: guestOS.defaultMemoryInGB,
             displayWidth: 3840, displayHeight: 2400,
@@ -23,8 +23,6 @@ struct VMConfigurationKeyRegistryTests {
                 ? DisplayBootSizing.hiDPIPixelsPerInch : DisplayBootSizing.standardPixelsPerInch,
             displaySizesToWindow: false, displayHiDPI: guestOS == .macOS,
             networkEnabled: true, networkMode: .shared, macAddress: "aa:bb:cc:dd:ee:ff")
-        config.applyEphemeralMode(enabled: false, baseline: nil)
-        return config
     }
 
     private func makeManifest() -> VMSnapshotManifest {
@@ -38,23 +36,47 @@ struct VMConfigurationKeyRegistryTests {
     }
 
     private func write(
+        _ key: VMConfigurationKey, _ value: String, to settings: inout VMSettings,
+        manifest: VMSnapshotManifest? = nil
+    ) throws {
+        try key.write(value, &settings, context(manifest))
+    }
+
+    /// Writes a configuration key, on a VM whose host state is the default.
+    private func write(
         _ key: VMConfigurationKey, _ value: String, to config: inout VMConfiguration,
         manifest: VMSnapshotManifest? = nil
     ) throws {
-        try key.write(value, &config, context(manifest))
+        var settings = VMSettings(configuration: config, hostState: VMHostState())
+        try write(key, value, to: &settings, manifest: manifest)
+        config = settings.configuration
+    }
+
+    /// Reads a configuration key, on a VM whose host state is the default.
+    private func read(_ key: VMConfigurationKey, _ config: VMConfiguration) -> String {
+        key.read(VMSettings(configuration: config, hostState: VMHostState()))
     }
 
     // MARK: - Round trip
 
+    /// Every key's read written straight back leaves `original` untouched.
+    private func expectEveryKeyRoundTrips(
+        _ original: VMSettings, manifest: VMSnapshotManifest? = nil, _ label: String = ""
+    ) throws {
+        for key in VMConfigurationKeyRegistry.keys where key.applies(original.configuration) {
+            var settings = original
+            try write(key, key.read(original), to: &settings, manifest: manifest)
+            #expect(settings == original, "\(key.name)\(label)")
+        }
+    }
+
     @Test("Every key writes back what it read without changing anything")
     func everyKeyRoundTrips() throws {
         for guestOS in VMGuestOS.allCases {
-            let original = makeConfiguration(guestOS: guestOS)
-            for key in VMConfigurationKeyRegistry.keys where key.applies(original) {
-                var config = original
-                try write(key, key.read(original), to: &config)
-                #expect(config == original, "\(key.name) on \(guestOS.rawValue)")
-            }
+            try expectEveryKeyRoundTrips(
+                VMSettings(
+                    configuration: makeConfiguration(guestOS: guestOS), hostState: VMHostState()),
+                " on \(guestOS.rawValue)")
         }
     }
 
@@ -65,33 +87,27 @@ struct VMConfigurationKeyRegistryTests {
         original.macAddress = nil
         original.bridgedInterfaceIdentifier = nil
 
-        for key in VMConfigurationKeyRegistry.keys where key.applies(original) {
-            var config = original
-            try write(key, key.read(original), to: &config)
-            #expect(config == original, "\(key.name)")
-        }
+        try expectEveryKeyRoundTrips(
+            VMSettings(configuration: original, hostState: VMHostState()))
     }
 
     @Test("Every key writes back what it read on an ephemeral, sharing VM")
     func everyKeyRoundTripsWithEveryFlagOn() throws {
         let manifest = makeManifest()
         var original = makeConfiguration()
-        original.applyEphemeralMode(
-            enabled: true, baseline: manifest.defaultEphemeralBaseline(preferring: nil))
         original.clipboardSharingEnabled = true
         original.clipboardPassthroughEnabled = true
         original.displaySizesToWindow = true
         original.displayAutoResizes = false
-        original.displayPreference = .fullscreen
         original.systemKeyForwarding = .fullscreenOnly
         original.networkMode = .bridged
         original.bridgedInterfaceIdentifier = "en1"
+        var hostState = VMHostState(displayPreference: .fullscreen)
+        hostState.applyEphemeralMode(
+            enabled: true, baseline: manifest.defaultEphemeralBaseline(preferring: nil))
 
-        for key in VMConfigurationKeyRegistry.keys where key.applies(original) {
-            var config = original
-            try write(key, key.read(original), to: &config, manifest: manifest)
-            #expect(config == original, "\(key.name)")
-        }
+        try expectEveryKeyRoundTrips(
+            VMSettings(configuration: original, hostState: hostState), manifest: manifest)
     }
 
     // MARK: - Namespace
@@ -154,9 +170,9 @@ struct VMConfigurationKeyRegistryTests {
         }
         var config = makeConfiguration()
         config.displayAutoResizes = true
-        #expect(key.read(config) == "true")
+        #expect(read(key, config) == "true")
         config.displayAutoResizes = false
-        #expect(key.read(config) == "false")
+        #expect(read(key, config) == "false")
     }
 
     @Test("System keys takes and reads back every mode, live")
@@ -168,7 +184,7 @@ struct VMConfigurationKeyRegistryTests {
             var config = makeConfiguration()
             try write(key, mode.rawValue, to: &config)
             #expect(config.systemKeyForwarding == mode)
-            #expect(key.read(config) == mode.rawValue)
+            #expect(read(key, config) == mode.rawValue)
         }
     }
 
@@ -264,8 +280,8 @@ struct VMConfigurationKeyRegistryTests {
         let height = try #require(VMConfigurationKeyRegistry.key(named: "display.height"))
         var config = makeConfiguration()
 
-        #expect(width.read(config) == "1920")
-        #expect(height.read(config) == "1200")
+        #expect(read(width, config) == "1920")
+        #expect(read(height, config) == "1200")
 
         try write(width, "1280", to: &config)
         try write(height, "800", to: &config)
@@ -311,11 +327,11 @@ struct VMConfigurationKeyRegistryTests {
     func modeKeySpellsNoDeviceAsNone() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
         var config = makeConfiguration()
-        #expect(key.read(config) == "shared")
+        #expect(read(key, config) == "shared")
 
         try write(key, "none", to: &config)
         #expect(!config.networkEnabled)
-        #expect(key.read(config) == "none")
+        #expect(read(key, config) == "none")
         // The mode is remembered, so coming back lands where the VM left.
         #expect(config.networkMode == .shared)
 
@@ -345,7 +361,7 @@ struct VMConfigurationKeyRegistryTests {
         config.bridgedInterfaceIdentifier = "en1"
         try write(bridged, "", to: &config)
         #expect(config.bridgedInterfaceIdentifier == nil)
-        #expect(bridged.read(config).isEmpty)
+        #expect(read(bridged, config).isEmpty)
 
         let mac = try #require(VMConfigurationKeyRegistry.key(named: "network.mac"))
         try write(mac, "", to: &config)
@@ -382,28 +398,43 @@ struct VMConfigurationKeyRegistryTests {
     func ephemeralPinsTheSharedBaseline() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
         let manifest = makeManifest()
-        var config = makeConfiguration()
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
 
-        try write(key, "true", to: &config, manifest: manifest)
+        try write(key, "true", to: &settings, manifest: manifest)
 
-        #expect(config.ephemeralModeEnabled)
-        #expect(config.ephemeralBaselineSnapshotID == manifest.currentID)
+        #expect(settings.hostState.ephemeralModeEnabled)
+        #expect(settings.hostState.ephemeralBaselineSnapshotID == manifest.currentID)
 
-        try write(key, "false", to: &config, manifest: manifest)
-        #expect(!config.ephemeralModeEnabled)
+        try write(key, "false", to: &settings, manifest: manifest)
+        #expect(!settings.hostState.ephemeralModeEnabled)
         // Turning the mode off clears the choice rather than leaving a baseline
         // recorded against a mode nothing reads.
-        #expect(config.ephemeralBaselineSnapshotID == nil)
+        #expect(settings.hostState.ephemeralBaselineSnapshotID == nil)
     }
 
     @Test("A VM with no snapshot cannot be made ephemeral")
     func ephemeralNeedsASnapshot() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
-        var config = makeConfiguration()
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
 
         #expect(throws: CommandError.self) {
-            try write(key, "true", to: &config, manifest: VMSnapshotManifest())
+            try write(key, "true", to: &settings, manifest: VMSnapshotManifest())
         }
-        #expect(!config.ephemeralModeEnabled)
+        #expect(!settings.hostState.ephemeralModeEnabled)
+    }
+
+    // MARK: - Host state
+
+    @Test("A host-state key writes the host state and leaves the configuration alone")
+    func hostStateKeysWriteTheHostState() throws {
+        let key = try #require(VMConfigurationKeyRegistry.key(named: "display.preference"))
+        let original = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+        var settings = original
+
+        try write(key, "popOut", to: &settings)
+
+        #expect(settings.hostState.displayPreference == .popOut)
+        #expect(settings.configuration == original.configuration)
+        #expect(key.read(settings) == "popOut")
     }
 }

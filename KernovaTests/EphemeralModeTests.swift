@@ -28,109 +28,49 @@ struct EphemeralModeTitleTests {
     }
 }
 
-/// Ephemeral Mode's model rules: the flag/baseline pairing, what survives a
-/// revert, and what a clone inherits.
-@Suite("Ephemeral Mode Configuration Tests", .admissionGated)
-struct EphemeralModeConfigurationTests {
-    private func makeConfig() -> VMConfiguration {
-        VMConfiguration(name: "Throwaway", guestOS: .linux, bootMode: .efi)
-    }
-
-    @Test("A fresh configuration is not ephemeral")
+/// Ephemeral Mode's model rule: the flag/baseline pairing, and how it persists.
+@Suite("Ephemeral Mode Host State Tests", .admissionGated)
+struct EphemeralModeHostStateTests {
+    @Test("A fresh host state is not ephemeral")
     func defaultsOff() {
-        let config = makeConfig()
-        #expect(!config.ephemeralModeEnabled)
-        #expect(config.ephemeralBaselineSnapshotID == nil)
+        let hostState = VMHostState()
+        #expect(!hostState.ephemeralModeEnabled)
+        #expect(hostState.ephemeralBaselineSnapshotID == nil)
     }
 
     @Test("Turning the mode on records the baseline")
     func enablingRecordsTheBaseline() {
-        var config = makeConfig()
+        var hostState = VMHostState()
         let baseline = UUID()
 
-        config.applyEphemeralMode(enabled: true, baseline: baseline)
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline)
 
-        #expect(config.ephemeralModeEnabled)
-        #expect(config.ephemeralBaselineSnapshotID == baseline)
+        #expect(hostState.ephemeralModeEnabled)
+        #expect(hostState.ephemeralBaselineSnapshotID == baseline)
     }
 
     @Test("Turning the mode off clears the baseline choice")
     func disablingClearsTheBaseline() {
-        var config = makeConfig()
-        config.applyEphemeralMode(enabled: true, baseline: UUID())
+        var hostState = VMHostState()
+        hostState.applyEphemeralMode(enabled: true, baseline: UUID())
 
-        config.applyEphemeralMode(enabled: false, baseline: UUID())
+        hostState.applyEphemeralMode(enabled: false, baseline: UUID())
 
-        #expect(!config.ephemeralModeEnabled)
-        #expect(config.ephemeralBaselineSnapshotID == nil)
+        #expect(!hostState.ephemeralModeEnabled)
+        #expect(hostState.ephemeralBaselineSnapshotID == nil)
     }
 
-    @Test("The mode round-trips through config.json")
+    @Test("The mode round-trips through host-state.json")
     func codingRoundTrip() throws {
-        var config = makeConfig()
+        var hostState = VMHostState()
         let baseline = UUID()
-        config.applyEphemeralMode(enabled: true, baseline: baseline)
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline)
 
-        let data = try VMConfiguration.makeJSONEncoder().encode(config)
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        let data = try VMConfiguration.makeJSONEncoder().encode(hostState)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data)
 
         #expect(decoded.ephemeralModeEnabled)
         #expect(decoded.ephemeralBaselineSnapshotID == baseline)
-    }
-
-    @Test("A configuration written without the ephemeral keys decodes as off")
-    func missingKeysDecodeOff() throws {
-        var config = makeConfig()
-        config.applyEphemeralMode(enabled: true, baseline: UUID())
-        let data = try VMConfiguration.makeJSONEncoder().encode(config)
-        var object = try #require(
-            try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        object.removeValue(forKey: "ephemeralModeEnabled")
-        object.removeValue(forKey: "ephemeralBaselineSnapshotID")
-        let stripped = try JSONSerialization.data(withJSONObject: object)
-
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self, from: stripped)
-
-        #expect(!decoded.ephemeralModeEnabled)
-        #expect(decoded.ephemeralBaselineSnapshotID == nil)
-    }
-
-    @Test("A revert keeps the mode that asked for it, not the snapshot's copy")
-    func revertKeepsTheModePolicy() {
-        var live = makeConfig()
-        let baseline = UUID()
-        live.applyEphemeralMode(enabled: true, baseline: baseline)
-        // Captured before the mode was ever turned on.
-        let captured = makeConfig()
-
-        let restored = live.adoptingSnapshotState(captured)
-
-        #expect(restored.ephemeralModeEnabled)
-        #expect(restored.ephemeralBaselineSnapshotID == baseline)
-    }
-
-    @Test("A revert on a VM that is no longer ephemeral doesn't take the mode back")
-    func revertDoesNotResurrectTheMode() {
-        let live = makeConfig()
-        var captured = makeConfig()
-        captured.applyEphemeralMode(enabled: true, baseline: UUID())
-
-        let restored = live.adoptingSnapshotState(captured)
-
-        #expect(!restored.ephemeralModeEnabled)
-        #expect(restored.ephemeralBaselineSnapshotID == nil)
-    }
-
-    @Test("A clone is not ephemeral — its bundle holds none of the snapshots")
-    func cloneClearsTheMode() {
-        var original = makeConfig()
-        original.applyEphemeralMode(enabled: true, baseline: UUID())
-
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(!clone.ephemeralModeEnabled)
-        #expect(clone.ephemeralBaselineSnapshotID == nil)
     }
 }
 
@@ -141,16 +81,16 @@ struct EphemeralModeInstanceTests {
     private let preferences = makeTestPreferences()
 
     private func makeInstance(
-        phase: VMLifecyclePhase = .stopped, _ mutate: (inout VMConfiguration) -> Void = { _ in }
+        phase: VMLifecyclePhase = .stopped, _ hostState: VMHostState = VMHostState()
     ) -> VMInstance {
         VMInstanceFixture.make(
-            name: "Throwaway", phase: phase, preferences: preferences, mutate: mutate)
+            name: "Throwaway", phase: phase, preferences: preferences, hostState: hostState)
     }
 
     @Test("A VM with the mode off has no baseline")
     func noBaselineWhileOff() {
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        let instance = makeInstance { $0.ephemeralBaselineSnapshotID = snapshot.id }
+        let instance = makeInstance(VMHostState(ephemeralBaselineSnapshotID: snapshot.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 
         #expect(instance.ephemeralBaselineSnapshot == nil)
@@ -160,7 +100,7 @@ struct EphemeralModeInstanceTests {
     @Test("The baseline resolves through the manifest")
     func baselineResolves() {
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        let instance = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
+        let instance = makeInstance(.ephemeral(baseline: snapshot.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 
         #expect(instance.ephemeralBaselineSnapshot == snapshot)
@@ -169,7 +109,7 @@ struct EphemeralModeInstanceTests {
 
     @Test("A baseline the manifest no longer lists resolves to nothing")
     func danglingBaselineResolvesToNothing() {
-        let instance = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: UUID()) }
+        let instance = makeInstance(.ephemeral(baseline: UUID()))
 
         #expect(instance.ephemeralBaselineSnapshot == nil)
         #expect(!instance.hasLiveEphemeralSession)
@@ -178,7 +118,7 @@ struct EphemeralModeInstanceTests {
     @Test("The running marker needs a live session, not just the mode")
     func liveSessionMarkerFollowsTheSession() {
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        let instance = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
+        let instance = makeInstance(.ephemeral(baseline: snapshot.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 
         // Stopped: the mode is on, but nothing is running to discard.

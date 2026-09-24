@@ -200,9 +200,9 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.statusDisplayNSColor
                 _ = instance.agentStatus
                 _ = instance.setupState
-                _ = instance.configuration.agentInstallNudgeDismissed
+                _ = instance.hostState.agentInstallNudgeDismissed
                 _ = instance.configuration.lastSeenAgentVersion
-                _ = instance.configuration.ephemeralModeEnabled
+                _ = instance.hostState.ephemeralModeEnabled
             },
             apply: { [weak self] in
                 self?.applyLiveState()
@@ -229,7 +229,7 @@ final class SidebarVMRowCellView: NSTableCellView {
             iconView.toolTip = instance.statusToolTip
         }
 
-        let showsEphemeral = instance.configuration.ephemeralModeEnabled
+        let showsEphemeral = instance.hostState.ephemeralModeEnabled
         if !showsEphemeral { ephemeralBadge.reset() }
         ephemeralBadge.isHidden = !showsEphemeral
 
@@ -425,7 +425,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         let status = instance.agentStatus
         if case .current = status { return nil }
         if case .waiting = status,
-            installPromptDisabled || instance.configuration.agentInstallNudgeDismissed
+            installPromptDisabled || instance.hostState.agentInstallNudgeDismissed
         {
             return nil
         }

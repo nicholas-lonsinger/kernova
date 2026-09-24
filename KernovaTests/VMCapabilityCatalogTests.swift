@@ -40,12 +40,13 @@ struct VMCapabilityCatalogTests {
     private func makeInstance(
         in harness: Harness, name: String = "Catalog VM", phase: VMLifecyclePhase = .stopped,
         guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = [],
+        hostState: VMHostState = VMHostState(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
             library: harness.library, storage: harness.storage, preferences: preferences,
-            mutate: mutate)
+            hostState: hostState, mutate: mutate)
     }
 
     /// Applicable in every state, so each case below names only what its state
@@ -243,10 +244,8 @@ struct VMCapabilityCatalogTests {
 
         let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
         let ephemeral = makeInstance(
-            in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline]
-        ) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+            in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
         defer { VMInstanceFixture.removeBundle(of: ephemeral) }
         try VMInstanceFixture.writeSaveFile(for: ephemeral)
         #expect(harness.catalog.stopAction(for: ephemeral) == .revertToBaseline)
@@ -540,15 +539,15 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let later = VMSnapshot(name: "Configured", macAddress: nil)
-        let instance = makeInstance(in: harness, snapshots: [baseline, later]) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = makeInstance(
+            in: harness, snapshots: [baseline, later],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
         #expect(!harness.catalog.canDeleteSnapshot(baseline, on: instance))
         #expect(harness.catalog.canDeleteSnapshot(later, on: instance))
 
         // Turning the mode off releases the baseline: nothing needs it back.
-        harness.library.editConfiguration(of: instance) {
+        harness.library.editHostState(of: instance) {
             $0.applyEphemeralMode(enabled: false, baseline: nil)
         }
         #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
@@ -573,9 +572,9 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let later = VMSnapshot(name: "Configured", macAddress: nil)
-        let instance = makeInstance(in: harness, snapshots: [baseline, later]) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = makeInstance(
+            in: harness, snapshots: [baseline, later],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
         #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .barredAsBaseline)
         #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .offered)
@@ -655,10 +654,8 @@ struct VMCapabilityCatalogTests {
             let harness = makeHarness()
             for preference in [VMDisplayPreference.popOut, .fullscreen] {
                 let instance = makeInstance(
-                    in: harness, name: "VM \(index) \(preference)", phase: expected.phase
-                ) {
-                    $0.displayPreference = preference
-                }
+                    in: harness, name: "VM \(index) \(preference)", phase: expected.phase,
+                    hostState: VMHostState(displayPreference: preference))
                 #expect(
                     harness.catalog.revealSurface(for: instance) == expected.detached,
                     "\(expected.phase) \(preference)")
@@ -684,9 +681,8 @@ struct VMCapabilityCatalogTests {
     @Test("A VM whose bundle is still being written reveals in the library")
     func revealSurfaceOfAPreparingVMIsTheLibrary() {
         let harness = makeHarness()
-        let phantom = makeInstance(in: harness, phase: .suspended) {
-            $0.displayPreference = .popOut
-        }
+        let phantom = makeInstance(
+            in: harness, phase: .suspended, hostState: VMHostState(displayPreference: .popOut))
         let task = Task {}
         defer { task.cancel() }
 

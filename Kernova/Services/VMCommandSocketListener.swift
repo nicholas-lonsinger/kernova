@@ -25,7 +25,7 @@ final class VMCommandSocketListener {
 
     private let router: VMCommandEnvelopeRouter
     private let authorizer: (any PeerAuthorizing)?
-    private let socketPath: String?
+    private let socketPath: Result<String, KernovaAppGroup.SocketPathFailure>
     private let awaitReady: @MainActor @Sendable () async -> Void
     private let onSurfaceRequested: @MainActor @Sendable () -> Void
     private let queue = DispatchQueue(label: "app.kernova.command-socket")
@@ -46,8 +46,8 @@ final class VMCommandSocketListener {
 
     /// Prepares the socket, which nothing binds until `start()`.
     ///
-    /// A `nil` `socketPath` or `authorizer` is the degraded build: `start()`
-    /// binds nothing and says so once.
+    /// A `socketPath` that names no socket, or a `nil` `authorizer`, is the
+    /// degraded build: `start()` binds nothing and says why once.
     ///
     /// `awaitReady` is the app's first library read. The socket is bound before
     /// that read lands, so a client that just launched the app finds something
@@ -56,7 +56,7 @@ final class VMCommandSocketListener {
     init(
         router: VMCommandEnvelopeRouter,
         authorizer: (any PeerAuthorizing)?,
-        socketPath: String?,
+        socketPath: Result<String, KernovaAppGroup.SocketPathFailure>,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
         onSurfaceRequested: @MainActor @Sendable @escaping () -> Void
     ) {
@@ -69,10 +69,20 @@ final class VMCommandSocketListener {
 
     /// Binds the socket and begins accepting same-team clients.
     func start() {
-        guard let socketPath else {
+        let socketPath: String
+        switch self.socketPath {
+        case .success(let path):
+            socketPath = path
+        case .failure(.noContainer):
             #log(
                 Self.logger, .warning,
                 "No app-group container resolved — the command socket is unavailable in this build")
+            return
+        case .failure(.unresolvableBundle(let error)):
+            #log(
+                Self.logger, .error,
+                "This app's bundle could not be looked up (\(error.description, privacy: .public)) — the command socket is unavailable"
+            )
             return
         }
         guard let authorizer else {
@@ -112,8 +122,6 @@ final class VMCommandSocketListener {
             return
         }
         self.listener = listener
-        // Two copies of the app signed by the same team share this path, and
-        // the second to bind wins after unlinking the first's socket file.
         #log(
             Self.logger, .notice,
             "Listening for VM commands at \(socketPath, privacy: .public)")

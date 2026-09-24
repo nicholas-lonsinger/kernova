@@ -15,10 +15,11 @@ enum RegisteredVMInstanceFixture {
     static func register(
         name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, snapshots: [VMSnapshot] = [],
         library: VMLibrary, storage: MockVMStorageService, preferences: AppPreferences,
+        hostState: VMHostState = VMHostState(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
-            name: name, guestOS: guestOS, phase: phase, preferences: preferences,
+            name: name, guestOS: guestOS, phase: phase, preferences: preferences, hostState: hostState,
             mutate: {
                 $0.networkEnabled = false
                 mutate(&$0)

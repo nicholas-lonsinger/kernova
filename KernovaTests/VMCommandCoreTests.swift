@@ -112,23 +112,25 @@ struct VMCommandCoreTests {
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String = "Core VM", phase: VMLifecyclePhase = .stopped,
-        guestOS: VMGuestOS = .linux, mutate: (inout VMConfiguration) -> Void = { _ in }
+        guestOS: VMGuestOS = .linux, hostState: VMHostState = VMHostState(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, library: harness.library,
-            storage: harness.storage, preferences: preferences, mutate: mutate)
+            storage: harness.storage, preferences: preferences, hostState: hostState, mutate: mutate)
     }
 
     @discardableResult
     private func makeInstance(
         in harness: SuspendingHarness, name: String = "Core VM",
         phase: VMLifecyclePhase = .stopped, snapshots: [VMSnapshot] = [],
+        hostState: VMHostState = VMHostState(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: .linux, snapshots: snapshots,
             library: harness.library, storage: harness.storage, preferences: preferences,
-            mutate: mutate)
+            hostState: hostState, mutate: mutate)
     }
 
     private func commandError(_ body: () async throws -> Void) async -> CommandError? {
@@ -794,8 +796,8 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID())
-        ) { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()),
+            hostState: .ephemeral(baseline: baseline.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
 
         let error = try #require(
@@ -1279,9 +1281,8 @@ struct VMCommandCoreTests {
     func gracefulStopOfAColdPausedEphemeralVMAsksForConsent() async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(in: harness, name: "Ephemeral", phase: .suspended) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .suspended, hostState: .ephemeral(baseline: baseline.id))
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
@@ -1710,9 +1711,7 @@ struct VMCommandCoreTests {
     func ephemeralBaselineCannotBeDeleted() async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(in: harness) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = makeInstance(in: harness, hostState: .ephemeral(baseline: baseline.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
 
         let error = try #require(
@@ -2370,9 +2369,8 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(in: harness, name: "Ephemeral", phase: .suspended) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .suspended, hostState: .ephemeral(baseline: baseline.id))
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
@@ -2397,8 +2395,8 @@ struct VMCommandCoreTests {
 
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID())
-        ) { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
+            hostState: .ephemeral(baseline: baseline.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
@@ -3203,8 +3201,8 @@ struct VMCommandCoreTests {
         harness.virtualization.shouldSuspendOnRevert = true
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID())
-        ) { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
+            hostState: .ephemeral(baseline: baseline.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
@@ -3347,8 +3345,8 @@ struct VMCommandCoreTests {
         harness.virtualization.shouldSuspendOnRevert = true
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID())
-        ) { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
+            hostState: .ephemeral(baseline: baseline.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
@@ -3438,8 +3436,8 @@ struct VMCommandCoreTests {
         harness.virtualization.shouldSuspendOnRevert = true
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID())
-        ) { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
+            hostState: .ephemeral(baseline: baseline.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 

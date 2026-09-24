@@ -41,9 +41,10 @@ struct VMMACAddressRegistryTests {
     /// A VM on the shared network at `mac`, holding `snapshots`.
     private func makeVM(
         _ name: String, mac: String?, snapshots: [VMSnapshot] = [],
+        hostState: VMHostState = VMHostState(),
         _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: name) {
+        let instance = VMInstanceFixture.make(name: name, hostState: hostState) {
             $0 = shared($0, mac: mac)
             mutate(&$0)
         }
@@ -137,8 +138,8 @@ struct VMMACAddressRegistryTests {
         let baselineID = UUID()
         let second = makeVM(
             "Second", mac: "aa:bb:cc:dd:ee:02",
-            snapshots: [VMSnapshot(id: baselineID, name: "Baseline", macAddress: "aa:bb:cc:dd:ee:01")]
-        ) { $0.applyEphemeralMode(enabled: true, baseline: baselineID) }
+            snapshots: [VMSnapshot(id: baselineID, name: "Baseline", macAddress: "aa:bb:cc:dd:ee:01")],
+            hostState: .ephemeral(baseline: baselineID))
         let instance = VMInstanceFixture.make(name: "Mine")
         roster.instances = [first, unrelated, second, instance]
 

@@ -1411,8 +1411,8 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { unsaved, mutate in
+        let persist = instance.onUpdateSettings
+        instance.onUpdateSettings = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
             return persist?(unsaved, mutate) ?? .refused(.noLibrary)
         }
@@ -1630,8 +1630,8 @@ struct VMLifecycleCoordinatorTests {
         // whose step is known: the destination is persisted while Download
         // runs, and the ISO is attached once Verify has finished.
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { unsaved, mutate in
+        let persist = instance.onUpdateSettings
+        instance.onUpdateSettings = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
             return persist?(unsaved, mutate) ?? .refused(.noLibrary)
         }
@@ -1689,8 +1689,8 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { unsaved, mutate in
+        let persist = instance.onUpdateSettings
+        instance.onUpdateSettings = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
             return persist?(unsaved, mutate) ?? .refused(.noLibrary)
         }

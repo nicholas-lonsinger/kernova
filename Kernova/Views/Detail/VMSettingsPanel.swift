@@ -148,8 +148,14 @@ extension VMSettingsPanel {
     ///   configuration kept its old value.
     @discardableResult
     func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
+        writeSettings { mutate(&$0.configuration) }
+    }
+
+    /// ``writeConfig(_:)`` for a mutation that may touch the VM's host state.
+    @discardableResult
+    func writeSettings(_ mutate: (inout VMSettings) -> Void) -> Bool {
         guard
-            case .saved = viewModel.updateConfiguration(
+            case .saved = viewModel.updateSettings(
                 of: instance, ifNotSaved: .discard, mutate: mutate)
         else { return false }
         return true

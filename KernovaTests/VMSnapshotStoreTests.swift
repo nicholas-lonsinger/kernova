@@ -113,7 +113,7 @@ struct VMSnapshotStoreTests {
     func missingManifestReadsEmpty() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        #expect(VMSnapshotStore().loadManifest(bundleURL: fixture.bundleURL).isEmpty)
+        #expect(try VMSnapshotStore().loadManifest(bundleURL: fixture.bundleURL).isEmpty)
     }
 
     @Test("A saved manifest reads back")
@@ -130,7 +130,7 @@ struct VMSnapshotStoreTests {
 
         try store.saveManifest(manifest, bundleURL: fixture.bundleURL)
 
-        #expect(store.loadManifest(bundleURL: fixture.bundleURL) == manifest)
+        #expect(try store.loadManifest(bundleURL: fixture.bundleURL) == manifest)
     }
 
     @Test("A loaded snapshot carries the MAC address of the configuration it was taken under")
@@ -151,7 +151,7 @@ struct VMSnapshotStoreTests {
         try store.saveManifest(
             VMSnapshotManifest(snapshots: [captured, unrecorded]), bundleURL: fixture.bundleURL)
 
-        let loaded = store.loadManifest(bundleURL: fixture.bundleURL)
+        let loaded = try store.loadManifest(bundleURL: fixture.bundleURL)
 
         #expect(loaded.snapshot(id: captured.id)?.macAddress == "aa:bb:cc:dd:ee:01")
         #expect(loaded.snapshot(id: unrecorded.id) == unrecorded)
@@ -161,15 +161,17 @@ struct VMSnapshotStoreTests {
         #expect(!String(decoding: manifestData, as: UTF8.self).contains("macAddress"))
     }
 
-    @Test("A corrupt manifest reads as empty rather than throwing")
-    func corruptManifestReadsEmpty() throws {
+    @Test("A corrupt manifest throws rather than reading as empty")
+    func corruptManifestThrows() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         try FileManager.default.createDirectory(
             at: fixture.layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: fixture.layout.snapshotManifestURL)
 
-        #expect(VMSnapshotStore().loadManifest(bundleURL: fixture.bundleURL).isEmpty)
+        #expect(throws: VMBundleSidecarFile.Unreadable.self) {
+            try VMSnapshotStore().loadManifest(bundleURL: fixture.bundleURL)
+        }
     }
 
     // MARK: - Capture and restore
@@ -578,6 +580,37 @@ struct VMSnapshotStoreTests {
 
         let written = try VMConfiguration.load(fromBundle: fixture.bundleURL)
         #expect(written.memorySizeInGB == 12)
+    }
+
+    @Test("A snapshot neither captures the host state nor writes it back")
+    func hostStateStaysOutOfSnapshots() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let storage = VMStorageService()
+        let snapshotID = UUID()
+        try storage.saveHostState(VMHostState(), to: fixture.bundleURL)
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        let edited = VMHostState(
+            startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
+            agentInstallNudgeDismissed: true)
+        try storage.saveHostState(edited, to: fixture.bundleURL)
+
+        let plan = try store.planRestore(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
+        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.snapshotLayout(id: snapshotID).hostStateURL
+                    .path(percentEncoded: false)))
+        #expect(try storage.loadHostState(from: fixture.bundleURL) == edited)
     }
 
     // MARK: - Staging sweep

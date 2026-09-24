@@ -52,7 +52,8 @@ final class AdvancedSettingsViewController: NSViewController {
         ])
         let caption = makeGroupedFormCaption(
             "Advanced actions such as Start in Recovery Mode are normally revealed by holding the "
-                + "Option (⌥) key in menus. Turn this on to always show them.")
+                + "Option (⌥) key in a virtual machine's context menu. Turn this on to always show "
+                + "them.")
 
         let blockCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Block duplicate machine IDs from booting", control: blockDuplicateIDSwitch)
@@ -68,8 +69,9 @@ final class AdvancedSettingsViewController: NSViewController {
         let cloneCaption = makeGroupedFormCaption(
             "A new machine ID gives each clone its own identity, so it can run alongside its "
                 + "source. macOS 12 and earlier guests may not boot after their ID changes — "
-                + "clone those keeping the ID. To do the opposite for one clone, hold Option (⌥) "
-                + "over Clone in the Virtual Machine menu or the VM's context menu.")
+                + "clone those keeping the ID. To do the opposite for one clone, use the second "
+                + "Clone item in the Virtual Machine menu, or hold Option (⌥) over Clone in the "
+                + "VM's context menu.")
 
         var rows: [NSView] = [
             makeGroupedFormSectionHeader("Advanced Options"),
@@ -98,9 +100,10 @@ final class AdvancedSettingsViewController: NSViewController {
                 makeGroupedFormCardRow("Command line tool", control: installButton)
             ])
             let toolCaption = makeGroupedFormCaption(
-                "Links the bundled kernova tool into a folder you choose, so a shell can drive "
-                    + "your virtual machines. A verb starts Kernova when it is not running. If "
-                    + "the folder is not already on your PATH, add it:")
+                "Links this copy's kernova tool into a folder you choose, so a shell can drive "
+                    + "your virtual machines. The tool drives the copy of Kernova it links into, "
+                    + "starting that copy when it is not running. If the folder is not already "
+                    + "on your PATH, add it:")
             let pathHint = makeCalloutCode("export PATH=\"/usr/local/bin:$PATH\"")
             let completionsCard = makeGroupedFormCard(rows: [
                 makeGroupedFormCardRow("Shell completions", control: makeCompletionsButton())
@@ -208,7 +211,32 @@ final class AdvancedSettingsViewController: NSViewController {
         }
     }
 
+    /// Links the tool at `destination`, first asking before a link that drives
+    /// another copy of Kernova is pointed at this one: the panel's replace
+    /// prompt names the file, not the copy every shell using it drives after.
     private func install(at destination: URL) {
+        guard case .anotherCopysLink(let app) = CommandLineToolInstaller.occupant(at: destination)
+        else {
+            link(at: destination)
+            return
+        }
+        guard let window = view.window else { return }
+        presentSheetAlert(
+            AlertConfiguration(
+                title: "Point kernova at This Copy of Kernova?",
+                message: "The kernova at \(destination.path) drives the copy of Kernova at "
+                    + "\(app.path). Pointing it here makes it drive this copy, at "
+                    + "\(Bundle.main.bundleURL.path), instead.",
+                buttons: [
+                    AlertButton("Point Here", role: .default) { [weak self] in
+                        self?.link(at: destination)
+                    },
+                    AlertButton("Cancel", role: .cancel),
+                ]),
+            in: window)
+    }
+
+    private func link(at destination: URL) {
         do {
             try CommandLineToolInstaller.installSymlink(at: destination)
         } catch {

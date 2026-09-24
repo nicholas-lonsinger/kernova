@@ -36,9 +36,10 @@ func makeSettingsViewModel(
 @MainActor
 func makeSettingsInstance(
     guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped,
+    hostState: VMHostState = VMHostState(),
     mutate: (inout VMConfiguration) -> Void = { _ in }
 ) -> VMInstance {
-    VMInstanceFixture.make(guestOS: guestOS, phase: phase, mutate: mutate)
+    VMInstanceFixture.make(guestOS: guestOS, phase: phase, hostState: hostState, mutate: mutate)
 }
 
 /// Puts `instance` in the view model's library, which is what lets the command

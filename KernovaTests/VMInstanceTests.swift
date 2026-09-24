@@ -1040,15 +1040,14 @@ struct VMInstanceTests {
     /// A VM whose bundle exists on disk, holding a warm baseline snapshot whose
     /// captured saved state the bundle's own suspend slot can be compared to.
     private func makeEphemeralInstanceWithBundle(
-        mutate: (inout VMConfiguration) -> Void = { _ in }
+        ephemeralModeEnabled: Bool = true
     ) throws -> (
         instance: VMInstance, baseline: VMSnapshot, temp: URL
     ) {
         let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
-        let instance = VMInstanceFixture.make(name: "Ephemeral VM", phase: .suspended) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-            mutate(&$0)
-        }
+        let instance = VMInstanceFixture.make(
+            name: "Ephemeral VM", phase: .suspended,
+            hostState: ephemeralModeEnabled ? .ephemeral(baseline: baseline.id) : VMHostState())
         let temp = instance.bundleURL
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
@@ -1092,9 +1091,7 @@ struct VMInstanceTests {
 
     @Test("Ephemeral Mode off leaves the baseline comparison unasked")
     func restingAtBaselineNeedsEphemeralMode() throws {
-        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle {
-            $0.applyEphemeralMode(enabled: false, baseline: nil)
-        }
+        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
         try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
@@ -1356,11 +1353,11 @@ struct VMInstanceTests {
         agentInstallNudgeDismissed: Bool = false
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
-            name: "macOS Watchdog Test", guestOS: .macOS, phase: .running(sessionID: UUID())
+            name: "macOS Watchdog Test", guestOS: .macOS, phase: .running(sessionID: UUID()),
+            hostState: VMHostState(agentInstallNudgeDismissed: agentInstallNudgeDismissed)
         ) {
             $0.lastSeenAgentVersion = lastSeen
             $0.lastSeenGuestOSVersion = lastSeenGuestOSVersion
-            $0.agentInstallNudgeDismissed = agentInstallNudgeDismissed
         }
         instance.setupState = setupState
         instance.beginSessionContext(bootedIntoRecovery: bootedIntoRecovery)
@@ -1460,7 +1457,7 @@ struct VMInstanceTests {
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
     }
 
     @Test("Each boot attempt's context carries its own recovery-boot flag")
@@ -1568,9 +1565,9 @@ struct VMInstanceTests {
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
-        #expect(storage.saveConfigurationCallCount == 1)
-        #expect(storage.bundles[instance.bundleURL]?.agentInstallNudgeDismissed == false)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
+        #expect(storage.saveHostStateCallCount == 1)
+        #expect(storage.hostStates[instance.bundleURL]?.agentInstallNudgeDismissed == false)
     }
 
     @Test("Watchdog firing clears the stored guest OS version in the same persist")
@@ -1605,6 +1602,7 @@ struct VMInstanceTests {
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(storage.saveConfigurationCallCount == 0)
+        #expect(storage.saveHostStateCallCount == 0)
     }
 
     @Test("A mid-session firing leaves the nudge dismissal and guest OS version alone")
@@ -1624,6 +1622,7 @@ struct VMInstanceTests {
             ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
         #expect(instance.hasSeenAgentThisSession)
         let persistsAfterHello = storage.saveConfigurationCallCount
+        let hostStatePersistsAfterHello = storage.saveHostStateCallCount
 
         // The agent goes away mid-session and never comes back.
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1632,9 +1631,10 @@ struct VMInstanceTests {
         // The badge still escalates — that is the whole point of #706.
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
-        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+        #expect(instance.hostState.agentInstallNudgeDismissed == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(storage.saveConfigurationCallCount == persistsAfterHello)
+        #expect(storage.saveHostStateCallCount == hostStatePersistsAfterHello)
     }
 
     @Test("tearDownSession clears hasSeenAgentThisSession")

@@ -6,7 +6,7 @@ import KernovaLogging
 /// two list edits a caller names by path rather than by id, and the reads that
 /// answer those two lists.
 ///
-/// Every write lands as one ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``: the
+/// Every write lands as one ``VMLibrary/updateSettings(of:ifNotSaved:mutate:)``: the
 /// gates and the values are all checked first, so a batch that names one bad
 /// key writes nothing at all.
 extension VMCommandCore {
@@ -20,17 +20,17 @@ extension VMCommandCore {
 
     func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
-        let config = instance.configuration
+        let settings = instance.settings
         guard let keys else {
             // A key the guest cannot have is left out rather than reported with
             // a value no `set` would take back.
             return VMConfigurationKeyRegistry.keys
-                .filter { $0.applies(config) }
-                .map { ConfigurationEntry(key: $0.name, value: $0.read(config)) }
+                .filter { $0.applies(settings.configuration) }
+                .map { ConfigurationEntry(key: $0.name, value: $0.read(settings)) }
         }
         return try keys.map { name in
-            let key = try requireKey(named: name, on: config)
-            return ConfigurationEntry(key: key.name, value: key.read(config))
+            let key = try requireKey(named: name, on: settings.configuration)
+            return ConfigurationEntry(key: key.name, value: key.read(settings))
         }
     }
 
@@ -48,11 +48,11 @@ extension VMCommandCore {
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
-        let current = instance.configuration
+        let current = instance.settings
 
         var resolved: [(key: VMConfigurationKey, value: String)] = []
         for assignment in assignments {
-            let key = try requireKey(named: assignment.key, on: current)
+            let key = try requireKey(named: assignment.key, on: current.configuration)
             try require(key.capability(writing: assignment.value), on: instance)
             resolved.append((key, assignment.value))
         }
@@ -66,13 +66,15 @@ extension VMCommandCore {
             // Only a key this call actually moved is judged: writing back what
             // a read answered has to stay a no-op, so `get` output is `set`
             // input on a VM whose stored value is already inert.
-            guard let message = entry.key.refusalOnResult(candidate) else { continue }
+            guard let message = entry.key.refusalOnResult(candidate.configuration) else { continue }
             throw CommandError.invalidArgument(message)
         }
 
-        try refuseClipboardPassthrough(on: instance, from: current, to: candidate, confirmed: confirmed)
+        try refuseClipboardPassthrough(
+            on: instance, from: current.configuration, to: candidate.configuration,
+            confirmed: confirmed)
         if let conflict = library.macAddresses.macAddressConflict(
-            on: instance, movingFrom: current, to: candidate)
+            on: instance, movingFrom: current.configuration, to: candidate.configuration)
         {
             throw CommandError.conflict(
                 vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
@@ -81,12 +83,12 @@ extension VMCommandCore {
         // Assigning the whole candidate is safe because nothing between reading
         // `current` and this write awaits — a suspension there would clobber
         // whatever a concurrent writer landed in between.
-        try writeConfiguration(of: instance, verb: .setConfiguration) { $0 = candidate }
+        try writeSettings(of: instance, verb: .setConfiguration) { $0 = candidate }
         #log(
             Self.logger, .notice,
             "Changed \(resolved.map(\.key.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
         )
-        let written = instance.configuration
+        let written = instance.settings
         return resolved.map { ConfigurationEntry(key: $0.key.name, value: $0.key.read(written)) }
     }
 

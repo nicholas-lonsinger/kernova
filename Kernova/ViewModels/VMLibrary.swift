@@ -5,7 +5,8 @@ import KernovaLogging
 /// The set of VMs the app knows about, and the bookkeeping that keeps it in
 /// step with the bundles on disk: membership and sidebar ordering, the library
 /// read, the directory-watched reconcile, `prepareBundle`/`registerPhantom`/
-/// `evict`, every write of a VM's configuration, and the revert registry.
+/// `evict`, every write of a VM's configuration and host state, and the
+/// revert registry.
 ///
 /// It also sequences the collaborators it owns — ``macAddresses``,
 /// ``removableMedia`` and ``guestAddresses`` — because only the library knows
@@ -270,32 +271,60 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// What a VM's bundle holds beside its configuration, which the library
     /// takes on wherever a bundle enters it: the load, a reconcile that finds
     /// one, and a preparing row's publication.
+    ///
+    /// Read whole or not at all: a bundle whose host state or snapshot manifest
+    /// is present but unreadable does not enter the library — the way one whose
+    /// configuration cannot be read does not — so no write can replace a file
+    /// whose contents were never known. Pairings are the exception
+    /// ``USBAccessoryPairingStoring/load(bundleURL:)`` states.
     struct BundleContents: Sendable {
+        let hostState: VMHostState
         let snapshots: VMSnapshotManifest
         let usbPairings: USBAccessoryPairingSet
     }
 
-    /// Reads what the bundle at `bundleURL` holds, reclaiming the staging
-    /// directory an interrupted revert left there.
-    ///
-    /// Blocks on the filesystem — every snapshot's configuration is opened for
-    /// the address it reserves — so it runs where the other bundle reads do.
-    /// The sweep is safe here because a bundle being taken in has no instance
-    /// yet, so no revert of it can be running.
-    private nonisolated static func readContents(
-        ofBundleAt bundleURL: URL, snapshotStore: any VMSnapshotStoring,
-        usbPairingStore: any USBAccessoryPairingStoring
-    ) -> BundleContents {
-        snapshotStore.sweepRestoreStaging(bundleURL: bundleURL)
-        return BundleContents(
-            snapshots: snapshotStore.loadManifest(bundleURL: bundleURL),
-            usbPairings: usbPairingStore.load(bundleURL: bundleURL))
+    /// The stores a bundle is read through, gathered so the reads can run off
+    /// the main actor.
+    private struct BundleReader: Sendable {
+        let storage: any VMStorageProviding
+        let snapshots: any VMSnapshotStoring
+        let pairings: any USBAccessoryPairingStoring
+
+        /// Reads the bundle's configuration and everything beside it.
+        func bundle(at bundleURL: URL) throws -> ScannedBundle {
+            let config = try storage.loadConfiguration(from: bundleURL)
+            return ScannedBundle(
+                configuration: config, bundleURL: bundleURL,
+                phase: VMLibrary.initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL)),
+                contents: try readContents(ofBundleAt: bundleURL))
+        }
+
+        /// Reads what the bundle at `bundleURL` holds, reclaiming the staging
+        /// directory an interrupted revert left there.
+        ///
+        /// Blocks on the filesystem — every snapshot's configuration is opened
+        /// for the address it reserves — so it runs where the other bundle
+        /// reads do. No bundle handed here can have a revert running — it has
+        /// no instance yet, or only a phantom's, which `canRevertToSnapshot`
+        /// refuses — so a staging directory found belongs to no running revert.
+        func readContents(ofBundleAt bundleURL: URL) throws -> BundleContents {
+            let contents = BundleContents(
+                hostState: try storage.loadHostState(from: bundleURL),
+                snapshots: try snapshots.loadManifest(bundleURL: bundleURL),
+                usbPairings: pairings.load(bundleURL: bundleURL))
+            snapshots.sweepRestoreStaging(bundleURL: bundleURL)
+            return contents
+        }
+    }
+
+    private var bundleReader: BundleReader {
+        BundleReader(storage: storageService, snapshots: snapshotStore, pairings: usbPairingStore)
     }
 
     /// The whole library as read from disk in one pass.
     private struct LibraryScan: Sendable {
         var bundles: [ScannedBundle] = []
-        /// Bundle names whose configuration could not be read.
+        /// Bundle names that could not be read.
         var failedBundleNames: [String] = []
     }
 
@@ -303,22 +332,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     ///
     /// Nonisolated so the disk work can run off the main actor; it touches no
     /// library state and reports failures through the returned scan.
-    private nonisolated static func scanLibrary(
-        using storage: any VMStorageProviding, snapshotStore: any VMSnapshotStoring,
-        usbPairingStore: any USBAccessoryPairingStoring
-    ) throws -> LibraryScan {
+    private nonisolated static func scanLibrary(using reader: BundleReader) throws -> LibraryScan {
         var scan = LibraryScan()
-        for bundleURL in try storage.listVMBundles() {
+        for bundleURL in try reader.storage.listVMBundles() {
             do {
-                let config = try storage.loadConfiguration(from: bundleURL)
-                scan.bundles.append(
-                    ScannedBundle(
-                        configuration: config,
-                        bundleURL: bundleURL,
-                        phase: initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL)),
-                        contents: readContents(
-                            ofBundleAt: bundleURL, snapshotStore: snapshotStore,
-                            usbPairingStore: usbPairingStore)))
+                scan.bundles.append(try reader.bundle(at: bundleURL))
             } catch {
                 #log(
                     logger, .error,
@@ -330,6 +348,16 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         return scan
     }
 
+    /// Builds the instance for a bundle read from disk, wired to this library.
+    private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
+        let instance = VMInstance(
+            configuration: scanned.configuration, bundleURL: scanned.bundleURL,
+            phase: scanned.phase, preferences: preferences)
+        wireHooks(for: instance)
+        take(scanned.contents, on: instance)
+        return instance
+    }
+
     /// Replaces the library with what is on disk.
     ///
     /// The read runs off the main actor — a library of any size is bound by
@@ -337,9 +365,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// whatever window is already on screen.
     func loadVMs() async {
         reportedFailedBundles.removeAll()
-        let storage = storageService
-        let snapshotStore = snapshotStore
-        let usbPairingStore = usbPairingStore
+        let reader = bundleReader
         // The read is asynchronous, so the library can be mutated while it runs.
         // Anything appearing in `instances` after this line is newer than
         // whatever the read returns, and the result must not delete it.
@@ -349,8 +375,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         defer { hasLoadedLibrary = true }
         do {
             let scan = try await Task.detached(priority: .userInitiated) {
-                try Self.scanLibrary(
-                    using: storage, snapshotStore: snapshotStore, usbPairingStore: usbPairingStore)
+                try Self.scanLibrary(using: reader)
             }.value
             apply(scan, keepingInstancesAddedSince: knownBeforeRead)
         } catch {
@@ -373,14 +398,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         instances =
             scan.bundles
             .filter { !addedDuringReadIDs.contains($0.configuration.id) }
-            .map { scanned in
-                let instance = VMInstance(
-                    configuration: scanned.configuration, bundleURL: scanned.bundleURL,
-                    phase: scanned.phase, preferences: preferences)
-                wireHooks(for: instance)
-                take(scanned.contents, on: instance)
-                return instance
-            } + addedDuringRead
+            .map(makeInstance) + addedDuringRead
         macAddresses.logDuplicateMACAddressHolders()
 
         if !scan.failedBundleNames.isEmpty {
@@ -467,8 +485,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// registering mid-operation can't steal the sidebar's focus from the one the
     /// user is already watching.
     ///
-    /// The row holds none of its bundle's contents yet: the bundle does not
-    /// exist until publication, which is where they are read.
+    /// Nothing is read for it: its bundle does not exist yet, and
+    /// ``prepareBundle(_:operation:copyWork:onSuccess:onFailure:)`` reads what
+    /// the write produced.
     private func registerPhantom(_ phantom: VMInstance) {
         wireHooks(for: phantom)
         instances.append(phantom)
@@ -487,9 +506,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// becomes a bundle on disk at one instant — the publication rename below —
     /// and an abnormal exit at any point before it leaves nothing to adopt.
     /// It answers the configuration it wrote there. Publication is where the
-    /// row takes on its bundle whole — that configuration, and the snapshots,
-    /// pairings and anything else ``BundleContents`` reads — so no path follows
-    /// a copy with a read of its own.
+    /// row takes on its bundle whole — that configuration, and everything
+    /// ``BundleContents`` reads from the staged tree before the rename — so no
+    /// path follows a copy with a read of its own.
     ///
     /// `copyWork` is uninterruptible (a blocking `FileManager` call), so a user cancel cancels this
     /// outer `Task` while the copy keeps writing. This task is the single owner of the settle: on
@@ -508,8 +527,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         registerPhantom(phantom)
         let fileSystem = fileSystem
         let storage = storageService
-        let snapshotStore = snapshotStore
-        let usbPairingStore = usbPairingStore
+        let reader = bundleReader
         let finalURL = phantom.bundleURL
         let task = Task { [weak self] in
             defer {
@@ -528,6 +546,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 written = staged
                 self?.writeLocations[phantom.id] = staged
                 let configuration = try await copyWork(staged)
+                // Read before publication, so a written tree holding a file the
+                // library cannot read — an import's, say — never becomes a
+                // bundle.
+                let contents = try await Task.detached { try reader.readContents(ofBundleAt: staged) }
+                    .value
                 guard let self else {
                     if Task.isCancelled {
                         Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
@@ -555,12 +578,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                     self.cleanupPhantomInstance(phantom, bundleAt: staged)
                     return
                 }
-                let contents = try await Task.detached {
-                    try storage.publishBundle(from: staged, to: finalURL)
-                    return Self.readContents(
-                        ofBundleAt: finalURL, snapshotStore: snapshotStore,
-                        usbPairingStore: usbPairingStore)
-                }.value
+                try await Task.detached { try storage.publishBundle(from: staged, to: finalURL) }.value
                 written = finalURL
                 self.writeLocations[phantom.id] = finalURL
                 self.adopt(configuration, on: phantom)
@@ -817,9 +835,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // Every closure is stored *on* `instance`, so it must capture it weakly:
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `instances`.
-        instance.onUpdateConfiguration = { [weak self, weak instance] unsaved, mutate in
+        instance.onUpdateSettings = { [weak self, weak instance] unsaved, mutate in
             guard let self, let instance else { return .refused(.noLibrary) }
-            return self.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
+            return self.updateSettings(of: instance, ifNotSaved: unsaved, mutate: mutate)
         }
         // Auto-eject the installer disk once the agent handshakes a current version.
         // Wired here so it fires regardless of which window is open.
@@ -841,8 +859,41 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         }
     }
 
+    /// The single entry point for a mutation that touches `instance`'s host
+    /// state, alone or beside its configuration.
+    ///
+    /// The configuration half goes through
+    /// ``updateConfiguration(of:ifNotSaved:mutate:)`` first, and a refusal
+    /// there — or a failed save that `unsaved` discards — leaves the host
+    /// state unapplied. The host-state half saves before it assigns, and
+    /// `unsaved` decides what memory holds when that save fails.
+    ///
+    /// - Returns: The configuration half's outcome when it did not save,
+    ///   otherwise the host-state half's.
+    @discardableResult
+    func updateSettings(
+        of instance: VMInstance,
+        ifNotSaved unsaved: UnsavedConfiguration,
+        mutate: (inout VMSettings) -> Void
+    ) -> ConfigurationWrite {
+        var new = instance.settings
+        mutate(&new)
+        let configurationWrite = updateConfiguration(
+            of: instance, ifNotSaved: unsaved, mutate: { $0 = new.configuration })
+        switch configurationWrite {
+        case .saved: return updateHostState(of: instance, to: new.hostState, ifNotSaved: unsaved)
+        case .refused: return configurationWrite
+        case .notSaved:
+            if unsaved == .keep {
+                updateHostState(of: instance, to: new.hostState, ifNotSaved: unsaved)
+            }
+            return configurationWrite
+        }
+    }
+
     /// Mirrors `contents`, read from `instance`'s bundle, onto the instance.
     private func take(_ contents: BundleContents, on instance: VMInstance) {
+        instance.replaceHostState(with: contents.hostState, key: ConfigurationWriteKey())
         instance.snapshotManifest = contents.snapshots
         instance.usbPairings = contents.usbPairings
     }
@@ -966,6 +1017,31 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         instance.replaceConfiguration(with: configuration, key: ConfigurationWriteKey())
     }
 
+    /// ``updateSettings(of:ifNotSaved:mutate:)``'s host-state half: writes the
+    /// bundle's host-state file and installs `new`, no-oping when nothing
+    /// changed.
+    ///
+    /// A failed write is presented, and memory holds what `unsaved` says.
+    @discardableResult
+    private func updateHostState(
+        of instance: VMInstance, to new: VMHostState, ifNotSaved unsaved: UnsavedConfiguration
+    ) -> ConfigurationWrite {
+        guard new != instance.hostState else { return .saved }
+        do {
+            try storageService.saveHostState(new, to: instance.bundleURL)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+            if unsaved == .keep { instance.replaceHostState(with: new, key: ConfigurationWriteKey()) }
+            return .notSaved(error)
+        }
+        instance.replaceHostState(with: new, key: ConfigurationWriteKey())
+        return .saved
+    }
+
     /// The single entry point for any change to what a VM takes its USB
     /// accessories back from — the attach and detach verbs, the prompt's
     /// answer, and the settings row's remove button alike.
@@ -1056,7 +1132,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 do {
                     let config = try storageService.loadConfiguration(from: bundleURL)
                     diskConfigs.append((config, bundleURL))
-                    reportedFailedBundles.remove(bundleName)
                 } catch {
                     #log(
                         Self.logger, .error,
@@ -1069,24 +1144,29 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             let memoryIDs = Set(instances.map(\.id))
 
             var didChange = false
+            let reader = bundleReader
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
-                let layout = VMBundleLayout(bundleURL: bundleURL)
-                let instance = VMInstance(
-                    configuration: config,
-                    bundleURL: bundleURL,
-                    phase: Self.initialPhase(for: config, layout: layout),
-                    preferences: preferences
-                )
-                wireHooks(for: instance)
-                take(
-                    Self.readContents(
-                        ofBundleAt: bundleURL, snapshotStore: snapshotStore,
-                        usbPairingStore: usbPairingStore),
-                    on: instance)
-                instances.append(instance)
-                #log(Self.logger, .info, "Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
-                didChange = true
+                do {
+                    let scanned = ScannedBundle(
+                        configuration: config, bundleURL: bundleURL,
+                        phase: Self.initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL)),
+                        contents: try reader.readContents(ofBundleAt: bundleURL))
+                    instances.append(makeInstance(scanned))
+                    #log(
+                        Self.logger, .info,
+                        "Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
+                    didChange = true
+                } catch {
+                    #log(
+                        Self.logger, .error,
+                        "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
+                    )
+                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
+                }
             }
+            reportedFailedBundles.subtract(
+                Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
+                    .subtracting(failedBundles))
 
             // Only remove resting-state VMs — never touch running/paused/preparing ones.
             let instancesToRemove = instances.filter { instance in
@@ -1218,8 +1298,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 }
 
 extension VMLibrary {
-    /// What ``VMInstance/replaceConfiguration(with:key:)`` asks for, so only
-    /// this file can write a VM's configuration: the initializer is
+    /// What ``VMInstance/replaceConfiguration(with:key:)`` and
+    /// ``VMInstance/replaceHostState(with:key:)`` ask for, so only this file
+    /// can write a VM's configuration or host state: the initializer is
     /// `fileprivate`, which `@testable import` does not open.
     struct ConfigurationWriteKey {
         fileprivate init() {}

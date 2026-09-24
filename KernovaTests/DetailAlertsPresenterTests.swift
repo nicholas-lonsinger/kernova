@@ -30,7 +30,7 @@ import Testing
 /// `presentDeleteSheet` through the follow-up call/`stop()`, so the off-main
 /// resolution Task can't run until the test `await`s the captured handle's
 /// `.value` — event-driven, no polling.
-@Suite("DetailAlertsPresenter Tests", .serialized, .admissionGated)
+@Suite("DetailAlertsPresenter Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct DetailAlertsPresenterTests {
     private let preferences = makeTestPreferences()
@@ -58,22 +58,13 @@ struct DetailAlertsPresenterTests {
         return (DetailAlertsPresenter(viewModel: viewModel), viewModel)
     }
 
-    /// A window for the presenter to put its sheets on, ordered in: a sheet on
-    /// a window that isn't goes up on the display by itself.
-    private func makeWindow() -> NSWindow {
-        let window = makeTestWindow(
-            styleMask: [.titled], contentSize: NSSize(width: 480, height: 320))
-        window.orderFront(nil)
-        return window
-    }
-
     /// An attachment-free Linux VM: `externalAttachments` returns `[]` without
     /// the off-main probe, so resolution finishes fast.
     private func makeInstance(
         name: String = "Test VM", in viewModel: VMLibraryViewModel,
-        mutate: (inout VMConfiguration) -> Void = { _ in }
+        hostState: VMHostState = VMHostState()
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: name, mutate: mutate)
+        let instance = VMInstanceFixture.make(name: name, hostState: hostState)
         viewModel.library.instances.append(instance)
         return instance
     }
@@ -192,7 +183,7 @@ struct DetailAlertsPresenterTests {
     @Test("A delete gesture while the sheet is shown is ignored, not dropped")
     func ignoreWhileSheetShown() async {
         let (presenter, viewModel) = makePresenter()
-        let window = makeWindow()
+        let window = showTestWindow(styleMask: [.titled])
         presenter.start(window: window)
         let vmA = makeInstance(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
@@ -207,14 +198,12 @@ struct DetailAlertsPresenterTests {
         // and then silently dropped when the shown sheet closes.
         presenter.presentDeleteSheet(for: vmB)
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
-
-        presenter.stop()  // tear down the sheet so the window doesn't linger
     }
 
     @Test("A delete after teardown during a shown sheet is accepted, not blocked")
     func deleteAcceptedAfterStopDuringShownSheet() async {
         let (presenter, viewModel) = makePresenter()
-        let window = makeWindow()
+        let window = showTestWindow(styleMask: [.titled])
         presenter.start(window: window)
         let vmA = makeInstance(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
@@ -234,8 +223,6 @@ struct DetailAlertsPresenterTests {
         // stop() resets the sheet synchronously, so the prior sheet's lingering
         // `isShown` doesn't stall vmB — its sheet drains immediately (count 0).
         #expect(presenter.pendingCountForTesting == 0)
-
-        presenter.stop()
     }
 
     // MARK: - Teardown
@@ -516,9 +503,9 @@ struct DetailAlertsPresenterTests {
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let vm = makeInstance(in: viewModel) {
-            $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        var hostState = VMHostState()
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let vm = makeInstance(in: viewModel, hostState: hostState)
         vm.enter(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
@@ -622,7 +609,7 @@ struct DetailAlertsPresenterTests {
     @Test("Answering one pairing prompt leaves the next one able to be shown")
     func answeringAPairingPromptFreesTheSlot() throws {
         let (presenter, viewModel) = makePresenter()
-        let window = makeWindow()
+        let window = showTestWindow(styleMask: [.titled])
         presenter.start(window: window)
         let instance = makeInstance(name: "Work", in: viewModel)
         let answers = PairingAnswers()
@@ -659,7 +646,7 @@ struct DetailAlertsPresenterTests {
     @Test("A pairing prompt raised while another alert is up is answered as a hold")
     func aPairingPromptBehindAnotherAlertHolds() throws {
         let (presenter, viewModel) = makePresenter()
-        let window = makeWindow()
+        let window = showTestWindow(styleMask: [.titled])
         presenter.start(window: window)
         let instance = makeInstance(name: "Work", in: viewModel)
         let answers = PairingAnswers()
@@ -722,7 +709,7 @@ struct DetailAlertsPresenterTests {
     @Test("An account prompt raised while another alert is up starts nothing")
     func anAccountPromptBehindAnotherAlertIsCancelled() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         presenter.presentError("Something else", title: "Couldn't Start")
         #expect(presenter.isShowingAlertForTesting)
         let answers = AccountAnswers()
@@ -735,7 +722,7 @@ struct DetailAlertsPresenterTests {
     @Test("A second Start while the prompt is up is turned away, not asked twice")
     func aSecondStartUnderThePromptIsTurnedAway() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let first = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: first))
         let second = AccountAnswers()
@@ -751,13 +738,12 @@ struct DetailAlertsPresenterTests {
         #expect(second.answered == [.cancelled])
         #expect(first.answered.isEmpty)
         #expect(presenter.isShowingAlertForTesting)
-        presenter.stop()
     }
 
     @Test("Tearing the window down answers the start suspended on the prompt")
     func stoppingAnswersTheWaitingStart() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
 
@@ -771,7 +757,7 @@ struct DetailAlertsPresenterTests {
     @Test("Tearing the window down takes the sheet with it, and frees the slot")
     func stoppingDismissesTheShownAlert() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         presenter.presentGuestAccountPassword(accountRequest(answers: AccountAnswers()))
         #expect(presenter.isShowingAlertForTesting)
 
@@ -784,16 +770,15 @@ struct DetailAlertsPresenterTests {
         #expect(!presenter.dismissShownAlertForTesting(.alertFirstButtonReturn))
 
         // The freed slot really is free: the next window's first request shows.
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         presenter.presentError("Something else", title: "Couldn't Start")
         #expect(presenter.isShowingAlertForTesting)
-        presenter.stop()
     }
 
     @Test("A pairing prompt on screen when the window goes is answered as a hold")
     func stoppingHoldsAShownPairingPrompt() {
         let (presenter, viewModel) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let instance = makeInstance(name: "Work", in: viewModel)
         let answers = PairingAnswers()
         presenter.presentUSBAccessoryPairing(
@@ -813,7 +798,7 @@ struct DetailAlertsPresenterTests {
     @Test("A prompt put back up after a refusal is answered by the teardown too")
     func stoppingAnswersARefusedPrompt() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
         // "Set Up Account" with the fields untouched: the refusal sends the
@@ -828,7 +813,7 @@ struct DetailAlertsPresenterTests {
     @Test("A prompt answered once is not answered again by the teardown")
     func stoppingDoesNotAnswerTwice() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
         #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
@@ -843,7 +828,7 @@ struct DetailAlertsPresenterTests {
     @Test("Skip Setup answers the waiting start and frees the slot")
     func skipSetupAnswersAndFreesTheSlot() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
         #expect(presenter.isShowingAlertForTesting)
@@ -857,7 +842,7 @@ struct DetailAlertsPresenterTests {
     @Test("Cancel answers with no start")
     func cancelAnswersWithNoStart() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
 
@@ -870,7 +855,7 @@ struct DetailAlertsPresenterTests {
     @Test("A refused password puts the sheet back up instead of answering the start")
     func aRefusedPasswordReturnsToTheSheet() {
         let (presenter, _) = makePresenter()
-        presenter.start(window: makeWindow())
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
 

@@ -72,7 +72,7 @@ final class ResourceConfigContentViewController: NSViewController {
         form.spacing = Spacing.standard
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        addCard([makeGroupedFormCardRow("Name", control: nameField, fillsControl: true)], to: form)
+        addCard([GroupedFormFieldRow("Name", control: nameField)], to: form)
 
         addSectionHeader("Compute", to: form)
         addCard(

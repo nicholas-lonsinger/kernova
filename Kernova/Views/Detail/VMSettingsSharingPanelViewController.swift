@@ -346,7 +346,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         // The per-VM flag keeps its value while the app-wide preference overrides
         // it, so the switch still shows what this VM reverts to when the
         // preference is turned back on — it just can't be changed from here.
-        installReminderSwitch.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
+        installReminderSwitch.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
         let overridden = viewModel.agentInstallPromptDisabled
         applyGroupedFormRowEnabled(
             !overridden, control: installReminderSwitch, label: installReminderLabel)

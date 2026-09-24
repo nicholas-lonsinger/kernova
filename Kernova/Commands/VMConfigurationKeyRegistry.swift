@@ -25,9 +25,9 @@ enum VMConfigurationKeyGate: Hashable, Sendable {
 
 /// How a key applies a written value, refusing one it cannot use.
 typealias VMConfigurationKeyWrite =
-    @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext) throws -> Void
+    @Sendable (String, inout VMSettings, VMConfigurationWriteContext) throws -> Void
 
-/// What a key's write needs beyond the configuration it edits.
+/// What a key's write needs beyond the settings it edits.
 struct VMConfigurationWriteContext: Sendable {
     /// The VM's restore points, which an Ephemeral Mode enable pins its
     /// baseline from.
@@ -51,7 +51,7 @@ struct VMConfigurationKey: Sendable {
     /// apply is left out of a whole-VM read and refused when named.
     let applies: @Sendable (VMConfiguration) -> Bool
     /// The value as `set` accepts it back.
-    let read: @Sendable (VMConfiguration) -> String
+    let read: @Sendable (VMSettings) -> String
     /// Applies `value`, refusing with ``CommandError/invalidArgument(_:)`` when
     /// it names nothing this key takes.
     let write: VMConfigurationKeyWrite
@@ -65,22 +65,48 @@ struct VMConfigurationKey: Sendable {
     /// actually moved, so writing back what a read answered stays a no-op.
     let refusalOnResult: @Sendable (VMConfiguration) -> String?
 
+    /// A key over the VM's configuration.
     init(
         name: String,
         summary: String,
         gate: VMConfigurationKeyGate,
         applies: @escaping @Sendable (VMConfiguration) -> Bool = { _ in true },
         read: @escaping @Sendable (VMConfiguration) -> String,
-        write: @escaping VMConfigurationKeyWrite,
+        write:
+            @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
+            throws -> Void,
         refusalOnResult: @escaping @Sendable (VMConfiguration) -> String? = { _ in nil }
     ) {
         self.name = name
         self.summary = summary
         self.gate = gate
         self.applies = applies
-        self.read = read
-        self.write = write
+        self.read = { read($0.configuration) }
+        self.write = { value, settings, context in
+            try write(value, &settings.configuration, context)
+        }
         self.refusalOnResult = refusalOnResult
+    }
+
+    /// A key over the VM's host state, which every VM has.
+    init(
+        name: String,
+        summary: String,
+        gate: VMConfigurationKeyGate,
+        readHostState: @escaping @Sendable (VMHostState) -> String,
+        writeHostState:
+            @escaping @Sendable (String, inout VMHostState, VMConfigurationWriteContext)
+            throws -> Void
+    ) {
+        self.name = name
+        self.summary = summary
+        self.gate = gate
+        self.applies = { _ in true }
+        self.read = { readHostState($0.hostState) }
+        self.write = { value, settings, context in
+            try writeHostState(value, &settings.hostState, context)
+        }
+        self.refusalOnResult = { _ in nil }
     }
 
     /// How this key describes itself to a client listing the keyspace.
@@ -211,9 +237,9 @@ enum VMConfigurationKeyRegistry {
             name: "display.preference",
             summary: "Where the display opens: inline, popOut or fullscreen.",
             gate: .live,
-            read: { $0.displayPreference.rawValue },
-            write: { value, config, _ in
-                config.displayPreference = try ConfigurationValue.choice(
+            readHostState: { $0.displayPreference.rawValue },
+            writeHostState: { value, hostState, _ in
+                hostState.displayPreference = try ConfigurationValue.choice(
                     value, key: "display.preference")
             }),
         VMConfigurationKey(
@@ -278,22 +304,22 @@ enum VMConfigurationKeyRegistry {
             name: "ephemeral",
             summary: "Return the VM to its baseline snapshot at every shutdown: true or false.",
             gate: .live,
-            read: { String($0.ephemeralModeEnabled) },
-            write: { value, config, context in
+            readHostState: { String($0.ephemeralModeEnabled) },
+            writeHostState: { value, hostState, context in
                 let enabled = try ConfigurationValue.boolean(value, key: "ephemeral")
                 guard enabled else {
-                    config.applyEphemeralMode(enabled: false, baseline: nil)
+                    hostState.applyEphemeralMode(enabled: false, baseline: nil)
                     return
                 }
                 guard
                     let baseline = context.snapshots.defaultEphemeralBaseline(
-                        preferring: config.ephemeralBaselineSnapshotID)
+                        preferring: hostState.ephemeralBaselineSnapshotID)
                 else {
                     throw CommandError.invalidArgument(
                         "Ephemeral Mode returns the virtual machine to a snapshot, and this one "
                             + "has none. Take a snapshot first.")
                 }
-                config.applyEphemeralMode(enabled: true, baseline: baseline)
+                hostState.applyEphemeralMode(enabled: true, baseline: baseline)
             }),
         VMConfigurationKey(
             name: "clipboard.sharing",

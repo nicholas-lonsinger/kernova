@@ -360,7 +360,7 @@ struct VMCapabilityCatalog {
     /// forward for it.
     func revealSurface(for instance: VMInstance) -> RevealSurface {
         guard accepts(.open, on: instance),
-            instance.configuration.displayPreference != .inline
+            instance.hostState.displayPreference != .inline
         else { return .library }
         return .displayWindow
     }
@@ -396,7 +396,7 @@ struct VMCapabilityCatalog {
     /// What a bring-up taken from a standing preference rather than a command
     /// may do with this VM, or `nil`.
     ///
-    /// The launch pass acts on ``VMConfiguration/startsAutomaticallyOnLaunch``,
+    /// The launch pass acts on ``VMHostState/startsAutomaticallyOnLaunch``,
     /// so it begins no guest setup and raises no question: a VM with a macOS
     /// install or a Linux image download still to run is passed over, and so is
     /// one still owing its guest an account answer

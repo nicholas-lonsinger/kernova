@@ -8,7 +8,7 @@ import Virtualization
 @testable import Kernova
 
 /// The Network panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Network Panel Tests", .serialized, .admissionGated)
+@Suite("VM Settings Network Panel Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsNetworkPanelTests {
     private let preferences = makeTestPreferences()

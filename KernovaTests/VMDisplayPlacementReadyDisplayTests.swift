@@ -11,7 +11,7 @@ import Testing
 /// A bring-up is not a request to look at the guest, so both answers are taken
 /// from the app's own posture and the VM's persisted placement, never from who
 /// asked for the start.
-@Suite("VMDisplayPlacementController readying", .serialized, .admissionGated)
+@Suite("VMDisplayPlacementController readying", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
     private let preferences = makeTestPreferences()
@@ -30,7 +30,8 @@ struct VMDisplayPlacementReadyDisplayTests {
     }
 
     private func makeInstance(preference: VMDisplayPreference) -> VMInstance {
-        VMInstanceFixture.make(name: "Readied VM") { $0.displayPreference = preference }
+        VMInstanceFixture.make(
+            name: "Readied VM", hostState: VMHostState(displayPreference: preference))
     }
 
     private func makeController(posture: GUIPosture)
@@ -91,7 +92,6 @@ struct VMDisplayPlacementReadyDisplayTests {
     func absentOpensNoWindow() {
         let (placement, residency) = makeController(posture: .absent)
         let instance = makeInstance(preference: .fullscreen)
-        defer { placement.closeAllForAppDismissal() }
 
         placement.readyDisplay(for: instance)
 
@@ -107,17 +107,16 @@ struct VMDisplayPlacementReadyDisplayTests {
     func backgroundOpensAnUnkeyWindow() throws {
         let (placement, residency) = makeController(posture: .background)
         let instance = makeInstance(preference: .fullscreen)
-        defer { placement.closeAllForAppDismissal() }
 
         placement.readyDisplay(for: instance)
 
         let window = try #require(placement.window(for: instance.instanceID))
-        hideFromScreen(window)
+        adoptAppWindow(window)
         #expect(window.isVisible)
         #expect(!window.isKeyWindow)
         #expect(!window.styleMask.contains(.fullScreen))
         #expect(instance.displayMode == .popOut)
-        #expect(instance.configuration.displayPreference == .fullscreen)
+        #expect(instance.hostState.displayPreference == .fullscreen)
         #expect(residency.prepareCount == 1)
     }
 }

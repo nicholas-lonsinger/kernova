@@ -38,6 +38,16 @@ final class VMInstance {
     /// writes it states what it persists and what it refuses.
     private(set) var configuration: VMConfiguration
 
+    /// Kernova's own state for this VM, mirrored from `host-state.json`.
+    ///
+    /// Written only by ``VMLibrary``, through ``replaceHostState(with:key:)``.
+    /// A snapshot revert installs a new ``configuration`` and leaves this as it
+    /// was.
+    private(set) var hostState: VMHostState
+
+    /// ``configuration`` and ``hostState`` as one value.
+    var settings: VMSettings { VMSettings(configuration: configuration, hostState: hostState) }
+
     /// Where this VM is in its lifecycle — the one stored value its status, its
     /// failure message and every liveness predicate here are read off.
     ///
@@ -232,16 +242,16 @@ final class VMInstance {
     /// whole session, not just at the moment of boot.
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
-    /// Routes a host-side mutation of this instance's configuration through
-    /// ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``, answering what
+    /// Routes a host-side mutation of this instance's settings through
+    /// ``VMLibrary/updateSettings(of:ifNotSaved:mutate:)``, answering what
     /// that answers.
     ///
     /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateConfiguration:
+    var onUpdateSettings:
         (
-            @MainActor (VMLibrary.UnsavedConfiguration, (inout VMConfiguration) -> Void) ->
+            @MainActor (VMLibrary.UnsavedConfiguration, (inout VMSettings) -> Void) ->
                 VMLibrary.ConfigurationWrite
         )?
 
@@ -272,15 +282,25 @@ final class VMInstance {
     /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
-    /// Applies a configuration mutation through ``onUpdateConfiguration``,
-    /// answering how the write ended. An instance no library has wired changes
-    /// nothing and is refused as ``VMLibrary/ConfigurationRefusal/noLibrary``.
+    /// Applies a settings mutation through ``onUpdateSettings``, answering how
+    /// the write ended. An instance no library has wired changes nothing and
+    /// is refused as ``VMLibrary/ConfigurationRefusal/noLibrary``.
+    @discardableResult
+    func performSettingsMutation(
+        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
+        _ mutate: (inout VMSettings) -> Void
+    ) -> VMLibrary.ConfigurationWrite {
+        onUpdateSettings?(unsaved, mutate) ?? .refused(.noLibrary)
+    }
+
+    /// ``performSettingsMutation(ifNotSaved:_:)`` for a mutation of the
+    /// configuration alone.
     @discardableResult
     func performConfigurationMutation(
         ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
         _ mutate: (inout VMConfiguration) -> Void
     ) -> VMLibrary.ConfigurationWrite {
-        onUpdateConfiguration?(unsaved, mutate) ?? .refused(.noLibrary)
+        performSettingsMutation(ifNotSaved: unsaved) { mutate(&$0.configuration) }
     }
 
     /// Replaces ``configuration``; `key` is what confines the call to
@@ -289,6 +309,12 @@ final class VMInstance {
         with configuration: VMConfiguration, key _: VMLibrary.ConfigurationWriteKey
     ) {
         self.configuration = configuration
+    }
+
+    /// Replaces ``hostState``; `key` is what confines the call to
+    /// ``VMLibrary``.
+    func replaceHostState(with hostState: VMHostState, key _: VMLibrary.ConfigurationWriteKey) {
+        self.hostState = hostState
     }
 
     /// The current install/version/liveness state of the guest agent for this VM.
@@ -358,10 +384,11 @@ final class VMInstance {
 
     init(
         configuration: VMConfiguration, bundleURL: URL, phase: VMLifecyclePhase = .stopped,
-        preferences: AppPreferences = .shared
+        hostState: VMHostState = VMHostState(), preferences: AppPreferences = .shared
     ) {
         self.instanceID = configuration.id
         self.configuration = configuration
+        self.hostState = hostState
         self.bundleURL = bundleURL
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.phase = phase
@@ -786,8 +813,8 @@ final class VMInstance {
     /// The one read every ephemeral path gates on, so a mode left on with a
     /// baseline that has gone reverts nothing rather than failing at power-off.
     var ephemeralBaselineSnapshot: VMSnapshot? {
-        guard configuration.ephemeralModeEnabled,
-            let id = configuration.ephemeralBaselineSnapshotID
+        guard hostState.ephemeralModeEnabled,
+            let id = hostState.ephemeralBaselineSnapshotID
         else { return nil }
         return snapshotManifest.snapshot(id: id)
     }
@@ -1488,12 +1515,12 @@ final class VMInstance {
                 // reversing a preference nothing restores needs better evidence
                 // than one dropped channel.
                 if !armed.hasSeenAgentThisSession,
-                    self.configuration.agentInstallNudgeDismissed
+                    self.hostState.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performConfigurationMutation(ifNotSaved: .keep) {
-                        $0.agentInstallNudgeDismissed = false
-                        $0.lastSeenGuestOSVersion = nil
+                    self.performSettingsMutation(ifNotSaved: .keep) {
+                        $0.hostState.agentInstallNudgeDismissed = false
+                        $0.configuration.lastSeenGuestOSVersion = nil
                     }
                 }
             }

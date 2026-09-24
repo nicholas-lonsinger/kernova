@@ -109,17 +109,88 @@ struct CommandLineToolInstallerTests {
         }
     }
 
-    @Test("A live link into another Kernova belongs to that copy")
-    func installRefusesALiveKernovaLink() throws {
+    /// A tool at `relativePath` inside `directory`, as another copy of Kernova
+    /// or anything else would carry it.
+    private func makeTool(_ relativePath: String, in directory: URL) throws -> URL {
+        let tool = directory.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(
+            at: tool.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: tool)
+        return tool
+    }
+
+    /// The tool drives the copy it links into, so a link into another copy is
+    /// ours to point at this one.
+    @Test("A live link into another Kernova names that copy, and is repointed")
+    func installRepointsAnotherCopysLink() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let helpers = directory.appendingPathComponent(
-            "Other.app/Contents/Helpers", isDirectory: true)
-        try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
-        let other = helpers.appendingPathComponent("kernova")
-        try Data("#!/bin/sh\n".utf8).write(to: other)
+        let other = try makeTool("Other.app/Contents/Helpers/kernova", in: directory)
         let destination = directory.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: other)
+
+        guard
+            case .anotherCopysLink(let app) = CommandLineToolInstaller.occupant(at: destination)
+        else {
+            Issue.record("expected a link into another copy")
+            return
+        }
+        #expect(app.path == directory.appendingPathComponent("Other.app").path)
+
+        try CommandLineToolInstaller.installSymlink(at: destination)
+
+        let target = try FileManager.default.destinationOfSymbolicLink(
+            atPath: destination.path(percentEncoded: false))
+        #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+    }
+
+    @Test("A relative link is read from its own folder")
+    func relativeLinkIsReadFromItsFolder() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = try makeTool("Other.app/Contents/Helpers/kernova", in: directory)
+        let bin = directory.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let destination = bin.appendingPathComponent("kernova")
+        try FileManager.default.createSymbolicLink(
+            atPath: destination.path(percentEncoded: false),
+            withDestinationPath: "../Other.app/Contents/Helpers/kernova")
+
+        guard
+            case .anotherCopysLink(let app) = CommandLineToolInstaller.occupant(at: destination)
+        else {
+            Issue.record("expected a link into another copy")
+            return
+        }
+        #expect(app.path == directory.appendingPathComponent("Other.app").path)
+    }
+
+    @Test("A link into this copy's own tool is its own, and is rewritten")
+    func installRewritesThisCopysLink() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("kernova")
+        // The test host is a built Kernova.app, which carries the tool.
+        try #require(
+            FileManager.default.fileExists(
+                atPath: CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false)))
+        try CommandLineToolInstaller.installSymlink(at: destination)
+
+        #expect(CommandLineToolInstaller.occupant(at: destination) == .thisCopysLink)
+        try CommandLineToolInstaller.installSymlink(at: destination)
+
+        let target = try FileManager.default.destinationOfSymbolicLink(
+            atPath: destination.path(percentEncoded: false))
+        #expect(target == CommandLineToolInstaller.bundledToolURL.path(percentEncoded: false))
+    }
+
+    @Test("A live link into a kernova outside an app's Contents/Helpers is left alone")
+    func installRefusesALinkOutsideAnAppBundle() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let loose = try makeTool("Tools/Contents/Helpers/kernova", in: directory)
+        let destination = directory.appendingPathComponent("kernova")
+        try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: loose)
 
         #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
         #expect(throws: InstallFailure.exists) {

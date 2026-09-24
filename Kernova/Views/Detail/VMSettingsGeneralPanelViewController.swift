@@ -313,7 +313,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshStartup() {
-        autoStartSwitch.state = instance.configuration.startsAutomaticallyOnLaunch ? .on : .off
+        autoStartSwitch.state = instance.hostState.startsAutomaticallyOnLaunch ? .on : .off
         refreshEphemeralMode()
 
         let message = resolved.warnings[.general]
@@ -335,7 +335,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// the switch.
     private func refreshEphemeralMode() {
         let manifest = instance.snapshotManifest
-        let enabled = instance.configuration.ephemeralModeEnabled
+        let enabled = instance.hostState.ephemeralModeEnabled
         ephemeralSwitch.state = enabled ? .on : .off
         // A VM with nothing to fall back to can't take the mode — but one that
         // is already in it can always be taken back out.
@@ -373,7 +373,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         }
         guard
             let index = ephemeralBaselinePopUp.itemArray.firstIndex(where: {
-                ($0.representedObject as? UUID) == instance.configuration.ephemeralBaselineSnapshotID
+                ($0.representedObject as? UUID) == instance.hostState.ephemeralBaselineSnapshotID
             })
         else { return }
         ephemeralBaselinePopUp.selectItem(at: index)
@@ -398,7 +398,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }
-        writeConfig { $0.applyEphemeralMode(enabled: true, baseline: id) }
+        writeSettings { $0.hostState.applyEphemeralMode(enabled: true, baseline: id) }
     }
 
     // MARK: - Mirrored toggles

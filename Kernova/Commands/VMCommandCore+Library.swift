@@ -362,14 +362,7 @@ extension VMCommandCore {
     func importVM(from sourceURL: URL) throws -> VMSummary {
         do {
             let vmsDir = try storageService.vmsDirectory
-            var config = try storageService.loadConfiguration(from: sourceURL)
-
-            // Auto-start is the one setting that runs a guest with no user
-            // action, so it is local intent rather than something a bundle
-            // carries in: a VM arriving pre-marked would boot on the next
-            // launch without ever being asked for. The local user marks it.
-            let arrivedMarkedForAutoStart = config.startsAutomaticallyOnLaunch
-            config.startsAutomaticallyOnLaunch = false
+            let config = try storageService.loadConfiguration(from: sourceURL)
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — select it rather than re-importing.
@@ -392,19 +385,22 @@ extension VMCommandCore {
                 preferences: preferences)
 
             let storage = storageService
-            let sanitizedConfig = config
             library.prepareBundle(
                 phantom, operation: .importing,
                 copyWork: { staged in
                     try await Self.runBoundedCopy {
                         try FileManager.default.copyItem(at: sourceURL, to: staged)
+                        // Auto-start is the one setting that runs a guest with
+                        // no user action, so it is local intent rather than
+                        // something a bundle carries in: a VM arriving
+                        // pre-marked would boot on the next launch without
+                        // ever being asked for. The local user marks it.
+                        var hostState = try storage.loadHostState(from: staged)
+                        guard hostState.startsAutomaticallyOnLaunch else { return }
+                        hostState.startsAutomaticallyOnLaunch = false
+                        try storage.saveHostState(hostState, to: staged)
                     }
-                    // The copy reproduces the source `config.json` verbatim, so
-                    // the cleared flag only reaches disk by writing it back.
-                    if arrivedMarkedForAutoStart {
-                        try storage.saveConfiguration(sanitizedConfig, to: staged)
-                    }
-                    return sanitizedConfig
+                    return config
                 },
                 onSuccess: {
                     #log(

@@ -134,7 +134,9 @@ final class AppResidencyController: WindowResidencyHosting {
         let socket = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
-            socketPath: KernovaAppGroup.socketPath(),
+            socketPath: Result { () throws(KernovaAppGroup.SocketPathFailure) in
+                try KernovaAppGroup.socketPath(forAppBundle: Bundle.main.bundleURL)
+            },
             awaitReady: { await readiness.ready() },
             onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() })
         socket.start()
@@ -231,7 +233,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// are set up for every provenance — they are what the process needs to be
     /// reachable and to answer for itself, whoever started it. The two postures
     /// differ only in what goes on screen; both arm the same auto-start pass, so
-    /// VMs marked `VMConfiguration.startsAutomaticallyOnLaunch` come up once the
+    /// VMs marked `VMHostState.startsAutomaticallyOnLaunch` come up once the
     /// library read lands.
     ///
     /// `.headless` drops straight to `.accessory` — *not* through

@@ -183,9 +183,11 @@ enum VMOverviewSummary {
         let config = instance.configuration
         switch category {
         case .general:
-            let ephemeralOn = config.ephemeralModeEnabled
+            let hostState = instance.hostState
+            let ephemeralOn = hostState.ephemeralModeEnabled
             return [
-                ToggleState(toggle: .autoStart, isOn: config.startsAutomaticallyOnLaunch, isEnabled: true),
+                ToggleState(
+                    toggle: .autoStart, isOn: hostState.startsAutomaticallyOnLaunch, isEnabled: true),
                 // A VM with nothing to fall back to can't take the mode — but one
                 // already in it can always be taken back out, matching the panel.
                 ToggleState(

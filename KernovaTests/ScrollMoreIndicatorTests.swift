@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ScrollMoreIndicator Tests", .admissionGated)
+@Suite("ScrollMoreIndicator Tests", .admissionGated, .scopedWindows)
 @MainActor
 struct ScrollMoreIndicatorTests {
     private static let viewportHeight: CGFloat = 200
@@ -118,20 +118,19 @@ struct ScrollMoreIndicatorTests {
     ///
     /// The flash only fires against a visible window, so every flash assertion
     /// builds its scroll view through this rather than ``makeScrollView(documentHeight:)``.
-    private func makeShownScrollView(documentHeight: CGFloat) -> (NSScrollView, NSWindow) {
+    private func makeShownScrollView(documentHeight: CGFloat) -> NSScrollView {
         let scrollView = makeScrollView(documentHeight: documentHeight)
-        return (scrollView, showInTestWindow(scrollView))
+        showInTestWindow(scrollView)
+        return scrollView
     }
 
     @Test("Latches the one-time scroller flash on overflow, not when content fits")
     func flashLatch() {
-        let (fitting, fittingWindow) = makeShownScrollView(documentHeight: 50)
-        defer { fittingWindow.orderOut(nil) }
+        let fitting = makeShownScrollView(documentHeight: 50)
         let fits = ScrollMoreIndicator(scrollView: fitting)
         #expect(fits.flashCountForTesting == 0)
 
-        let (overflowing, overflowingWindow) = makeShownScrollView(documentHeight: 1000)
-        defer { overflowingWindow.orderOut(nil) }
+        let overflowing = makeShownScrollView(documentHeight: 1000)
         let overflows = ScrollMoreIndicator(scrollView: overflowing)
         #expect(overflows.flashCountForTesting == 1)
     }
@@ -147,8 +146,7 @@ struct ScrollMoreIndicatorTests {
         let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
         #expect(indicator.flashCountForTesting == 0)
 
-        let window = showInTestWindow(scrollView)
-        defer { window.orderOut(nil) }
+        showInTestWindow(scrollView)
         indicator.rearmFlash()
         #expect(indicator.flashCountForTesting == 1)
     }
@@ -158,8 +156,7 @@ struct ScrollMoreIndicatorTests {
         // The settings pane opts into `.flash` alone: it should still latch the
         // one-time scroller flash on overflow, but never build or host the
         // chevron/fade overlays (its root is an NSStackView).
-        let (scrollView, window) = makeShownScrollView(documentHeight: 1000)
-        defer { window.orderOut(nil) }
+        let scrollView = makeShownScrollView(documentHeight: 1000)
         let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
         #expect(indicator.flashCountForTesting == 1)
 
@@ -189,8 +186,7 @@ struct ScrollMoreIndicatorTests {
     /// at full alpha.
     @Test("An indicator born spent holds the flash for an explicit rearm")
     func bornSpentFlashWaitsForRearm() {
-        let (scrollView, window) = makeShownScrollView(documentHeight: 1000)
-        defer { window.orderOut(nil) }
+        let scrollView = makeShownScrollView(documentHeight: 1000)
         let indicator = ScrollMoreIndicator(
             scrollView: scrollView, cues: .flash, flashOnFirstOverflow: false)
         // Overflowing content against a visible window — the born-armed
@@ -267,8 +263,7 @@ struct ScrollMoreIndicatorTests {
     @Test("rearmFlash re-arms the one-time flash for a reused indicator")
     func rearmFlashReevaluates() {
         // Mirrors the settings pane reusing one indicator across VM switches.
-        let (scrollView, window) = makeShownScrollView(documentHeight: 1000)
-        defer { window.orderOut(nil) }
+        let scrollView = makeShownScrollView(documentHeight: 1000)
         let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
         #expect(indicator.flashCountForTesting == 1)  // flashed on first overflow
 

@@ -53,22 +53,12 @@ struct VMSnapshotStore: VMSnapshotStoring {
 
     // MARK: - Manifest
 
-    func loadManifest(bundleURL: URL) -> VMSnapshotManifest {
+    func loadManifest(bundleURL: URL) throws -> VMSnapshotManifest {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        guard let data = try? Data(contentsOf: layout.snapshotManifestURL) else {
-            return VMSnapshotManifest()
-        }
-        let record: VMSnapshotManifestRecord
-        do {
-            record = try VMConfiguration.makeJSONDecoder().decode(
-                VMSnapshotManifestRecord.self, from: data)
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Failed to read the snapshot manifest in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            return VMSnapshotManifest()
-        }
+        guard
+            let record = try VMBundleSidecarFile.read(
+                VMSnapshotManifestRecord.self, at: layout.snapshotManifestURL)
+        else { return VMSnapshotManifest() }
         return VMSnapshotManifest(
             snapshots: record.snapshots.map { snapshot in
                 VMSnapshot(
@@ -96,8 +86,7 @@ struct VMSnapshotStore: VMSnapshotStoring {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         try FileManager.default.createDirectory(
             at: layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
-        let data = try VMConfiguration.makeJSONEncoder().encode(manifest.record)
-        try data.write(to: layout.snapshotManifestURL, options: .atomic)
+        try VMBundleSidecarFile.write(manifest.record, to: layout.snapshotManifestURL)
     }
 
     // MARK: - Capture

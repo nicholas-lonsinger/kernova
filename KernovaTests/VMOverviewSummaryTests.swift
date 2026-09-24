@@ -8,9 +8,10 @@ import Testing
 @MainActor
 struct VMOverviewSummaryTests {
     private func makeInstance(
-        guestOS: VMGuestOS = .macOS, mutate: (inout VMConfiguration) -> Void = { _ in }
+        guestOS: VMGuestOS = .macOS, hostState: VMHostState = VMHostState(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        VMInstanceFixture.make(guestOS: guestOS) {
+        VMInstanceFixture.make(guestOS: guestOS, hostState: hostState) {
             $0.cpuCount = 4
             $0.memorySizeInGB = 8
             mutate(&$0)
@@ -321,7 +322,7 @@ struct VMOverviewSummaryTests {
         #expect(ephemeral(instance)?.isEnabled == true)
 
         // A VM already in the mode can always be taken back out of it.
-        let stuck = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: nil) }
+        let stuck = makeInstance(hostState: VMHostState(ephemeralModeEnabled: true))
         #expect(ephemeral(stuck)?.isEnabled == true)
         #expect(ephemeral(stuck)?.isOn == true)
     }

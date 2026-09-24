@@ -73,10 +73,10 @@ final class GuestAccountContentViewController: NSViewController {
 
         addCard(
             [
-                makeGroupedFormCardRow("Full name", control: fullNameField, fillsControl: true),
-                makeGroupedFormCardRow("Account name", control: usernameField, fillsControl: true),
-                makeGroupedFormCardRow("Password", control: passwordField, fillsControl: true),
-                makeGroupedFormCardRow("Verify", control: verifyField, fillsControl: true),
+                GroupedFormFieldRow("Full name", control: fullNameField),
+                GroupedFormFieldRow("Account name", control: usernameField),
+                GroupedFormFieldRow("Password", control: passwordField),
+                GroupedFormFieldRow("Verify", control: verifyField),
             ], to: form)
         let caption = makeGroupedFormCaption(
             "Kernova doesn\u{2019}t save this password. If Kernova quits before the account is "

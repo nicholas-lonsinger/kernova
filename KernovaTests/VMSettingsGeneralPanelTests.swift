@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The General panel's own behavior, drilled into through the shell.
-@Suite("VM Settings General Panel Tests", .serialized, .admissionGated)
+@Suite("VM Settings General Panel Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsGeneralPanelTests {
     private let preferences = makeTestPreferences()
@@ -257,9 +257,8 @@ struct VMSettingsGeneralPanelTests {
     @Test("The Startup toggle reflects the configuration")
     func autoStartSwitchReflectsConfiguration() {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux) {
-            $0.startsAutomaticallyOnLaunch = true
-        }
+        let instance = makeSettingsInstance(
+            guestOS: .linux, hostState: VMHostState(startsAutomaticallyOnLaunch: true))
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -272,7 +271,7 @@ struct VMSettingsGeneralPanelTests {
     @Test("Toggling the Startup switch writes back to the configuration")
     func autoStartToggleWritesConfig() {
         let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(instance.configuration.startsAutomaticallyOnLaunch == false)
+        #expect(instance.hostState.startsAutomaticallyOnLaunch == false)
 
         guard let autoStart = firstSwitch(action: "autoStartToggled", in: vc.view) else {
             Issue.record("Expected a Startup switch")
@@ -281,7 +280,7 @@ struct VMSettingsGeneralPanelTests {
         autoStart.state = .on
         autoStart.sendAction(autoStart.action, to: autoStart.target)
 
-        #expect(instance.configuration.startsAutomaticallyOnLaunch == true)
+        #expect(instance.hostState.startsAutomaticallyOnLaunch == true)
     }
 
     /// The flag is consumed once at app launch and reaches no
@@ -329,11 +328,10 @@ struct VMSettingsGeneralPanelTests {
         snapshots: [VMSnapshot], ephemeral: Bool, isReadOnly: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux) {
-            if ephemeral, let baseline = snapshots.first {
-                $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
-            }
-        }
+        let baseline = ephemeral ? snapshots.first : nil
+        let instance = makeSettingsInstance(
+            guestOS: .linux,
+            hostState: baseline.map { .ephemeral(baseline: $0.id) } ?? VMHostState())
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: snapshots, currentID: snapshots.first?.id)
         let vc = makeSettingsPane(
@@ -396,9 +394,9 @@ struct VMSettingsGeneralPanelTests {
         toggle.state = .on
         toggle.sendAction(toggle.action, to: toggle.target)
 
-        #expect(instance.configuration.ephemeralModeEnabled)
+        #expect(instance.hostState.ephemeralModeEnabled)
         #expect(
-            instance.configuration.ephemeralBaselineSnapshotID
+            instance.hostState.ephemeralBaselineSnapshotID
                 == instance.snapshotManifest.currentID)
     }
 
@@ -413,8 +411,8 @@ struct VMSettingsGeneralPanelTests {
         toggle.state = .off
         toggle.sendAction(toggle.action, to: toggle.target)
 
-        #expect(!instance.configuration.ephemeralModeEnabled)
-        #expect(instance.configuration.ephemeralBaselineSnapshotID == nil)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == nil)
     }
 
     @Test("The baseline menu lists the VM's snapshots and selects the chosen one")
@@ -428,7 +426,7 @@ struct VMSettingsGeneralPanelTests {
         #expect(popUp.itemArray.count == 3)
         #expect(
             (popUp.selectedItem?.representedObject as? UUID)
-                == instance.configuration.ephemeralBaselineSnapshotID)
+                == instance.hostState.ephemeralBaselineSnapshotID)
     }
 
     @Test("Choosing another snapshot moves the baseline")
@@ -444,8 +442,8 @@ struct VMSettingsGeneralPanelTests {
         popUp.select(popUp.itemArray[0])
         popUp.sendAction(popUp.action, to: popUp.target)
 
-        #expect(instance.configuration.ephemeralBaselineSnapshotID == newest)
-        #expect(instance.configuration.ephemeralModeEnabled)
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == newest)
+        #expect(instance.hostState.ephemeralModeEnabled)
     }
 
     /// The flag is read at power-off and reaches no `VZVirtualMachineConfiguration`,
@@ -498,7 +496,7 @@ struct VMSettingsGeneralPanelTests {
         #expect(popUp.itemArray.count == 2)
         #expect(
             (popUp.selectedItem?.representedObject as? UUID)
-                == instance.configuration.ephemeralBaselineSnapshotID)
+                == instance.hostState.ephemeralBaselineSnapshotID)
     }
 
     @Test("A warm baseline says the VM comes back suspended")
@@ -558,14 +556,14 @@ struct VMSettingsGeneralPanelTests {
     ) {
         let viewModel = makeViewModel()
         let marksItself = guestOS == .macOS && markedMacOSVMs > 0
-        let instance = makeSettingsInstance(guestOS: guestOS) {
-            $0.startsAutomaticallyOnLaunch = marksItself
-        }
+        let instance = makeSettingsInstance(
+            guestOS: guestOS, hostState: VMHostState(startsAutomaticallyOnLaunch: marksItself))
         var library = [instance]
         for index in 0..<(markedMacOSVMs - (marksItself ? 1 : 0)) {
-            let other = makeSettingsInstance(guestOS: .macOS) {
+            let other = makeSettingsInstance(
+                guestOS: .macOS, hostState: VMHostState(startsAutomaticallyOnLaunch: true)
+            ) {
                 $0.name = "Marked \(index)"
-                $0.startsAutomaticallyOnLaunch = true
             }
             library.append(other)
         }

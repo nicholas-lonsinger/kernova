@@ -8,24 +8,28 @@ struct USBAccessoryPairingStore: USBAccessoryPairingStoring {
 
     func load(bundleURL: URL) -> USBAccessoryPairingSet {
         let url = VMBundleLayout(bundleURL: bundleURL).usbPairingsURL
-        guard let data = try? Data(contentsOf: url) else { return USBAccessoryPairingSet() }
         do {
-            return try VMConfiguration.makeJSONDecoder().decode(
-                USBAccessoryPairingSet.self, from: data)
+            return try VMBundleSidecarFile.read(USBAccessoryPairingSet.self, at: url)
+                ?? USBAccessoryPairingSet()
         } catch {
-            // An unreadable file leaves the VM taking nothing back, which is
-            // the state a user recovers from by attaching the device once.
             #log(
                 Self.logger, .error,
-                "Failed to read the USB accessory pairings in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Removing the USB accessory pairings in '\(bundleURL.lastPathComponent, privacy: .public)' because they could not be read: \(error.localizedDescription, privacy: .public)"
             )
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                #log(
+                    Self.logger, .error,
+                    "Failed to remove the unreadable '\(url.lastPathComponent, privacy: .public)' in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+            }
             return USBAccessoryPairingSet()
         }
     }
 
     func save(_ pairings: USBAccessoryPairingSet, bundleURL: URL) throws {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        let data = try VMConfiguration.makeJSONEncoder().encode(pairings)
-        try data.write(to: layout.usbPairingsURL, options: .atomic)
+        try VMBundleSidecarFile.write(
+            pairings, to: VMBundleLayout(bundleURL: bundleURL).usbPairingsURL)
     }
 }

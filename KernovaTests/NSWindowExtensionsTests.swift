@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("NSWindow.withStableContentSize Tests", .admissionGated)
+@Suite("NSWindow.withStableContentSize Tests", .admissionGated, .scopedWindows)
 @MainActor
 struct NSWindowExtensionsTests {
     /// A content view controller whose Auto Layout fitting size is far smaller
@@ -30,6 +30,7 @@ struct NSWindowExtensionsTests {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: makeFlexibleContentViewController()
         )
+        adoptAppWindow(window)
 
         let contentSize = window.contentRect(forFrameRect: window.frame).size
         #expect(contentSize.width == size.width)
@@ -46,6 +47,7 @@ struct NSWindowExtensionsTests {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: makeFlexibleContentViewController()
         )
+        adoptAppWindow(window)
         window.minSize = NSSize(width: 800, height: 500)
 
         let contentSize = window.contentRect(forFrameRect: window.frame).size
@@ -61,6 +63,7 @@ struct NSWindowExtensionsTests {
             styleMask: [.titled, .closable],
             contentViewController: controller
         )
+        adoptAppWindow(window)
 
         #expect(window.contentViewController === controller)
         #expect(window.styleMask.contains(.titled))

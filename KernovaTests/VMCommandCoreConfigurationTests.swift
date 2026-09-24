@@ -152,7 +152,7 @@ struct VMCommandCoreConfigurationTests {
             confirmed: false)
 
         #expect(instance.configuration.cpuCount == 3)
-        #expect(instance.configuration.displayPreference == .fullscreen)
+        #expect(instance.hostState.displayPreference == .fullscreen)
         #expect(
             answered == [
                 ConfigurationEntry(key: "cpus", value: "3"),
@@ -397,8 +397,8 @@ struct VMCommandCoreConfigurationTests {
             assignments: [ConfigurationEntry(key: "ephemeral", value: "on")],
             confirmed: false)
 
-        #expect(instance.configuration.ephemeralModeEnabled)
-        #expect(instance.configuration.ephemeralBaselineSnapshotID == snapshot.id)
+        #expect(instance.hostState.ephemeralModeEnabled)
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == snapshot.id)
     }
 
     @Test("A VM with nothing to fall back to cannot be made ephemeral")
@@ -412,7 +412,7 @@ struct VMCommandCoreConfigurationTests {
                 assignments: [ConfigurationEntry(key: "ephemeral", value: "true")],
                 confirmed: false)
         }
-        #expect(!instance.configuration.ephemeralModeEnabled)
+        #expect(!instance.hostState.ephemeralModeEnabled)
     }
 
     @Test("An unknown key refuses as an argument and writes nothing")

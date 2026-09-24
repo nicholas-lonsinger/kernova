@@ -837,7 +837,7 @@ struct ClipboardPassthroughSwitchTests {
 
 /// Verifies the buffer card's content-type chip, which states what the buffer
 /// holds — the job the status line used to share with transient messages.
-@Suite("ClipboardContentViewController content chip", .admissionGated)
+@Suite("ClipboardContentViewController content chip", .admissionGated, .scopedWindows)
 @MainActor
 struct ClipboardContentChipTests {
     private let preferences = makeTestPreferences()

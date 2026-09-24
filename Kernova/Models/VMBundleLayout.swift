@@ -16,6 +16,11 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("config.json")
     }
 
+    /// The serialized ``VMHostState``, absent until something first writes it.
+    var hostStateURL: URL {
+        bundleURL.appendingPathComponent("host-state.json")
+    }
+
     var diskImageURL: URL {
         bundleURL.appendingPathComponent("Disk.asif")
     }
