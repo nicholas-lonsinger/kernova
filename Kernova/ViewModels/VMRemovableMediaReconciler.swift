@@ -146,28 +146,29 @@ final class VMRemovableMediaReconciler {
         }
     }
 
-    /// A pass VZ refused part-way.
+    /// A pass VZ refused some of.
     private struct RefusedPass {
         /// The session the pass acted for.
         let sessionID: UUID
         /// Each entry the settled list can name, by id — see
         /// ``applyLiveRemovableMediaChange(for:target:actingFor:)``.
         let lookup: [UUID: RemovableMediaItem]
-        let error: any Error
+        let failure: RemovableMediaReconcileFailure
     }
 
     /// Reconciles the live removable media list with `target`, diffing per id against
     /// `instance.liveRemovableMedia`.
     ///
     /// Detaches run before attaches, so swapping the medium in a slot cannot collide
-    /// with itself on a duplicate UUID.
+    /// with itself on a duplicate UUID — and a slot whose detach failed is not
+    /// attached again, since its medium is still there.
     ///
-    /// An unexpected detach or attach error stops the pass and is answered as a
-    /// ``RefusedPass``, from which the configuration is settled on
-    /// `instance.liveRemovableMedia` — so the UI snaps to what is actually
-    /// attached rather than describing a state VZ refused. `deviceNotFound`
-    /// (which also covers a guest-side eject) and `noVirtualMachine` are handled
-    /// as confirmed-gone / silent bail.
+    /// Every other item is attempted whatever happened to the ones before it.
+    /// Any unexpected error is answered in a ``RefusedPass``, from which the
+    /// configuration is settled on `instance.liveRemovableMedia` — so the UI
+    /// snaps to what is actually attached rather than describing a state VZ
+    /// refused. `deviceNotFound` (which also covers a guest-side eject) and
+    /// `noVirtualMachine` are handled as confirmed-gone / silent bail.
     ///
     /// Every framework call and bookkeeping write here acts for `sessionID` and
     /// drops once that session is no longer live.
@@ -227,8 +228,10 @@ final class VMRemovableMediaReconciler {
             toAttach.append(targetItem)
         }
 
+        var failures: [RemovableMediaReconcileFailure.Item] = []
         // Apply detaches first so duplicate-UUID conflicts can't fire when
         // a swap reuses an id with a different attachment.
+        var stillAttachedIDs: Set<UUID> = []
         for device in toDetach {
             do {
                 try await lifecycle.detachRemovableMedia(device, from: instance, for: sessionID)
@@ -251,11 +254,12 @@ final class VMRemovableMediaReconciler {
                     Self.logger, .error,
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                return RefusedPass(sessionID: sessionID, lookup: rollbackLookup, error: error)
+                failures.append(.init(name: device.displayName, operation: .eject, error: error))
+                stillAttachedIDs.insert(device.id)
             }
         }
 
-        for item in toAttach {
+        for item in toAttach where !stillAttachedIDs.contains(item.id) {
             do {
                 // The scope must stay live while the service resolves the path and
                 // opens the attachment; on success it is registered with the instance
@@ -287,10 +291,13 @@ final class VMRemovableMediaReconciler {
                     Self.logger, .error,
                     "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                return RefusedPass(sessionID: sessionID, lookup: rollbackLookup, error: error)
+                failures.append(.init(name: item.label, operation: .attach, error: error))
             }
         }
-        return nil
+        guard !failures.isEmpty else { return nil }
+        return RefusedPass(
+            sessionID: sessionID, lookup: rollbackLookup,
+            failure: RemovableMediaReconcileFailure(items: failures))
     }
 
     /// Settles the configuration on the live list and surfaces the error —
@@ -307,6 +314,27 @@ final class VMRemovableMediaReconciler {
         }
         let live = instance.liveRemovableMedia.compactMap { refused.lookup[$0.id] }
         onSettle?(instance, live.isEmpty ? nil : live)
-        onFailure?(refused.error)
+        onFailure?(refused.failure)
+    }
+}
+
+/// Every item a reconcile pass could not attach or eject, each named with what
+/// went wrong.
+struct RemovableMediaReconcileFailure: LocalizedError {
+    struct Item {
+        enum Operation { case attach, eject }
+
+        let name: String
+        let operation: Operation
+        let error: any Error
+    }
+
+    let items: [Item]
+
+    var errorDescription: String? {
+        items.map { item in
+            let verb = item.operation == .attach ? "attach" : "eject"
+            return "Couldn\u{2019}t \(verb) \u{201C}\(item.name)\u{201D}. \(item.error.localizedDescription)"
+        }.joined(separator: "\n")
     }
 }

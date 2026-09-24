@@ -24,25 +24,13 @@ struct VMCapabilityCatalogTests {
         usbAccessories: (any USBAccessoryProviding)? = nil
     ) -> Harness {
         let storage = MockVMStorageService()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            usbAccessoryService: usbAccessories,
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: MockFileSystem()
-        )
-        let library = VMLibrary(
-            storageService: storage,
-            snapshotStore: MockVMSnapshotStore(),
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization,
+            usbAccessoryService: usbAccessories)
+        let library = makeWiredLibrary(
+            storage: storage,
             lifecycle: lifecycle,
-            fileSystem: MockFileSystem(),
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         return Harness(
             catalog: VMCapabilityCatalog(library: library), library: library, lifecycle: lifecycle,
             storage: storage)
@@ -211,7 +199,7 @@ struct VMCapabilityCatalogTests {
     @Test("Nothing is available that is not applicable")
     func availabilityImpliesApplicability() {
         for phase in VMLifecyclePhaseFixtures.all {
-            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
+            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install", macAddress: nil)]] {
                 let harness = makeHarness()
                 let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
                 for capability in VMCapability.allCases
@@ -229,7 +217,7 @@ struct VMCapabilityCatalogTests {
         for phase in VMLifecyclePhaseFixtures.all {
             let stockedHarness = makeHarness()
             let stocked = makeInstance(
-                in: stockedHarness, phase: phase, snapshots: [VMSnapshot(name: "Clean install")])
+                in: stockedHarness, phase: phase, snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
             #expect(
                 stockedHarness.catalog.isApplicable(.revertToSnapshot, to: stocked)
                     == !phase.isTransitioning, "\(phase)")
@@ -253,7 +241,7 @@ struct VMCapabilityCatalogTests {
         try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(harness.catalog.stopAction(for: suspended) == .discardSavedState)
 
-        let baseline = VMSnapshot(name: "Ephemeral")
+        let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
         let ephemeral = makeInstance(
             in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline]
         ) {
@@ -289,7 +277,7 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()),
-            snapshots: [VMSnapshot(name: "Clean install")])
+            snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
@@ -333,7 +321,7 @@ struct VMCapabilityCatalogTests {
     func cloneInFlightLocksSourceButNothingElse() {
         let harness = makeHarness()
         let source = makeInstance(
-            in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install")])
+            in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
         let other = makeInstance(in: harness, name: "Other")
         let phantom = makeInstance(in: harness, name: "Source Copy")
         let task = Task {}
@@ -383,7 +371,7 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness(virtualization: suspending)
         let instance = makeInstance(
             in: harness, phase: .livePaused(sessionID: UUID()),
-            snapshots: [VMSnapshot(name: "Clean install")])
+            snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
 
         #expect(harness.catalog.isAvailable(.takeSnapshot, on: instance))
         #expect(harness.catalog.isAvailable(.revertToSnapshot, on: instance))
@@ -514,7 +502,7 @@ struct VMCapabilityCatalogTests {
         }
 
         for phase in VMLifecyclePhaseFixtures.all {
-            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
+            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install", macAddress: nil)]] {
                 let harness = makeHarness()
                 let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
                 for capability in VMCapability.allCases where !isAnException(capability, in: phase) {
@@ -550,8 +538,8 @@ struct VMCapabilityCatalogTests {
     @Test("An Ephemeral baseline is undeletable, and every other snapshot is not")
     func canDeleteSnapshotProtectsTheEphemeralBaseline() {
         let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install")
-        let later = VMSnapshot(name: "Configured")
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
         let instance = makeInstance(in: harness, snapshots: [baseline, later]) {
             $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
         }
@@ -569,7 +557,7 @@ struct VMCapabilityCatalogTests {
     @Test("No snapshot is deletable in a state the manifest cannot be edited in")
     func canDeleteSnapshotFollowsTheCapability() {
         let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Configured")
+        let snapshot = VMSnapshot(name: "Configured", macAddress: nil)
         let instance = makeInstance(
             in: harness, phase: .revertingToSnapshot, snapshots: [snapshot])
 
@@ -583,8 +571,8 @@ struct VMCapabilityCatalogTests {
     @Test("The delete offer names the baseline bar apart from an unavailable manifest")
     func snapshotDeleteOfferNamesWhatBarsIt() {
         let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install")
-        let later = VMSnapshot(name: "Configured")
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
         let instance = makeInstance(in: harness, snapshots: [baseline, later]) {
             $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
         }

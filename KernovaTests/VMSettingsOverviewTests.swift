@@ -427,7 +427,7 @@ struct VMSettingsOverviewTests {
         #expect(findLabel(withText: "Snapshots", in: snapshots) != nil)
         #expect(findLabel(withText: "Latest", in: snapshots) == nil)
 
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         reapply(vc, (instance, viewModel))
@@ -494,8 +494,8 @@ struct VMSettingsOverviewTests {
         let (vc, instance, viewModel) = makeController()
         // Listed, because the snapshot-size read addresses its VM by id.
         viewModel.library.instances.append(instance)
-        let first = VMSnapshot(name: "First")
-        let second = VMSnapshot(name: "Second")
+        let first = VMSnapshot(name: "First", macAddress: nil)
+        let second = VMSnapshot(name: "Second", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second], currentID: second.id)
         reapply(vc, (instance, viewModel))
@@ -506,7 +506,7 @@ struct VMSettingsOverviewTests {
 
         // Capturing another leaves the set part-measured, so the card states the
         // count alone until the fresh read covers the newcomer too.
-        let third = VMSnapshot(name: "Third")
+        let third = VMSnapshot(name: "Third", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second, third], currentID: third.id)
         reapply(vc, (instance, viewModel))
@@ -519,7 +519,7 @@ struct VMSettingsOverviewTests {
         // not land beside the previous VM's.
         let other = makeInstance(guestOS: .macOS)
         viewModel.library.instances.append(other)
-        let onlySnapshot = VMSnapshot(name: "Other")
+        let onlySnapshot = VMSnapshot(name: "Other", macAddress: nil)
         other.snapshotManifest = VMSnapshotManifest(
             snapshots: [onlySnapshot], currentID: onlySnapshot.id)
         vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)

@@ -31,47 +31,65 @@ func makeTestPreferences() -> AppPreferences {
     AppPreferences(defaults: makeTestDefaults())
 }
 
-// MARK: - Configuration edits
+// MARK: - Library construction
 
-/// A real `VMLibrary` over mocks, holding `instances` wired as every
-/// construction site wires one — what a test changes a VM's configuration
+/// A `VMLifecycleCoordinator` over mocks — the one a test library is built on,
+/// for a test that also drives the coordinator itself.
+@MainActor
+func makeTestLifecycle(
+    virtualization: any VirtualizationProviding = MockVirtualizationService(),
+    installService: any MacOSInstallProviding = MockMacOSInstallService(),
+    removableMedia: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
+    usbAccessoryService: (any USBAccessoryProviding)? = nil,
+    linuxImageResolveService: any LinuxImageResolving = MockLinuxImageResolveService(),
+    downloadService: any Downloading = MockDownloadService(),
+    fileSystem: MockFileSystem = MockFileSystem(),
+    downloadsDirectory: URL? = FileManager.default.urls(
+        for: .downloadsDirectory, in: .userDomainMask
+    ).first
+) -> VMLifecycleCoordinator {
+    VMLifecycleCoordinator(
+        virtualizationService: virtualization,
+        installService: installService,
+        ipswService: MockIPSWService(),
+        removableMediaDeviceService: removableMedia,
+        usbAccessoryService: usbAccessoryService,
+        linuxImageResolveService: linuxImageResolveService,
+        downloadService: downloadService,
+        fileSystem: fileSystem,
+        downloadsDirectory: downloadsDirectory)
+}
+
+/// A real `VMLibrary` over mocks — the pairing store aside, which is the
+/// production one unless a test passes its own — holding `instances`
+/// registered as a load would have left them: the test target's one
+/// construction of a library, and what a test changes a VM's configuration
 /// through once the VM exists, since only the library writes it.
 ///
-/// A manifest an instance already holds is kept, where wiring alone would
-/// replace it with the store's. The caller keeps the library alive for as long
-/// as it edits: each instance reaches it weakly.
-///
-/// `lifecycle`, when given, stands in for the one built over `virtualization`
-/// and `removableMedia`, for a test that drives it directly.
+/// The caller keeps the library alive for as long as it edits: each instance
+/// reaches it weakly.
 @MainActor
 func makeWiredLibrary(
     holding instances: [VMInstance] = [],
     storage: MockVMStorageService = MockVMStorageService(),
     snapshotStore: any VMSnapshotStoring = MockVMSnapshotStore(),
-    virtualization: any VirtualizationProviding = MockVirtualizationService(),
-    removableMedia: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
+    lifecycle: VMLifecycleCoordinator? = nil,
+    fileSystem: MockFileSystem = MockFileSystem(),
     preferences: AppPreferences = makeTestPreferences(),
-    lifecycle: VMLifecycleCoordinator? = nil
+    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    arpTable: ScriptedARPTable = ScriptedARPTable(),
+    usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore()
 ) -> VMLibrary {
-    let fileSystem = MockFileSystem()
     let library = VMLibrary(
         storageService: storage,
         snapshotStore: snapshotStore,
-        lifecycle: lifecycle
-            ?? VMLifecycleCoordinator(
-                virtualizationService: virtualization,
-                installService: MockMacOSInstallService(),
-                ipswService: MockIPSWService(),
-                removableMediaDeviceService: removableMedia,
-                linuxImageResolveService: MockLinuxImageResolveService(),
-                downloadService: MockDownloadService(),
-                fileSystem: fileSystem,
-                downloadsDirectory: nil),
+        lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
         fileSystem: fileSystem,
         preferences: preferences,
-        vmnetNetworks: MockVmnetNetworkProvider(),
-        arpTable: ScriptedARPTable(),
-        entitlements: .entitled)
+        vmnetNetworks: vmnetNetworks,
+        arpTable: arpTable,
+        entitlements: .entitled,
+        usbPairingStore: usbPairingStore)
     for instance in instances {
         library.register(instance, storage: storage)
     }
@@ -80,12 +98,12 @@ func makeWiredLibrary(
 
 extension VMLibrary {
     /// Wires `instance` and adds it to the library, with its configuration in
-    /// `storage`'s bundles as a load would have found it.
+    /// `storage`'s bundles as a load would have found it. What the instance
+    /// already holds — its snapshots, its pairings — stands for what its
+    /// bundle holds.
     func register(_ instance: VMInstance, storage: MockVMStorageService) {
         storage.bundles[instance.bundleURL] = instance.configuration
-        let manifest = instance.snapshotManifest
-        wirePersistence(for: instance)
-        if !manifest.isEmpty { instance.snapshotManifest = manifest }
+        wireHooks(for: instance)
         instances.append(instance)
     }
 
@@ -96,8 +114,11 @@ extension VMLibrary {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ mutate: (inout VMConfiguration) -> Void
     ) {
-        let landed = updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
-        #expect(landed, "the configuration edit did not land", sourceLocation: sourceLocation)
+        guard case .saved = updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
+        else {
+            Issue.record("the configuration edit did not land", sourceLocation: sourceLocation)
+            return
+        }
     }
 }
 

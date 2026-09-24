@@ -68,7 +68,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Snapshot call tracking
 
     /// Snapshots passed to `takeSnapshot`, in call order.
-    private(set) var takenSnapshots: [VMSnapshot] = []
+    private(set) var takenSnapshots: [VMSnapshotRecord] = []
     /// Snapshots passed to `revertToSnapshot`, in call order.
     private(set) var revertedSnapshots: [VMSnapshot] = []
 
@@ -174,7 +174,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// where it was found, suspended and stopped resting session-less where
     /// they started.
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
@@ -200,7 +200,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         takenSnapshots.append(snapshot)
         instance.enter(phases.resting)
-        return snapshot.captured(under: configuration)
+        return VMSnapshot(snapshot, macAddress: configuration.macAddress)
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn

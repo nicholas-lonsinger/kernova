@@ -81,7 +81,7 @@ protocol VirtualizationProviding: Sendable {
     /// Answers `snapshot` carrying the ``VMSnapshot/macAddress`` of the
     /// configuration the capture wrote.
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot
 
     /// Returns the VM to `snapshot`, discarding whatever session is live and

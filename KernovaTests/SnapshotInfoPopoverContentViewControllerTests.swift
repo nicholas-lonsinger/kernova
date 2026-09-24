@@ -19,7 +19,7 @@ struct SnapshotInfoPopoverContentViewControllerTests {
     ) -> SnapshotInfoPopoverContentViewController {
         let snapshot = VMSnapshot(
             name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            notes: notes, kind: kind)
+            notes: notes, kind: kind, macAddress: nil)
         let controller = SnapshotInfoPopoverContentViewController(
             snapshot: snapshot, onDiskText: "2 GB",
             onCommitNotes: { recorder.committed.append($0) })

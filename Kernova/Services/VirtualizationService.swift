@@ -520,7 +520,7 @@ final class VirtualizationService {
     /// snapshot directory and leaves the VM where it was: live, paused at
     /// worst, or stopped.
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot {
         #log(
             Self.logger, .debug,
@@ -546,7 +546,7 @@ final class VirtualizationService {
 
     /// The guest's memory plus the bundle's disks, from a live VM.
     private func takeWarmSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot {
         guard instance.canSave, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(
@@ -565,7 +565,7 @@ final class VirtualizationService {
     /// entitlement a real `VZVirtualMachine` needs.
     @discardableResult
     static func captureWarmSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring,
         session: any VMSnapshotSessionOperating, sessionID: UUID
     ) async throws -> VMSnapshot {
         let wasRunning = instance.phase == .running(sessionID: sessionID)
@@ -614,7 +614,7 @@ final class VirtualizationService {
                     "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)', which lost its session mid-capture — leaving it \(instance.status.displayName, privacy: .public)"
                 )
             }
-            return snapshot.captured(under: configuration)
+            return VMSnapshot(snapshot, macAddress: configuration.macAddress)
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
@@ -638,7 +638,7 @@ final class VirtualizationService {
     /// explicit quit wait the copy out
     /// (``VMLifecyclePhase/terminationMustWaitOut``).
     private func takeColdSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot {
         guard instance.phase == .stopped else {
             throw VirtualizationError.invalidStateTransition(
@@ -664,7 +664,7 @@ final class VirtualizationService {
                 Self.logger, .notice,
                 "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
-            return snapshot.captured(under: configuration)
+            return VMSnapshot(snapshot, macAddress: configuration.macAddress)
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
@@ -690,7 +690,7 @@ final class VirtualizationService {
     /// explicit quit wait the copy out
     /// (``VMLifecyclePhase/terminationMustWaitOut``).
     private func takeSuspendedSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot {
         // The slot, not the phase: ``VMInstance/snapshotCaptureMode`` offers this
         // capture to any VM resting on one, and a guard that read the phase
@@ -721,7 +721,7 @@ final class VirtualizationService {
                 Self.logger, .notice,
                 "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
-            return snapshot.captured(under: configuration)
+            return VMSnapshot(snapshot, macAddress: configuration.macAddress)
         } catch {
             await Task.detached {
                 store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)

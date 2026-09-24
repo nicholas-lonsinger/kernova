@@ -9,9 +9,8 @@ enum RegisteredVMInstanceFixture {
     /// hooks a verb answers — the power-off that starts an Ephemeral revert,
     /// above all — are actually connected.
     ///
-    /// `snapshots` seeds the manifest, which ``VMLibrary/register(_:storage:)``
-    /// keeps over the store's. `mutate` runs after networking is turned off,
-    /// so it can turn it back on.
+    /// `snapshots` seeds the manifest. `mutate` runs after networking is
+    /// turned off, so it can turn it back on.
     @discardableResult
     static func register(
         name: String, phase: VMLifecyclePhase, guestOS: VMGuestOS, snapshots: [VMSnapshot] = [],

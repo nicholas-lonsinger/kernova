@@ -120,7 +120,7 @@ final class VMLibraryViewModel {
         of instance: VMInstance,
         ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
         mutate: (inout VMConfiguration) -> Void
-    ) -> Bool {
+    ) -> VMLibrary.ConfigurationWrite {
         library.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
     }
 

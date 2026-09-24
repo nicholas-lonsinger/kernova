@@ -35,6 +35,9 @@ struct VMMACAddressRegistryTests {
         return config
     }
 
+    private static let before = HeldSnapshot(name: "Before", isEphemeralBaseline: false)
+    private static let after = HeldSnapshot(name: "After", isEphemeralBaseline: false)
+
     /// A VM on the shared network at `mac`, holding `snapshots`.
     private func makeVM(
         _ name: String, mac: String?, snapshots: [VMSnapshot] = [],
@@ -58,7 +61,7 @@ struct VMMACAddressRegistryTests {
         let old = instance.configuration
         let new = shared(old, mac: "AA:BB:CC:DD:EE:01")
 
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == true)
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) != nil)
         #expect(failures.errorTitle == "MAC Address In Use")
         #expect(failures.errorMessage?.contains("Twin") == true)
         // The address as the edit spelled it, so the refusal names what was
@@ -75,7 +78,7 @@ struct VMMACAddressRegistryTests {
         let old = instance.configuration
         let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
 
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == false)
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == nil)
         #expect(failures.showError == false)
     }
 
@@ -96,8 +99,9 @@ struct VMMACAddressRegistryTests {
         #expect(
             conflict?.reason
                 == .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:01", configured: false, snapshots: ["Before"]))
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == true)
+                    address: "aa:bb:cc:dd:ee:01", holding: .snapshots(HeldSnapshots(Self.before)),
+                    otherHolders: []))
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) != nil)
         #expect(failures.errorMessage?.contains("\u{201C}Before\u{201D}") == true)
     }
 
@@ -120,7 +124,40 @@ struct VMMACAddressRegistryTests {
         #expect(
             registry.macAddressConflict(on: instance, movingFrom: old, to: new)?.reason
                 == .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:01", configured: true, snapshots: ["Before", "After"]))
+                    address: "aa:bb:cc:dd:ee:01",
+                    holding: .configurationAndSnapshots(HeldSnapshots(Self.before, [Self.after])),
+                    otherHolders: []))
+    }
+
+    @Test("Every VM holding an address is named, each with how it holds it")
+    func macAddressConflictNamesEveryHolder() {
+        let registry = makeRegistry()
+        let first = makeVM("First", mac: "aa:bb:cc:dd:ee:01")
+        let unrelated = makeVM("Unrelated", mac: "aa:bb:cc:dd:ee:03")
+        let baselineID = UUID()
+        let second = makeVM(
+            "Second", mac: "aa:bb:cc:dd:ee:02",
+            snapshots: [VMSnapshot(id: baselineID, name: "Baseline", macAddress: "aa:bb:cc:dd:ee:01")]
+        ) { $0.applyEphemeralMode(enabled: true, baseline: baselineID) }
+        let instance = VMInstanceFixture.make(name: "Mine")
+        roster.instances = [first, unrelated, second, instance]
+
+        let old = instance.configuration
+        let conflict = registry.macAddressConflict(
+            on: instance, movingFrom: old, to: shared(old, mac: "aa:bb:cc:dd:ee:01"))
+
+        #expect(conflict?.other === first)
+        #expect(
+            conflict?.reason
+                == .macAddressInUse(
+                    address: "aa:bb:cc:dd:ee:01", holding: .configuration,
+                    otherHolders: [
+                        MACAddressHolder(
+                            name: "Second",
+                            holding: .snapshots(
+                                HeldSnapshots(
+                                    HeldSnapshot(name: "Baseline", isEphemeralBaseline: true))))
+                    ]))
     }
 
     @Test("A VM moving back onto an address its own snapshot was taken with is admitted")
@@ -134,7 +171,7 @@ struct VMMACAddressRegistryTests {
         let old = instance.configuration
         let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
 
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == false)
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == nil)
         #expect(failures.showError == false)
     }
 
@@ -204,7 +241,7 @@ struct VMMACAddressRegistryTests {
         var new = old
         new.networkMode = .hostOnly
 
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == true)
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) != nil)
         #expect(failures.errorTitle == "Duplicate MAC Address")
     }
 
@@ -224,7 +261,7 @@ struct VMMACAddressRegistryTests {
         var new = old
         new.networkMode = .hostOnly
 
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == false)
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == nil)
         #expect(failures.showError == false)
     }
 
@@ -243,7 +280,7 @@ struct VMMACAddressRegistryTests {
         new.networkMode = .hostOnly
 
         // Nothing is attached yet — `start` is what refuses this one.
-        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == false)
+        #expect(registry.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) == nil)
         #expect(failures.showError == false)
     }
 }

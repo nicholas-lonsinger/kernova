@@ -1698,7 +1698,7 @@ struct VMLibraryViewModelTests {
             $0.networkMode = .shared
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForMACAddress)
         #expect(switching.configuration.networkMode == .hostOnly)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
     }
@@ -1715,7 +1715,7 @@ struct VMLibraryViewModelTests {
             $0.networkMode = .shared
         }
 
-        #expect(accepted)
+        #expect(accepted.landed)
         #expect(switching.configuration.networkMode == .shared)
         #expect(presenter.showError == false)
     }
@@ -1731,7 +1731,7 @@ struct VMLibraryViewModelTests {
             $0.memorySizeInGB = 6
         }
 
-        #expect(accepted)
+        #expect(accepted.landed)
         #expect(switching.configuration.memorySizeInGB == 6)
         #expect(presenter.showError == false)
     }
@@ -1763,7 +1763,7 @@ struct VMLibraryViewModelTests {
             $0.removableMedia = nil
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForSession)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(storage.saveConfigurationCallCount == 0)
         #expect(presenter.showError == false)
@@ -1779,7 +1779,7 @@ struct VMLibraryViewModelTests {
             $0.memorySizeInGB = 6
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForSession)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(instance.configuration.memorySizeInGB != 6)
         #expect(storage.saveConfigurationCallCount == 0)
@@ -1795,7 +1795,7 @@ struct VMLibraryViewModelTests {
             $0.memorySizeInGB = 6
         }
 
-        #expect(accepted)
+        #expect(accepted.landed)
         #expect(instance.configuration.memorySizeInGB == 6)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(storage.saveConfigurationCallCount == 1)
@@ -1811,7 +1811,7 @@ struct VMLibraryViewModelTests {
                 $0.removableMedia = nil
             }
 
-            #expect(accepted, "\(phase)")
+            #expect(accepted.landed, "\(phase)")
             #expect(instance.configuration.removableMedia == nil, "\(phase)")
             #expect(storage.saveConfigurationCallCount == 1, "\(phase)")
         }
@@ -2851,7 +2851,7 @@ struct VMLibraryViewModelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForMACAddress)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
         #expect(storage.saveConfigurationCallCount == 0)
         #expect(presenter.errorTitle == "MAC Address In Use")
@@ -2869,7 +2869,7 @@ struct VMLibraryViewModelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForMACAddress)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
     }
 
@@ -2884,7 +2884,7 @@ struct VMLibraryViewModelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForMACAddress)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
     }
 
@@ -2899,7 +2899,7 @@ struct VMLibraryViewModelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
-        #expect(accepted == false)
+        #expect(accepted.refusedForMACAddress)
         #expect(editor.configuration.name == "Editing VM")
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
     }
@@ -2916,7 +2916,7 @@ struct VMLibraryViewModelTests {
             $0.name = "Renamed"
         }
 
-        #expect(accepted)
+        #expect(accepted.landed)
         #expect(editor.configuration.name == "Renamed")
         #expect(!presenter.showError)
     }
@@ -2934,7 +2934,7 @@ struct VMLibraryViewModelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
-        #expect(accepted)
+        #expect(accepted.landed)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
         #expect(!presenter.showError)
     }
@@ -2950,7 +2950,7 @@ struct VMLibraryViewModelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
-        #expect(accepted)
+        #expect(accepted.landed)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
         #expect(!presenter.showError)
     }
@@ -5431,7 +5431,7 @@ struct VMLibraryViewModelTests {
 
         #expect(instance.hasGuestAgentInstallerMounted)
 
-        // Fire the hook the view model wired in `wirePersistence(for:)` — it
+        // Fire the hook the view model wired in `wireHooks(for:)` — it
         // must detach the installer regardless of which window is open.
         instance.onAgentBecameCurrent?()
 
@@ -5520,7 +5520,7 @@ struct VMLibraryViewModelTests {
                     path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
             ]
         }
-        departed.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Base")])
+        departed.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Base", macAddress: nil)])
         let sharer = VMInstanceFixture.make(name: "Sharer") {
             $0.storageDisks = [
                 StorageDisk(
@@ -5734,7 +5734,7 @@ struct VMLibraryViewModelTests {
         )
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(name: "Work")
-        viewModel.library.wirePersistence(for: instance)
+        viewModel.library.wireHooks(for: instance)
         viewModel.library.instances.append(instance)
         instance.usbPairings.upsert(
             USBAccessoryPairing(

@@ -91,14 +91,14 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .stopped)
         #expect(instance.canRevertToSnapshot == false)
 
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One", macAddress: nil)])
         #expect(instance.canRevertToSnapshot == true)
     }
 
     @Test("A running VM can be reverted — the revert discards the live session")
     func runningVMCanBeReverted() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One", macAddress: nil)])
         #expect(instance.canRevertToSnapshot == true)
     }
 
@@ -106,7 +106,7 @@ struct VMInstanceTests {
     func transitioningVMCannotBeReverted() {
         for phase in Self.transitionalPhases {
             let instance = VMInstanceFixture.make(phase: phase)
-            instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+            instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One", macAddress: nil)])
             #expect(instance.canRevertToSnapshot == false, "phase \(phase)")
         }
     }
@@ -1044,7 +1044,7 @@ struct VMInstanceTests {
     ) throws -> (
         instance: VMInstance, baseline: VMSnapshot, temp: URL
     ) {
-        let baseline = VMSnapshot(name: "Ephemeral")
+        let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
         let instance = VMInstanceFixture.make(name: "Ephemeral VM", phase: .suspended) {
             $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
             mutate(&$0)
@@ -1729,11 +1729,17 @@ struct VMInstanceTests {
         let library = makeWiredLibrary(holding: [instance], storage: storage)
         defer { withExtendedLifetime(library) {} }
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        let before = instance.configuration
 
-        // Under `.keep` the new value stands in memory, so a caller that needs
-        // memory and disk to agree has to be told they do not.
-        #expect(
-            !instance.performConfigurationMutation(ifNotSaved: .keep) { $0.displayHiDPI.toggle() })
+        let outcome = instance.performConfigurationMutation(ifNotSaved: .keep) {
+            $0.displayHiDPI.toggle()
+        }
+
+        // Under `.keep` the new value stands in memory while disk keeps the
+        // old one, and the caller is told the save did not land.
+        #expect(outcome.failedToSave)
+        #expect(instance.configuration.displayHiDPI == !before.displayHiDPI)
+        #expect(storage.bundles[instance.bundleURL]?.displayHiDPI == before.displayHiDPI)
     }
 
     @Test("A mutation on an instance no library has wired changes nothing")
@@ -1742,9 +1748,9 @@ struct VMInstanceTests {
         let before = instance.configuration
 
         #expect(
-            !instance.performConfigurationMutation(ifNotSaved: .discard) {
+            instance.performConfigurationMutation(ifNotSaved: .discard) {
                 $0.displayHiDPI.toggle()
-            })
+            }.refusedOutsideALibrary)
         #expect(instance.configuration == before)
     }
 

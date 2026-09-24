@@ -125,7 +125,7 @@ struct VMSnapshotStoreTests {
         // precision is the second.
         let snapshot = VMSnapshot(
             name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            notes: "tools configured")
+            notes: "tools configured", macAddress: nil)
         let manifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 
         try store.saveManifest(manifest, bundleURL: fixture.bundleURL)
@@ -145,7 +145,7 @@ struct VMSnapshotStoreTests {
             name: "Captured", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             macAddress: "aa:bb:cc:dd:ee:09")
         let unrecorded = VMSnapshot(
-            name: "No settings", createdAt: Date(timeIntervalSince1970: 1_700_000_100))
+            name: "No settings", createdAt: Date(timeIntervalSince1970: 1_700_000_100), macAddress: nil)
         _ = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: captured.id, configuration: configuration)
         try store.saveManifest(

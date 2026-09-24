@@ -320,7 +320,7 @@ struct VMSettingsGeneralPanelTests {
         VMSnapshot(
             name: name ?? "Snapshot \(index)",
             createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index) * 60),
-            kind: kind)
+            kind: kind, macAddress: nil)
     }
 
     /// Builds a settings pane over a VM carrying `snapshots`, the first of which

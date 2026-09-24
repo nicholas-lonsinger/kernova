@@ -204,14 +204,85 @@ public enum ConflictReason: Codable, Sendable, Hashable {
     /// Two VMs would run at once on one network with one address, which both
     /// of them already carry.
     case macAddress
-    /// A second VM in the library already holds `address`, whatever state
-    /// either is in — the uniqueness every writer of an address preserves.
-    /// It travels here because it is the address the caller asked for, which
-    /// the VM being refused does not carry: nothing else in the refusal names
-    /// which one collided.
+    /// Other VMs in the library already hold `address`, whatever state any is
+    /// in — the uniqueness every writer of an address preserves. It travels
+    /// here because it is the address the caller asked for, which the VM being
+    /// refused does not carry: nothing else in the refusal names which one
+    /// collided.
     ///
-    /// `configured` says whether the holder's configuration carries the
-    /// address, and `snapshots` names the holder's snapshots taken with it,
-    /// each of which a revert puts back on it; at least one of the two holds.
-    case macAddressInUse(address: String, configured: Bool, snapshots: [String])
+    /// `holding` is how the refusal's other VM holds it, and `otherHolders`
+    /// every further VM that does, in library order.
+    case macAddressInUse(
+        address: String, holding: MACAddressHolding, otherHolders: [MACAddressHolder])
+}
+
+/// How one VM holds a MAC address: in its configuration, in snapshots taken
+/// with it — each of which a revert puts back on it — or both.
+public enum MACAddressHolding: Codable, Sendable, Hashable {
+    case configuration
+    case snapshots(HeldSnapshots)
+    case configurationAndSnapshots(HeldSnapshots)
+
+    /// The holding `configured` and `snapshots` describe, or `nil` when they
+    /// describe none.
+    public init?(configured: Bool, snapshots: [HeldSnapshot]) {
+        switch (configured, HeldSnapshots(snapshots)) {
+        case (true, nil): self = .configuration
+        case (false, let held?): self = .snapshots(held)
+        case (true, let held?): self = .configurationAndSnapshots(held)
+        case (false, nil): return nil
+        }
+    }
+}
+
+/// The snapshots of one VM taken with a MAC address — at least one.
+public struct HeldSnapshots: Codable, Sendable, Hashable {
+    /// The first of them, in the order they were taken.
+    public let first: HeldSnapshot
+    /// The others, in the order they were taken.
+    public let rest: [HeldSnapshot]
+
+    /// `first`, then `rest`.
+    public init(_ first: HeldSnapshot, _ rest: [HeldSnapshot] = []) {
+        self.first = first
+        self.rest = rest
+    }
+
+    /// `snapshots`, or `nil` when there are none.
+    public init?(_ snapshots: [HeldSnapshot]) {
+        guard let first = snapshots.first else { return nil }
+        self.init(first, Array(snapshots.dropFirst()))
+    }
+
+    /// Every one of them, in the order they were taken.
+    public var all: [HeldSnapshot] { [first] + rest }
+}
+
+/// One snapshot taken with a MAC address.
+public struct HeldSnapshot: Codable, Sendable, Hashable {
+    /// What the user called it.
+    public let name: String
+    /// Whether it is its VM's Ephemeral Mode baseline, which cannot be
+    /// deleted while the mode is on.
+    public let isEphemeralBaseline: Bool
+
+    /// Names one snapshot.
+    public init(name: String, isEphemeralBaseline: Bool) {
+        self.name = name
+        self.isEphemeralBaseline = isEphemeralBaseline
+    }
+}
+
+/// A VM holding a MAC address beyond the one a refusal names, and how.
+public struct MACAddressHolder: Codable, Sendable, Hashable {
+    /// The VM's display name.
+    public let name: String
+    /// How it holds the address.
+    public let holding: MACAddressHolding
+
+    /// Names one holder.
+    public init(name: String, holding: MACAddressHolding) {
+        self.name = name
+        self.holding = holding
+    }
 }

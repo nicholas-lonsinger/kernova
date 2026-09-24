@@ -1437,7 +1437,7 @@ struct VMLifecycleCoordinatorTests {
         let persist = instance.onUpdateConfiguration
         instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? false
+            return persist?(unsaved, mutate) ?? .refused(.notInLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1656,7 +1656,7 @@ struct VMLifecycleCoordinatorTests {
         let persist = instance.onUpdateConfiguration
         instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? false
+            return persist?(unsaved, mutate) ?? .refused(.notInLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1715,7 +1715,7 @@ struct VMLifecycleCoordinatorTests {
         let persist = instance.onUpdateConfiguration
         instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? false
+            return persist?(unsaved, mutate) ?? .refused(.notInLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)

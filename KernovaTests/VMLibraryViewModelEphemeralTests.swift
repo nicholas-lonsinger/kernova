@@ -33,9 +33,9 @@ struct VMLibraryViewModelEphemeralTests {
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
             name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            kind: baselineKind)
+            kind: baselineKind, macAddress: nil)
         let later = VMSnapshot(
-            name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
+            name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
 
         var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         if ephemeral {

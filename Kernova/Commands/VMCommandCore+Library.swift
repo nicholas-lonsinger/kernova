@@ -47,10 +47,14 @@ extension VMCommandCore {
         #log(
             Self.logger, .debug,
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
-        guard
-            library.updateConfiguration(
-                of: instance, ifNotSaved: .discard, mutate: { $0.name = trimmed })
-        else {
+        switch library.updateConfiguration(
+            of: instance, ifNotSaved: .discard, mutate: { $0.name = trimmed })
+        {
+        case .saved:
+            return
+        case .refused(let refusal):
+            throw refusalError(refusal, on: instance)
+        case .notSaved:
             throw CommandError.operationFailed(
                 verb: .rename,
                 message:
@@ -402,12 +406,7 @@ extension VMCommandCore {
                     }
                     return sanitizedConfig
                 },
-                onSuccess: { [weak self] in
-                    // The phantom was wired before its bundle existed, so any
-                    // snapshots that arrived with the copy are read now — and
-                    // the addresses they hold join the duplicate trace then.
-                    self?.reloadSnapshots(for: phantom)
-                    self?.library.macAddresses.logDuplicateMACAddressHolders()
+                onSuccess: {
                     #log(
                         Self.logger, .notice,
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"

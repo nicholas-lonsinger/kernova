@@ -47,7 +47,7 @@ struct SnapshotSectionViewTests {
     ) -> VMSnapshot {
         VMSnapshot(
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds),
-            notes: notes)
+            notes: notes, macAddress: nil)
     }
 
     /// The recorder is held weakly by the view, so the caller must keep the
@@ -150,7 +150,7 @@ struct SnapshotSectionViewTests {
     func coldRowNamesWhatItHolds() {
         let (view, _) = makeSection()
         var cold = makeSnapshot("Before first boot")
-        cold.kind = .cold
+        cold.record.kind = .cold
         let warm = makeSnapshot("Mid-session", offsetSeconds: 60)
 
         render(

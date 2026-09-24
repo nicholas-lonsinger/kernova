@@ -236,10 +236,14 @@ final class VMInstance {
     /// ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``, answering what
     /// that answers.
     ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`; `nil` for instances created
+    /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateConfiguration: (@MainActor (VMLibrary.UnsavedConfiguration, (inout VMConfiguration) -> Void) -> Bool)?
+    var onUpdateConfiguration:
+        (
+            @MainActor (VMLibrary.UnsavedConfiguration, (inout VMConfiguration) -> Void) ->
+                VMLibrary.ConfigurationWrite
+        )?
 
     /// Fired when the guest agent handshakes a new version that is current
     /// (matches or exceeds what the host bundles) — i.e. an install/update just
@@ -251,7 +255,7 @@ final class VMInstance {
     /// Fired from ``restAfterPowerOff()`` — the guest powering off, however it got
     /// there: a graceful shutdown from inside, Stop, or Force Stop.
     ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler reverts an
+    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler reverts an
     /// Ephemeral Mode VM to its baseline here. A suspend does not reach it:
     /// `save` tears the session down and rests at `.paused`.
     @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
@@ -264,21 +268,19 @@ final class VMInstance {
     /// session: a pause and resume both rest at attachable phases and must not
     /// re-run whatever this triggers.
     ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler hands the
+    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler hands the
     /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
-    /// Applies a configuration mutation through ``onUpdateConfiguration``.
-    ///
-    /// - Returns: whether the new configuration reached disk, on the terms
-    ///   ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)`` states. An
-    ///   instance no library has wired changes nothing and answers `false`.
+    /// Applies a configuration mutation through ``onUpdateConfiguration``,
+    /// answering how the write ended. An instance no library has wired changes
+    /// nothing and is refused as ``VMLibrary/ConfigurationRefusal/notInLibrary``.
     @discardableResult
     func performConfigurationMutation(
         ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
         _ mutate: (inout VMConfiguration) -> Void
-    ) -> Bool {
-        onUpdateConfiguration?(unsaved, mutate) ?? false
+    ) -> VMLibrary.ConfigurationWrite {
+        onUpdateConfiguration?(unsaved, mutate) ?? .refused(.notInLibrary)
     }
 
     /// Replaces ``configuration``; `key` is what confines the call to

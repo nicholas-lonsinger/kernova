@@ -366,7 +366,7 @@ struct DetailAlertsPresenterTests {
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
         #expect(vm.isColdPaused)
-        let snapshot = VMSnapshot(name: "Before the update")
+        let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 
@@ -513,7 +513,7 @@ struct DetailAlertsPresenterTests {
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()
-        let baseline = VMSnapshot(name: "Clean install")
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let vm = makeInstance(in: viewModel) {
             $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
         }
@@ -548,7 +548,7 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.running(sessionID: UUID()))
-        let snapshot = VMSnapshot(name: "Before the update")
+        let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 
@@ -561,7 +561,7 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.stopped)
-        let snapshot = VMSnapshot(name: "Before the update", kind: .cold)
+        let snapshot = VMSnapshot(name: "Before the update", kind: .cold, macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 
@@ -573,7 +573,7 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.enter(.running(sessionID: UUID()))
-        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
+        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 
@@ -588,7 +588,7 @@ struct DetailAlertsPresenterTests {
         vm.enter(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
-        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
+        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 

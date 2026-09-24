@@ -27,25 +27,20 @@ struct VMLibraryTests {
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         arpTable: ScriptedARPTable = ScriptedARPTable()
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
-        let library = VMLibrary(
-            storageService: storageService,
+        let library = makeWiredLibrary(
+            storage: storageService,
             snapshotStore: VMSnapshotStore(),
-            lifecycle: VMLifecycleCoordinator(
-                virtualizationService: virtualizationService,
-                installService: MockMacOSInstallService(),
-                ipswService: MockIPSWService(),
-                removableMediaDeviceService: removableMediaDeviceService,
+            lifecycle: makeTestLifecycle(
+                virtualization: virtualizationService,
+                removableMedia: removableMediaDeviceService,
                 linuxImageResolveService: linuxImageResolveService,
                 downloadService: downloadService,
                 fileSystem: fileSystem,
-                downloadsDirectory: downloadsDirectory
-            ),
+                downloadsDirectory: downloadsDirectory),
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
-            arpTable: arpTable,
-            entitlements: .entitled
-        )
+            arpTable: arpTable)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
@@ -323,7 +318,7 @@ struct VMLibraryTests {
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/A.iso", readOnly: true)]
         }
 
-        #expect(saved == false)
+        #expect(saved.failedToSave)
         #expect(instance.name == "Before")
         #expect(instance.configuration.removableMedia == nil)
         #expect(storage.bundles[instance.bundleURL]?.name == "Before")
@@ -344,7 +339,7 @@ struct VMLibraryTests {
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/A.iso", readOnly: true)]
         }
 
-        #expect(saved == false)
+        #expect(saved.failedToSave)
         #expect(instance.name == "After")
         #expect(storage.bundles[instance.bundleURL]?.name == "Before")
         #expect(instance.hasRemovableMediaReconcileOwed)
@@ -427,6 +422,45 @@ struct VMLibraryTests {
         #expect(instance.configuration == written)
         #expect(storage.saveConfigurationCallCount == saves)
         #expect(!failures.showError)
+    }
+
+    @Test("A row still preparing takes no configuration write, having nowhere to save it")
+    func preparingRowRefusesAWrite() {
+        let (library, storage, _, _) = makeLibrary()
+        let phantom = VMInstanceFixture.make(name: "Copy") {
+            $0.agentInstallNudgeDismissed = true
+        }
+        library.register(phantom, storage: storage)
+        markPreparing(phantom)
+        let saves = storage.saveConfigurationCallCount
+
+        let outcome = library.updateConfiguration(of: phantom, ifNotSaved: .keep) {
+            $0.agentInstallNudgeDismissed = false
+        }
+
+        #expect(outcome.refusedWhilePreparing)
+        #expect(phantom.configuration.agentInstallNudgeDismissed)
+        #expect(storage.saveConfigurationCallCount == saves)
+    }
+
+    @Test("A guest-account retraction refused while preparing keeps both halves")
+    func refusedRetractionKeepsTheAccountAndItsPassword() {
+        let (library, storage, _, _) = makeLibrary()
+        let intent = GuestAccountIntent(
+            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        let phantom = VMInstanceFixture.make(name: "Creating", guestOS: .macOS) {
+            $0.pendingGuestAccount = intent
+        }
+        library.register(phantom, storage: storage)
+        library.holdGuestAccountPassword(GuestAccountPassword("analytical-engine"), for: phantom)
+        markPreparing(phantom, operation: .creating)
+
+        let outcome = library.retractGuestAccount(for: phantom)
+
+        #expect(outcome.refusedWhilePreparing)
+        #expect(phantom.configuration.pendingGuestAccount == intent)
+        #expect(library.heldGuestAccountPassword(for: phantom) != nil)
     }
 
     @Test("A preparing row takes on the configuration its copy wrote when it publishes")
@@ -944,31 +978,25 @@ struct VMLibraryTests {
 
     // MARK: - USB Accessory Pairings
 
-    /// A library whose pairings live in memory, and the store behind it.
+    /// A library whose pairings live in memory, the store behind it, and the
+    /// bundles it loads.
     private func makePairingLibrary() -> (VMLibrary, MockUSBAccessoryPairingStore) {
+        let (library, store, _) = makePairingLibraryWithStorage()
+        return (library, store)
+    }
+
+    private func makePairingLibraryWithStorage()
+        -> (VMLibrary, MockUSBAccessoryPairingStore, MockVMStorageService)
+    {
         let store = MockUSBAccessoryPairingStore()
-        let library = VMLibrary(
-            storageService: MockVMStorageService(),
-            snapshotStore: VMSnapshotStore(),
-            lifecycle: VMLifecycleCoordinator(
-                virtualizationService: MockVirtualizationService(),
-                installService: MockMacOSInstallService(),
-                ipswService: MockIPSWService(),
-                removableMediaDeviceService: MockRemovableMediaDeviceService(),
-                linuxImageResolveService: MockLinuxImageResolveService(),
-                downloadService: MockDownloadService(),
-                fileSystem: fileSystem
-            ),
-            fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled,
-            usbPairingStore: store
-        )
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(
+            storage: storage, snapshotStore: VMSnapshotStore(), fileSystem: fileSystem,
+            preferences: preferences, usbPairingStore: store)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
-        return (library, store)
+        return (library, store, storage)
     }
 
     private func pairing(key: String) -> USBAccessoryPairing {
@@ -977,36 +1005,48 @@ struct VMLibraryTests {
             receptacleLabel: "Port-USB-C@2", pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
     }
 
-    @Test("wirePersistence mirrors the pairings the bundle holds")
-    func wirePersistenceLoadsPairings() {
-        let (library, store) = makePairingLibrary()
-        let instance = VMInstanceFixture.make(name: "Paired VM")
-        store.setPairings(
-            USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: instance.bundleURL)
+    @Test("A loaded VM mirrors the pairings its bundle holds")
+    func loadMirrorsPairings() async {
+        let (library, store, storage) = makePairingLibraryWithStorage()
+        let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = VMInstanceFixture.bundleURL(for: config.id)
+        storage.bundles[bundleURL] = config
+        store.setPairings(USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: bundleURL)
 
-        library.wirePersistence(for: instance)
+        await library.loadVMs()
 
-        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
+        #expect(library.instances.first?.usbPairings.pairings.map(\.key) == ["k"])
     }
 
-    @Test("A bundle with no pairings mirrors an empty set")
-    func wirePersistenceLoadsNothingForAFreshBundle() {
-        let (library, _) = makePairingLibrary()
-        let instance = VMInstanceFixture.make(name: "Fresh VM")
+    @Test("A preparing row takes on its bundle's pairings when it publishes, and not before")
+    func publicationMirrorsPairings() async {
+        let (library, store) = makePairingLibrary()
+        let phantom = VMInstanceFixture.make(name: "Fresh VM")
+        store.setPairings(
+            USBAccessoryPairingSet(pairings: [pairing(key: "k")]), for: phantom.bundleURL)
+        let written = phantom.configuration
 
-        library.wirePersistence(for: instance)
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            library.prepareBundle(
+                phantom, operation: .importing,
+                copyWork: { _ in written },
+                onSuccess: { done.resume() },
+                onFailure: { error in
+                    Issue.record(error)
+                    done.resume()
+                })
+            // Registered, but its bundle does not exist yet.
+            #expect(phantom.usbPairings.isEmpty)
+        }
 
-        // A clone's bundle is a fresh directory, and the pairing file is
-        // not among the ones a clone copies — so the clone starts
-        // expecting nothing, rather than racing its source for one device.
-        #expect(instance.usbPairings.isEmpty)
+        #expect(phantom.usbPairings.pairings.map(\.key) == ["k"])
     }
 
     @Test("updateUSBPairings writes the bundle, and writes nothing when nothing changed")
     func updateUSBPairingsPersistsAndNoOps() {
         let (library, store) = makePairingLibrary()
         let instance = VMInstanceFixture.make(name: "Paired VM")
-        library.wirePersistence(for: instance)
+        library.wireHooks(for: instance)
 
         #expect(library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) })
         #expect(store.pairings(for: instance.bundleURL)?.pairings.map(\.key) == ["k"])
@@ -1021,7 +1061,7 @@ struct VMLibraryTests {
     func updateUSBPairingsReportsAFailedWrite() {
         let (library, store) = makePairingLibrary()
         let instance = VMInstanceFixture.make(name: "Paired VM")
-        library.wirePersistence(for: instance)
+        library.wireHooks(for: instance)
         store.saveError = VMStorageError.bundleNotFound(instance.bundleURL)
 
         let saved = library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) }
@@ -1039,7 +1079,7 @@ struct VMLibraryTests {
         let first = VMInstanceFixture.make(name: "First")
         let second = VMInstanceFixture.make(name: "Second")
         for instance in [first, second] {
-            library.wirePersistence(for: instance)
+            library.wireHooks(for: instance)
             library.instances.append(instance)
         }
         library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }

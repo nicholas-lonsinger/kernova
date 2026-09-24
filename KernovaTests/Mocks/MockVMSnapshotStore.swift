@@ -80,12 +80,13 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     /// snapshot's own `config.json`.
     func loadManifest(bundleURL: URL) -> VMSnapshotManifest {
         lock.withLock {
-            var manifest = state.manifests[bundleURL] ?? VMSnapshotManifest()
-            for index in manifest.snapshots.indices {
-                manifest.snapshots[index].macAddress =
-                    state.capturedConfigurations[manifest.snapshots[index].id]?.macAddress
-            }
-            return manifest
+            let manifest = state.manifests[bundleURL] ?? VMSnapshotManifest()
+            return VMSnapshotManifest(
+                snapshots: manifest.snapshots.map {
+                    VMSnapshot(
+                        $0.record, macAddress: state.capturedConfigurations[$0.id]?.macAddress)
+                },
+                currentID: manifest.currentID)
         }
     }
 

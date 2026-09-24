@@ -149,7 +149,7 @@ struct EphemeralModeInstanceTests {
 
     @Test("A VM with the mode off has no baseline")
     func noBaselineWhileOff() {
-        let snapshot = VMSnapshot(name: "Clean")
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
         let instance = makeInstance { $0.ephemeralBaselineSnapshotID = snapshot.id }
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 
@@ -159,7 +159,7 @@ struct EphemeralModeInstanceTests {
 
     @Test("The baseline resolves through the manifest")
     func baselineResolves() {
-        let snapshot = VMSnapshot(name: "Clean")
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
         let instance = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 
@@ -177,7 +177,7 @@ struct EphemeralModeInstanceTests {
 
     @Test("The running marker needs a live session, not just the mode")
     func liveSessionMarkerFollowsTheSession() {
-        let snapshot = VMSnapshot(name: "Clean")
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
         let instance = makeInstance { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
 

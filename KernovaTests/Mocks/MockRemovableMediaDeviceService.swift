@@ -6,6 +6,9 @@ final class MockRemovableMediaDeviceService: RemovableMediaAttaching {
     var attachCallCount = 0
     var detachCallCount = 0
     var attachError: (any Error)?
+    /// Thrown by an attach of that path alone, for a pass whose items fail
+    /// differently.
+    var attachErrorsByPath: [String: any Error] = [:]
     var detachError: (any Error)?
     var lastAttachedPath: String?
     var lastAttachedReadOnly: Bool?
@@ -21,7 +24,7 @@ final class MockRemovableMediaDeviceService: RemovableMediaAttaching {
         lastAttachedPath = diskImagePath
         lastAttachedReadOnly = readOnly
         lastAttachedDesiredUUID = desiredUUID
-        if let error = attachError { throw error }
+        if let error = attachError ?? attachErrorsByPath[diskImagePath] { throw error }
         // Honor the desired UUID so callers that pass one (e.g. the disk
         // image hot-swap flow) get back a RemovableMediaDeviceInfo whose `id` matches
         // what they asked for. Falls back to a fresh UUID when nil.

@@ -55,24 +55,16 @@ struct VMCommandEnvelopeRouterTests {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization,
             installService: installService,
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -139,7 +131,7 @@ struct VMCommandEnvelopeRouterTests {
     func snapshotOnDiskBytesCrossesTheWire() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Measured")
-        let snapshot = VMSnapshot(name: "Clean install")
+        let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         harness.snapshots.setSize(12_884_901_888, for: snapshot.id)
 
@@ -491,24 +483,15 @@ struct VMCommandEnvelopeRouterTests {
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization,
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             snapshotStore: snapshots, diskImageService: MockDiskImageService(),

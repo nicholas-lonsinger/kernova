@@ -81,7 +81,7 @@ struct VMLibraryViewModelSnapshotTests {
     }
 
     private func makeSnapshot(name: String = "Before the update") -> VMSnapshot {
-        VMSnapshot(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        VMSnapshot(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
     }
 
     /// Lists `snapshots` on `instance` and records what each captured, so a
@@ -220,7 +220,7 @@ struct VMLibraryViewModelSnapshotTests {
 
         await #expect(throws: VirtualizationError.self) {
             _ = try await harness.virtualization.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Mis-stamped", kind: .cold),
+                instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold),
                 store: harness.snapshots)
         }
 
@@ -252,7 +252,7 @@ struct VMLibraryViewModelSnapshotTests {
             harness.viewModel.updateConfiguration(of: ephemeral, ifNotSaved: .discard) {
                 $0.applyEphemeralMode(enabled: true, baseline: baseline.id)
                 $0.macAddress = "aa:bb:cc:dd:ee:06"
-            })
+            }.landed)
         let other = makeInstance(in: harness.viewModel, phase: .stopped, name: "Other") {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:07"
@@ -262,10 +262,15 @@ struct VMLibraryViewModelSnapshotTests {
             $0.macAddress = "aa:bb:cc:dd:ee:05"
         }
 
-        #expect(took == false)
+        #expect(took.refusedForMACAddress)
         #expect(other.configuration.macAddress == "aa:bb:cc:dd:ee:07")
         #expect(presenter.errorTitles == ["MAC Address In Use"])
-        #expect(presenter.errorMessage?.contains("\u{201C}Baseline\u{201D}") == true)
+        // The baseline is named as one, and offered no delete it would refuse.
+        #expect(
+            presenter.errorMessage
+                == "\u{201C}Ephemeral\u{201D} has a snapshot, \u{201C}Baseline\u{201D}, taken with aa:bb:cc:dd:ee:05. "
+                + "\u{201C}Baseline\u{201D} is its Ephemeral Mode baseline. "
+                + "Each virtual machine needs its own MAC address.")
 
         // The power-off revert puts the VM back on the baseline's address,
         // which nothing else took meanwhile.
@@ -353,7 +358,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel)
         let target = makeSnapshot(name: "Fresh install")
-        let other = VMSnapshot(name: "Later", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
+        let other = VMSnapshot(name: "Later", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
         seed(harness, instance, [target, other], currentID: other.id)
 
         await harness.viewModel.revert(instance, to: target)
@@ -409,7 +414,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, phase: .stopped)
         var target = makeSnapshot()
-        target.kind = .cold
+        target.record.kind = .cold
         seed(harness, instance, [target])
 
         await harness.viewModel.revert(instance, to: target, takingCheckpoint: true)

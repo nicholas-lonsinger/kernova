@@ -13,16 +13,7 @@ final class RevertOutcome {
 
 /// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.
 extension VMCommandCore {
-    // MARK: - Manifest
-
-    /// Re-reads a bundle's snapshot manifest into its instance.
-    ///
-    /// Every instance is seeded at construction; this is for the paths that put
-    /// files in the bundle afterwards (an import copying a bundle that already
-    /// carries snapshots).
-    func reloadSnapshots(for instance: VMInstance) {
-        instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
-    }
+    // MARK: - Sizes
 
     func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
         await snapshotOnDiskBytes(for: try resolve(selector))
@@ -80,7 +71,7 @@ extension VMCommandCore {
             throw invalidState(instance)
         }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshot = VMSnapshot(
+        let snapshot = VMSnapshotRecord(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: mode.kind)

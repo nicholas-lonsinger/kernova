@@ -52,12 +52,18 @@ final class MacOSInstallService {
 
         let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
         let machineIDData = try Data(contentsOf: instance.machineIdentifierURL)
-        // Not a reason to stop the install when the save fails, which the
-        // write reports itself: the build below reads an identity the
-        // configuration lacks from the files written just above.
-        instance.performConfigurationMutation(ifNotSaved: .discard) {
+        // The install stops unless the identity lands: the build below prefers
+        // the configuration's hardware model over the bundle's file, which
+        // `setupPlatformFiles` writes only when absent, so a model an earlier
+        // attempt recorded would stand in for this image's.
+        let recorded = instance.performConfigurationMutation(ifNotSaved: .discard) {
             $0.hardwareModelData = hardwareModelData
             $0.machineIdentifierData = machineIDData
+        }
+        switch recorded {
+        case .saved: break
+        case .notSaved(let error): throw error
+        case .refused(let refusal): throw refusal
         }
 
         instance.beginSessionContext()

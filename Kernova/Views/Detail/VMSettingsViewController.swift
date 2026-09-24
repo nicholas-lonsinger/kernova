@@ -270,10 +270,15 @@ final class VMSettingsViewController: NSViewController {
     // MARK: - Write helpers (route through updateConfiguration)
 
     /// - Returns: Whether the mutation was applied, so a caller whose control
-    ///   already moved can put it back when the view model refused.
+    ///   already moved can put it back — refused or unsaved alike, the
+    ///   configuration kept its old value.
     @discardableResult
     private func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        viewModel.updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
+        guard
+            case .saved = viewModel.updateConfiguration(
+                of: instance, ifNotSaved: .discard, mutate: mutate)
+        else { return false }
+        return true
     }
 }
 

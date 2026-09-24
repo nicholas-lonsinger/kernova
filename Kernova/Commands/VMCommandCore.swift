@@ -345,15 +345,35 @@ final class VMCommandCore: VMCommanding {
     ///
     /// The one write convention every verb in the core shares: a change that
     /// was refused, or whose save failed, changes nothing, and the verb says
-    /// so.
+    /// which.
     func writeConfiguration(
         of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
     ) throws {
-        guard library.updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate) else {
+        switch library.updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate) {
+        case .saved:
+            return
+        case .refused(let refusal):
+            throw refusalError(refusal, on: instance)
+        case .notSaved:
             throw CommandError.operationFailed(
                 verb: verb,
                 message:
                     "The change to \u{201C}\(instance.name)\u{201D} was not saved.")
+        }
+    }
+
+    /// The refusal a verb raises when the library turned its configuration
+    /// write away.
+    func refusalError(
+        _ refusal: VMLibrary.ConfigurationRefusal, on instance: VMInstance
+    ) -> CommandError {
+        switch refusal {
+        case .macAddressInUse(let conflict):
+            .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
+        case .sessionNotAttachable, .preparing:
+            invalidState(instance)
+        case .notInLibrary:
+            .notFound(.id(instance.id))
         }
     }
 

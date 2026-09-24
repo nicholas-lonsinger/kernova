@@ -24,24 +24,15 @@ struct VMCommandCoreConfigurationTests {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+        let lifecycle = makeTestLifecycle(
+            virtualization: MockVirtualizationService(),
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -294,7 +285,7 @@ struct VMCommandCoreConfigurationTests {
             #expect(
                 reason
                     == .macAddressInUse(
-                        address: "aa:bb:cc:dd:ee:ff", configured: true, snapshots: []))
+                        address: "aa:bb:cc:dd:ee:ff", holding: .configuration, otherHolders: []))
             #expect(error.message.contains("aa:bb:cc:dd:ee:ff"))
         }
 
@@ -321,7 +312,10 @@ struct VMCommandCoreConfigurationTests {
             return other.name == "Beta"
                 && reason
                     == .macAddressInUse(
-                        address: "aa:bb:cc:dd:ee:ff", configured: false, snapshots: ["Before"])
+                        address: "aa:bb:cc:dd:ee:ff",
+                        holding: .snapshots(
+                            HeldSnapshots(HeldSnapshot(name: "Before", isEphemeralBaseline: false))),
+                        otherHolders: [])
         }
 
         #expect(alpha.configuration == before)
@@ -394,7 +388,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("Ephemeral Mode is writable while the VM runs and pins the shared baseline")
     func ephemeralIsWritableWhileRunning() throws {
         let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Baseline", kind: .cold)
+        let snapshot = VMSnapshot(name: "Baseline", kind: .cold, macAddress: nil)
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), snapshots: [snapshot])
 

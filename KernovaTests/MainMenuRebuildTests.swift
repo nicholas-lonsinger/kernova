@@ -223,7 +223,7 @@ struct MainMenuRebuildTests {
         let fixture = makeFixture(instance: instance)
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
-        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean")]
+        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean", macAddress: nil)]
         fixture.controller.menuNeedsUpdate(revertMenu)
 
         // Each item renders two lines, so its title is matched by prefix.
@@ -239,7 +239,7 @@ struct MainMenuRebuildTests {
         let vmMenu = try #require(submenu(titled: "Virtual Machine", in: fixture.mainMenu))
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
-        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean")]
+        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean", macAddress: nil)]
         fixture.controller.menuNeedsUpdate(vmMenu)
 
         #expect(revertMenu.items.count == 1)

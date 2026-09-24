@@ -58,9 +58,10 @@ struct VMSnapshotStore: VMSnapshotStoring {
         guard let data = try? Data(contentsOf: layout.snapshotManifestURL) else {
             return VMSnapshotManifest()
         }
-        var manifest: VMSnapshotManifest
+        let record: VMSnapshotManifestRecord
         do {
-            manifest = try VMConfiguration.makeJSONDecoder().decode(VMSnapshotManifest.self, from: data)
+            record = try VMConfiguration.makeJSONDecoder().decode(
+                VMSnapshotManifestRecord.self, from: data)
         } catch {
             #log(
                 Self.logger, .error,
@@ -68,11 +69,13 @@ struct VMSnapshotStore: VMSnapshotStoring {
             )
             return VMSnapshotManifest()
         }
-        for index in manifest.snapshots.indices {
-            manifest.snapshots[index].macAddress = Self.capturedMACAddress(
-                in: layout.snapshotLayout(id: manifest.snapshots[index].id))
-        }
-        return manifest
+        return VMSnapshotManifest(
+            snapshots: record.snapshots.map { snapshot in
+                VMSnapshot(
+                    snapshot,
+                    macAddress: Self.capturedMACAddress(in: layout.snapshotLayout(id: snapshot.id)))
+            },
+            currentID: record.currentID)
     }
 
     /// The `macAddress` of the configuration a snapshot directory holds, or
@@ -93,7 +96,7 @@ struct VMSnapshotStore: VMSnapshotStoring {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         try FileManager.default.createDirectory(
             at: layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
-        let data = try VMConfiguration.makeJSONEncoder().encode(manifest)
+        let data = try VMConfiguration.makeJSONEncoder().encode(manifest.record)
         try data.write(to: layout.snapshotManifestURL, options: .atomic)
     }
 

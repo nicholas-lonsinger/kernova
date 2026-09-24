@@ -14,9 +14,6 @@ struct VMOverviewResolverTests {
 
     /// `inLibrary` lists the VM the resolver is bound to, which is what lets the
     /// reads it issues — each addressing its VM by id — answer at all.
-    ///
-    /// Listed rather than registered: `wirePersistence` re-reads the snapshot
-    /// manifest these tests seed by hand.
     private func makeResolver(
         instance: VMInstance,
         viewModel: VMLibraryViewModel? = nil,
@@ -241,7 +238,7 @@ struct VMOverviewResolverTests {
     @Test("The snapshots' footprint lands from an off-main read, keyed to its set")
     func snapshotFootprintFollowsItsSet() async throws {
         let instance = VMInstanceFixture.make()
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         let resolver = makeResolver(instance: instance, inLibrary: true)
@@ -260,7 +257,7 @@ struct VMOverviewResolverTests {
     @Test("A size already read survives the re-read the next snapshot triggers")
     func measuredSizesOutliveARereadOfTheSameVM() async throws {
         let instance = VMInstanceFixture.make()
-        let first = VMSnapshot(name: "First")
+        let first = VMSnapshot(name: "First", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [first], currentID: first.id)
         let resolver = makeResolver(instance: instance, inLibrary: true)
         resolver.refresh()
@@ -269,7 +266,7 @@ struct VMOverviewResolverTests {
 
         // Capturing a second snapshot re-issues the walk, which takes seconds on
         // a real VM — the row already measured keeps its figure meanwhile.
-        let second = VMSnapshot(name: "Second")
+        let second = VMSnapshot(name: "Second", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second], currentID: second.id)
         resolver.refresh()
@@ -287,8 +284,8 @@ struct VMOverviewResolverTests {
     @Test("Deleting a snapshot drops its size and leaves the rest measured")
     func deletingASnapshotDropsOnlyItsOwnSize() async throws {
         let instance = VMInstanceFixture.make()
-        let first = VMSnapshot(name: "First")
-        let second = VMSnapshot(name: "Second")
+        let first = VMSnapshot(name: "First", macAddress: nil)
+        let second = VMSnapshot(name: "Second", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second], currentID: second.id)
         let resolver = makeResolver(instance: instance, inLibrary: true)
@@ -310,7 +307,7 @@ struct VMOverviewResolverTests {
     func rebindingClearsTheOutgoingVMsValues() async {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = VMInstanceFixture.make()
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         let resolver = makeResolver(instance: instance, viewModel: viewModel, inLibrary: true)
@@ -332,7 +329,7 @@ struct VMOverviewResolverTests {
     @Test("A resolved read reports the category whose card it moved")
     func resolvedReadsReportTheirCategory() async {
         let instance = VMInstanceFixture.make()
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         let resolver = makeResolver(instance: instance, inLibrary: true)

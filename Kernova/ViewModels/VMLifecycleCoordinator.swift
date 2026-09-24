@@ -287,7 +287,7 @@ final class VMLifecycleCoordinator {
     // MARK: - Snapshots
 
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
     ) async throws -> VMSnapshot {
         try await serialized(instance, action: "takeSnapshot") {
             // A warm capture takes every passthrough accessory off before it

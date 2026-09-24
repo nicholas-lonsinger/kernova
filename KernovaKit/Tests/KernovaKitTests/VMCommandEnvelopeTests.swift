@@ -315,12 +315,18 @@ struct VMCommandEnvelopeTests {
             .conflict(
                 vm: summary, with: summary,
                 reason: .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:0f", configured: false, snapshots: ["Before"])),
+                    address: "aa:bb:cc:dd:ee:0f",
+                    holding: .snapshots(HeldSnapshots(Self.before)), otherHolders: [])),
             .conflict(
                 vm: summary, with: summary,
                 reason: .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:0f", configured: true,
-                    snapshots: ["Before", "After"])),
+                    address: "aa:bb:cc:dd:ee:0f",
+                    holding: .configurationAndSnapshots(HeldSnapshots(Self.before, [Self.baseline])),
+                    otherHolders: [
+                        MACAddressHolder(name: "Other", holding: .configuration),
+                        MACAddressHolder(
+                            name: "Third", holding: .snapshots(HeldSnapshots(Self.baseline))),
+                    ])),
             .invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."),
             .timedOut(vm: summary, verb: .stop, seconds: 60),
             .timedOut(vm: summary, verb: .restart, seconds: 12.5),
@@ -359,13 +365,24 @@ struct VMCommandEnvelopeTests {
                 .contains("2.5 seconds"))
     }
 
-    @Test("A taken MAC address names itself, its holder, and the VM asking for it")
-    func macAddressInUseCopyNamesTheAddress() {
+    private static let before = HeldSnapshot(name: "Before", isEphemeralBaseline: false)
+    private static let after = HeldSnapshot(name: "After", isEphemeralBaseline: false)
+    private static let baseline = HeldSnapshot(name: "Baseline", isEphemeralBaseline: true)
+
+    private func inUse(
+        _ holding: MACAddressHolding, others: [MACAddressHolder] = []
+    ) -> CommandErrorDTO {
         let holder = VMSummary(
             id: vmID, name: "Holder", status: "stopped", ipAddress: .unavailable)
-        let failure = CommandErrorDTO.conflict(
+        return .conflict(
             vm: summary, with: holder,
-            reason: .macAddressInUse(address: "aa:bb:cc:dd:ee:0f", configured: true, snapshots: []))
+            reason: .macAddressInUse(
+                address: "aa:bb:cc:dd:ee:0f", holding: holding, otherHolders: others))
+    }
+
+    @Test("A taken MAC address names itself, its holder, and the VM asking for it")
+    func macAddressInUseCopyNamesTheAddress() {
+        let failure = inUse(.configuration)
 
         #expect(failure.title == "MAC Address In Use")
         #expect(
@@ -375,27 +392,15 @@ struct VMCommandEnvelopeTests {
                 + "Change or delete \u{201C}Holder\u{201D} first to move this address to \u{201C}Alpha\u{201D}.")
     }
 
-    @Test("An address held only by a snapshot names the snapshot, and deleting it as the way out")
+    @Test("An address held only by snapshots names them, and deleting them as the way out")
     func macAddressInUseCopyNamesTheSnapshot() {
-        let holder = VMSummary(
-            id: vmID, name: "Holder", status: "stopped", ipAddress: .unavailable)
-        let one = CommandErrorDTO.conflict(
-            vm: summary, with: holder,
-            reason: .macAddressInUse(
-                address: "aa:bb:cc:dd:ee:0f", configured: false, snapshots: ["Before"]))
-        let two = CommandErrorDTO.conflict(
-            vm: summary, with: holder,
-            reason: .macAddressInUse(
-                address: "aa:bb:cc:dd:ee:0f", configured: false, snapshots: ["Before", "After"]))
-
-        #expect(one.title == "MAC Address In Use")
         #expect(
-            one.message
+            inUse(.snapshots(HeldSnapshots(Self.before))).message
                 == "\u{201C}Holder\u{201D} has a snapshot, \u{201C}Before\u{201D}, taken with aa:bb:cc:dd:ee:0f. "
                 + "Each virtual machine needs its own MAC address. "
                 + "Delete that snapshot first to move this address to \u{201C}Alpha\u{201D}.")
         #expect(
-            two.message
+            inUse(.snapshots(HeldSnapshots(Self.before, [Self.after]))).message
                 == "\u{201C}Holder\u{201D} has snapshots \u{201C}Before\u{201D} and \u{201C}After\u{201D} taken with aa:bb:cc:dd:ee:0f. "
                 + "Each virtual machine needs its own MAC address. "
                 + "Delete those snapshots first to move this address to \u{201C}Alpha\u{201D}.")
@@ -403,19 +408,52 @@ struct VMCommandEnvelopeTests {
 
     @Test("An address a holder uses and took a snapshot with names both, and both ways out")
     func macAddressInUseCopyNamesTheConfigurationAndSnapshot() {
-        let holder = VMSummary(
-            id: vmID, name: "Holder", status: "stopped", ipAddress: .unavailable)
-        let failure = CommandErrorDTO.conflict(
-            vm: summary, with: holder,
-            reason: .macAddressInUse(
-                address: "aa:bb:cc:dd:ee:0f", configured: true, snapshots: ["Before"]))
-
         #expect(
-            failure.message
+            inUse(.configurationAndSnapshots(HeldSnapshots(Self.before))).message
                 == "\u{201C}Holder\u{201D} already uses aa:bb:cc:dd:ee:0f, and has a snapshot, \u{201C}Before\u{201D}, taken with it. "
                 + "Each virtual machine needs its own MAC address. "
                 + "Delete \u{201C}Holder\u{201D}, or change its address and delete that snapshot, to move this address to \u{201C}Alpha\u{201D}."
         )
+    }
+
+    @Test("An Ephemeral Mode baseline is named as one, and offered no delete")
+    func macAddressInUseCopyOffersNoDeleteForABaseline() {
+        let message = inUse(.snapshots(HeldSnapshots(Self.baseline))).message
+
+        #expect(
+            message
+                == "\u{201C}Holder\u{201D} has a snapshot, \u{201C}Baseline\u{201D}, taken with aa:bb:cc:dd:ee:0f. "
+                + "\u{201C}Baseline\u{201D} is its Ephemeral Mode baseline. "
+                + "Each virtual machine needs its own MAC address.")
+    }
+
+    @Test("Every holder is named, and no single step is offered when several hold the address")
+    func macAddressInUseCopyNamesEveryHolder() {
+        let message = inUse(
+            .configuration,
+            others: [
+                MACAddressHolder(name: "Other", holding: .snapshots(HeldSnapshots(Self.before)))
+            ]
+        ).message
+
+        #expect(
+            message
+                == "\u{201C}Holder\u{201D} already uses aa:bb:cc:dd:ee:0f. "
+                + "\u{201C}Other\u{201D} has a snapshot, \u{201C}Before\u{201D}, taken with aa:bb:cc:dd:ee:0f. "
+                + "Each virtual machine needs its own MAC address.")
+    }
+
+    @Test("A holding answers nil for neither, and its snapshots keep their order")
+    func macAddressHoldingCannotBeNeither() {
+        #expect(MACAddressHolding(configured: false, snapshots: []) == nil)
+        #expect(MACAddressHolding(configured: true, snapshots: []) == .configuration)
+        #expect(
+            MACAddressHolding(configured: false, snapshots: [Self.before, Self.after])
+                == .snapshots(HeldSnapshots(Self.before, [Self.after])))
+        #expect(
+            MACAddressHolding(configured: true, snapshots: [Self.baseline])
+                == .configurationAndSnapshots(HeldSnapshots(Self.baseline)))
+        #expect(HeldSnapshots(Self.before, [Self.after]).all == [Self.before, Self.after])
     }
 
     @Test("A failure's own heading survives the wire")

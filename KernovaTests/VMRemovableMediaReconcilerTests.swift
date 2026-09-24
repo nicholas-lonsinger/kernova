@@ -33,18 +33,11 @@ struct VMRemovableMediaReconcilerTests {
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService()
     ) -> Harness {
         let virtualization = MockVirtualizationService()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: removableMediaDeviceService,
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem,
-            downloadsDirectory: nil
-        )
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization, removableMedia: removableMediaDeviceService,
+            fileSystem: fileSystem)
         let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage, lifecycle: lifecycle)
+        let library = makeWiredLibrary(storage: storage, lifecycle: lifecycle, fileSystem: fileSystem)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
@@ -299,29 +292,71 @@ struct VMRemovableMediaReconcilerTests {
         #expect(instance.liveRemovableMedia.first?.path == "/tmp/new.iso")
     }
 
-    @Test("Transient detach error fails fast — reconcile aborts before attach")
-    func liveRemovableTransientDetachErrorFailsFast() async throws {
+    @Test("A failed eject still attaches the rest of the target, and the config names both")
+    func failedEjectDoesNotSkipTheRest() async throws {
         struct TransientError: Error {}
         let mock = MockRemovableMediaDeviceService()
         mock.detachError = TransientError()
         let harness = makeHarness(removableMediaDeviceService: mock)
-        let oldID = UUID()
-        let (instance, sessionID) = makeRunningInstance(in: harness) {
-            $0.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
-        }
+        let old = RemovableMediaItem(path: "/tmp/old.iso", readOnly: true)
+        let (instance, sessionID) = makeRunningInstance(in: harness) { $0.removableMedia = [old] }
         instance.recordAttachedMedia(
-            RemovableMediaDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true), for: sessionID)
+            RemovableMediaDeviceInfo(id: old.id, path: old.path, readOnly: true), for: sessionID)
+        let new = RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)
 
-        harness.library.editConfiguration(of: instance) {
-            $0.removableMedia = [RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)]
-        }
-
-        while !failures.showError { await Task.yield() }
-        for _ in 0..<5 { await Task.yield() }
+        harness.library.editConfiguration(of: instance) { $0.removableMedia = [new] }
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
 
         #expect(mock.detachCallCount == 1)
-        // No attach attempted — preventing the device-leak.
+        #expect(mock.attachCallCount == 1)
+        #expect(Set(instance.liveRemovableMedia.map(\.path)) == ["/tmp/old.iso", "/tmp/new.iso"])
+        #expect(Set(instance.configuration.removableMedia?.map(\.id) ?? []) == [old.id, new.id])
+        #expect(failures.errorMessage?.contains("\u{201C}old.iso\u{201D}") == true)
+    }
+
+    @Test("A slot whose eject failed is not attached again, its medium still there")
+    func failedEjectLeavesItsSlotAlone() async throws {
+        struct TransientError: Error {}
+        let mock = MockRemovableMediaDeviceService()
+        mock.detachError = TransientError()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let id = UUID()
+        let (instance, sessionID) = makeRunningInstance(in: harness) {
+            $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
+        }
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true), for: sessionID)
+
+        harness.library.editConfiguration(of: instance) {
+            $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
+        }
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+
+        #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
+        #expect(instance.configuration.removableMedia?.map(\.readOnly) == [true])
+        #expect(failures.showError)
+    }
+
+    @Test("A pass attempts every item: one failed attach leaves the rest attached and named")
+    func failedAttachDoesNotSkipTheRest() async throws {
+        let mock = MockRemovableMediaDeviceService()
+        mock.attachErrorsByPath["/tmp/bad.iso"] = RemovableMediaDeviceError.diskImageNotFound(
+            "/tmp/bad.iso")
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let (instance, _) = makeRunningInstance(in: harness)
+        let bad = RemovableMediaItem(path: "/tmp/bad.iso", readOnly: true)
+        let good = RemovableMediaItem(path: "/tmp/good.iso", readOnly: true)
+
+        harness.library.editConfiguration(of: instance) { $0.removableMedia = [bad, good] }
+        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+
+        #expect(mock.attachCallCount == 2)
+        #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/good.iso"])
+        #expect(instance.configuration.removableMedia == [good])
+        #expect(harness.saved(instance)?.removableMedia == [good])
+        #expect(failures.errorMessage?.contains("\u{201C}bad\u{201D}") == true)
+        #expect(failures.errorMessage?.contains("good") == false)
     }
 
     @Test("Detach noVirtualMachine error bails the reconcile silently")
