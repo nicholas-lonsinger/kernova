@@ -28,6 +28,12 @@
 #     `git worktree list` entry names: anything writing into a removed
 #     worktree's path after `git worktree remove` recreates the directory,
 #     and git, holding no registration for it, never lists it again
+#   - Registered worktrees under .claude/worktrees/ that are abandoned: no
+#     live Claude Code session or subagent holds their lock, nothing is
+#     uncommitted, and their content is already on origin/main — PRs merge by
+#     squash, so a finished branch never reads as merged by ancestry
+#     (Tools/lib/worktrees.sh has the criteria); one a process still uses is
+#     reported with its holders and never removed
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
 #     CFBundleVersion outranks the installed /Applications copy — unlike the
 #     dead-path ghosts above, Launch Services elects these by highest
@@ -76,6 +82,8 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 # and exit long before the report body, and they label paths too.
 # shellcheck source=lib/output.sh
 . "$REPO_ROOT/Tools/lib/output.sh"
+# shellcheck source=lib/holders.sh
+. "$REPO_ROOT/Tools/lib/holders.sh"
 # shellcheck source=lib/worktrees.sh
 . "$REPO_ROOT/Tools/lib/worktrees.sh"
 
@@ -163,78 +171,12 @@ orphaned_dd_arenas() {
     done
 }
 
-# PIDs of processes executing from inside the arena — eviction would yank
-# their binaries out from under them.
-# Not pgrep: `pgrep -f` takes a regex, and the arena path must match
-# literally (`grep -F`); a false match only skips an eviction, the safe
-# failure mode.
-arena_pids() {
-    # shellcheck disable=SC2009
-    ps -axo pid=,args= 2>/dev/null | grep -F "$1/" | grep -v grep | awk '{print $1}'
-}
-
-arena_in_use() {
-    [ -n "$(arena_pids "$1")" ]
-}
-
 # The process's own executable path. lsof's `txt` fd is the mapped binary,
 # which is the only reliable source here: the arena holds bundles whose paths
 # contain spaces ("Kernova Guest Agent.app"), so splitting `ps` args on
 # whitespace would truncate them.
 exe_of_pid() {
     lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
-}
-
-# Whether the app itself is among an arena's holders. Asked with one grep
-# rather than by resolving every PID, because the display list below is capped
-# and can leave the app out — and its quit is the line a reader most needs.
-arena_holds_app() {
-    # shellcheck disable=SC2009
-    ps -axo args= 2>/dev/null | grep -F "$1/" | grep -qF '/Kernova.app/Contents/MacOS/Kernova'
-}
-
-# The in-use refusal: what is holding the arena, and how to clear it. Naming
-# the PID is what makes the refusal actionable — the arena path says which
-# folder is stuck, never which running thing to go quit.
-#
-# Two kinds of holder, labelled apart because the wrong one sends the reader
-# after the wrong process: a binary that lives inside the arena is running
-# from it and dies with the eviction, while a build tool or a log tail merely
-# carries the path in its argv. arena_pids matches argv text, so both land here.
-#
-# Capped: `make clean` evicts the arena Xcode builds into, so a build in flight
-# routes every swift-frontend and ld output path through this — uncapped, the
-# refusal is a screenful and each line costs an lsof. The full count still
-# prints, so a long tail is never silently dropped.
-#
-# Callers check arena_in_use first; with no holder left this prints the tail
-# lines alone, the harmless read on a process that exited in between.
-arena_blocked_lines() {
-    local dir=$1 pid exe shown=0 total=0 max=5
-    while IFS= read -r pid; do
-        [ -z "$pid" ] && continue
-        total=$((total + 1))
-        [ "$shown" -ge "$max" ] && continue
-        shown=$((shown + 1))
-        exe=$(exe_of_pid "$pid")
-        if [ -n "$exe" ] && [ "${exe#"$dir"/}" != "$exe" ]; then
-            printf 'running from inside: PID %s (%s)\n' "$pid" "${exe##*/}"
-        else
-            printf 'holding it open: PID %s%s\n' "$pid" "${exe:+ (${exe##*/})}"
-        fi
-    done < <(arena_pids "$dir")
-    [ "$total" -gt "$shown" ] && printf 'and %s more\n' "$((total - shown))"
-    if [ "$total" -gt 1 ]; then
-        printf 'quit them (or reboot), then re-run\n'
-    else
-        printf 'quit it (or reboot), then re-run\n'
-    fi
-    # Additive, never instead of the line above: with a mixed set, quitting the
-    # app alone leaves the arena held and the next run refusing identically.
-    if arena_holds_app "$dir"; then
-        printf 'Kernova quits cleanly with: %s (save-suspends running VMs)\n' \
-            "osascript -e 'quit app \"Kernova\"'"
-    fi
 }
 
 # Unregister every bundle inside the arena, then delete the folder outright.
@@ -251,6 +193,18 @@ evict_dd_arena() {
         "$LSREGISTER" -u "$app" >/dev/null 2>&1
     done < <(find "$dir" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
     rm -rf "$dir" 2>/dev/null
+}
+
+# Out of place, recoverably: an abandoned worktree can still hold ignored files
+# someone set by hand (a local .xcconfig, saved artifacts), so it goes to the
+# Trash. Its DerivedData/ build arena is evicted first — a bundle in the Trash
+# stays registered with Launch Services (see evict_dd_arena).
+# shellcheck disable=SC2329 # called through report_abandoned_worktrees
+dispose_worktree() {
+    if [ -d "$1/DerivedData" ] && [ ! -L "$1/DerivedData" ]; then
+        evict_dd_arena "$1/DerivedData"
+    fi
+    trash "$1" >/dev/null 2>&1
 }
 
 # --sweep: the quiet, non-interactive subset for hooks — unregister dead
@@ -271,9 +225,10 @@ if [ "$SWEEP" = 1 ]; then
         "$LSREGISTER" -u "$path" >/dev/null 2>&1
         printf 'ghosts.sh: swept dead Launch Services registration: %s\n' "$path"
     done < <(kernova_registered_paths)
+    [ -n "$XCODE_DD_ROOT" ] && refresh_holders "$XCODE_DD_ROOT"
     while IFS= read -r dir; do
         [ -z "$dir" ] && continue
-        arena_in_use "$dir" && continue
+        path_held "$dir" && continue
         if evict_dd_arena "$dir"; then
             printf 'ghosts.sh: evicted orphaned DerivedData arena: %s\n' "$(labeled_path "$dir")"
         fi
@@ -311,11 +266,12 @@ if [ "$EVICT" = 1 ]; then
     [ -d "$EVICT_DIR" ] || exit 0
     # Clear the in-use guard before announcing anything, so a refusal never
     # follows a "Removing…" line that turned out to be false.
-    if arena_in_use "$EVICT_DIR"; then
+    refresh_holders "$EVICT_DIR"
+    if path_held "$EVICT_DIR"; then
         printf 'ghosts.sh: cannot remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
         while IFS= read -r blocked; do
             printf 'ghosts.sh: %s\n' "$blocked" >&2
-        done < <(arena_blocked_lines "$EVICT_DIR")
+        done < <(holder_blocked_lines "$EVICT_DIR")
         exit 1
     fi
     # Size on the way out: on a default-location machine this is the arena the
@@ -337,7 +293,7 @@ printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
 # the Makefile front door anyway (make swallows `--fix` as one of its own
 # options and bails), so echoing it back only suggests an argument the reader
 # cannot actually pass to `make ghosts`.
-[ "$FIX" = 1 ] && printf '%s(repair mode: will unregister, kill, prune, trash, and evict)%s\n' "$c_dim" "$c_reset"
+[ "$FIX" = 1 ] && printf '%s(repair mode: will unregister, kill, prune, trash, remove, and evict)%s\n' "$c_dim" "$c_reset"
 
 # ---- Launch Services ghost registrations -------------------------------------
 
@@ -445,6 +401,12 @@ if read_worktree_layout "$REPO_ROOT"; then
             fi
         done
     fi
+
+    # Ahead of the arena section on purpose: a removed worktree's arena in the
+    # machine-wide DerivedData root then reads as orphaned and is evicted in
+    # the same run. An in-checkout DerivedData/ is evicted here, since it goes
+    # with the directory.
+    report_abandoned_worktrees "$REPO_ROOT" "$FIX" holder_blocked_lines dispose_worktree
 fi
 
 # ---- orphaned DerivedData build arenas ----------------------------------------
@@ -465,6 +427,7 @@ done < <(orphaned_dd_arenas)
 if [ "${#dd_orphans[@]}" -eq 0 ]; then
     pass 'No DerivedData arenas left by removed checkouts'
 else
+    refresh_holders "$XCODE_DD_ROOT"
     for dir in "${dd_orphans[@]}"; do
         # Resolved once, up front, because the label is read out of the arena's
         # own records — evicting the arena destroys the evidence, so a
@@ -472,10 +435,10 @@ else
         # line where naming the worktree matters most.
         dir_label=$(labeled_path "$dir")
         ghost "Orphaned arena: $dir_label — $(du -sh "$dir" 2>/dev/null | cut -f1)"
-        if arena_in_use "$dir"; then
+        if path_held "$dir"; then
             while IFS= read -r blocked; do
                 detail "$blocked"
-            done < <(arena_blocked_lines "$dir")
+            done < <(holder_blocked_lines "$dir")
             continue
         fi
         if [ "$FIX" = 1 ]; then

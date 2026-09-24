@@ -247,5 +247,5 @@ doctor: ## Check the local toolchain, signing, optional tooling, and repo setup
 ghosts: ## Report stale/competing Kernova Launch Services registrations, processes, worktrees, and build arenas
 	@Tools/ghosts.sh
 
-clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/trashes/evicts what it finds
+clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/trashes/removes/evicts what it finds
 	@Tools/ghosts.sh --fix
