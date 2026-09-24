@@ -15,15 +15,22 @@ struct VMSettingsOverviewTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(guestOS: VMGuestOS, macAddress: String? = nil) -> VMInstance {
-        VMInstanceFixture.make(guestOS: guestOS) { $0.macAddress = macAddress }
+    private func makeInstance(
+        name: String = "Test VM", guestOS: VMGuestOS, macAddress: String? = nil,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        VMInstanceFixture.make(name: name, guestOS: guestOS) {
+            $0.macAddress = macAddress
+            mutate(&$0)
+        }
     }
 
-    private func makeController(guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false) -> (
-        VMSettingsViewController, VMInstance, VMLibraryViewModel
-    ) {
+    private func makeController(
+        guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: guestOS)
+        let instance = makeInstance(guestOS: guestOS, mutate: mutate)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -315,9 +322,7 @@ struct VMSettingsOverviewTests {
 
     @Test("Cancelling the passthrough confirmation puts the panel's switch back")
     func cancelledPassthroughRevertsEverySurface() throws {
-        let (vc, instance, viewModel) = makeController()
-        instance.configuration.clipboardSharingEnabled = true
-        reapply(vc, (instance, viewModel))
+        let (vc, instance, _) = makeController { $0.clipboardSharingEnabled = true }
         vc.showCategory(.sharing)
         let panelToggle = try #require(
             firstSubview(NSSwitch.self, in: vc.view) {
@@ -346,9 +351,11 @@ struct VMSettingsOverviewTests {
 
         // Turned on where the toggle still lives — the panel, or the clipboard
         // window — and shared a folder with the guest.
-        instance.configuration.clipboardSharingEnabled = true
-        instance.configuration.clipboardPassthroughEnabled = true
-        instance.configuration.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
+        viewModel.library.editConfiguration(of: instance) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+            $0.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
+        }
         reapply(vc, (instance, viewModel))
 
         #expect(summaryLine(in: sharing) == "Passthrough on \u{00B7} 1 shared folder")
@@ -420,7 +427,7 @@ struct VMSettingsOverviewTests {
         #expect(findLabel(withText: "Snapshots", in: snapshots) != nil)
         #expect(findLabel(withText: "Latest", in: snapshots) == nil)
 
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         reapply(vc, (instance, viewModel))
@@ -487,8 +494,8 @@ struct VMSettingsOverviewTests {
         let (vc, instance, viewModel) = makeController()
         // Listed, because the snapshot-size read addresses its VM by id.
         viewModel.library.instances.append(instance)
-        let first = VMSnapshot(name: "First")
-        let second = VMSnapshot(name: "Second")
+        let first = VMSnapshot(name: "First", macAddress: nil)
+        let second = VMSnapshot(name: "Second", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second], currentID: second.id)
         reapply(vc, (instance, viewModel))
@@ -499,7 +506,7 @@ struct VMSettingsOverviewTests {
 
         // Capturing another leaves the set part-measured, so the card states the
         // count alone until the fresh read covers the newcomer too.
-        let third = VMSnapshot(name: "Third")
+        let third = VMSnapshot(name: "Third", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [first, second, third], currentID: third.id)
         reapply(vc, (instance, viewModel))
@@ -512,7 +519,7 @@ struct VMSettingsOverviewTests {
         // not land beside the previous VM's.
         let other = makeInstance(guestOS: .macOS)
         viewModel.library.instances.append(other)
-        let onlySnapshot = VMSnapshot(name: "Other")
+        let onlySnapshot = VMSnapshot(name: "Other", macAddress: nil)
         other.snapshotManifest = VMSnapshotManifest(
             snapshots: [onlySnapshot], currentID: onlySnapshot.id)
         vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)
@@ -537,8 +544,7 @@ struct VMSettingsOverviewTests {
     func duplicateMACRaisesTheCardWarning() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        let other = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        other.configuration.name = "Twin"
+        let other = makeInstance(name: "Twin", guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
         viewModel.instances = [instance, other]
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)

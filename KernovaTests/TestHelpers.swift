@@ -31,6 +31,127 @@ func makeTestPreferences() -> AppPreferences {
     AppPreferences(defaults: makeTestDefaults())
 }
 
+// MARK: - Library construction
+
+/// A `VMLifecycleCoordinator` over mocks — the test target's one construction
+/// of one, which a test library is built on too.
+///
+/// No Downloads directory unless a test names one: a test that needs it passes
+/// a temporary directory, never the user's own.
+@MainActor
+func makeTestLifecycle(
+    virtualization: any VirtualizationProviding = MockVirtualizationService(),
+    installService: any MacOSInstallProviding = MockMacOSInstallService(),
+    ipswService: any IPSWProviding = MockIPSWService(),
+    removableMedia: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
+    usbAccessoryService: (any USBAccessoryProviding)? = nil,
+    usbAccessoryReturnTimeout: Duration = .seconds(5),
+    linuxImageResolveService: any LinuxImageResolving = MockLinuxImageResolveService(),
+    downloadService: any Downloading = MockDownloadService(),
+    fileSystem: MockFileSystem = MockFileSystem(),
+    downloadsDirectory: URL? = nil
+) -> VMLifecycleCoordinator {
+    VMLifecycleCoordinator(
+        virtualizationService: virtualization,
+        installService: installService,
+        ipswService: ipswService,
+        removableMediaDeviceService: removableMedia,
+        usbAccessoryService: usbAccessoryService,
+        usbAccessoryReturnTimeout: usbAccessoryReturnTimeout,
+        linuxImageResolveService: linuxImageResolveService,
+        downloadService: downloadService,
+        fileSystem: fileSystem,
+        downloadsDirectory: downloadsDirectory)
+}
+
+/// A real `VMLibrary` over mocks — the pairing store aside, which is the
+/// production one unless a test passes its own — holding `instances`
+/// registered as a load would have left them: the test target's one
+/// construction of a library, and what a test changes a VM's configuration
+/// through once the VM exists, since only the library writes it.
+///
+/// The caller keeps the library alive for as long as it edits: each instance
+/// reaches it weakly.
+@MainActor
+func makeWiredLibrary(
+    holding instances: [VMInstance] = [],
+    storage: MockVMStorageService = MockVMStorageService(),
+    snapshotStore: any VMSnapshotStoring = MockVMSnapshotStore(),
+    lifecycle: VMLifecycleCoordinator? = nil,
+    fileSystem: MockFileSystem = MockFileSystem(),
+    preferences: AppPreferences = makeTestPreferences(),
+    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    arpTable: ScriptedARPTable = ScriptedARPTable(),
+    usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore()
+) -> VMLibrary {
+    let library = VMLibrary(
+        storageService: storage,
+        snapshotStore: snapshotStore,
+        lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
+        fileSystem: fileSystem,
+        preferences: preferences,
+        vmnetNetworks: vmnetNetworks,
+        arpTable: arpTable,
+        entitlements: .entitled,
+        usbPairingStore: usbPairingStore)
+    for instance in instances {
+        library.register(instance, storage: storage)
+    }
+    return library
+}
+
+extension VMLibrary {
+    /// Wires `instance` and adds it to the library, with its configuration in
+    /// `storage`'s bundles as a load would have found it. What the instance
+    /// already holds — its snapshots, its pairings — stands for what its
+    /// bundle holds.
+    func register(_ instance: VMInstance, storage: MockVMStorageService) {
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.hostStates[instance.bundleURL] = instance.hostState
+        wireHooks(for: instance)
+        instances.append(instance)
+    }
+
+    /// Applies `mutate` to `instance`'s host state as setup a test relies on,
+    /// recording an issue when the write does not land.
+    func editHostState(
+        of instance: VMInstance,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ mutate: (inout VMHostState) -> Void
+    ) {
+        guard
+            case .saved = updateSettings(
+                of: instance, ifNotSaved: .discard, mutate: { mutate(&$0.hostState) })
+        else {
+            Issue.record("the host-state edit did not land", sourceLocation: sourceLocation)
+            return
+        }
+    }
+
+    /// Applies `mutate` to `instance`'s configuration as setup a test relies
+    /// on, recording an issue when the write is refused or does not land.
+    func editConfiguration(
+        of instance: VMInstance,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ mutate: (inout VMConfiguration) -> Void
+    ) {
+        guard case .saved = updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
+        else {
+            Issue.record("the configuration edit did not land", sourceLocation: sourceLocation)
+            return
+        }
+    }
+}
+
+extension VMHostState {
+    /// Ephemeral Mode on, reverting to `baseline`.
+    static func ephemeral(baseline: UUID) -> VMHostState {
+        var hostState = VMHostState()
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline)
+        return hostState
+    }
+}
+
 /// A `VMIndexRecord` over an in-memory store, holding `indexed` as an earlier
 /// run's record of what it wrote to Spotlight.
 @MainActor

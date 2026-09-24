@@ -29,6 +29,8 @@ struct RemindersSettingsViewControllerTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -329,7 +331,9 @@ struct RemindersSettingsViewControllerTests {
     func disabledPerVMRowKeepsItsState() throws {
         let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
         defer { controller.viewDidDisappear() }
-        viewModel.instances[0].hostState.agentInstallNudgeDismissed = true
+        viewModel.library.editHostState(of: viewModel.instances[0]) {
+            $0.agentInstallNudgeDismissed = true
+        }
         viewModel.agentInstallPromptDisabled = true
         controller.viewWillAppear()
 

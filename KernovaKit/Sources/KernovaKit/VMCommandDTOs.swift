@@ -468,10 +468,10 @@ extension CommandErrorDTO {
             "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
             switch reason {
-            case .macAddressInUse(let address):
-                "\u{201C}\(other.name)\u{201D} already uses \(address). "
-                    + "Each virtual machine needs its own MAC address. "
-                    + "Change or delete \u{201C}\(other.name)\u{201D} first to move this address to \u{201C}\(vm.name)\u{201D}."
+            case .macAddressInUse(let address, let holding, let otherHolders):
+                Self.macAddressInUseMessage(
+                    address, vm: vm.name, holder: other.name, holding: holding,
+                    otherHolders: otherHolders)
             case .machineIdentity:
                 "\u{201C}\(vm.name)\u{201D} has the same machine ID as \u{201C}\(other.name)\u{201D}, which is active. "
                     + "Two virtual machines with the same machine ID must not run at once. "
@@ -500,5 +500,81 @@ extension CommandErrorDTO {
     private static func deadlineText(_ seconds: TimeInterval) -> String {
         seconds == seconds.rounded()
             ? String(format: "%.0f", seconds) : String(format: "%.1f", seconds)
+    }
+
+    /// What ``ConflictReason/macAddressInUse(address:holding:otherHolders:)``
+    /// tells the user: where each VM holds the address, then — only when one
+    /// VM holds it and a step it can take certainly frees it — that step.
+    ///
+    /// An Ephemeral Mode baseline is named as one and offered no remedy: it
+    /// cannot be deleted while the mode is on.
+    private static func macAddressInUseMessage(
+        _ address: String, vm: String, holder: String, holding: MACAddressHolding,
+        otherHolders: [MACAddressHolder]
+    ) -> String {
+        let holders =
+            [(name: holder, holding: holding)]
+            + otherHolders.map { (name: $0.name, holding: $0.holding) }
+        var sentences = holders.map { holdingSentence(address, name: $0.name, holding: $0.holding) }
+        sentences.append("Each virtual machine needs its own MAC address.")
+        if otherHolders.isEmpty,
+            let remedy = remedy(name: holder, holding: holding, destination: vm)
+        {
+            sentences.append(remedy)
+        }
+        return sentences.joined(separator: " ")
+    }
+
+    /// One VM's hold on `address`, as the facts a refusal states.
+    private static func holdingSentence(
+        _ address: String, name: String, holding: MACAddressHolding
+    ) -> String {
+        let vm = "\u{201C}\(name)\u{201D}"
+        let held: HeldSnapshots
+        let facts: String
+        switch holding {
+        case .configuration:
+            return "\(vm) already uses \(address)."
+        case .snapshots(let snapshots):
+            held = snapshots
+            facts = "\(vm) has \(snapshotPhrase(snapshots)) taken with \(address)."
+        case .configurationAndSnapshots(let snapshots):
+            held = snapshots
+            facts = "\(vm) already uses \(address), and has \(snapshotPhrase(snapshots)) taken with it."
+        }
+        guard let baseline = held.all.first(where: \.isEphemeralBaseline) else { return facts }
+        return facts + " \u{201C}\(baseline.name)\u{201D} is its Ephemeral Mode baseline."
+    }
+
+    /// "a snapshot, “S”," or "snapshots “S1” and “S2”".
+    private static func snapshotPhrase(_ snapshots: HeldSnapshots) -> String {
+        let quoted = snapshots.all.map { "\u{201C}\($0.name)\u{201D}" }
+        return quoted.count == 1 ? "a snapshot, \(quoted[0])," : "snapshots \(listed(quoted))"
+    }
+
+    /// The step that frees the address from its only holder, or `nil` when a
+    /// snapshot holding it is a baseline no delete will take.
+    private static func remedy(
+        name: String, holding: MACAddressHolding, destination: String
+    ) -> String? {
+        let vm = "\u{201C}\(name)\u{201D}"
+        let destination = "to move this address to \u{201C}\(destination)\u{201D}."
+        switch holding {
+        case .configuration:
+            return "Change or delete \(vm) first \(destination)"
+        case .snapshots(let snapshots):
+            guard !snapshots.all.contains(where: \.isEphemeralBaseline) else { return nil }
+            return "Delete \(snapshots.rest.isEmpty ? "that snapshot" : "those snapshots") first \(destination)"
+        case .configurationAndSnapshots(let snapshots):
+            guard !snapshots.all.contains(where: \.isEphemeralBaseline) else { return nil }
+            let those = snapshots.rest.isEmpty ? "that snapshot" : "those snapshots"
+            return "Delete \(vm), or change its address and delete \(those), \(destination)"
+        }
+    }
+
+    /// `items` as a sentence lists them: "A", "A and B", "A, B and C".
+    private static func listed(_ items: [String]) -> String {
+        guard let last = items.last, items.count > 1 else { return items.first ?? "" }
+        return items.dropLast().joined(separator: ", ") + " and " + last
     }
 }

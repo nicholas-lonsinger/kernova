@@ -148,19 +148,27 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
+    ) async throws -> VMSnapshot {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
         instance.enter(phases.resting)
+        return VMSnapshot(snapshot, macAddress: instance.configuration.macAddress)
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
     ) async throws {
+        let plan = try store.planRestore(
+            bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
+        var restore = plan
+        restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
+        try store.restore(bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
+        adopt(restore)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the store mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)

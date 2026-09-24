@@ -30,9 +30,8 @@ struct VMDisplayPlacementReadyDisplayTests {
     }
 
     private func makeInstance(preference: VMDisplayPreference) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: "Readied VM")
-        instance.hostState.displayPreference = preference
-        return instance
+        VMInstanceFixture.make(
+            name: "Readied VM", hostState: VMHostState(displayPreference: preference))
     }
 
     private func makeController(posture: GUIPosture)

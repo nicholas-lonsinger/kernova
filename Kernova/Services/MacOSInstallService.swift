@@ -9,7 +9,6 @@ final class MacOSInstallService {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MacOSInstallService")
 
     private let configBuilder: ConfigurationBuilder
-    private let storageService = VMStorageService()
 
     init(vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService) {
         configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
@@ -51,13 +50,21 @@ final class MacOSInstallService {
             hardwareModel: supportedConfig.hardwareModel
         )
 
-        instance.configuration.hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
-
-        let machineIDURL = instance.machineIdentifierURL
-        let machineIDData = try Data(contentsOf: machineIDURL)
-        instance.configuration.machineIdentifierData = machineIDData
-
-        try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
+        let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
+        let machineIDData = try Data(contentsOf: instance.machineIdentifierURL)
+        // The install stops unless the identity lands: the build below prefers
+        // the configuration's hardware model over the bundle's file, which
+        // `setupPlatformFiles` writes only when absent, so a model an earlier
+        // attempt recorded would stand in for this image's.
+        let recorded = instance.performConfigurationMutation(ifNotSaved: .discard) {
+            $0.hardwareModelData = hardwareModelData
+            $0.machineIdentifierData = machineIDData
+        }
+        switch recorded {
+        case .saved: break
+        case .notSaved(let error): throw error
+        case .refused(let refusal): throw refusal
+        }
 
         instance.beginSessionContext()
         let result = try configBuilder.build(

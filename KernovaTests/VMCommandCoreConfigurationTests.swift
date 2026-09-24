@@ -24,24 +24,15 @@ struct VMCommandCoreConfigurationTests {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+        let lifecycle = makeTestLifecycle(
+            virtualization: MockVirtualizationService(),
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -67,11 +58,13 @@ struct VMCommandCoreConfigurationTests {
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String = "Alpha", phase: VMLifecyclePhase = .stopped,
-        guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = []
+        guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = [],
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
-            library: harness.library, storage: harness.storage, preferences: preferences)
+            library: harness.library, storage: harness.storage, preferences: preferences,
+            mutate: mutate)
     }
 
     private func value(_ entries: [ConfigurationEntry], _ key: String) throws -> String {
@@ -233,9 +226,10 @@ struct VMCommandCoreConfigurationTests {
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")
     func networkModeIsLiveSwitchableButNotRemovable() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+        }
 
         try harness.core.setConfiguration(
             .name("Alpha"),
@@ -271,8 +265,7 @@ struct VMCommandCoreConfigurationTests {
     func aTakenMACAddressIsAConflict() throws {
         let harness = makeHarness()
         let alpha = makeInstance(in: harness, name: "Alpha")
-        let beta = makeInstance(in: harness, name: "Beta")
-        beta.configuration.macAddress = "aa:bb:cc:dd:ee:ff"
+        makeInstance(in: harness, name: "Beta") { $0.macAddress = "aa:bb:cc:dd:ee:ff" }
         let before = alpha.configuration
 
         do {
@@ -289,8 +282,40 @@ struct VMCommandCoreConfigurationTests {
             #expect(other.name == "Beta")
             // The address the assignment named, canonical: what the refusal
             // tells a caller who is typing addresses at it.
-            #expect(reason == .macAddressInUse(address: "aa:bb:cc:dd:ee:ff"))
+            #expect(
+                reason
+                    == .macAddressInUse(
+                        address: "aa:bb:cc:dd:ee:ff", holding: .configuration, otherHolders: []))
             #expect(error.message.contains("aa:bb:cc:dd:ee:ff"))
+        }
+
+        #expect(alpha.configuration == before)
+    }
+
+    @Test("An address another VM's snapshot was taken with is refused as a conflict naming it")
+    func aSnapshotsMACAddressIsAConflict() throws {
+        let harness = makeHarness()
+        let alpha = makeInstance(in: harness, name: "Alpha")
+        makeInstance(
+            in: harness, name: "Beta",
+            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:ff")]
+        ) { $0.macAddress = "aa:bb:cc:dd:ee:01" }
+        let before = alpha.configuration
+
+        #expect {
+            _ = try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: [ConfigurationEntry(key: "network.mac", value: "aa:bb:cc:dd:ee:ff")],
+                confirmed: false)
+        } throws: { error in
+            guard case CommandError.conflict(_, let other, let reason) = error else { return false }
+            return other.name == "Beta"
+                && reason
+                    == .macAddressInUse(
+                        address: "aa:bb:cc:dd:ee:ff",
+                        holding: .snapshots(
+                            HeldSnapshots(HeldSnapshot(name: "Before", isEphemeralBaseline: false))),
+                        otherHolders: [])
         }
 
         #expect(alpha.configuration == before)
@@ -299,8 +324,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("Turning passthrough on refuses without consent, and takes it as a parameter")
     func passthroughEnableAsksForConsent() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        instance.configuration.clipboardSharingEnabled = true
+        let instance = makeInstance(in: harness) { $0.clipboardSharingEnabled = true }
 
         do {
             _ = try harness.core.setConfiguration(
@@ -347,9 +371,10 @@ struct VMCommandCoreConfigurationTests {
     @Test("Turning sharing off leaves a passthrough flag already set alone")
     func turningSharingOffIsNotAPassthroughEnable() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        instance.configuration.clipboardSharingEnabled = true
-        instance.configuration.clipboardPassthroughEnabled = true
+        let instance = makeInstance(in: harness) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+        }
 
         try harness.core.setConfiguration(
             .name("Alpha"),
@@ -363,7 +388,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("Ephemeral Mode is writable while the VM runs and pins the shared baseline")
     func ephemeralIsWritableWhileRunning() throws {
         let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Baseline", kind: .cold)
+        let snapshot = VMSnapshot(name: "Baseline", kind: .cold, macAddress: nil)
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), snapshots: [snapshot])
 
@@ -428,10 +453,9 @@ struct VMCommandCoreConfigurationTests {
     @Test("Turning sharing on over a passthrough flag already set asks for consent")
     func sharingEnableOverAStalePassthroughFlagAsksForConsent() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
         // Reachable from both surfaces: passthrough is left set when sharing
         // goes off, and turning sharing back on starts it running again.
-        instance.configuration.clipboardPassthroughEnabled = true
+        let instance = makeInstance(in: harness) { $0.clipboardPassthroughEnabled = true }
 
         do {
             _ = try harness.core.setConfiguration(
@@ -470,10 +494,11 @@ struct VMCommandCoreConfigurationTests {
     @Test("The size keys name the size the pane's fields show, not the pixels")
     func displaySizeKeysSpeakBaseSize() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, guestOS: .macOS)
-        instance.configuration.displaySizesToWindow = false
-        instance.configuration.displayResolution = DisplayBootSizing.Resolution(
-            width: 2560, height: 1600, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displaySizesToWindow = false
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 2560, height: 1600, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+        }
 
         let read = try harness.core.configuration(
             .name("Alpha"), keys: ["display.width", "display.height"])
@@ -496,10 +521,11 @@ struct VMCommandCoreConfigurationTests {
     @Test("A size the pane would not offer is refused, whichever axis names it")
     func displaySizeBelowTheMinimumIsRefused() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, guestOS: .macOS)
-        instance.configuration.displaySizesToWindow = false
-        instance.configuration.displayResolution = DisplayBootSizing.Resolution(
-            width: 2560, height: 1600, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displaySizesToWindow = false
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 2560, height: 1600, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+        }
         let before = instance.configuration
 
         #expect(throws: CommandError.self) {
@@ -522,8 +548,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("A size written while the display sizes to its window is refused")
     func displaySizeIsRefusedWhileSizedToWindow() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        instance.configuration.displaySizesToWindow = true
+        let instance = makeInstance(in: harness) { $0.displaySizesToWindow = true }
         let before = instance.configuration
 
         do {
@@ -556,8 +581,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("Leaving size-to-window in the same call lets the size land, whichever order")
     func displaySizeLandsWithSizeToWindowInTheSameBatch() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        instance.configuration.displaySizesToWindow = true
+        let instance = makeInstance(in: harness) { $0.displaySizesToWindow = true }
 
         try harness.core.setConfiguration(
             .name("Alpha"),
@@ -659,11 +683,13 @@ struct VMCommandCoreConfigurationTests {
     @Test("The share listing is what the VM carries, in order, without the bookmark behind it")
     func sharedDirectoriesAnswerWhatTheVMCarries() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        instance.configuration.sharedDirectories = [
-            SharedDirectory(path: "/Users/somebody/Sites", readOnly: false, bookmark: Data([1, 2])),
-            SharedDirectory(path: "/Users/somebody/Reference", readOnly: true),
-        ]
+        makeInstance(in: harness) {
+            $0.sharedDirectories = [
+                SharedDirectory(
+                    path: "/Users/somebody/Sites", readOnly: false, bookmark: Data([1, 2])),
+                SharedDirectory(path: "/Users/somebody/Reference", readOnly: true),
+            ]
+        }
 
         let listed = try harness.core.sharedDirectories(of: .name("Alpha"))
 

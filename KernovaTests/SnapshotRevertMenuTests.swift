@@ -18,7 +18,7 @@ struct SnapshotRevertMenuTests {
 
     private func makeSnapshot(_ name: String, offsetSeconds: TimeInterval = 0) -> VMSnapshot {
         VMSnapshot(
-            name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds))
+            name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds), macAddress: nil)
     }
 
     private func rebuild(for instance: VMInstance?, isEnabled: Bool? = nil) -> NSMenu {

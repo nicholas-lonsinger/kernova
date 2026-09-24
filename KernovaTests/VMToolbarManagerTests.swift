@@ -17,24 +17,8 @@ struct VMToolbarManagerTests {
     private func makeLibrary(
         virtualization: any VirtualizationProviding = MockVirtualizationService()
     ) -> (library: VMLibrary, lifecycle: VMLifecycleCoordinator) {
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: MockFileSystem()
-        )
-        let library = VMLibrary(
-            storageService: MockVMStorageService(),
-            snapshotStore: MockVMSnapshotStore(),
-            lifecycle: lifecycle,
-            fileSystem: MockFileSystem(),
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+        let lifecycle = makeTestLifecycle(virtualization: virtualization)
+        let library = makeWiredLibrary(lifecycle: lifecycle, preferences: preferences)
         return (library, lifecycle)
     }
 

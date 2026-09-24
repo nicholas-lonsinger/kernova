@@ -343,15 +343,18 @@ final class VMCommandCore: VMCommanding {
     /// Applies `mutate` to the VM's settings, refusing when the result did not
     /// reach disk.
     ///
-    /// The one write convention every verb in the core shares. A failed save
-    /// leaves the new value in memory and the old one on disk, so the next
-    /// library read takes it back — answering `ok` would report a change the
-    /// user is about to lose. A mutation the write funnel *refused* returns the
-    /// same `false` and is refused here too, having changed nothing.
+    /// The one write convention every verb in the core shares: a change that
+    /// was refused, or whose save failed, changes nothing, and the verb says
+    /// which.
     func writeSettings(
         of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) -> Void
     ) throws {
-        guard library.updateSettings(of: instance, mutate: mutate) else {
+        switch library.updateSettings(of: instance, ifNotSaved: .discard, mutate: mutate) {
+        case .saved:
+            return
+        case .refused(let refusal):
+            throw refusalError(refusal, on: instance)
+        case .notSaved:
             throw CommandError.operationFailed(
                 verb: verb,
                 message:
@@ -364,6 +367,21 @@ final class VMCommandCore: VMCommanding {
         of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
     ) throws {
         try writeSettings(of: instance, verb: verb) { mutate(&$0.configuration) }
+    }
+
+    /// The refusal a verb raises when the library turned its settings write
+    /// away.
+    func refusalError(
+        _ refusal: VMLibrary.SettingsRefusal, on instance: VMInstance
+    ) -> CommandError {
+        switch refusal {
+        case .macAddressInUse(let conflict):
+            .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
+        case .sessionNotAttachable:
+            invalidState(instance)
+        case .noLibrary:
+            .notFound(.id(instance.id))
+        }
     }
 
     /// The refusal a verb gets while `instance` is still copying, shared by

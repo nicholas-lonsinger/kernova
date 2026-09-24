@@ -13,7 +13,7 @@ final class RevertOutcome {
 
 /// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.
 extension VMCommandCore {
-    // MARK: - Manifest
+    // MARK: - Sizes
 
     func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
         await snapshotOnDiskBytes(for: try resolve(selector))
@@ -71,12 +71,14 @@ extension VMCommandCore {
             throw invalidState(instance)
         }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshot = VMSnapshot(
+        let snapshot = VMSnapshotRecord(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: mode.kind)
+        let captured: VMSnapshot
         do {
-            try await lifecycle.takeSnapshot(instance, snapshot: snapshot, store: snapshotStore)
+            captured = try await lifecycle.takeSnapshot(
+                instance, snapshot: snapshot, store: snapshotStore)
         } catch {
             #log(
                 Self.logger, .error,
@@ -85,7 +87,7 @@ extension VMCommandCore {
             throw failure(error, verb: .takeSnapshot, on: instance)
         }
         var manifest = instance.snapshotManifest
-        manifest.insert(snapshot)
+        manifest.insert(captured)
         do {
             try writeSnapshotManifest(manifest, for: instance, verb: .takeSnapshot)
         } catch {
@@ -99,7 +101,7 @@ extension VMCommandCore {
             }.value
             throw error
         }
-        return snapshot
+        return captured
     }
 
     // MARK: - Revert
@@ -252,7 +254,10 @@ extension VMCommandCore {
         var revertFailure: CommandError?
         do {
             try await lifecycle.revertToSnapshot(
-                instance, snapshot: snapshot, store: snapshotStore)
+                instance, snapshot: snapshot, store: snapshotStore
+            ) { [library] plan in
+                library.adoptRevertedConfiguration(plan, on: instance)
+            }
         } catch {
             #log(
                 Self.logger, .error,

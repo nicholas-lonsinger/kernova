@@ -472,9 +472,10 @@ struct VMSettingsNetworkPanelTests {
         _ mac: String, presenter: MockVMLibraryPresenting? = nil
     ) -> VMLibraryViewModel {
         let viewModel = makeViewModel()
-        let holder = makeSettingsInstance(guestOS: .linux)
-        holder.configuration.name = "Holder"
-        holder.configuration.macAddress = mac
+        let holder = makeSettingsInstance(guestOS: .linux) {
+            $0.name = "Holder"
+            $0.macAddress = mac
+        }
         viewModel.instances = [holder]
         if let presenter { viewModel.presenter = presenter }
         return viewModel

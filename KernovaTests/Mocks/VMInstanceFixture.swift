@@ -12,15 +12,22 @@ enum VMInstanceFixture {
         guestOS: VMGuestOS = .linux,
         phase: VMLifecyclePhase = .stopped,
         preferences: AppPreferences = .shared,
+        hostState: VMHostState = VMHostState(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         var config = VMConfiguration(
             name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
         mutate(&config)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         return VMInstance(
-            configuration: config, bundleURL: bundleURL, phase: phase, preferences: preferences)
+            configuration: config, bundleURL: bundleURL(for: config.id), phase: phase,
+            hostState: hostState, preferences: preferences)
+    }
+
+    /// The bundle a fixture VM with identifier `id` lives at — for a
+    /// configuration that names paths inside it before the instance exists.
+    nonisolated static func bundleURL(for id: UUID) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(id.uuidString).kernova", isDirectory: true)
     }
 
     /// Puts a suspend slot in `instance`'s bundle, creating the bundle

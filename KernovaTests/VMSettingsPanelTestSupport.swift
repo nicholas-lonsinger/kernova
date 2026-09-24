@@ -24,6 +24,8 @@ func makeSettingsViewModel(
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
+        fileSystem: MockFileSystem(),
+        downloadsDirectory: nil,
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
@@ -32,18 +34,23 @@ func makeSettingsViewModel(
 }
 
 @MainActor
-func makeSettingsInstance(guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped) -> VMInstance {
-    VMInstanceFixture.make(guestOS: guestOS, phase: phase)
+func makeSettingsInstance(
+    guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped,
+    hostState: VMHostState = VMHostState(),
+    mutate: (inout VMConfiguration) -> Void = { _ in }
+) -> VMInstance {
+    VMInstanceFixture.make(guestOS: guestOS, phase: phase, hostState: hostState, mutate: mutate)
 }
 
 /// Puts `instance` in the view model's library, which is what lets the command
 /// verbs a panel's controls call resolve it by id.
 @MainActor
 func registerSettingsInstance(_ instance: VMInstance, in viewModel: VMLibraryViewModel) {
-    (viewModel.storageService as? MockVMStorageService)?.bundles[instance.bundleURL] =
-        instance.configuration
-    viewModel.library.wirePersistence(for: instance)
-    viewModel.library.instances.append(instance)
+    guard let storage = viewModel.storageService as? MockVMStorageService else {
+        Issue.record("the settings view model is not over a MockVMStorageService")
+        return
+    }
+    viewModel.library.register(instance, storage: storage)
 }
 
 /// The test target's one construction site for the settings pane, which is what

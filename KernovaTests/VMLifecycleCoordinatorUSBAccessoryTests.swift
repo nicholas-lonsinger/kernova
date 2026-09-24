@@ -16,14 +16,9 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
         returnTimeout: Duration = .seconds(5)
     ) -> (VMLifecycleCoordinator, MockUSBAccessoryService) {
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            usbAccessoryService: accessories,
-            usbAccessoryReturnTimeout: returnTimeout
-        )
+        let coordinator = makeTestLifecycle(
+            virtualization: virtualization, usbAccessoryService: accessories,
+            usbAccessoryReturnTimeout: returnTimeout)
         return (coordinator, accessories)
     }
 
@@ -164,8 +159,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization.onTakeSnapshot = captureEjecting(
             instance, for: sessionID, service: service, reassigningAs: 11, serial: "0373")
 
-        let snapshot = VMSnapshot(name: "Snap", kind: .warm)
-        try await coordinator.takeSnapshot(
+        let snapshot = VMSnapshotRecord(name: "Snap", kind: .warm)
+        _ = try await coordinator.takeSnapshot(
             instance, snapshot: snapshot, store: MockVMSnapshotStore())
 
         // The handle it went off under names nothing now; it goes back on under
@@ -188,8 +183,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+            _ = try? await coordinator.takeSnapshot(
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
         // Event-driven both ways: the assignment lands only once the put-back
@@ -214,8 +209,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
         service.answersMissingAccessoryImmediately = true
 
-        try await coordinator.takeSnapshot(
-            instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+        _ = try await coordinator.takeSnapshot(
+            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
             store: MockVMSnapshotStore())
 
         // The snapshot the user asked for is written; the hardware is simply
@@ -235,8 +230,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization.onTakeSnapshot = captureEjecting(
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
-        try await coordinator.takeSnapshot(
-            instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+        _ = try await coordinator.takeSnapshot(
+            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
             store: MockVMSnapshotStore())
 
         #expect(service.awaitedIdentities.isEmpty)
@@ -260,8 +255,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "AAA")
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+            _ = try? await coordinator.takeSnapshot(
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
         // Both waits parked at once is the thing under test: a put-back that
@@ -293,8 +288,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+            _ = try? await coordinator.takeSnapshot(
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
         try await service.waitStarted.wait { service.parkedWaitCount > 0 }
@@ -327,7 +322,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }
 
@@ -359,7 +354,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }
 
@@ -385,8 +380,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.suspendNextAttach = true
 
         async let snapshot: Void = {
-            try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Snap", kind: .warm),
+            _ = try? await coordinator.takeSnapshot(
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
                 store: MockVMSnapshotStore())
         }()
         await service.attachStarted()

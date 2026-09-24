@@ -22,8 +22,11 @@ struct VMInstanceVsockAdmissionTests {
         }
     }
 
-    private func makeInstance() -> VMInstance {
-        let instance = VMInstanceFixture.make(name: "Admission VM", guestOS: .macOS)
+    private func makeInstance(
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        let instance = VMInstanceFixture.make(
+            name: "Admission VM", guestOS: .macOS, mutate: mutate)
         // Every service below is session state, so it needs a session to live
         // in — the boot paths open one before any listener is wired.
         instance.beginSessionContext()
@@ -300,12 +303,13 @@ struct VMInstanceVsockAdmissionTests {
     /// An instance standing in for one with a live session, its handshake
     /// published so the feature ports admit a connection.
     private func makeInstanceWithLiveSession() -> (instance: VMInstance, sessionID: UUID) {
-        let instance = makeInstance()
         // A feature listener exists only while its setting is on, and its
         // hand-off re-reads that setting — so a fixture standing in for a bound
         // feature port has to have them on.
-        instance.configuration.clipboardSharingEnabled = true
-        instance.configuration.agentLogForwardingEnabled = true
+        let instance = makeInstance {
+            $0.clipboardSharingEnabled = true
+            $0.agentLogForwardingEnabled = true
+        }
         let sessionID = UUID()
         instance.enter(.running(sessionID: sessionID))
         instance.vsockAdmissionGate.publish(

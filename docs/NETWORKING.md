@@ -32,7 +32,9 @@ its expiry — as the address.
 one a bundle arrives with** — the guest may pin it, and a LAN's DHCP server may hold a
 reservation for it — so import, load and reconcile admit the duplicate, the VM's Network
 section names the other holder while the address stays editable, and two holders never
-run on one network at once: the second to start is refused.
+run on one network at once: the second to start is refused. An address a VM's snapshot
+was taken with stays that VM's until the snapshot is deleted, because a revert puts the
+VM back on it ([VZ restore requires the saved MAC address](research/2026-09-23-vz-restore-requires-the-saved-mac-address.md)).
 
 ### 5. Guest-to-guest reach is network membership
 

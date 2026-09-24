@@ -223,7 +223,7 @@ struct MainMenuRebuildTests {
         let fixture = makeFixture(instance: instance)
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
-        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean")]
+        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean", macAddress: nil)]
         fixture.controller.menuNeedsUpdate(revertMenu)
 
         // Each item renders two lines, so its title is matched by prefix.
@@ -239,7 +239,7 @@ struct MainMenuRebuildTests {
         let vmMenu = try #require(submenu(titled: "Virtual Machine", in: fixture.mainMenu))
         let revertMenu = try #require(revertSubmenu(in: fixture.mainMenu))
 
-        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean")]
+        instance.snapshotManifest.snapshots = [VMSnapshot(name: "Clean", macAddress: nil)]
         fixture.controller.menuNeedsUpdate(vmMenu)
 
         #expect(revertMenu.items.count == 1)
@@ -250,8 +250,9 @@ struct MainMenuRebuildTests {
 
     @Test("The clipboard item follows the active VM's clipboard availability")
     func clipboardItemFollowsActiveInstance() throws {
-        let instance = makeMenuInstance(guestOS: .linux, phase: .running(sessionID: UUID()))
-        instance.configuration.clipboardSharingEnabled = true
+        let instance = makeMenuInstance(guestOS: .linux, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
         let fixture = makeFixture(instance: instance)
         let windowMenu = try #require(submenu(titled: "Window", in: fixture.mainMenu))
         let clipboardItem = try #require(windowMenu.items.first { $0.title == "Clipboard" })

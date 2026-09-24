@@ -84,7 +84,13 @@ struct ClipboardPassthroughSetting {
     }
 
     private func write(_ change: Change) {
-        let written = viewModel.updateConfiguration(of: instance) { change.apply(to: &$0) }
-        if !written { refresh() }
+        if case .saved = viewModel.updateConfiguration(
+            of: instance, ifNotSaved: .discard, mutate: { change.apply(to: &$0) })
+        {
+            return
+        }
+        // Refused or unsaved, the configuration kept its old value, which the
+        // controls go back to showing.
+        refresh()
     }
 }

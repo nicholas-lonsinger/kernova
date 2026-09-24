@@ -28,6 +28,7 @@ struct GuestAccountResumePromptTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -46,7 +47,8 @@ struct GuestAccountResumePromptTests {
     /// start and the boot.
     private func makeVM(
         in viewModel: VMLibraryViewModel, storage: MockVMStorageService,
-        intent: GuestAccountIntent?, installPending: Bool = true
+        intent: GuestAccountIntent?, installPending: Bool = true,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS) {
             if installPending {
@@ -54,14 +56,10 @@ struct GuestAccountResumePromptTests {
                     source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
             }
             $0.pendingGuestAccount = intent
-        }
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return true
+            mutate(&$0)
         }
         instance.enter(installPending ? .initialBoot : .stopped)
-        viewModel.instances.append(instance)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        viewModel.library.register(instance, storage: storage)
         return instance
     }
 
@@ -251,12 +249,12 @@ struct GuestAccountResumePromptTests {
     @Test("The start-failed recovery removes, then runs the ordinary Start that asks")
     func theStartFailedRecoveryAsksThroughTheOrdinaryStart() async {
         let (viewModel, storage, virtualization) = makeViewModel()
-        let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
         let disk = StorageDisk(path: "/tmp/missing.img", label: "Scratch", isInternal: false)
         let keeper = StorageDisk(
             path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        instance.configuration.storageDisks = [disk, keeper]
+        let instance = makeVM(
+            in: viewModel, storage: storage, intent: makeIntent(), installPending: false
+        ) { $0.storageDisks = [disk, keeper] }
         presenter.guestAccountPasswordAnswer = .password("analytical-engine")
 
         await viewModel.removeStartFailedAttachmentAndStart(
@@ -278,10 +276,10 @@ struct GuestAccountResumePromptTests {
     @Test("A start-failed recovery whose removal refuses starts nothing")
     func aRefusedRecoveryRemovalStartsNothing() async {
         let (viewModel, storage, virtualization) = makeViewModel()
-        let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
         let sole = StorageDisk(path: "/tmp/missing.img", label: "Scratch", isInternal: false)
-        instance.configuration.storageDisks = [sole]
+        let instance = makeVM(
+            in: viewModel, storage: storage, intent: makeIntent(), installPending: false
+        ) { $0.storageDisks = [sole] }
         presenter.guestAccountPasswordAnswer = .password("analytical-engine")
 
         // A VM keeps at least one storage disk, so the removal is refused.

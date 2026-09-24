@@ -3,10 +3,10 @@ import KernovaLogging
 
 /// Drives a running VM's XHCI removable-media list to whatever its
 /// configuration asks for, coalescing rapid edits into one pass per instance
-/// and rolling the configuration back when VZ refuses.
+/// and settling the configuration on the live list when VZ refuses.
 ///
-/// Headless: the configuration write and the alert both leave through hooks, so
-/// the persistence funnel stays ``VMLibrary``'s alone.
+/// Headless: the configuration write and the alert both leave through hooks,
+/// so every configuration write stays ``VMLibrary``'s.
 @MainActor
 final class VMRemovableMediaReconciler {
     nonisolated private static let logger = KernovaLogger(
@@ -14,9 +14,9 @@ final class VMRemovableMediaReconciler {
 
     private let lifecycle: VMLifecycleCoordinator
 
-    /// Persists a rolled-back `instance.configuration` through the library's
-    /// save funnel.
-    var onSaveConfiguration: ((VMInstance) -> Void)?
+    /// Points the configuration's removable-media list at the one a refused
+    /// reconcile left live — ``VMLibrary/settleRemovableMedia(of:toLive:)``.
+    var onSettle: ((VMInstance, [RemovableMediaItem]?) -> Void)?
 
     /// Receives every failure the reconcile needs a user to see.
     var onFailure: ((any Error) -> Void)?
@@ -115,6 +115,12 @@ final class VMRemovableMediaReconciler {
     /// once the queue is empty — attachable or not, so the flag never outlives
     /// the queue on a context that survives the pass; a session torn down
     /// mid-pass dropped its own flag with its context.
+    ///
+    /// A refused pass is answered only once the queue is empty, and only when
+    /// it was the last pass: an edit queued behind it is what the
+    /// configuration holds and what the next pass drives the VM to, so
+    /// settling the configuration on the live list before then would overwrite
+    /// that edit with a list the VM is about to leave.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
         defer {
             reconcilingRemovableMediaInstances.remove(id)
@@ -122,6 +128,7 @@ final class VMRemovableMediaReconciler {
                 instance.clearRemovableMediaReconcileOwed(for: live)
             }
         }
+        var refused: RefusedPass?
         while let pending = pendingRemovableMediaTarget[id] {
             pendingRemovableMediaTarget.removeValue(forKey: id)
             guard let sessionID = instance.attachableSessionID, pending.sessionID == sessionID else {
@@ -131,30 +138,45 @@ final class VMRemovableMediaReconciler {
                 )
                 continue
             }
-            await applyLiveRemovableMediaChange(
+            refused = await applyLiveRemovableMediaChange(
                 for: instance, target: pending.target, actingFor: sessionID)
         }
+        if let refused {
+            failReconcile(for: instance, refused)
+        }
+    }
+
+    /// A pass VZ refused some of.
+    private struct RefusedPass {
+        /// The session the pass acted for.
+        let sessionID: UUID
+        /// Each entry the settled list can name, by id — see
+        /// ``applyLiveRemovableMediaChange(for:target:actingFor:)``.
+        let lookup: [UUID: RemovableMediaItem]
+        let failure: RemovableMediaReconcileFailure
     }
 
     /// Reconciles the live removable media list with `target`, diffing per id against
     /// `instance.liveRemovableMedia`.
     ///
     /// Detaches run before attaches, so swapping the medium in a slot cannot collide
-    /// with itself on a duplicate UUID.
+    /// with itself on a duplicate UUID — and a slot whose detach failed is not
+    /// attached again, since its medium is still there.
     ///
-    /// On unexpected detach or attach errors the persisted config is rolled back to
-    /// match `instance.liveRemovableMedia`, so the UI snaps to what is actually
-    /// attached rather than describing a state VZ refused. `deviceNotFound` (which
-    /// also covers a guest-side eject) and `noVirtualMachine` are handled as
-    /// confirmed-gone / silent bail.
+    /// Every other item is attempted whatever happened to the ones before it.
+    /// Any unexpected error is answered in a ``RefusedPass``, from which the
+    /// configuration is settled on `instance.liveRemovableMedia` — so the UI
+    /// snaps to what is actually attached rather than describing a state VZ
+    /// refused. `deviceNotFound` (which also covers a guest-side eject) and
+    /// `noVirtualMachine` are handled as confirmed-gone / silent bail.
     ///
-    /// Every framework call, bookkeeping write and failure handler here acts for
-    /// `sessionID` and drops once that session is no longer live.
+    /// Every framework call and bookkeeping write here acts for `sessionID` and
+    /// drops once that session is no longer live.
     private func applyLiveRemovableMediaChange(
         for instance: VMInstance,
         target: [RemovableMediaItem],
         actingFor sessionID: UUID
-    ) async {
+    ) async -> RefusedPass? {
         let tracked = instance.liveRemovableMedia
         // Tolerate duplicate ids: a hand-edited or corrupted config.json could ship
         // two `removableMedia` entries with the same UUID, and a uniquing-free
@@ -206,8 +228,10 @@ final class VMRemovableMediaReconciler {
             toAttach.append(targetItem)
         }
 
+        var failures: [RemovableMediaReconcileFailure.Item] = []
         // Apply detaches first so duplicate-UUID conflicts can't fire when
         // a swap reuses an id with a different attachment.
+        var stillAttachedIDs: Set<UUID> = []
         for device in toDetach {
             do {
                 try await lifecycle.detachRemovableMedia(device, from: instance, for: sessionID)
@@ -216,7 +240,7 @@ final class VMRemovableMediaReconciler {
                     Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
                 )
-                return
+                return nil
             } catch RemovableMediaDeviceError.deviceNotFound {
                 // The coordinator's `forgetAttachedMedia` is skipped when the
                 // framework call throws, so clear stale tracking explicitly here.
@@ -230,12 +254,12 @@ final class VMRemovableMediaReconciler {
                     Self.logger, .error,
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
-                return
+                failures.append(.init(name: device.displayName, operation: .eject, error: error))
+                stillAttachedIDs.insert(device.id)
             }
         }
 
-        for item in toAttach {
+        for item in toAttach where !stillAttachedIDs.contains(item.id) {
             do {
                 // The scope must stay live while the service resolves the path and
                 // opens the attachment; on success it is registered with the instance
@@ -261,57 +285,56 @@ final class VMRemovableMediaReconciler {
                     Self.logger, .notice,
                     "VM '\(instance.name, privacy: .public)' torn down during media attach; abandoning reconcile"
                 )
-                return
+                return nil
             } catch {
                 #log(
                     Self.logger, .error,
                     "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                failReconcile(for: instance, actingFor: sessionID, lookup: rollbackLookup, error: error)
-                return
+                failures.append(.init(name: item.label, operation: .attach, error: error))
             }
         }
+        guard !failures.isEmpty else { return nil }
+        return RefusedPass(
+            sessionID: sessionID, lookup: rollbackLookup,
+            failure: RemovableMediaReconcileFailure(items: failures))
     }
 
-    /// Rolls the config back to the live state and surfaces `error` — unless the
-    /// pass acting for `sessionID` has been overtaken, whose successor's live
-    /// media the rollback would describe and whose user force-stopped the VM the
-    /// error is about.
-    private func failReconcile(
-        for instance: VMInstance,
-        actingFor sessionID: UUID,
-        lookup: [UUID: RemovableMediaItem],
-        error: any Error
-    ) {
-        guard instance.liveSessionID == sessionID else {
+    /// Settles the configuration on the live list and surfaces the error —
+    /// unless the session `refused` acted for has been overtaken, whose
+    /// successor's live media the list would describe and whose user
+    /// force-stopped the VM the error is about.
+    private func failReconcile(for instance: VMInstance, _ refused: RefusedPass) {
+        guard instance.liveSessionID == refused.sessionID else {
             #log(
                 Self.logger, .notice,
-                "Dropping removable-media reconcile failure for '\(instance.name, privacy: .public)': session \(sessionID, privacy: .public) is no longer live"
+                "Dropping removable-media reconcile failure for '\(instance.name, privacy: .public)': session \(refused.sessionID, privacy: .public) is no longer live"
             )
             return
         }
-        reconcileConfigToLiveState(for: instance, lookup: lookup)
-        onFailure?(error)
+        let live = instance.liveRemovableMedia.compactMap { refused.lookup[$0.id] }
+        onSettle?(instance, live.isEmpty ? nil : live)
+        onFailure?(refused.failure)
+    }
+}
+
+/// Every item a reconcile pass could not attach or eject, each named with what
+/// went wrong.
+struct RemovableMediaReconcileFailure: LocalizedError {
+    struct Item {
+        enum Operation { case attach, eject }
+
+        let name: String
+        let operation: Operation
+        let error: any Error
     }
 
-    /// Rolls `instance.configuration.removableMedia` back to whatever is
-    /// actually attached in `liveRemovableMedia`.
-    ///
-    /// The write bypasses `updateConfiguration` to avoid re-entering the reconcile
-    /// pipeline — the rolled-back state is the destination, not a retry.
-    private func reconcileConfigToLiveState(
-        for instance: VMInstance,
-        lookup: [UUID: RemovableMediaItem]
-    ) {
-        let rolled = instance.liveRemovableMedia.compactMap { lookup[$0.id] }
-        var newConfig = instance.configuration
-        newConfig.removableMedia = rolled.isEmpty ? nil : rolled
-        guard newConfig != instance.configuration else { return }
-        instance.configuration = newConfig
-        onSaveConfiguration?(instance)
-        #log(
-            Self.logger, .notice,
-            "Rolled removable media config for '\(instance.name, privacy: .public)' back to live state after reconcile error"
-        )
+    let items: [Item]
+
+    var errorDescription: String? {
+        items.map { item in
+            let verb = item.operation == .attach ? "attach" : "eject"
+            return "Couldn\u{2019}t \(verb) \u{201C}\(item.name)\u{201D}. \(item.error.localizedDescription)"
+        }.joined(separator: "\n")
     }
 }

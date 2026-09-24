@@ -118,14 +118,19 @@ final class VMLibraryViewModel {
     @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
         mutate: (inout VMConfiguration) -> Void
-    ) -> Bool {
-        library.updateConfiguration(of: instance, mutate: mutate)
+    ) -> VMLibrary.SettingsWrite {
+        library.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
     }
 
     @discardableResult
-    func updateSettings(of instance: VMInstance, mutate: (inout VMSettings) -> Void) -> Bool {
-        library.updateSettings(of: instance, mutate: mutate)
+    func updateSettings(
+        of instance: VMInstance,
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
+        mutate: (inout VMSettings) -> Void
+    ) -> VMLibrary.SettingsWrite {
+        library.updateSettings(of: instance, ifNotSaved: unsaved, mutate: mutate)
     }
 
     // MARK: - Command Forwarding
@@ -469,8 +474,9 @@ final class VMLibraryViewModel {
     // MARK: - Initialization
 
     /// A collaborator over the user's own state — the VMs directory, the
-    /// defaults domain, the host's vmnet networks and their store, its ARP
-    /// table, the signature's entitlements — takes no default: the test host
+    /// defaults domain, the Trash, the Downloads folder, the host's vmnet
+    /// networks and their store, its ARP table, the signature's entitlements —
+    /// takes no default: the test host
     /// runs as the app, in its container and with its signature, so a default
     /// would hand that state to every test that left it out. ``AppDelegate``
     /// supplies each.
@@ -489,10 +495,8 @@ final class VMLibraryViewModel {
         usbAccessoryService: (any USBAccessoryProviding)? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
-        fileSystem: any FileSystemOperating = FileManager.default,
-        downloadsDirectory: URL? = FileManager.default.urls(
-            for: .downloadsDirectory, in: .userDomainMask
-        ).first,
+        fileSystem: any FileSystemOperating,
+        downloadsDirectory: URL?,
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
@@ -1234,7 +1238,9 @@ final class VMLibraryViewModel {
             Self.logger, .notice,
             "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
         )
-        updateSettings(of: instance) { $0.hostState.agentInstallNudgeDismissed = dismissed }
+        updateSettings(of: instance, ifNotSaved: .discard) {
+            $0.hostState.agentInstallNudgeDismissed = dismissed
+        }
     }
 
     /// Re-arms the agent-install nudge everywhere: clears the app-wide

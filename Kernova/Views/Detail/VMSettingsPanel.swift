@@ -144,16 +144,21 @@ extension VMSettingsPanel {
     var resolved: VMOverviewResolved { context.overview.resolved }
 
     /// - Returns: Whether the mutation was applied, so a caller whose control
-    ///   already moved can put it back when the view model refused.
+    ///   already moved can put it back — refused or unsaved alike, the
+    ///   configuration kept its old value.
     @discardableResult
     func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        viewModel.updateConfiguration(of: instance, mutate: mutate)
+        writeSettings { mutate(&$0.configuration) }
     }
 
     /// ``writeConfig(_:)`` for a mutation that may touch the VM's host state.
     @discardableResult
     func writeSettings(_ mutate: (inout VMSettings) -> Void) -> Bool {
-        viewModel.updateSettings(of: instance, mutate: mutate)
+        guard
+            case .saved = viewModel.updateSettings(
+                of: instance, ifNotSaved: .discard, mutate: mutate)
+        else { return false }
+        return true
     }
 
     /// Hands a toggle this panel shares with an overview card to the shell, so

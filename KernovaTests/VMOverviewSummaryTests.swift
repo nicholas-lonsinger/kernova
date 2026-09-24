@@ -8,9 +8,10 @@ import Testing
 @MainActor
 struct VMOverviewSummaryTests {
     private func makeInstance(
-        guestOS: VMGuestOS = .macOS, mutate: (inout VMConfiguration) -> Void = { _ in }
+        guestOS: VMGuestOS = .macOS, hostState: VMHostState = VMHostState(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        VMInstanceFixture.make(guestOS: guestOS) {
+        VMInstanceFixture.make(guestOS: guestOS, hostState: hostState) {
             $0.cpuCount = 4
             $0.memorySizeInGB = 8
             mutate(&$0)
@@ -234,8 +235,8 @@ struct VMOverviewSummaryTests {
         let instance = makeInstance()
         #expect(rows(.snapshots, instance).isEmpty)
 
-        let older = VMSnapshot(name: "Older", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
-        let newer = VMSnapshot(name: "Newer", createdAt: Date(timeIntervalSince1970: 1_700_003_600))
+        let older = VMSnapshot(name: "Older", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
+        let newer = VMSnapshot(name: "Newer", createdAt: Date(timeIntervalSince1970: 1_700_003_600), macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [older, newer], currentID: newer.id)
 
         #expect(rows(.snapshots, instance).map(\.label) == ["Latest"])
@@ -253,8 +254,8 @@ struct VMOverviewSummaryTests {
         }
         #expect(summary() == nil)
 
-        let one = VMSnapshot(name: "Base")
-        let two = VMSnapshot(name: "Later")
+        let one = VMSnapshot(name: "Base", macAddress: nil)
+        let two = VMSnapshot(name: "Later", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [one, two], currentID: two.id)
 
         // The size read lands after the count, so the count stands on its own
@@ -268,7 +269,7 @@ struct VMOverviewSummaryTests {
     @Test("Only Snapshots states a header summary")
     func onlySnapshotsCarryAHeaderSummary() {
         let instance = makeInstance()
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         for category in VMSettingsCategory.allCases {
@@ -315,14 +316,13 @@ struct VMOverviewSummaryTests {
         }
         #expect(ephemeral(instance)?.isEnabled == false)
 
-        let snapshot = VMSnapshot(name: "Base")
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(
             snapshots: [snapshot], currentID: snapshot.id)
         #expect(ephemeral(instance)?.isEnabled == true)
 
         // A VM already in the mode can always be taken back out of it.
-        let stuck = makeInstance()
-        stuck.hostState.applyEphemeralMode(enabled: true, baseline: nil)
+        let stuck = makeInstance(hostState: VMHostState(ephemeralModeEnabled: true))
         #expect(ephemeral(stuck)?.isEnabled == true)
         #expect(ephemeral(stuck)?.isOn == true)
     }

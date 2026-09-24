@@ -27,7 +27,7 @@ struct VMConfigurationKeyRegistryTests {
 
     private func makeManifest() -> VMSnapshotManifest {
         let snapshot = VMSnapshot(
-            name: "Baseline", createdAt: Date(timeIntervalSince1970: 1), kind: .cold)
+            name: "Baseline", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
         return VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
     }
 

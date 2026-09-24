@@ -399,8 +399,7 @@ struct VMSettingsSystemPanelTests {
         _ status: AVAuthorizationStatus,
         systemSettings: SystemSettingsLink = SystemSettingsLink()
     ) -> VMSettingsViewController {
-        let instance = makeSettingsInstance(guestOS: .linux)
-        instance.configuration.audioInputEnabled = true
+        let instance = makeSettingsInstance(guestOS: .linux) { $0.audioInputEnabled = true }
         let vc = makeSettingsPane(
             instance: instance, viewModel: makeViewModel(), isReadOnly: false,
             micPermissionStatus: { status }, systemSettings: systemSettings)

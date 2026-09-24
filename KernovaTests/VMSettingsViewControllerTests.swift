@@ -150,8 +150,7 @@ struct VMSettingsViewControllerTests {
         let otherCenter = NotificationCenter()
         let mic = MicStatus(.authorized)
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = makeSettingsInstance(guestOS: .linux)
-        instance.configuration.audioInputEnabled = true
+        let instance = makeSettingsInstance(guestOS: .linux) { $0.audioInputEnabled = true }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false,
             micPermissionStatus: { mic.value }, activationCenter: center)

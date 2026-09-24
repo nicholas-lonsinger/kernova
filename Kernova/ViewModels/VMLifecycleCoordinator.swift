@@ -287,8 +287,8 @@ final class VMLifecycleCoordinator {
     // MARK: - Snapshots
 
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws {
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
+    ) async throws -> VMSnapshot {
         try await serialized(instance, action: "takeSnapshot") {
             // A warm capture takes every passthrough accessory off before it
             // writes the guest's state, because a saved state carrying one
@@ -302,8 +302,9 @@ final class VMLifecycleCoordinator {
             // user the same thing on that path as on the one that succeeded.
             let held = instance.liveUSBAccessories
             let sessionID = instance.attachableSessionID
+            let captured: VMSnapshot
             do {
-                try await virtualizationService.takeSnapshot(
+                captured = try await virtualizationService.takeSnapshot(
                     instance, snapshot: snapshot, store: store)
             } catch {
                 if let sessionID {
@@ -314,6 +315,7 @@ final class VMLifecycleCoordinator {
             if let sessionID {
                 await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
             }
+            return captured
         }
     }
 
@@ -439,11 +441,12 @@ final class VMLifecycleCoordinator {
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
     ) async throws {
         try await serialized(instance, action: "revertToSnapshot") {
             try await virtualizationService.revertToSnapshot(
-                instance, snapshot: snapshot, store: store)
+                instance, snapshot: snapshot, store: store, adopt: adopt)
         }
     }
 
@@ -600,7 +603,7 @@ final class VMLifecycleCoordinator {
                             // Keep the persisted path on the file the download
                             // actually writes, so resume across relaunches and
                             // delete-time cleanup stay keyed to it.
-                            instance.performConfigurationMutation {
+                            instance.performConfigurationMutation(ifNotSaved: .keep) {
                                 $0.installContext?.downloadDestinationPath =
                                     downloadDestination.path(percentEncoded: false)
                                 $0.installContext?.requestedFreshDownload = false
@@ -632,7 +635,7 @@ final class VMLifecycleCoordinator {
                             Self.logger, .notice,
                             "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — the existing IPSW + bundle are trashed before the download starts"
                         )
-                        instance.performConfigurationMutation {
+                        instance.performConfigurationMutation(ifNotSaved: .keep) {
                             $0.installContext?.requestedFreshDownload = false
                         }
                     }
@@ -663,7 +666,7 @@ final class VMLifecycleCoordinator {
                     // so its stored path and bookmark can both drift between
                     // retries.
                     if let reference, let healed = opened?.healedTo {
-                        instance.performConfigurationMutation {
+                        instance.performConfigurationMutation(ifNotSaved: .keep) {
                             $0.healExternalReference(
                                 reference, movedTo: healed.path, bookmark: healed.bookmark)
                         }
@@ -687,7 +690,7 @@ final class VMLifecycleCoordinator {
                 // stays: the boot that delivers it has not run yet, and anything
                 // interrupting the two must leave the next Start something to ask
                 // about.
-                instance.performConfigurationMutation {
+                instance.performConfigurationMutation(ifNotSaved: .keep) {
                     $0.installContext = nil
                     $0.installedImage = installedImage
                 }
@@ -877,7 +880,7 @@ final class VMLifecycleCoordinator {
                 // Keep the persisted path on the file the download writes, so
                 // resume across relaunches and delete-time cleanup stay keyed
                 // to it.
-                instance.performConfigurationMutation {
+                instance.performConfigurationMutation(ifNotSaved: .keep) {
                     $0.linuxInstallContext?.downloadDestinationPath =
                         downloadDestination.path(percentEncoded: false)
                 }
@@ -1021,7 +1024,7 @@ final class VMLifecycleCoordinator {
             bookmark: SecurityScopedBookmark.make(for: destination)
         )
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        instance.performConfigurationMutation { config in
+        instance.performConfigurationMutation(ifNotSaved: .keep) { config in
             // Position [0] is what EFI boots first, which is the whole reason
             // the installer is on the list at all.
             config.setStorageDisks([installer] + config.effectiveStorageDisks(layout: layout))

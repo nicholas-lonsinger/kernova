@@ -212,6 +212,7 @@ struct VMInstanceLiveVsockPolicyTests {
     func logHandOffCrossingDisableIsRefused() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .log, on: instance, sessionID: sessionID)
+        let library = makeWiredLibrary(holding: [instance])
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -222,7 +223,7 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
         // The user toggles the setting off before the queued hand-off gets its
         // turn on main.
-        instance.configuration.agentLogForwardingEnabled = false
+        library.editConfiguration(of: instance) { $0.agentLogForwardingEnabled = false }
 
         await drainMainQueue()
 
@@ -234,6 +235,7 @@ struct VMInstanceLiveVsockPolicyTests {
     func dropHandOffCrossingDisableIsRefused() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .drop, on: instance, sessionID: sessionID)
+        let library = makeWiredLibrary(holding: [instance])
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -241,7 +243,7 @@ struct VMInstanceLiveVsockPolicyTests {
 
         #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
         instance.dropDataSink.set(nil)
-        instance.configuration.dropFilesEnabled = false
+        library.editConfiguration(of: instance) { $0.dropFilesEnabled = false }
 
         await drainMainQueue()
 
@@ -254,6 +256,7 @@ struct VMInstanceLiveVsockPolicyTests {
     func clipboardHandOffCrossingDisableIsRefused() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .clipboard, on: instance, sessionID: sessionID)
+        let library = makeWiredLibrary(holding: [instance])
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -263,7 +266,7 @@ struct VMInstanceLiveVsockPolicyTests {
         // Cleared the way the disable branch clears it, so a hand-off that
         // repointed the sink at a rebuilt service would show up below.
         instance.clipboardDataSink.set(nil)
-        instance.configuration.clipboardSharingEnabled = false
+        library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = false }
 
         await drainMainQueue()
 

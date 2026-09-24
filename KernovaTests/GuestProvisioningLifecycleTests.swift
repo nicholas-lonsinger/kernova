@@ -13,11 +13,7 @@ import Testing
 struct GuestProvisioningLifecycleTests {
     private func makeCoordinator() -> (VMLifecycleCoordinator, MockMacOSInstallService) {
         let installService = MockMacOSInstallService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: installService,
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService())
+        let coordinator = makeTestLifecycle(installService: installService)
         return (coordinator, installService)
     }
 
@@ -27,21 +23,17 @@ struct GuestProvisioningLifecycleTests {
             enablesRemoteLogin: false)
     }
 
+    /// The instance reaches its library only weakly, so the caller keeps the
+    /// library alive for as long as a configuration write has to land.
     private func makeInstance(
         intent: GuestAccountIntent? = nil
-    ) -> VMInstance {
+    ) -> (instance: VMInstance, library: VMLibrary) {
         let instance = VMInstanceFixture.make(name: "Unattended VM", guestOS: .macOS) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
             $0.pendingGuestAccount = intent
         }
-        // Wired as the library wires it, so a configuration write reaches the
-        // configuration the way it does in the app.
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return true
-        }
-        return instance
+        return (instance, makeWiredLibrary(holding: [instance]))
     }
 
     // MARK: - Rejoining the Intent
@@ -107,7 +99,8 @@ struct GuestProvisioningLifecycleTests {
     func installKeepsTheAccountForTheBootAfterIt() async throws {
         let (coordinator, installService) = makeCoordinator()
         installService.installedImage = .macOSRestoreImage(version: "27.0", build: "27A100")
-        let instance = makeInstance(intent: makeIntent())
+        let (instance, library) = makeInstance(intent: makeIntent())
+        defer { withExtendedLifetime(library) {} }
         let context = try #require(instance.configuration.installContext)
 
         try await coordinator.installMacOS(on: instance, context: context)
@@ -123,7 +116,8 @@ struct GuestProvisioningLifecycleTests {
     func installBelowFloorRecordsTheImage() async throws {
         let (coordinator, installService) = makeCoordinator()
         installService.installedImage = .macOSRestoreImage(version: "26.5.2", build: "25F84")
-        let instance = makeInstance(intent: makeIntent())
+        let (instance, library) = makeInstance(intent: makeIntent())
+        defer { withExtendedLifetime(library) {} }
         let context = try #require(instance.configuration.installContext)
 
         try await coordinator.installMacOS(on: instance, context: context)

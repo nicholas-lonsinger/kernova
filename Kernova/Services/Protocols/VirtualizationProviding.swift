@@ -77,16 +77,22 @@ protocol VirtualizationProviding: Sendable {
     /// slot, unless the VM is stopped — leaving the VM where it was found.
     /// Throws if the VM has since moved to a mode that disagrees with
     /// `snapshot.kind`.
+    ///
+    /// Answers `snapshot` carrying the ``VMSnapshot/macAddress`` of the
+    /// configuration the capture wrote.
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
-    ) async throws
+        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
+    ) async throws -> VMSnapshot
 
     /// Returns the VM to `snapshot`, discarding whatever session is live and
     /// keeping the snapshot itself.
     ///
     /// The VM lands in the state the snapshot captured: paused on a warm
-    /// snapshot's memory image, stopped on a cold snapshot's disks.
+    /// snapshot's memory image, stopped on a cold snapshot's disks. `adopt`
+    /// receives the plan once the store has written it to the bundle, and
+    /// before anything reads the VM's configuration to bring it back up.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
     ) async throws
 }

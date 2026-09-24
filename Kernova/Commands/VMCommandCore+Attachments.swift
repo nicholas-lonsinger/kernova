@@ -47,7 +47,7 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 ///
 /// Every one resolves through a ``VMSelector``, refuses through
 /// ``VMCommandCore/require(_:on:)``, and writes through
-/// ``VMLibrary/updateConfiguration(of:mutate:)``. Consent is a parameter:
+/// ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``. Consent is a parameter:
 /// trashing the file behind an attachment refuses without it.
 extension VMCommandCore {
     // MARK: - Storage Disks
@@ -308,10 +308,16 @@ extension VMCommandCore {
         // The write above is a real hop: a suspend or quit landing during it
         // moves the VM to a phase the entry cannot be attached in, and the
         // configuration write refuses. The file is the user's and stays.
-        let accepted = library.updateConfiguration(of: instance) { config in
-            config.removableMedia = (config.removableMedia ?? []) + [item]
-        }
-        guard accepted else {
+        let created = destinationURL.path(percentEncoded: false)
+        switch library.updateConfiguration(
+            of: instance, ifNotSaved: .discard,
+            mutate: { config in
+                config.removableMedia = (config.removableMedia ?? []) + [item]
+            })
+        {
+        case .saved:
+            break
+        case .refused(.sessionNotAttachable):
             #log(
                 Self.logger, .notice,
                 "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
@@ -319,7 +325,27 @@ extension VMCommandCore {
             throw CommandError.operationFailed(
                 verb: .editRemovableMedia,
                 message:
-                    "The disk image was created at \(destinationURL.path(percentEncoded: false)), but \(instance.name) is \(instance.status.rawValue) and could not take it. Attach the file once the VM is running."
+                    "The disk image was created at \(created), but it isn\u{2019}t attached: \u{201C}\(instance.name)\u{201D} is \(instance.status.displayName.lowercased()), and couldn\u{2019}t take a removable-media change."
+            )
+        case .refused(let refusal):
+            #log(
+                Self.logger, .notice,
+                "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
+            )
+            throw CommandError.operationFailed(
+                verb: .editRemovableMedia,
+                message:
+                    "The disk image was created at \(created), but it was not attached. \(refusal.localizedDescription)"
+            )
+        case .notSaved:
+            #log(
+                Self.logger, .notice,
+                "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the configuration was not saved"
+            )
+            throw CommandError.operationFailed(
+                verb: .editRemovableMedia,
+                message:
+                    "The disk image was created at \(created), but the change to \u{201C}\(instance.name)\u{201D} was not saved, so it is not attached."
             )
         }
         #log(
@@ -572,14 +598,24 @@ extension VMCommandCore {
         #log(
             Self.logger, .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        let accepted = library.updateConfiguration(of: instance) { config in
-            let pruned = (config.removableMedia ?? []).filter { $0.path != path }
-            config.removableMedia = pruned.isEmpty ? nil : pruned
-        }
-        if !accepted {
+        switch library.updateConfiguration(
+            of: instance, ifNotSaved: .discard,
+            mutate: { config in
+                let pruned = (config.removableMedia ?? []).filter { $0.path != path }
+                config.removableMedia = pruned.isEmpty ? nil : pruned
+            })
+        {
+        case .saved:
+            break
+        case .refused(let refusal):
             #log(
                 Self.logger, .notice,
-                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
+                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)' (\(instance.status.rawValue, privacy: .public)): \(refusal.localizedDescription, privacy: .public)"
+            )
+        case .notSaved:
+            #log(
+                Self.logger, .notice,
+                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': the configuration was not saved"
             )
         }
     }

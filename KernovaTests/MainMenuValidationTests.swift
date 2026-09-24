@@ -51,8 +51,9 @@ struct MainMenuValidationTests {
 
     @Test("Start takes its title from the VM's start action")
     func startRetitlesForPendingInstall() {
-        let instance = makeMenuInstance()
-        instance.configuration.installContext = MacOSInstallContext(source: .localFile)
+        let instance = makeMenuInstance {
+            $0.installContext = MacOSInstallContext(source: .localFile)
+        }
         let fixture = makeFixture(instance: instance)
         let item = makeMenuItem(#selector(AppDelegate.startVM(_:)))
 

@@ -80,16 +80,18 @@ struct EphemeralModeHostStateTests {
 struct EphemeralModeInstanceTests {
     private let preferences = makeTestPreferences()
 
-    private func makeInstance(phase: VMLifecyclePhase = .stopped) -> VMInstance {
-        VMInstanceFixture.make(name: "Throwaway", phase: phase, preferences: preferences)
+    private func makeInstance(
+        phase: VMLifecyclePhase = .stopped, _ hostState: VMHostState = VMHostState()
+    ) -> VMInstance {
+        VMInstanceFixture.make(
+            name: "Throwaway", phase: phase, preferences: preferences, hostState: hostState)
     }
 
     @Test("A VM with the mode off has no baseline")
     func noBaselineWhileOff() {
-        let instance = makeInstance()
-        let snapshot = VMSnapshot(name: "Clean")
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
+        let instance = makeInstance(VMHostState(ephemeralBaselineSnapshotID: snapshot.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
-        instance.hostState.ephemeralBaselineSnapshotID = snapshot.id
 
         #expect(instance.ephemeralBaselineSnapshot == nil)
         #expect(!instance.isEphemeralBaseline(snapshot))
@@ -97,10 +99,9 @@ struct EphemeralModeInstanceTests {
 
     @Test("The baseline resolves through the manifest")
     func baselineResolves() {
-        let instance = makeInstance()
-        let snapshot = VMSnapshot(name: "Clean")
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
+        let instance = makeInstance(.ephemeral(baseline: snapshot.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
-        instance.hostState.applyEphemeralMode(enabled: true, baseline: snapshot.id)
 
         #expect(instance.ephemeralBaselineSnapshot == snapshot)
         #expect(instance.isEphemeralBaseline(snapshot))
@@ -108,8 +109,7 @@ struct EphemeralModeInstanceTests {
 
     @Test("A baseline the manifest no longer lists resolves to nothing")
     func danglingBaselineResolvesToNothing() {
-        let instance = makeInstance()
-        instance.hostState.applyEphemeralMode(enabled: true, baseline: UUID())
+        let instance = makeInstance(.ephemeral(baseline: UUID()))
 
         #expect(instance.ephemeralBaselineSnapshot == nil)
         #expect(!instance.hasLiveEphemeralSession)
@@ -117,10 +117,9 @@ struct EphemeralModeInstanceTests {
 
     @Test("The running marker needs a live session, not just the mode")
     func liveSessionMarkerFollowsTheSession() {
-        let instance = makeInstance()
-        let snapshot = VMSnapshot(name: "Clean")
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
+        let instance = makeInstance(.ephemeral(baseline: snapshot.id))
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
-        instance.hostState.applyEphemeralMode(enabled: true, baseline: snapshot.id)
 
         // Stopped: the mode is on, but nothing is running to discard.
         #expect(!instance.hasLiveEphemeralSession)

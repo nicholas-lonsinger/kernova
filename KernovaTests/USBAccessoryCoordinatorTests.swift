@@ -10,12 +10,7 @@ import Testing
 @MainActor
 struct USBAccessoryCoordinatorTests {
     private func makeLifecycle(_ service: MockUSBAccessoryService) -> VMLifecycleCoordinator {
-        VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            usbAccessoryService: service)
+        makeTestLifecycle(usbAccessoryService: service)
     }
 
     /// The coordinator under test.
@@ -73,12 +68,7 @@ struct USBAccessoryCoordinatorTests {
 
     @Test("Does not exist in a build that cannot pass accessories through")
     func absentWithoutTheCapability() {
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            usbAccessoryService: nil)
+        let lifecycle = makeTestLifecycle(usbAccessoryService: nil)
         #expect(
             USBAccessoryCoordinator(
                 lifecycle: lifecycle, roster: StubVMInstanceRoster(),

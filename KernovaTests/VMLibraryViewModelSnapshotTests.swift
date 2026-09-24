@@ -30,6 +30,7 @@ struct VMLibraryViewModelSnapshotTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -60,6 +61,7 @@ struct VMLibraryViewModelSnapshotTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -71,16 +73,17 @@ struct VMLibraryViewModelSnapshotTests {
     /// A VM registered in `viewModel`'s library — every verb addresses a VM by
     /// selector, so one outside the library resolves to nothing.
     private func makeInstance(
-        in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .running(sessionID: UUID())
+        in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .running(sessionID: UUID()),
+        name: String = "Snapshot VM", _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
-            name: "Snapshot VM", phase: phase, preferences: preferences)
+            name: name, phase: phase, preferences: preferences, mutate: mutate)
         viewModel.instances.append(instance)
         return instance
     }
 
     private func makeSnapshot(name: String = "Before the update") -> VMSnapshot {
-        VMSnapshot(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        VMSnapshot(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
     }
 
     /// Lists `snapshots` on `instance` and records what each captured, so a
@@ -218,13 +221,65 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, phase: .running(sessionID: sessionID))
 
         await #expect(throws: VirtualizationError.self) {
-            try await harness.virtualization.takeSnapshot(
-                instance, snapshot: VMSnapshot(name: "Mis-stamped", kind: .cold),
+            _ = try await harness.virtualization.takeSnapshot(
+                instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold),
                 store: harness.snapshots)
         }
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
         #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
+    @Test("A snapshot is listed carrying the MAC address it was taken with")
+    func takenSnapshotCarriesItsMACAddress() async {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel) { $0.macAddress = "aa:bb:cc:dd:ee:04" }
+
+        await harness.viewModel.takeSnapshot(instance, name: "Clean install").value
+
+        #expect(instance.snapshotManifest.snapshots.map(\.macAddress) == ["aa:bb:cc:dd:ee:04"])
+    }
+
+    @Test("An Ephemeral baseline keeps the address it was taken with from every other VM")
+    func ephemeralBaselineReservesItsAddress() async throws {
+        let harness = makeHarness()
+        let ephemeral = makeInstance(in: harness.viewModel, phase: .stopped, name: "Ephemeral") {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:05"
+        }
+        await harness.viewModel.takeSnapshot(ephemeral, name: "Baseline").value
+        let baseline = try #require(ephemeral.snapshotManifest.snapshots.first)
+        // The VM itself may leave the address, which its baseline still holds.
+        #expect(
+            harness.viewModel.updateSettings(of: ephemeral, ifNotSaved: .discard) {
+                $0.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+                $0.configuration.macAddress = "aa:bb:cc:dd:ee:06"
+            }.landed)
+        let other = makeInstance(in: harness.viewModel, phase: .stopped, name: "Other") {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:07"
+        }
+
+        let took = harness.viewModel.updateConfiguration(of: other, ifNotSaved: .discard) {
+            $0.macAddress = "aa:bb:cc:dd:ee:05"
+        }
+
+        #expect(took.refusedForMACAddress)
+        #expect(other.configuration.macAddress == "aa:bb:cc:dd:ee:07")
+        #expect(presenter.errorTitles == ["MAC Address In Use"])
+        // The baseline is named as one, and offered no delete it would refuse.
+        #expect(
+            presenter.errorMessage
+                == "\u{201C}Ephemeral\u{201D} has a snapshot, \u{201C}Baseline\u{201D}, taken with aa:bb:cc:dd:ee:05. "
+                + "\u{201C}Baseline\u{201D} is its Ephemeral Mode baseline. "
+                + "Each virtual machine needs its own MAC address.")
+
+        // The power-off revert puts the VM back on the baseline's address,
+        // which nothing else took meanwhile.
+        await harness.viewModel.revert(ephemeral, to: baseline)
+        #expect(ephemeral.configuration.macAddress == "aa:bb:cc:dd:ee:05")
+        #expect(ephemeral.hostState.ephemeralModeEnabled)
+        #expect(harness.viewModel.vmNamesSharingMACAddress(with: ephemeral).isEmpty)
     }
 
     @Test("Taking a snapshot captures it and lists it as current")
@@ -305,7 +360,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel)
         let target = makeSnapshot(name: "Fresh install")
-        let other = VMSnapshot(name: "Later", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
+        let other = VMSnapshot(name: "Later", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
         seed(harness, instance, [target, other], currentID: other.id)
 
         await harness.viewModel.revert(instance, to: target)
@@ -361,7 +416,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, phase: .stopped)
         var target = makeSnapshot()
-        target.kind = .cold
+        target.record.kind = .cold
         seed(harness, instance, [target])
 
         await harness.viewModel.revert(instance, to: target, takingCheckpoint: true)

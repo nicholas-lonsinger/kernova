@@ -24,25 +24,13 @@ struct VMCapabilityCatalogTests {
         usbAccessories: (any USBAccessoryProviding)? = nil
     ) -> Harness {
         let storage = MockVMStorageService()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            usbAccessoryService: usbAccessories,
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: MockFileSystem()
-        )
-        let library = VMLibrary(
-            storageService: storage,
-            snapshotStore: MockVMSnapshotStore(),
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization,
+            usbAccessoryService: usbAccessories)
+        let library = makeWiredLibrary(
+            storage: storage,
             lifecycle: lifecycle,
-            fileSystem: MockFileSystem(),
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         return Harness(
             catalog: VMCapabilityCatalog(library: library), library: library, lifecycle: lifecycle,
             storage: storage)
@@ -51,11 +39,14 @@ struct VMCapabilityCatalogTests {
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String = "Catalog VM", phase: VMLifecyclePhase = .stopped,
-        guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = []
+        guestOS: VMGuestOS = .linux, snapshots: [VMSnapshot] = [],
+        hostState: VMHostState = VMHostState(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
-            library: harness.library, storage: harness.storage, preferences: preferences)
+            library: harness.library, storage: harness.storage, preferences: preferences,
+            hostState: hostState, mutate: mutate)
     }
 
     /// Applicable in every state, so each case below names only what its state
@@ -209,7 +200,7 @@ struct VMCapabilityCatalogTests {
     @Test("Nothing is available that is not applicable")
     func availabilityImpliesApplicability() {
         for phase in VMLifecyclePhaseFixtures.all {
-            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
+            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install", macAddress: nil)]] {
                 let harness = makeHarness()
                 let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
                 for capability in VMCapability.allCases
@@ -227,7 +218,7 @@ struct VMCapabilityCatalogTests {
         for phase in VMLifecyclePhaseFixtures.all {
             let stockedHarness = makeHarness()
             let stocked = makeInstance(
-                in: stockedHarness, phase: phase, snapshots: [VMSnapshot(name: "Clean install")])
+                in: stockedHarness, phase: phase, snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
             #expect(
                 stockedHarness.catalog.isApplicable(.revertToSnapshot, to: stocked)
                     == !phase.isTransitioning, "\(phase)")
@@ -251,12 +242,12 @@ struct VMCapabilityCatalogTests {
         try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(harness.catalog.stopAction(for: suspended) == .discardSavedState)
 
-        let baseline = VMSnapshot(name: "Ephemeral")
+        let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
         let ephemeral = makeInstance(
-            in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline])
+            in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
         defer { VMInstanceFixture.removeBundle(of: ephemeral) }
         try VMInstanceFixture.writeSaveFile(for: ephemeral)
-        ephemeral.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         #expect(harness.catalog.stopAction(for: ephemeral) == .revertToBaseline)
     }
 
@@ -285,7 +276,7 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()),
-            snapshots: [VMSnapshot(name: "Clean install")])
+            snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
@@ -329,7 +320,7 @@ struct VMCapabilityCatalogTests {
     func cloneInFlightLocksSourceButNothingElse() {
         let harness = makeHarness()
         let source = makeInstance(
-            in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install")])
+            in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
         let other = makeInstance(in: harness, name: "Other")
         let phantom = makeInstance(in: harness, name: "Source Copy")
         let task = Task {}
@@ -379,7 +370,7 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness(virtualization: suspending)
         let instance = makeInstance(
             in: harness, phase: .livePaused(sessionID: UUID()),
-            snapshots: [VMSnapshot(name: "Clean install")])
+            snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
 
         #expect(harness.catalog.isAvailable(.takeSnapshot, on: instance))
         #expect(harness.catalog.isAvailable(.revertToSnapshot, on: instance))
@@ -510,7 +501,7 @@ struct VMCapabilityCatalogTests {
         }
 
         for phase in VMLifecyclePhaseFixtures.all {
-            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install")]] {
+            for snapshots: [VMSnapshot] in [[], [VMSnapshot(name: "Clean install", macAddress: nil)]] {
                 let harness = makeHarness()
                 let instance = makeInstance(in: harness, phase: phase, snapshots: snapshots)
                 for capability in VMCapability.allCases where !isAnException(capability, in: phase) {
@@ -546,23 +537,26 @@ struct VMCapabilityCatalogTests {
     @Test("An Ephemeral baseline is undeletable, and every other snapshot is not")
     func canDeleteSnapshotProtectsTheEphemeralBaseline() {
         let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install")
-        let later = VMSnapshot(name: "Configured")
-        let instance = makeInstance(in: harness, snapshots: [baseline, later])
-        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
+        let instance = makeInstance(
+            in: harness, snapshots: [baseline, later],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
         #expect(!harness.catalog.canDeleteSnapshot(baseline, on: instance))
         #expect(harness.catalog.canDeleteSnapshot(later, on: instance))
 
         // Turning the mode off releases the baseline: nothing needs it back.
-        instance.hostState.applyEphemeralMode(enabled: false, baseline: nil)
+        harness.library.editHostState(of: instance) {
+            $0.applyEphemeralMode(enabled: false, baseline: nil)
+        }
         #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
     }
 
     @Test("No snapshot is deletable in a state the manifest cannot be edited in")
     func canDeleteSnapshotFollowsTheCapability() {
         let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Configured")
+        let snapshot = VMSnapshot(name: "Configured", macAddress: nil)
         let instance = makeInstance(
             in: harness, phase: .revertingToSnapshot, snapshots: [snapshot])
 
@@ -576,10 +570,11 @@ struct VMCapabilityCatalogTests {
     @Test("The delete offer names the baseline bar apart from an unavailable manifest")
     func snapshotDeleteOfferNamesWhatBarsIt() {
         let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install")
-        let later = VMSnapshot(name: "Configured")
-        let instance = makeInstance(in: harness, snapshots: [baseline, later])
-        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
+        let instance = makeInstance(
+            in: harness, snapshots: [baseline, later],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
         #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .barredAsBaseline)
         #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .offered)
@@ -617,7 +612,7 @@ struct VMCapabilityCatalogTests {
 
         #expect(!harness.catalog.isApplicable(.showClipboard, to: instance))
 
-        instance.configuration.clipboardSharingEnabled = true
+        harness.library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = true }
         #expect(harness.catalog.isApplicable(.showClipboard, to: instance))
     }
 
@@ -659,8 +654,8 @@ struct VMCapabilityCatalogTests {
             let harness = makeHarness()
             for preference in [VMDisplayPreference.popOut, .fullscreen] {
                 let instance = makeInstance(
-                    in: harness, name: "VM \(index) \(preference)", phase: expected.phase)
-                instance.hostState.displayPreference = preference
+                    in: harness, name: "VM \(index) \(preference)", phase: expected.phase,
+                    hostState: VMHostState(displayPreference: preference))
                 #expect(
                     harness.catalog.revealSurface(for: instance) == expected.detached,
                     "\(expected.phase) \(preference)")
@@ -686,8 +681,8 @@ struct VMCapabilityCatalogTests {
     @Test("A VM whose bundle is still being written reveals in the library")
     func revealSurfaceOfAPreparingVMIsTheLibrary() {
         let harness = makeHarness()
-        let phantom = makeInstance(in: harness, phase: .suspended)
-        phantom.hostState.displayPreference = .popOut
+        let phantom = makeInstance(
+            in: harness, phase: .suspended, hostState: VMHostState(displayPreference: .popOut))
         let task = Task {}
         defer { task.cancel() }
 
@@ -759,8 +754,9 @@ struct VMCapabilityCatalogTests {
         ])
     func standingBringUpRefusesPendingSetup(phase: VMLifecyclePhase) {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase)
-        instance.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
+        let instance = makeInstance(in: harness, phase: phase) {
+            $0.installContext = MacOSInstallContext(source: .downloadLatest)
+        }
 
         #expect(instance.configuration.pendingGuestSetup != nil)
         #expect(harness.catalog.standingBringUp(for: instance) == nil)
@@ -794,7 +790,7 @@ struct VMCapabilityCatalogTests {
 
         #expect(harness.catalog.guestAccountState(of: instance) == .none)
 
-        instance.configuration.pendingGuestAccount = intent
+        harness.library.editConfiguration(of: instance) { $0.pendingGuestAccount = intent }
         #expect(harness.catalog.guestAccountState(of: instance) == .owed(intent))
         #expect(harness.catalog.owesGuestAccountAnswer(instance))
 
@@ -819,9 +815,11 @@ struct VMCapabilityCatalogTests {
         // Answered first, to show the phase alone would have brought it up.
         #expect(harness.catalog.standingBringUp(for: instance) != nil)
 
-        instance.configuration.pendingGuestAccount = GuestAccountIntent(
-            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-            enablesRemoteLogin: false)
+        harness.library.editConfiguration(of: instance) {
+            $0.pendingGuestAccount = GuestAccountIntent(
+                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+                enablesRemoteLogin: false)
+        }
 
         #expect(harness.catalog.owesGuestAccountAnswer(instance))
         #expect(harness.catalog.standingBringUp(for: instance) == nil)
@@ -831,10 +829,11 @@ struct VMCapabilityCatalogTests {
     @Test("A VM whose account answer is held owes nothing, and takes the standing bring-up")
     func standingBringUpAdmitsAnAnsweredAccount() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
-        instance.configuration.pendingGuestAccount = GuestAccountIntent(
-            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-            enablesRemoteLogin: false)
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
+            $0.pendingGuestAccount = GuestAccountIntent(
+                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+                enablesRemoteLogin: false)
+        }
         #expect(harness.catalog.standingBringUp(for: instance) == nil)
 
         harness.library.holdGuestAccountPassword(
@@ -851,10 +850,11 @@ struct VMCapabilityCatalogTests {
     @Test("A retraction leaves nothing owed and nothing held")
     func retractingEndsBothHalves() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
-        instance.configuration.pendingGuestAccount = GuestAccountIntent(
-            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-            enablesRemoteLogin: false)
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
+            $0.pendingGuestAccount = GuestAccountIntent(
+                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
+                enablesRemoteLogin: false)
+        }
         harness.library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance)
 

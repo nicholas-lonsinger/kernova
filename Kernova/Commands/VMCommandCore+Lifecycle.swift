@@ -260,7 +260,9 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Skipping the account '\(account.username, privacy: .public)' '\(instance.name, privacy: .public)' was set up with — macOS asks for one in Setup Assistant instead"
         )
-        library.retractGuestAccount(for: instance)
+        if case .refused(let refusal) = library.retractGuestAccount(for: instance) {
+            throw refusalError(refusal, on: instance)
+        }
     }
 
     /// What every surface is told about an account nobody has answered for.
@@ -332,14 +334,20 @@ extension VMCommandCore {
         let scale = hiDPI ? surface.backingScaleFactor : 1
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: surface.pointSize, backingScaleFactor: scale)
-        let previous = instance.configuration
-        if !library.updateConfiguration(of: instance, mutate: { $0.displayResolution = resolution }) {
-            // Assigned directly rather than through the funnel: disk still holds
-            // `previous`, so re-persisting it is a second chance to fail.
-            instance.configuration = previous
+        switch library.updateConfiguration(
+            of: instance, ifNotSaved: .discard, mutate: { $0.displayResolution = resolution })
+        {
+        case .saved:
+            break
+        case .notSaved:
             #log(
                 Self.logger, .warning,
                 "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"
+            )
+        case .refused(let refusal):
+            #log(
+                Self.logger, .warning,
+                "The window-fitted resolution for '\(instance.name, privacy: .public)' was refused — booting at the previously saved resolution: \(refusal.localizedDescription, privacy: .public)"
             )
         }
     }

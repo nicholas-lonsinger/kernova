@@ -91,14 +91,14 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .stopped)
         #expect(instance.canRevertToSnapshot == false)
 
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One", macAddress: nil)])
         #expect(instance.canRevertToSnapshot == true)
     }
 
     @Test("A running VM can be reverted — the revert discards the live session")
     func runningVMCanBeReverted() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One", macAddress: nil)])
         #expect(instance.canRevertToSnapshot == true)
     }
 
@@ -106,7 +106,7 @@ struct VMInstanceTests {
     func transitioningVMCannotBeReverted() {
         for phase in Self.transitionalPhases {
             let instance = VMInstanceFixture.make(phase: phase)
-            instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+            instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One", macAddress: nil)])
             #expect(instance.canRevertToSnapshot == false, "phase \(phase)")
         }
     }
@@ -472,8 +472,7 @@ struct VMInstanceTests {
 
     @Test("effectiveMachineIdentifierData prefers the configuration field")
     func effectiveMachineIDPrefersConfiguration() {
-        let instance = VMInstanceFixture.make()
-        instance.configuration.machineIdentifierData = Data([1, 2, 3])
+        let instance = VMInstanceFixture.make { $0.machineIdentifierData = Data([1, 2, 3]) }
         #expect(instance.effectiveMachineIdentifierData == Data([1, 2, 3]))
     }
 
@@ -781,28 +780,31 @@ struct VMInstanceTests {
     @Test("A running VM awaiting network reattach shows the warning tint and says why")
     func networkPendingShowsWarningTintAndToolTip() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        let library = makeWiredLibrary(holding: [instance])
         instance.beginSessionContext().networkAttachmentPending = true
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
         // The wording names what is actually unavailable: the app-managed
         // network for Shared and Host Only, a host interface for Bridged.
-        instance.configuration.networkMode = .shared
+        library.editConfiguration(of: instance) { $0.networkMode = .shared }
         #expect(
             instance.statusToolTip
                 == "The Shared Network is unavailable. Kernova reconnects automatically.")
-        instance.configuration.networkMode = .hostOnly
+        library.editConfiguration(of: instance) { $0.networkMode = .hostOnly }
         #expect(
             instance.statusToolTip
                 == "The Host Only network is unavailable. Kernova reconnects automatically.")
-        instance.configuration.networkMode = .bridged
+        library.editConfiguration(of: instance) { $0.networkMode = .bridged }
         #expect(instance.statusToolTip?.contains("network interface") == true)
     }
 
     @Test("applyLivePolicy forwards a network mode change to the coordinator")
     func applyLivePolicyForwardsNetworkChange() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+        }
+        let library = makeWiredLibrary(holding: [instance])
         let device = MockNetworkDeviceControl(plan: .nat)
         let coordinator = attachNetworkCoordinator(
             to: instance, device: device,
@@ -811,37 +813,38 @@ struct VMInstanceTests {
         coordinator.activate()
         #expect(device.appliedPlans.isEmpty)
 
-        let old = instance.configuration
-        instance.configuration.networkMode = .bridged
-        instance.configuration.bridgedInterfaceIdentifier = "en0"
-        instance.applyLivePolicy(oldConfig: old, newConfig: instance.configuration)
+        library.editConfiguration(of: instance) {
+            $0.networkMode = .bridged
+            $0.bridgedInterfaceIdentifier = "en0"
+        }
 
         #expect(device.appliedPlans == [.bridged("en0")])
     }
 
     @Test("applyLivePolicy ignores a network change while the VM is stopped")
     func applyLivePolicyIgnoresNetworkChangeWhileStopped() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+        }
+        let library = makeWiredLibrary(holding: [instance])
         let device = MockNetworkDeviceControl()
         let coordinator = attachNetworkCoordinator(to: instance, device: device)
         coordinator.activate()
         #expect(device.appliedPlans == [.nat])
         instance.enter(.stopped)
 
-        let old = instance.configuration
-        instance.configuration.networkMode = .bridged
-        instance.applyLivePolicy(oldConfig: old, newConfig: instance.configuration)
+        library.editConfiguration(of: instance) { $0.networkMode = .bridged }
 
         #expect(device.appliedPlans == [.nat])
     }
 
     @Test("tearDownSession stops network recovery and clears the pending flag")
     func tearDownSessionStopsNetworkRecovery() throws {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .bridged
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+        }
         let device = MockNetworkDeviceControl()
         let observer = MockNetworkLinkObserver()
         let coordinator = attachNetworkCoordinator(
@@ -874,8 +877,9 @@ struct VMInstanceTests {
 
     @Test("startAction is .install with a pending install context and no resumable download")
     func startActionInstall() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
+        let instance = VMInstanceFixture.make(phase: .stopped) {
+            $0.installContext = MacOSInstallContext(source: .downloadLatest)
+        }
         #expect(instance.hasResumableInstallDownload == false)
         #expect(instance.startAction == .install)
         #expect(instance.startAction.label == "Install")
@@ -916,11 +920,12 @@ struct VMInstanceTests {
         // produce. The directory must be there for the test to mean anything.
         #expect(bundle.exists)
 
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.configuration.installContext = MacOSInstallContext(
-            source: source,
-            downloadDestinationPath: destination.path(percentEncoded: false)
-        )
+        let instance = VMInstanceFixture.make(phase: .stopped) {
+            $0.installContext = MacOSInstallContext(
+                source: source,
+                downloadDestinationPath: destination.path(percentEncoded: false)
+            )
+        }
         return (instance, temp)
     }
 
@@ -973,9 +978,10 @@ struct VMInstanceTests {
 
     @Test("startAction is .download with a pending Linux image and nothing partial on disk")
     func startActionDownload() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.configuration.linuxInstallContext = LinuxInstallContext(
-            source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = VMInstanceFixture.make(phase: .stopped) {
+            $0.linuxInstallContext = LinuxInstallContext(
+                source: .catalogEntry(makeLinuxCatalogEntry()))
+        }
 
         // No destination until the mirror is asked, which is exactly when there
         // is nothing to resume from.
@@ -999,10 +1005,11 @@ struct VMInstanceTests {
                 etag: nil, lastModified: nil, createdAt: Date()))
         try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
 
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.configuration.linuxInstallContext = LinuxInstallContext(
-            source: .catalogEntry(makeLinuxCatalogEntry()),
-            downloadDestinationPath: destination.path(percentEncoded: false))
+        let instance = VMInstanceFixture.make(phase: .stopped) {
+            $0.linuxInstallContext = LinuxInstallContext(
+                source: .catalogEntry(makeLinuxCatalogEntry()),
+                downloadDestinationPath: destination.path(percentEncoded: false))
+        }
 
         #expect(instance.hasResumableInstallDownload == true)
         #expect(instance.startAction == .resumeDownload)
@@ -1032,12 +1039,15 @@ struct VMInstanceTests {
 
     /// A VM whose bundle exists on disk, holding a warm baseline snapshot whose
     /// captured saved state the bundle's own suspend slot can be compared to.
-    private func makeEphemeralInstanceWithBundle() throws -> (
+    private func makeEphemeralInstanceWithBundle(
+        ephemeralModeEnabled: Bool = true
+    ) throws -> (
         instance: VMInstance, baseline: VMSnapshot, temp: URL
     ) {
-        let baseline = VMSnapshot(name: "Ephemeral")
-        let instance = VMInstanceFixture.make(name: "Ephemeral VM", phase: .suspended)
-        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
+        let instance = VMInstanceFixture.make(
+            name: "Ephemeral VM", phase: .suspended,
+            hostState: ephemeralModeEnabled ? .ephemeral(baseline: baseline.id) : VMHostState())
         let temp = instance.bundleURL
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
@@ -1081,12 +1091,11 @@ struct VMInstanceTests {
 
     @Test("Ephemeral Mode off leaves the baseline comparison unasked")
     func restingAtBaselineNeedsEphemeralMode() throws {
-        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
+        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
         try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
 
-        instance.hostState.applyEphemeralMode(enabled: false, baseline: nil)
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
@@ -1302,9 +1311,10 @@ struct VMInstanceTests {
 
     @Test("networkAttachmentDisconnected forwards to the recovery coordinator")
     func networkDisconnectedEventForwardsToCoordinator() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.configuration.networkEnabled = true
-        instance.configuration.networkMode = .shared
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+        }
         let device = MockNetworkDeviceControl(plan: .nat)
         let coordinator = attachNetworkCoordinator(to: instance, device: device)
         coordinator.activate()
@@ -1339,10 +1349,12 @@ struct VMInstanceTests {
         lastSeen: String = "0.9.2",
         lastSeenGuestOSVersion: String? = nil,
         setupState: GuestSetupState? = nil,
-        bootedIntoRecovery: Bool = false
+        bootedIntoRecovery: Bool = false,
+        agentInstallNudgeDismissed: Bool = false
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
-            name: "macOS Watchdog Test", guestOS: .macOS, phase: .running(sessionID: UUID())
+            name: "macOS Watchdog Test", guestOS: .macOS, phase: .running(sessionID: UUID()),
+            hostState: VMHostState(agentInstallNudgeDismissed: agentInstallNudgeDismissed)
         ) {
             $0.lastSeenAgentVersion = lastSeen
             $0.lastSeenGuestOSVersion = lastSeenGuestOSVersion
@@ -1544,22 +1556,18 @@ struct VMInstanceTests {
         // .expectedMissing AND resets the dismissed flag so any future
         // .waiting (e.g. they wipe + reinstall the VM) is not silently
         // suppressed by their old preference.
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.hostState.agentInstallNudgeDismissed = true
-
-        var persistCallCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            persistCallCount += 1
-            return true
-        }
+        let instance = makeMacOSInstanceWithAgentInstalled(agentInstallNudgeDismissed: true)
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.hostState.agentInstallNudgeDismissed == false)
-        #expect(persistCallCount == 1)
+        #expect(storage.saveHostStateCallCount == 1)
+        #expect(storage.hostStates[instance.bundleURL]?.agentInstallNudgeDismissed == false)
     }
 
     @Test("Watchdog firing clears the stored guest OS version in the same persist")
@@ -1569,38 +1577,32 @@ struct VMInstanceTests {
         // stale version linger (the guest may have been wiped or upgraded).
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-
-        var persistCallCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            persistCallCount += 1
-            return true
-        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == nil)
-        #expect(persistCallCount == 1)
+        #expect(storage.saveConfigurationCallCount == 1)
     }
 
     @Test("Watchdog firing leaves an undismissed nudge alone (no spurious persist)")
     func watchdogDoesNotPersistWhenDismissalAlreadyClear() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
         // Default: agentInstallNudgeDismissed == false
-        var persistCallCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            persistCallCount += 1
-            return true
-        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
-        #expect(persistCallCount == 0)
+        #expect(storage.saveConfigurationCallCount == 0)
+        #expect(storage.saveHostStateCallCount == 0)
     }
 
     @Test("A mid-session firing leaves the nudge dismissal and guest OS version alone")
@@ -1611,20 +1613,16 @@ struct VMInstanceTests {
         // the session produced, and `agentInstallNudgeDismissed` is a user
         // preference nothing restores — a dropped channel is not enough to
         // reverse it.
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.hostState.agentInstallNudgeDismissed = true
-
-        var persistCallCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            persistCallCount += 1
-            return true
-        }
+        let instance = makeMacOSInstanceWithAgentInstalled(agentInstallNudgeDismissed: true)
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.recordObservedAgentInfo(
             ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
         #expect(instance.hasSeenAgentThisSession)
-        let persistsAfterHello = persistCallCount
+        let persistsAfterHello = storage.saveConfigurationCallCount
+        let hostStatePersistsAfterHello = storage.saveHostStateCallCount
 
         // The agent goes away mid-session and never comes back.
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
@@ -1635,7 +1633,8 @@ struct VMInstanceTests {
         #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
         #expect(instance.hostState.agentInstallNudgeDismissed == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-        #expect(persistCallCount == persistsAfterHello)
+        #expect(storage.saveConfigurationCallCount == persistsAfterHello)
+        #expect(storage.saveHostStateCallCount == hostStatePersistsAfterHello)
     }
 
     @Test("tearDownSession clears hasSeenAgentThisSession")
@@ -1710,13 +1709,14 @@ struct VMInstanceTests {
     @Test("agentStatus surfaces .expectedMissing only when both the flag and persisted version are set")
     func agentStatusExpectedMissingRequiresBoth() {
         let instance = makeMacOSInstanceWithAgentInstalled()
+        let library = makeWiredLibrary(holding: [instance])
         // Flag alone but version present → .expectedMissing
         instance.sessionContext?.agentExpectedButMissing = true
         #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
 
         // Wipe the persisted version: the synthesizer guard falls back to
         // .waiting rather than producing .expectedMissing(expected: "").
-        instance.configuration.lastSeenAgentVersion = nil
+        library.editConfiguration(of: instance) { $0.lastSeenAgentVersion = nil }
         #expect(instance.agentStatus == .waiting)
     }
 
@@ -1725,25 +1725,33 @@ struct VMInstanceTests {
     @Test("A mutation the persistence pipeline could not write reports that it did not land")
     func mutationReportsAFailedWrite() {
         let instance = VMInstanceFixture.make()
-        // What the library answers when the write threw or the mutation was
-        // refused: the new value stands in memory, and a caller that needs
-        // memory and disk to agree has to be told they do not.
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return false
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        let before = instance.configuration
+
+        let outcome = instance.performConfigurationMutation(ifNotSaved: .keep) {
+            $0.displayHiDPI.toggle()
         }
 
-        #expect(!instance.performConfigurationMutation { $0.displayHiDPI.toggle() })
+        // Under `.keep` the new value stands in memory while disk keeps the
+        // old one, and the caller is told the save did not land.
+        #expect(outcome.failedToSave)
+        #expect(instance.configuration.displayHiDPI == !before.displayHiDPI)
+        #expect(storage.bundles[instance.bundleURL]?.displayHiDPI == before.displayHiDPI)
     }
 
-    @Test("A mutation on an instance with no persistence wired lands")
-    func mutationWithoutPersistenceLands() {
+    @Test("A mutation on an instance no library has wired changes nothing")
+    func mutationWithoutPersistenceChangesNothing() {
         let instance = VMInstanceFixture.make()
+        let before = instance.configuration
 
-        // No bundle to disagree with: nothing refused the write, so nothing
-        // reads as a failure.
-        #expect(instance.performConfigurationMutation { $0.displayHiDPI = true })
-        #expect(instance.configuration.displayHiDPI)
+        #expect(
+            instance.performConfigurationMutation(ifNotSaved: .discard) {
+                $0.displayHiDPI.toggle()
+            }.refusedForNoLibrary)
+        #expect(instance.configuration == before)
     }
 
     // MARK: - recordObservedAgentInfo
@@ -1751,17 +1759,14 @@ struct VMInstanceTests {
     @Test("recordObservedAgentInfo persists when the version changes")
     func recordObservedPersistsOnChange() {
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.0")
-        var savedConfig: VMConfiguration?
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            savedConfig = instance.configuration
-            return true
-        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
         #expect(instance.configuration.lastSeenAgentVersion == "0.9.2")
-        #expect(savedConfig?.lastSeenAgentVersion == "0.9.2")
+        #expect(storage.bundles[instance.bundleURL]?.lastSeenAgentVersion == "0.9.2")
     }
 
     @Test("recordObservedAgentInfo populates both last-seen fields for fresh VMs")
@@ -1771,31 +1776,25 @@ struct VMInstanceTests {
         // in a single write.
         let instance = VMInstanceFixture.make(
             name: "Fresh", guestOS: .macOS, phase: .running(sessionID: UUID()))
-        var saveCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            saveCount += 1
-            return true
-        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.recordObservedAgentInfo(
             ObservedAgentInfo(agentVersion: "0.9.0", osVersion: "Version 26.0 (Build 25A123)"))
 
         #expect(instance.configuration.lastSeenAgentVersion == "0.9.0")
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-        #expect(saveCount == 1)
+        #expect(storage.saveConfigurationCallCount == 1)
     }
 
     @Test("recordObservedAgentInfo does not persist when both fields are unchanged")
     func recordObservedSkipsRedundantWrites() {
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        var saveCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            saveCount += 1
-            return true
-        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         let info = ObservedAgentInfo(
             agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)")
@@ -1805,7 +1804,7 @@ struct VMInstanceTests {
         // Two identical Hellos must not produce a single disk write.
         // Storage churn would re-fire VMDirectoryWatcher reconcile on every
         // heartbeat-driven reconnect.
-        #expect(saveCount == 0)
+        #expect(storage.saveConfigurationCallCount == 0)
     }
 
     @Test("recordObservedAgentInfo persists an OS-version change on a same-agent-version reconnect")
@@ -1814,18 +1813,15 @@ struct VMInstanceTests {
         // version. The new OS version must still land on disk.
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        var saveCount = 0
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            saveCount += 1
-            return true
-        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
 
         instance.recordObservedAgentInfo(
             ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.1 (Build 25B456)"))
 
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.1 (Build 25B456)")
-        #expect(saveCount == 1)
+        #expect(storage.saveConfigurationCallCount == 1)
     }
 
     @Test("recordObservedAgentInfo overwrites a stored OS version with nil when the agent reports none")
@@ -1834,10 +1830,8 @@ struct VMInstanceTests {
         // one — Unknown beats stale.
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return true
-        }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
@@ -1850,10 +1844,8 @@ struct VMInstanceTests {
         // lastSeen must differ from the reported version so the persist guard
         // doesn't short-circuit before the auto-eject hook.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return true
-        }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
@@ -1869,10 +1861,8 @@ struct VMInstanceTests {
         // sentinel, so "0.0.1" genuinely classifies as outdated.
         try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return true
-        }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
@@ -1889,10 +1879,8 @@ struct VMInstanceTests {
         // same-version reconnect — even when an OS-version change makes the
         // write itself go through.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: bundled)
-        instance.onUpdateSettings = { mutate in
-            mutate(&instance.settings)
-            return true
-        }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
@@ -1955,19 +1943,21 @@ struct VMInstanceTests {
 
     @Test("bundledStorageDisks returns the internal disks and excludes externals")
     func bundledStorageDisksListInternalOnly() {
-        let instance = VMInstanceFixture.make()
-        instance.configuration.storageDisks = [
-            StorageDisk(
-                path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio),
-            StorageDisk(
-                path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
-                isInternal: true, kind: .virtio
-            ),
-            StorageDisk(
-                path: "/Volumes/External/data.img", readOnly: false, label: "Scratch",
-                isInternal: false, kind: .virtio
-            ),
-        ]
+        let instance = VMInstanceFixture.make {
+            $0.storageDisks = [
+                StorageDisk(
+                    path: "Disk.asif", readOnly: false, label: "Main", isInternal: true,
+                    kind: .virtio),
+                StorageDisk(
+                    path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
+                    isInternal: true, kind: .virtio
+                ),
+                StorageDisk(
+                    path: "/Volumes/External/data.img", readOnly: false, label: "Scratch",
+                    isInternal: false, kind: .virtio
+                ),
+            ]
+        }
 
         let bundled = instance.bundledStorageDisks
 
@@ -1979,8 +1969,7 @@ struct VMInstanceTests {
     @Test("bundledStorageDisks falls back to the synthesized main disk for a nil or empty list")
     func bundledStorageDisksFallBackToTheMainDisk() {
         for disks in [nil, []] as [[StorageDisk]?] {
-            let instance = VMInstanceFixture.make()
-            instance.configuration.storageDisks = disks
+            let instance = VMInstanceFixture.make { $0.storageDisks = disks }
             #expect(instance.bundledStorageDisks.count == 1)
             #expect(instance.bundledStorageDisks[0].isInternal)
         }
@@ -1989,6 +1978,7 @@ struct VMInstanceTests {
     @Test("isSoleStorageDisk is true for a VM's only disk and false for either of two")
     func isSoleStorageDiskFollowsTheCount() {
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
         // A nil list resolves to the synthesized main disk alone.
         let main = instance.effectiveStorageDisks[0]
         #expect(instance.isSoleStorageDisk(main))
@@ -1996,11 +1986,11 @@ struct VMInstanceTests {
         let extra = StorageDisk(
             path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
             isInternal: true, kind: .virtio)
-        instance.configuration.storageDisks = [main, extra]
+        library.editConfiguration(of: instance) { $0.storageDisks = [main, extra] }
         #expect(!instance.isSoleStorageDisk(main))
         #expect(!instance.isSoleStorageDisk(extra))
 
-        instance.configuration.storageDisks = [extra]
+        library.editConfiguration(of: instance) { $0.storageDisks = [extra] }
         #expect(instance.isSoleStorageDisk(extra))
     }
 
@@ -2008,18 +1998,23 @@ struct VMInstanceTests {
     func hasGuestAgentInstallerMountedReflectsState() throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
 
         #expect(!instance.hasGuestAgentInstallerMounted)
 
-        instance.configuration.removableMedia = [
-            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
-        ]
+        library.editConfiguration(of: instance) {
+            $0.removableMedia = [
+                RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+            ]
+        }
         #expect(instance.hasGuestAgentInstallerMounted)
 
         // An unrelated removable item must not count as the installer.
-        instance.configuration.removableMedia = [
-            RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
-        ]
+        library.editConfiguration(of: instance) {
+            $0.removableMedia = [
+                RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
+            ]
+        }
         #expect(!instance.hasGuestAgentInstallerMounted)
     }
 

@@ -33,30 +33,20 @@ final class VMInstance {
 
     let instanceID: UUID
 
-    /// Changed through ``VMLibrary/updateConfiguration(of:mutate:)``, which
-    /// persists the new value and applies live policy.
-    ///
-    /// A direct assignment is only for a value disk already holds: a rollback
-    /// to what is still on disk, or the configuration a snapshot restore just
-    /// wrote there.
-    var configuration: VMConfiguration
+    /// Written only by ``VMLibrary``, through
+    /// ``replaceConfiguration(with:key:)``; each library entry point that
+    /// writes it states what it persists and what it refuses.
+    private(set) var configuration: VMConfiguration
 
     /// Kernova's own state for this VM, mirrored from `host-state.json`.
     ///
-    /// Changed through ``VMLibrary/updateSettings(of:mutate:)``, which keeps
-    /// this and the file in step. A snapshot revert installs a new
-    /// ``configuration`` and leaves this as it was.
-    var hostState = VMHostState()
+    /// Written only by ``VMLibrary``, through ``replaceHostState(with:key:)``.
+    /// A snapshot revert installs a new ``configuration`` and leaves this as it
+    /// was.
+    private(set) var hostState: VMHostState
 
-    /// ``configuration`` and ``hostState`` as one value; a set assigns only the
-    /// half that changed.
-    var settings: VMSettings {
-        get { VMSettings(configuration: configuration, hostState: hostState) }
-        set {
-            if newValue.configuration != configuration { configuration = newValue.configuration }
-            if newValue.hostState != hostState { hostState = newValue.hostState }
-        }
-    }
+    /// ``configuration`` and ``hostState`` as one value.
+    var settings: VMSettings { VMSettings(configuration: configuration, hostState: hostState) }
 
     /// Where this VM is in its lifecycle — the one stored value its status, its
     /// failure message and every liveness predicate here are read off.
@@ -252,14 +242,18 @@ final class VMInstance {
     /// whole session, not just at the moment of boot.
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
-    /// Performs a host-side mutation of this instance's settings and routes it
-    /// through the library's `updateSettings` pipeline (persist + apply live
-    /// policy), answering whether the result reached disk.
+    /// Routes a host-side mutation of this instance's settings through
+    /// ``VMLibrary/updateSettings(of:ifNotSaved:mutate:)``, answering what
+    /// that answers.
     ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`; `nil` for instances created
+    /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateSettings: (@MainActor ((inout VMSettings) -> Void) -> Bool)?
+    var onUpdateSettings:
+        (
+            @MainActor (VMLibrary.UnsavedSettings, (inout VMSettings) -> Void) ->
+                VMLibrary.SettingsWrite
+        )?
 
     /// Fired when the guest agent handshakes a new version that is current
     /// (matches or exceeds what the host bundles) — i.e. an install/update just
@@ -271,7 +265,7 @@ final class VMInstance {
     /// Fired from ``restAfterPowerOff()`` — the guest powering off, however it got
     /// there: a graceful shutdown from inside, Stop, or Force Stop.
     ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler reverts an
+    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler reverts an
     /// Ephemeral Mode VM to its baseline here. A suspend does not reach it:
     /// `save` tears the session down and rests at `.paused`.
     @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
@@ -284,30 +278,43 @@ final class VMInstance {
     /// session: a pause and resume both rest at attachable phases and must not
     /// re-run whatever this triggers.
     ///
-    /// Wired by `VMLibrary.wirePersistence(for:)`, whose handler hands the
+    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler hands the
     /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
-    /// Applies a settings mutation, routing it through the persistence pipeline
-    /// when `onUpdateSettings` is wired.
-    ///
-    /// - Returns: whether the new settings reached disk, on the terms
-    ///   `VMLibrary.updateSettings(of:mutate:)` states — a caller that needs
-    ///   memory and disk to agree reads it. An instance with no persistence
-    ///   wired has no bundle to disagree with, so it answers `true`.
+    /// Applies a settings mutation through ``onUpdateSettings``, answering how
+    /// the write ended. An instance no library has wired changes nothing and
+    /// is refused as ``VMLibrary/SettingsRefusal/noLibrary``.
     @discardableResult
-    func performSettingsMutation(_ mutate: (inout VMSettings) -> Void) -> Bool {
-        guard let onUpdateSettings else {
-            mutate(&settings)
-            return true
-        }
-        return onUpdateSettings(mutate)
+    func performSettingsMutation(
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
+        _ mutate: (inout VMSettings) -> Void
+    ) -> VMLibrary.SettingsWrite {
+        onUpdateSettings?(unsaved, mutate) ?? .refused(.noLibrary)
     }
 
-    /// ``performSettingsMutation(_:)`` for a mutation of the configuration alone.
+    /// ``performSettingsMutation(ifNotSaved:_:)`` for a mutation of the
+    /// configuration alone.
     @discardableResult
-    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        performSettingsMutation { mutate(&$0.configuration) }
+    func performConfigurationMutation(
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
+        _ mutate: (inout VMConfiguration) -> Void
+    ) -> VMLibrary.SettingsWrite {
+        performSettingsMutation(ifNotSaved: unsaved) { mutate(&$0.configuration) }
+    }
+
+    /// Replaces ``configuration``; `key` is what confines the call to
+    /// ``VMLibrary``.
+    func replaceConfiguration(
+        with configuration: VMConfiguration, key _: VMLibrary.SettingsWriteKey
+    ) {
+        self.configuration = configuration
+    }
+
+    /// Replaces ``hostState``; `key` is what confines the call to
+    /// ``VMLibrary``.
+    func replaceHostState(with hostState: VMHostState, key _: VMLibrary.SettingsWriteKey) {
+        self.hostState = hostState
     }
 
     /// The current install/version/liveness state of the guest agent for this VM.
@@ -377,10 +384,11 @@ final class VMInstance {
 
     init(
         configuration: VMConfiguration, bundleURL: URL, phase: VMLifecyclePhase = .stopped,
-        preferences: AppPreferences = .shared
+        hostState: VMHostState = VMHostState(), preferences: AppPreferences = .shared
     ) {
         self.instanceID = configuration.id
         self.configuration = configuration
+        self.hostState = hostState
         self.bundleURL = bundleURL
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.phase = phase
@@ -1510,7 +1518,7 @@ final class VMInstance {
                     self.hostState.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performSettingsMutation {
+                    self.performSettingsMutation(ifNotSaved: .keep) {
                         $0.hostState.agentInstallNudgeDismissed = false
                         $0.configuration.lastSeenGuestOSVersion = nil
                     }
@@ -1551,7 +1559,7 @@ final class VMInstance {
         // re-fire `VMDirectoryWatcher` reconcile.
         let agentVersionChanged = configuration.lastSeenAgentVersion != info.agentVersion
         if agentVersionChanged || configuration.lastSeenGuestOSVersion != info.osVersion {
-            performConfigurationMutation {
+            performConfigurationMutation(ifNotSaved: .keep) {
                 $0.lastSeenAgentVersion = info.agentVersion
                 $0.lastSeenGuestOSVersion = info.osVersion
             }

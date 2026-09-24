@@ -36,26 +36,17 @@ struct VMCommandCoreUSBAccessoryTests {
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let accessories = withAccessorySupport ? MockUSBAccessoryService() : nil
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+        let lifecycle = makeTestLifecycle(
+            virtualization: MockVirtualizationService(),
             usbAccessoryService: accessories,
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled,
-            usbPairingStore: MockUSBAccessoryPairingStore()
-        )
+            usbPairingStore: MockUSBAccessoryPairingStore())
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,

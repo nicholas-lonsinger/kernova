@@ -16,16 +16,7 @@ struct VMSleepWakeCoordinatorTests {
     ) -> (VMSleepWakeCoordinator, StubVMInstanceRoster, MockVirtualizationService) {
         let roster = StubVMInstanceRoster()
         let coordinator = VMSleepWakeCoordinator(
-            lifecycle: VMLifecycleCoordinator(
-                virtualizationService: virtualizationService,
-                installService: MockMacOSInstallService(),
-                ipswService: MockIPSWService(),
-                removableMediaDeviceService: MockRemovableMediaDeviceService(),
-                linuxImageResolveService: MockLinuxImageResolveService(),
-                downloadService: MockDownloadService(),
-                fileSystem: fileSystem,
-                downloadsDirectory: nil
-            ),
+            lifecycle: makeTestLifecycle(virtualization: virtualizationService, fileSystem: fileSystem),
             roster: roster
         )
         coordinator.onFailure = { [failures] error in

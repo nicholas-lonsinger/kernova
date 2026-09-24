@@ -11,7 +11,7 @@ struct VMSnapshotTests {
     ) -> VMSnapshot {
         VMSnapshot(
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds),
-            notes: notes)
+            notes: notes, macAddress: nil)
     }
 
     // MARK: - Ordering
@@ -124,22 +124,36 @@ struct VMSnapshotTests {
                 makeSnapshot(name: "Second", offsetSeconds: 60),
             ],
             currentID: nil)
-        let data = try VMConfiguration.makeJSONEncoder().encode(manifest)
+        let data = try VMConfiguration.makeJSONEncoder().encode(manifest.record)
         let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMSnapshotManifest.self, from: data)
-        #expect(decoded == manifest)
+            VMSnapshotManifestRecord.self, from: data)
+        #expect(decoded == manifest.record)
     }
 
     @Test("A cold snapshot round-trips through the config JSON coders")
     func coldSnapshotRoundTrips() throws {
         var snapshot = makeSnapshot(name: "Before first boot")
-        snapshot.kind = .cold
+        snapshot.record.kind = .cold
         let manifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
-        let data = try VMConfiguration.makeJSONEncoder().encode(manifest)
+        let data = try VMConfiguration.makeJSONEncoder().encode(manifest.record)
         let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMSnapshotManifest.self, from: data)
+            VMSnapshotManifestRecord.self, from: data)
         #expect(decoded.snapshots.first?.kind == .cold)
-        #expect(decoded == manifest)
+        #expect(decoded == manifest.record)
+    }
+
+    @Test("The manifest file stores each entry's fields and nothing else")
+    func manifestFileKeepsItsShape() throws {
+        let snapshot = VMSnapshot(
+            id: UUID(), name: "One", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            notes: "n", kind: .warm, macAddress: "aa:bb:cc:dd:ee:01")
+        let data = try VMConfiguration.makeJSONEncoder().encode(
+            VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id).record)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let entry = try #require((object["snapshots"] as? [[String: Any]])?.first)
+
+        #expect(Set(object.keys) == ["snapshots", "currentID"])
+        #expect(Set(entry.keys) == ["id", "name", "createdAt", "notes", "kind"])
     }
 
     @Test("A manifest entry carrying no kind decodes as a memory-and-disks snapshot")
@@ -150,7 +164,7 @@ struct VMSnapshotTests {
             "createdAt":"2026-01-02T03:04:05Z","notes":""}]}
             """
         let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMSnapshotManifest.self, from: Data(json.utf8))
-        #expect(decoded.snapshot(id: id)?.kind == .warm)
+            VMSnapshotManifestRecord.self, from: Data(json.utf8))
+        #expect(decoded.snapshots.first { $0.id == id }?.kind == .warm)
     }
 }

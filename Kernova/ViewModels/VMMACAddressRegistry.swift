@@ -7,6 +7,11 @@ import KernovaLogging
 /// app did not author (docs/NETWORKING.md, a MAC address belongs to one virtual
 /// machine).
 ///
+/// A VM holds the address its configuration carries and the one each of its
+/// snapshots was taken with, until that snapshot is deleted: a revert puts
+/// the VM back on the snapshot's address — a warm snapshot's saved state
+/// restores under no other — so the address must still be the VM's to take.
+///
 /// Headless: a refusal leaves through ``onFailure`` as words, and through
 /// ``macAddressConflict(on:movingFrom:to:)`` as data for a caller that renders
 /// its own.
@@ -42,7 +47,8 @@ final class VMMACAddressRegistry {
 
     /// Why a configuration change is refused, and which VM it collides with.
     struct MACAddressConflict {
-        /// The VM already holding what the change asked for.
+        /// The VM already holding what the change asked for — the first, in
+        /// library order, when several do.
         let other: VMInstance
         /// What the two collide on.
         let reason: ConflictReason
@@ -51,12 +57,12 @@ final class VMMACAddressRegistry {
     /// Refuses a configuration edit that would put two guests on one MAC
     /// address, surfacing the alert the refusal owes.
     ///
-    /// - Returns: `true` when the caller must abort.
+    /// - Returns: The conflict refused, or `nil` when the edit is admissible.
     func refuseMACAddressConflict(
         on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
-    ) -> Bool {
+    ) -> MACAddressConflict? {
         guard let conflict = macAddressConflict(on: instance, movingFrom: old, to: new) else {
-            return false
+            return nil
         }
         let failure = commandFailure(conflict, on: instance)
         #log(
@@ -64,20 +70,28 @@ final class VMMACAddressRegistry {
             "Refused a configuration change to '\(instance.name, privacy: .public)': \(failure.message, privacy: .public)"
         )
         onFailure?(failure.title, failure.message)
-        return true
+        return conflict
     }
 
     /// The VM a configuration change would collide with, and what on — the one
     /// derivation both an in-process refusal and a wire refusal read.
     ///
-    /// `nil` when the change is admissible.
+    /// `nil` when the change is admissible. An address one of the VM's own
+    /// snapshots was taken with is its own to move back onto.
     func macAddressConflict(
         on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
     ) -> MACAddressConflict? {
-        if let mac = new.macAddress, mac.lowercased() != old.macAddress?.lowercased(),
-            let holder = vmsHoldingMACAddress(mac, otherThan: instance).first
-        {
-            return MACAddressConflict(other: holder, reason: .macAddressInUse(address: mac))
+        if let mac = new.macAddress, mac.lowercased() != old.macAddress?.lowercased() {
+            let holders = self.holders(of: mac, otherThan: instance)
+            if let (first, holding) = holders.first {
+                return MACAddressConflict(
+                    other: first,
+                    reason: .macAddressInUse(
+                        address: mac, holding: holding,
+                        otherHolders: holders.dropFirst().map {
+                            MACAddressHolder(name: $0.vm.name, holding: $0.holding)
+                        }))
+            }
         }
         // A live VM's Mode picker stays enabled, and a mode change hot-swaps the
         // attachment: the address is unchanged, so the refusal above never sees
@@ -85,13 +99,19 @@ final class VMMACAddressRegistry {
         // VM already running can form the collision this way, and only a
         // configuration not already in one is refused — a VM that reached a
         // collision by some other route has to stay editable to leave it.
-        if instance.isActive || instance.isLivePaused,
-            liveMACAddressConflict(for: old, excluding: instance) == nil,
-            let live = liveMACAddressConflict(for: new, excluding: instance)
-        {
-            return MACAddressConflict(other: live, reason: .macAddress)
-        }
-        return nil
+        guard instance.isActive || instance.isLivePaused,
+            !Self.claimSameNetwork(old, new),
+            let live = liveMACAddressConflict(for: new, excluding: instance),
+            liveMACAddressConflict(for: old, excluding: instance) == nil
+        else { return nil }
+        return MACAddressConflict(other: live, reason: .macAddress)
+    }
+
+    /// Whether `a` and `b` put the same address on the same network — the
+    /// three fields ``liveMACAddressConflict(for:excluding:)`` reads.
+    private static func claimSameNetwork(_ a: VMConfiguration, _ b: VMConfiguration) -> Bool {
+        a.networkEnabled == b.networkEnabled && a.networkMode == b.networkMode
+            && a.macAddress?.lowercased() == b.macAddress?.lowercased()
     }
 
     /// `conflict` in the command vocabulary, so an alert and a wire client word
@@ -107,40 +127,86 @@ final class VMMACAddressRegistry {
 
     // MARK: - Holders
 
-    /// The VMs other than `instance` whose configuration carries `mac`, in
-    /// library order — the one lookup every duplicate-address question derives
-    /// from.
+    /// How `vm` holds `mac` — in its configuration, in snapshots, or both —
+    /// or `nil` when it does not. `mac` is lowercased.
+    private static func holding(of mac: String, by vm: VMInstance) -> MACAddressHolding? {
+        MACAddressHolding(
+            configured: vm.configuration.macAddress?.lowercased() == mac,
+            snapshots: vm.snapshotManifest.snapshots
+                .filter { $0.macAddress?.lowercased() == mac }
+                .map { HeldSnapshot(name: $0.name, isEphemeralBaseline: vm.isEphemeralBaseline($0)) })
+    }
+
+    /// The VMs other than `instance` holding `mac`, in library order, each
+    /// with how it holds it — the lookup every refusal derives from.
     ///
     /// Case-insensitive. A VM with networking off counts: the address persists
     /// across mode changes, so turning networking back on would re-form the
     /// collision.
-    private func vmsHoldingMACAddress(_ mac: String, otherThan instance: VMInstance) -> [VMInstance] {
+    private func holders(
+        of mac: String, otherThan instance: VMInstance
+    ) -> [(vm: VMInstance, holding: MACAddressHolding)] {
+        let wanted = mac.lowercased()
+        return instances.compactMap { vm in
+            guard vm !== instance, let holding = Self.holding(of: wanted, by: vm) else { return nil }
+            return (vm, holding)
+        }
+    }
+
+    /// The VMs other than `instance` whose configuration carries `mac`, in
+    /// library order.
+    private func configurationHolders(
+        of mac: String, otherThan instance: VMInstance
+    ) -> [VMInstance] {
         let wanted = mac.lowercased()
         return instances.filter {
             $0 !== instance && $0.configuration.macAddress?.lowercased() == wanted
         }
     }
 
-    /// Names of the other VMs in the library carrying `instance`'s MAC address,
-    /// in library order — empty when the address is this VM's alone.
+    /// Names of the other VMs in the library whose configuration carries
+    /// `instance`'s MAC address, in library order — empty when no other
+    /// configuration does.
+    ///
+    /// A snapshot's hold is left out: it puts the address on no network until
+    /// a revert makes it the configuration's.
     func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
         guard let mac = instance.configuration.macAddress else { return [] }
-        return vmsHoldingMACAddress(mac, otherThan: instance).map(\.name)
+        return configurationHolders(of: mac, otherThan: instance).map(\.name)
     }
 
-    /// Records every MAC address two or more VMs in the library hold.
+    /// Records every MAC address two or more VMs in the library hold, in
+    /// their configurations or their snapshots.
     ///
     /// Import, load and reconcile admit whatever address a bundle arrives
     /// carrying, so this is where a pair the app never authored becomes
-    /// traceable. Runs on each of those three, which are the paths a VM the app
-    /// did not author an address for enters by.
+    /// traceable. Runs once each of those has taken in the bundle's snapshots,
+    /// which are the paths a VM the app did not author an address for enters
+    /// by.
     func logDuplicateMACAddressHolders() {
-        let holders = Dictionary(grouping: instances) { $0.configuration.macAddress?.lowercased() }
-        for (mac, vms) in holders where mac != nil && vms.count > 1 {
-            let names = vms.map { "'\($0.name)'" }.joined(separator: ", ")
+        let addresses = Set(
+            instances.flatMap { vm in
+                [vm.configuration.macAddress] + vm.snapshotManifest.snapshots.map(\.macAddress)
+            }.compactMap { $0?.lowercased() })
+        for mac in addresses {
+            let holders = instances.compactMap { vm in
+                Self.holding(of: mac, by: vm).map { (vm: vm, holding: $0) }
+            }
+            guard holders.count > 1 else { continue }
+            let names = holders.map { "'\($0.vm.name)' (\(Self.describe($0.holding)))" }
+                .joined(separator: ", ")
             #log(
                 Self.logger, .warning,
-                "MAC address \(mac ?? "", privacy: .public) is held by \(names, privacy: .public)")
+                "MAC address \(mac, privacy: .public) is held by \(names, privacy: .public)")
+        }
+    }
+
+    private static func describe(_ holding: MACAddressHolding) -> String {
+        switch holding {
+        case .configuration: "configuration"
+        case .snapshots(let held): "snapshots " + held.all.map { "'\($0.name)'" }.joined(separator: ", ")
+        case .configurationAndSnapshots(let held):
+            "configuration, snapshots " + held.all.map { "'\($0.name)'" }.joined(separator: ", ")
         }
     }
 
@@ -152,12 +218,13 @@ final class VMMACAddressRegistry {
     /// guests attach: networking off puts no address on a wire, and Shared,
     /// Host Only and Bridged are separate networks. Two bridged VMs compare as
     /// one network whatever interface each names — Automatic resolves at start,
-    /// so which link they land on is not knowable in advance.
+    /// so which link they land on is not knowable in advance. Only
+    /// configurations count: a running guest is on its configuration's address.
     func liveMACAddressConflict(
         for config: VMConfiguration, excluding instance: VMInstance
     ) -> VMInstance? {
         guard config.networkEnabled, let mac = config.macAddress else { return nil }
-        return vmsHoldingMACAddress(mac, otherThan: instance).first { other in
+        return configurationHolders(of: mac, otherThan: instance).first { other in
             (other.isActive || other.isLivePaused)
                 && other.configuration.networkEnabled
                 && other.configuration.networkMode == config.networkMode

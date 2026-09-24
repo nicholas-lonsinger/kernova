@@ -86,6 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             installService: MacOSInstallService(
                 vmnetNetworks: vmnetNetworks, entitlements: entitlements),
             usbAccessoryService: USBAccessorySupport.makeService(entitlements: entitlements),
+            fileSystem: FileManager.default,
+            downloadsDirectory: FileManager.default.urls(
+                for: .downloadsDirectory, in: .userDomainMask
+            ).first,
             preferences: .shared,
             vmnetNetworks: vmnetNetworks,
             arpTable: HostARPTableReader(),

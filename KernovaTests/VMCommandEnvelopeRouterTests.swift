@@ -55,24 +55,16 @@ struct VMCommandEnvelopeRouterTests {
         let storage = MockVMStorageService()
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization,
             installService: installService,
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -94,11 +86,12 @@ struct VMCommandEnvelopeRouterTests {
 
     @discardableResult
     private func makeInstance(
-        in harness: Harness, name: String = "Wired", phase: VMLifecyclePhase = .stopped
+        in harness: Harness, name: String = "Wired", phase: VMLifecyclePhase = .stopped,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: .linux, library: harness.library,
-            storage: harness.storage, preferences: preferences)
+            storage: harness.storage, preferences: preferences, mutate: mutate)
     }
 
     // MARK: - Reads
@@ -138,7 +131,7 @@ struct VMCommandEnvelopeRouterTests {
     func snapshotOnDiskBytesCrossesTheWire() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Measured")
-        let snapshot = VMSnapshot(name: "Clean install")
+        let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
         harness.snapshots.setSize(12_884_901_888, for: snapshot.id)
 
@@ -455,8 +448,7 @@ struct VMCommandEnvelopeRouterTests {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        harness.library.instances.append(instance)
-        harness.storage.bundles[instance.bundleURL] = instance.configuration
+        harness.library.register(instance, storage: harness.storage)
 
         let started = try await harness.transport.send(
             .start(.id(instance.id), recovery: false))
@@ -491,24 +483,15 @@ struct VMCommandEnvelopeRouterTests {
         let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
-        let lifecycle = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: MockLinuxImageResolveService(),
-            downloadService: MockDownloadService(),
-            fileSystem: fileSystem
-        )
-        let library = VMLibrary(
-            storageService: storage,
+        let lifecycle = makeTestLifecycle(
+            virtualization: virtualization,
+            fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage,
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
-            entitlements: .entitled
-        )
+            preferences: preferences)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             snapshotStore: snapshots, diskImageService: MockDiskImageService(),
@@ -521,8 +504,7 @@ struct VMCommandEnvelopeRouterTests {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        library.instances.append(instance)
-        storage.bundles[instance.bundleURL] = instance.configuration
+        library.register(instance, storage: storage)
 
         let started = try await transport.send(.start(.id(instance.id), recovery: false))
         #expect(started.result == .ok)
@@ -638,9 +620,10 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A running VM refuses a disk edit over the wire and names what it does take")
     func storageDiskEditRefusedOnARunningVM() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        instance.configuration.storageDisks = [disk]
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
+            $0.storageDisks = [disk]
+        }
 
         let response = try await harness.transport.send(
             .editStorageDisk(.id(instance.id), .rename(disk: disk.id, newLabel: "New")))
@@ -657,13 +640,12 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A trashing removal refuses over the wire until consent comes with it")
     func trashingRemovalAsksForConsentOverTheWire() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
             .path(percentEncoded: false)
         let disk = StorageDisk(path: path, label: "External", isInternal: false)
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        instance.configuration.storageDisks = [disk, keeper]
+        let instance = makeInstance(in: harness) { $0.storageDisks = [disk, keeper] }
 
         let refused = try await harness.transport.send(
             .editStorageDisk(

@@ -23,13 +23,10 @@ enum VMSnapshotCaptureMode: Sendable, Equatable {
     var kind: VMSnapshotKind { self == .stopped ? .cold : .warm }
 }
 
-/// One named restore point: a point-in-time copy of the VM's bundle-owned
-/// disks, paired with the guest's memory when the VM was live or suspended at
-/// capture (``VMSnapshotKind``), kept until the user deletes it.
-///
-/// Distinct from the suspend slot (`VMBundleLayout.saveFileURL`), whose saved
-/// state is consumed the moment a restore succeeds.
-struct VMSnapshot: Codable, Sendable, Equatable, Identifiable {
+/// One named restore point as `Snapshots/manifest.json` records it — what a
+/// capture is asked to take, before there is a configuration it was taken
+/// under.
+struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
     var id: UUID
     var name: String
     var createdAt: Date
@@ -61,9 +58,57 @@ struct VMSnapshot: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// The `Snapshots/manifest.json` payload: every snapshot a VM bundle holds,
-/// plus which one the VM was last taken from or reverted to.
-struct VMSnapshotManifest: Codable, Sendable, Equatable {
+/// One named restore point: a point-in-time copy of the VM's bundle-owned
+/// disks, paired with the guest's memory when the VM was live or suspended at
+/// capture (``VMSnapshotKind``), kept until the user deletes it.
+///
+/// Distinct from the suspend slot (`VMBundleLayout.saveFileURL`), whose saved
+/// state is consumed the moment a restore succeeds.
+///
+/// Equality covers ``macAddress``: two values that differ in it describe
+/// different captured states, and the address is what reserves it.
+struct VMSnapshot: Sendable, Equatable, Identifiable {
+    /// What the manifest records.
+    var record: VMSnapshotRecord
+
+    /// The MAC address of the configuration the snapshot was captured under,
+    /// which a revert puts the VM back on — and which stays this VM's while
+    /// the snapshot is listed (``VMMACAddressRegistry``).
+    ///
+    /// Read from the snapshot's own `config.json`, which is the only place it
+    /// is stored; the manifest does not repeat it.
+    let macAddress: String?
+
+    init(_ record: VMSnapshotRecord, macAddress: String?) {
+        self.record = record
+        self.macAddress = macAddress
+    }
+
+    var id: UUID { record.id }
+    var createdAt: Date { record.createdAt }
+    var kind: VMSnapshotKind { record.kind }
+
+    var name: String {
+        get { record.name }
+        set { record.name = newValue }
+    }
+
+    /// Free-form user note, empty when none was entered.
+    var notes: String {
+        get { record.notes }
+        set { record.notes = newValue }
+    }
+}
+
+/// The `Snapshots/manifest.json` payload.
+struct VMSnapshotManifestRecord: Codable, Sendable, Equatable {
+    var snapshots: [VMSnapshotRecord]
+    var currentID: UUID?
+}
+
+/// Every snapshot a VM bundle holds, plus which one the VM was last taken from
+/// or reverted to.
+struct VMSnapshotManifest: Sendable, Equatable {
     /// Storage order is the order snapshots were taken; ``ordered`` is what the
     /// UI reads.
     var snapshots: [VMSnapshot]
@@ -76,6 +121,11 @@ struct VMSnapshotManifest: Codable, Sendable, Equatable {
     init(snapshots: [VMSnapshot] = [], currentID: UUID? = nil) {
         self.snapshots = snapshots
         self.currentID = currentID
+    }
+
+    /// The manifest as the file records it.
+    var record: VMSnapshotManifestRecord {
+        VMSnapshotManifestRecord(snapshots: snapshots.map(\.record), currentID: currentID)
     }
 
     /// Newest first — the list order every surface renders.

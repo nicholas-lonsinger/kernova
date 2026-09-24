@@ -33,9 +33,9 @@ struct VMLibraryViewModelEphemeralTests {
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
             name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            kind: baselineKind)
+            kind: baselineKind, macAddress: nil)
         let later = VMSnapshot(
-            name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
+            name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
 
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = try storage.bundleURL(for: config)
@@ -86,6 +86,7 @@ struct VMLibraryViewModelEphemeralTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -216,7 +217,9 @@ struct VMLibraryViewModelEphemeralTests {
     @Test("A mode left on with a baseline the manifest lost reverts nothing")
     func danglingBaselineRevertsNothing() async throws {
         let harness = try await makeHarness()
-        harness.instance.hostState.ephemeralBaselineSnapshotID = UUID()
+        harness.viewModel.library.editHostState(of: harness.instance) {
+            $0.ephemeralBaselineSnapshotID = UUID()
+        }
 
         await harness.viewModel.stop(harness.instance)
         await settleEphemeralRevert(harness)
@@ -240,7 +243,7 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness()
         let instance = harness.instance
         let capturedCPUs = instance.configuration.cpuCount
-        harness.viewModel.updateSettings(of: instance) {
+        harness.viewModel.updateSettings(of: instance, ifNotSaved: .discard) {
             $0.configuration.cpuCount = capturedCPUs + 1
             $0.hostState.startsAutomaticallyOnLaunch = true
             $0.hostState.displayPreference = .fullscreen
@@ -361,7 +364,9 @@ struct VMLibraryViewModelEphemeralTests {
     @Test("Turning the mode off releases the baseline for deletion")
     func turningTheModeOffReleasesTheBaseline() async throws {
         let harness = try await makeHarness()
-        harness.instance.hostState.applyEphemeralMode(enabled: false, baseline: nil)
+        harness.viewModel.library.editHostState(of: harness.instance) {
+            $0.applyEphemeralMode(enabled: false, baseline: nil)
+        }
 
         await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.baseline)
             .value

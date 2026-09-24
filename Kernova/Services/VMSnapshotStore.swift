@@ -54,16 +54,39 @@ struct VMSnapshotStore: VMSnapshotStoring {
     // MARK: - Manifest
 
     func loadManifest(bundleURL: URL) throws -> VMSnapshotManifest {
-        try VMBundleSidecarFile.read(
-            VMSnapshotManifest.self, at: VMBundleLayout(bundleURL: bundleURL).snapshotManifestURL)
-            ?? VMSnapshotManifest()
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        guard
+            let record = try VMBundleSidecarFile.read(
+                VMSnapshotManifestRecord.self, at: layout.snapshotManifestURL)
+        else { return VMSnapshotManifest() }
+        return VMSnapshotManifest(
+            snapshots: record.snapshots.map { snapshot in
+                VMSnapshot(
+                    snapshot,
+                    macAddress: Self.capturedMACAddress(in: layout.snapshotLayout(id: snapshot.id)))
+            },
+            currentID: record.currentID)
+    }
+
+    /// The `macAddress` of the configuration a snapshot directory holds, or
+    /// `nil` when it holds none or carries no address.
+    ///
+    /// Decodes that one key rather than the whole configuration, so a snapshot
+    /// whose configuration no longer decodes still reserves its address.
+    private static func capturedMACAddress(in snapshotLayout: VMBundleLayout) -> String? {
+        struct CapturedAddress: Decodable {
+            let macAddress: String?
+        }
+        guard let data = try? Data(contentsOf: snapshotLayout.configURL) else { return nil }
+        return (try? VMConfiguration.makeJSONDecoder().decode(CapturedAddress.self, from: data))?
+            .macAddress
     }
 
     func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         try FileManager.default.createDirectory(
             at: layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
-        try VMBundleSidecarFile.write(manifest, to: layout.snapshotManifestURL)
+        try VMBundleSidecarFile.write(manifest.record, to: layout.snapshotManifestURL)
     }
 
     // MARK: - Capture
