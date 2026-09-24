@@ -118,18 +118,18 @@ final class VMLibraryViewModel {
     @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
-        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
         mutate: (inout VMConfiguration) -> Void
-    ) -> VMLibrary.ConfigurationWrite {
+    ) -> VMLibrary.SettingsWrite {
         library.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
     }
 
     @discardableResult
     func updateSettings(
         of instance: VMInstance,
-        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
         mutate: (inout VMSettings) -> Void
-    ) -> VMLibrary.ConfigurationWrite {
+    ) -> VMLibrary.SettingsWrite {
         library.updateSettings(of: instance, ifNotSaved: unsaved, mutate: mutate)
     }
 

@@ -1,8 +1,8 @@
 import Foundation
 @testable import Kernova
 
-/// What a test asserts about how a configuration write ended.
-extension VMLibrary.ConfigurationWrite {
+/// What a test asserts about how a settings write ended.
+extension VMLibrary.SettingsWrite {
     var landed: Bool {
         if case .saved = self { true } else { false }
     }

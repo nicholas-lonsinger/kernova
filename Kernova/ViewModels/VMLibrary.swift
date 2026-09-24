@@ -739,7 +739,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// The intent is written first and the password dropped only after, so a
     /// write the library refuses leaves both halves as they were.
     @discardableResult
-    func retractGuestAccount(for instance: VMInstance) -> ConfigurationWrite {
+    func retractGuestAccount(for instance: VMInstance) -> SettingsWrite {
         // Kept when the save fails: every caller retracts an account nothing
         // will create any more, so this session must not ask for it again.
         let outcome = updateConfiguration(of: instance, ifNotSaved: .keep) {
@@ -873,9 +873,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     @discardableResult
     func updateSettings(
         of instance: VMInstance,
-        ifNotSaved unsaved: UnsavedConfiguration,
+        ifNotSaved unsaved: UnsavedSettings,
         mutate: (inout VMSettings) -> Void
-    ) -> ConfigurationWrite {
+    ) -> SettingsWrite {
         var new = instance.settings
         mutate(&new)
         let configurationWrite = updateConfiguration(
@@ -893,14 +893,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
     /// Mirrors `contents`, read from `instance`'s bundle, onto the instance.
     private func take(_ contents: BundleContents, on instance: VMInstance) {
-        instance.replaceHostState(with: contents.hostState, key: ConfigurationWriteKey())
+        instance.replaceHostState(with: contents.hostState, key: SettingsWriteKey())
         instance.snapshotManifest = contents.snapshots
         instance.usbPairings = contents.usbPairings
     }
 
-    /// What a configuration write leaves in memory when its save does not
+    /// What a settings write leaves in memory when its save does not
     /// land.
-    enum UnsavedConfiguration {
+    enum UnsavedSettings {
         /// Memory takes the new value anyway, and live policy applies it: the
         /// write records something that already happened — an install that
         /// finished, a boot window spent, a file found moved, a version the
@@ -912,21 +912,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         case discard
     }
 
-    /// How a configuration write ended.
-    enum ConfigurationWrite {
-        /// The new configuration is in memory and in the bundle — or the
+    /// How a settings write ended.
+    enum SettingsWrite {
+        /// The new settings are in memory and in the bundle — or the
         /// mutation changed nothing.
         case saved
         /// Nothing changed.
-        case refused(ConfigurationRefusal)
+        case refused(SettingsRefusal)
         /// The save failed with this error, which the library has already
-        /// presented; memory holds what the write's ``UnsavedConfiguration``
+        /// presented; memory holds what the write's ``UnsavedSettings``
         /// says.
         case notSaved(any Error)
     }
 
-    /// Why the library turned a configuration write away.
-    enum ConfigurationRefusal: LocalizedError {
+    /// Why the library turned a settings write away.
+    enum SettingsRefusal: LocalizedError {
         /// The new MAC address is one another VM holds; the refusal was
         /// presented as it was made.
         case macAddressInUse(VMMACAddressRegistry.MACAddressConflict)
@@ -958,9 +958,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
-        ifNotSaved unsaved: UnsavedConfiguration,
+        ifNotSaved unsaved: UnsavedSettings,
         mutate: (inout VMConfiguration) -> Void
-    ) -> ConfigurationWrite {
+    ) -> SettingsWrite {
         let old = instance.configuration
         var new = old
         mutate(&new)
@@ -973,7 +973,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         }
         let saveError = persist(new, for: instance)
         if let saveError, unsaved == .discard { return .notSaved(saveError) }
-        instance.replaceConfiguration(with: new, key: ConfigurationWriteKey())
+        instance.replaceConfiguration(with: new, key: SettingsWriteKey())
         applyLivePolicy(for: instance, old: old, new: new)
         // A live switch onto an app-managed network starts a guest worth
         // watching without starting a session.
@@ -992,7 +992,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         var new = instance.configuration
         new.removableMedia = media
         guard new != instance.configuration else { return }
-        instance.replaceConfiguration(with: new, key: ConfigurationWriteKey())
+        instance.replaceConfiguration(with: new, key: SettingsWriteKey())
         persist(new, for: instance)
         #log(
             Self.logger, .notice,
@@ -1014,7 +1014,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
     /// Installs `configuration`, which `instance`'s bundle already holds.
     private func adopt(_ configuration: VMConfiguration, on instance: VMInstance) {
-        instance.replaceConfiguration(with: configuration, key: ConfigurationWriteKey())
+        instance.replaceConfiguration(with: configuration, key: SettingsWriteKey())
     }
 
     /// ``updateSettings(of:ifNotSaved:mutate:)``'s host-state half: writes the
@@ -1024,8 +1024,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// A failed write is presented, and memory holds what `unsaved` says.
     @discardableResult
     private func updateHostState(
-        of instance: VMInstance, to new: VMHostState, ifNotSaved unsaved: UnsavedConfiguration
-    ) -> ConfigurationWrite {
+        of instance: VMInstance, to new: VMHostState, ifNotSaved unsaved: UnsavedSettings
+    ) -> SettingsWrite {
         guard new != instance.hostState else { return .saved }
         do {
             try storageService.saveHostState(new, to: instance.bundleURL)
@@ -1035,10 +1035,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
-            if unsaved == .keep { instance.replaceHostState(with: new, key: ConfigurationWriteKey()) }
+            if unsaved == .keep { instance.replaceHostState(with: new, key: SettingsWriteKey()) }
             return .notSaved(error)
         }
-        instance.replaceHostState(with: new, key: ConfigurationWriteKey())
+        instance.replaceHostState(with: new, key: SettingsWriteKey())
         return .saved
     }
 
@@ -1302,7 +1302,7 @@ extension VMLibrary {
     /// ``VMInstance/replaceHostState(with:key:)`` ask for, so only this file
     /// can write a VM's configuration or host state: the initializer is
     /// `fileprivate`, which `@testable import` does not open.
-    struct ConfigurationWriteKey {
+    struct SettingsWriteKey {
         fileprivate init() {}
     }
 }

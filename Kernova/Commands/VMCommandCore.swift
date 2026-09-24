@@ -372,7 +372,7 @@ final class VMCommandCore: VMCommanding {
     /// The refusal a verb raises when the library turned its settings write
     /// away.
     func refusalError(
-        _ refusal: VMLibrary.ConfigurationRefusal, on instance: VMInstance
+        _ refusal: VMLibrary.SettingsRefusal, on instance: VMInstance
     ) -> CommandError {
         switch refusal {
         case .macAddressInUse(let conflict):

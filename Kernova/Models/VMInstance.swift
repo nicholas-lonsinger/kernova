@@ -251,8 +251,8 @@ final class VMInstance {
     @ObservationIgnored
     var onUpdateSettings:
         (
-            @MainActor (VMLibrary.UnsavedConfiguration, (inout VMSettings) -> Void) ->
-                VMLibrary.ConfigurationWrite
+            @MainActor (VMLibrary.UnsavedSettings, (inout VMSettings) -> Void) ->
+                VMLibrary.SettingsWrite
         )?
 
     /// Fired when the guest agent handshakes a new version that is current
@@ -284,12 +284,12 @@ final class VMInstance {
 
     /// Applies a settings mutation through ``onUpdateSettings``, answering how
     /// the write ended. An instance no library has wired changes nothing and
-    /// is refused as ``VMLibrary/ConfigurationRefusal/noLibrary``.
+    /// is refused as ``VMLibrary/SettingsRefusal/noLibrary``.
     @discardableResult
     func performSettingsMutation(
-        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
         _ mutate: (inout VMSettings) -> Void
-    ) -> VMLibrary.ConfigurationWrite {
+    ) -> VMLibrary.SettingsWrite {
         onUpdateSettings?(unsaved, mutate) ?? .refused(.noLibrary)
     }
 
@@ -297,23 +297,23 @@ final class VMInstance {
     /// configuration alone.
     @discardableResult
     func performConfigurationMutation(
-        ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
+        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
         _ mutate: (inout VMConfiguration) -> Void
-    ) -> VMLibrary.ConfigurationWrite {
+    ) -> VMLibrary.SettingsWrite {
         performSettingsMutation(ifNotSaved: unsaved) { mutate(&$0.configuration) }
     }
 
     /// Replaces ``configuration``; `key` is what confines the call to
     /// ``VMLibrary``.
     func replaceConfiguration(
-        with configuration: VMConfiguration, key _: VMLibrary.ConfigurationWriteKey
+        with configuration: VMConfiguration, key _: VMLibrary.SettingsWriteKey
     ) {
         self.configuration = configuration
     }
 
     /// Replaces ``hostState``; `key` is what confines the call to
     /// ``VMLibrary``.
-    func replaceHostState(with hostState: VMHostState, key _: VMLibrary.ConfigurationWriteKey) {
+    func replaceHostState(with hostState: VMHostState, key _: VMLibrary.SettingsWriteKey) {
         self.hostState = hostState
     }
 
