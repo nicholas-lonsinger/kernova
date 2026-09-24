@@ -171,6 +171,17 @@ struct VMStorageService: Sendable {
         )
     }
 
+    func loadHostState(from bundleURL: URL) throws -> VMHostState {
+        try VMBundleSidecarFile.read(
+            VMHostState.self, at: VMBundleLayout(bundleURL: bundleURL).hostStateURL)
+            ?? VMHostState()
+    }
+
+    func saveHostState(_ hostState: VMHostState, to bundleURL: URL) throws {
+        try VMBundleSidecarFile.write(
+            hostState, to: VMBundleLayout(bundleURL: bundleURL).hostStateURL)
+    }
+
     /// Creates a new VM bundle directory at `bundleURL` and saves the initial configuration.
     ///
     /// Every caller writes into a freshly minted ``makeStagedBundleURL()``; the

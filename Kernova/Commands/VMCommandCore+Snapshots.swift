@@ -15,15 +15,6 @@ final class RevertOutcome {
 extension VMCommandCore {
     // MARK: - Manifest
 
-    /// Re-reads a bundle's snapshot manifest into its instance.
-    ///
-    /// Every instance is seeded at construction; this is for the paths that put
-    /// files in the bundle afterwards (an import copying a bundle that already
-    /// carries snapshots).
-    func reloadSnapshots(for instance: VMInstance) {
-        instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
-    }
-
     func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
         await snapshotOnDiskBytes(for: try resolve(selector))
     }

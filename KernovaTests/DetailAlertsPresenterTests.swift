@@ -505,7 +505,7 @@ struct DetailAlertsPresenterTests {
         try VMInstanceFixture.writeSaveFile(for: vm)
         let baseline = VMSnapshot(name: "Clean install")
         vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
-        vm.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        vm.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
 
         let alert = presenter.forceStopAlertForTesting(vm)
 

@@ -55,8 +55,8 @@ struct GuestAccountResumePromptTests {
             }
             $0.pendingGuestAccount = intent
         }
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         instance.enter(installPending ? .initialBoot : .stopped)

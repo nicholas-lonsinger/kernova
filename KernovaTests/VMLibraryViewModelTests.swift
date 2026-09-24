@@ -1007,7 +1007,7 @@ struct VMLibraryViewModelTests {
     func startPopOutSkipsInlineGuestFocus() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = VMInstanceFixture.make()
-        instance.configuration.displayPreference = .popOut
+        instance.hostState.displayPreference = .popOut
         viewModel.instances.append(instance)
 
         await viewModel.start(instance)
@@ -1036,7 +1036,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = VMInstanceFixture.make()
         instance.enter(.suspended)
-        instance.configuration.displayPreference = .popOut
+        instance.hostState.displayPreference = .popOut
         viewModel.instances.append(instance)
 
         await viewModel.resume(instance)
@@ -1089,7 +1089,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
-        wanted.configuration.displayPreference = .popOut
+        wanted.hostState.displayPreference = .popOut
         viewModel.instances.append(wanted)
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
@@ -1182,7 +1182,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.suspended)
-        wanted.configuration.displayPreference = .popOut
+        wanted.hostState.displayPreference = .popOut
         viewModel.instances.append(wanted)
         var displayWindows: [VMInstance] = []
         viewModel.onOpenDisplayWindow = { displayWindows.append($0) }
@@ -1236,7 +1236,7 @@ struct VMLibraryViewModelTests {
         let onScreen = VMInstanceFixture.make(name: "OnScreen")
         let wanted = VMInstanceFixture.make(name: "Wanted")
         wanted.enter(.running(sessionID: UUID()))
-        wanted.configuration.displayPreference = .popOut
+        wanted.hostState.displayPreference = .popOut
         viewModel.instances.append(contentsOf: [onScreen, wanted])
         viewModel.selectedID = onScreen.id
 
@@ -2571,8 +2571,8 @@ struct VMLibraryViewModelTests {
         let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS)
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         instance.enter(.initialBoot)
@@ -3364,8 +3364,8 @@ struct VMLibraryViewModelTests {
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
         )
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         instance.enter(.initialBoot)
@@ -3446,8 +3446,8 @@ struct VMLibraryViewModelTests {
         let instance = VMInstanceFixture.make(name: "Debian")
         instance.configuration.linuxInstallContext = LinuxInstallContext(
             source: .catalogEntry(makeLinuxCatalogEntry()), downloadDestinationPath: destinationPath)
-        instance.onUpdateConfiguration = { mutate in
-            mutate(&instance.configuration)
+        instance.onUpdateSettings = { mutate in
+            mutate(&instance.settings)
             return true
         }
         instance.enter(.initialBoot)
@@ -3655,12 +3655,16 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         viewModel.setAgentInstallNudgeDismissed(true, for: instance)
-        #expect(instance.configuration.agentInstallNudgeDismissed == true)
-        #expect(storage.saveConfigurationCallCount == 1)
+        #expect(instance.hostState.agentInstallNudgeDismissed == true)
+        #expect(storage.hostStates[instance.bundleURL]?.agentInstallNudgeDismissed == true)
+        #expect(storage.saveHostStateCallCount == 1)
 
         viewModel.setAgentInstallNudgeDismissed(false, for: instance)
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
-        #expect(storage.saveConfigurationCallCount == 2)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
+        #expect(storage.hostStates[instance.bundleURL]?.agentInstallNudgeDismissed == false)
+        #expect(storage.saveHostStateCallCount == 2)
+        // The flag is host state, so no write reaches `config.json`.
+        #expect(storage.saveConfigurationCallCount == 0)
     }
 
     @Test("setAgentInstallNudgeDismissed no-ops when unchanged")
@@ -3671,7 +3675,7 @@ struct VMLibraryViewModelTests {
 
         // Default is already false; setting false again writes nothing.
         viewModel.setAgentInstallNudgeDismissed(false, for: instance)
-        #expect(storage.saveConfigurationCallCount == 0)
+        #expect(storage.saveHostStateCallCount == 0)
     }
 
     @Test("dismissAgentInstallNudge still sets the flag to true")
@@ -3682,8 +3686,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.dismissAgentInstallNudge(for: instance)
 
-        #expect(instance.configuration.agentInstallNudgeDismissed == true)
-        #expect(storage.saveConfigurationCallCount == 1)
+        #expect(instance.hostState.agentInstallNudgeDismissed == true)
+        #expect(storage.saveHostStateCallCount == 1)
     }
 
     @Test("resetAllAgentInstallNudges re-arms every VM and the app-wide preference")
@@ -3692,17 +3696,17 @@ struct VMLibraryViewModelTests {
         let first = VMInstanceFixture.make(name: "First")
         let second = VMInstanceFixture.make(name: "Second")
         let third = VMInstanceFixture.make(name: "Third")
-        first.configuration.agentInstallNudgeDismissed = true
-        second.configuration.agentInstallNudgeDismissed = true
+        first.hostState.agentInstallNudgeDismissed = true
+        second.hostState.agentInstallNudgeDismissed = true
         // `third` stays armed to confirm the reset no-ops on already-armed VMs.
         viewModel.instances = [first, second, third]
         viewModel.agentInstallPromptDisabled = true
 
         viewModel.resetAllAgentInstallNudges()
 
-        #expect(first.configuration.agentInstallNudgeDismissed == false)
-        #expect(second.configuration.agentInstallNudgeDismissed == false)
-        #expect(third.configuration.agentInstallNudgeDismissed == false)
+        #expect(first.hostState.agentInstallNudgeDismissed == false)
+        #expect(second.hostState.agentInstallNudgeDismissed == false)
+        #expect(third.hostState.agentInstallNudgeDismissed == false)
         #expect(viewModel.agentInstallPromptDisabled == false)
         #expect(preferences.agentInstallPromptDisabled == false)
     }
@@ -3915,15 +3919,15 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let dismissed = VMInstanceFixture.make(name: "Dismissed")
         let armed = VMInstanceFixture.make(name: "Armed")
-        dismissed.configuration.agentInstallNudgeDismissed = true
+        dismissed.hostState.agentInstallNudgeDismissed = true
         viewModel.instances = [dismissed, armed]
 
         viewModel.agentInstallPromptDisabled = true
         viewModel.agentInstallPromptDisabled = false
 
-        #expect(dismissed.configuration.agentInstallNudgeDismissed == true)
-        #expect(armed.configuration.agentInstallNudgeDismissed == false)
-        #expect(storage.saveConfigurationCallCount == 0)
+        #expect(dismissed.hostState.agentInstallNudgeDismissed == true)
+        #expect(armed.hostState.agentInstallNudgeDismissed == false)
+        #expect(storage.saveHostStateCallCount == 0)
     }
 
     // MARK: - Rename
@@ -4080,7 +4084,7 @@ struct VMLibraryViewModelTests {
     /// Marks the instance to start automatically, returning it for chaining.
     @discardableResult
     private func markAutoStart(_ instance: VMInstance) -> VMInstance {
-        instance.configuration.startsAutomaticallyOnLaunch = true
+        instance.hostState.startsAutomaticallyOnLaunch = true
         return instance
     }
 
@@ -4301,7 +4305,7 @@ struct VMLibraryViewModelTests {
         // presenter nil.
         viewModel.presenter = nil
         let popOut = markAutoStart(VMInstanceFixture.make(name: "Pop Out"))
-        popOut.configuration.displayPreference = .popOut
+        popOut.hostState.displayPreference = .popOut
         let inline = markAutoStart(VMInstanceFixture.make(name: "Inline"))
         let saved = markAutoStart(VMInstanceFixture.make(name: "Suspended"))
         saved.enter(.suspended)
@@ -4383,17 +4387,21 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = try makeImportSource(name: "Pre-marked VM", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
-        var marked = source.config
-        marked.startsAutomaticallyOnLaunch = true
-        storage.bundles[source.url] = marked
+        // A real file, since the import copies the source directory itself.
+        try VMStorageService().saveHostState(
+            VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut),
+            to: source.url)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         await viewModel.awaitPreparingForTesting()
 
         let imported = try #require(viewModel.instances.first)
-        #expect(imported.configuration.startsAutomaticallyOnLaunch == false)
+        #expect(imported.hostState.startsAutomaticallyOnLaunch == false)
         // …and the cleared flag reached the imported bundle, not just the row.
-        #expect(storage.bundles[imported.bundleURL]?.startsAutomaticallyOnLaunch == false)
+        #expect(storage.hostStates[imported.bundleURL]?.startsAutomaticallyOnLaunch == false)
+        // The rest of the host state arrives with the bundle: the row reads the
+        // published bundle rather than keeping the defaults it was built with.
+        #expect(imported.hostState.displayPreference == .popOut)
     }
 
     @Test("importVMs imports every bundle in a multi-select batch (#444)")
@@ -4683,6 +4691,33 @@ struct VMLibraryViewModelTests {
         #expect(phantom?.preparingState == nil)
         #expect(viewModel.instances.count == 2)
         #expect(storage.cloneVMBundleCallCount == 1)
+    }
+
+    /// Duplicating a VM asks for a copy of the machine: not a second guest
+    /// booting at every launch, not a baseline the clone's bundle holds no
+    /// snapshot for, and not the source's window placement or dismissals.
+    @Test("A clone starts with the default host state, whatever its source's")
+    func cloneStartsWithDefaultHostState() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = VMInstanceFixture.make(name: "Original")
+        instance.enter(.stopped)
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+        var sourceHostState = VMHostState(
+            startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
+            lastFullscreenDisplayID: 4_280_803_137, agentInstallNudgeDismissed: true)
+        sourceHostState.applyEphemeralMode(enabled: true, baseline: UUID())
+        instance.hostState = sourceHostState
+        storage.hostStates[instance.bundleURL] = sourceHostState
+
+        viewModel.cloneVM(instance)
+        let phantom = try #require(viewModel.instances.first { $0.id != instance.id })
+        await phantom.preparingState?.task.value
+
+        #expect(phantom.hostState == VMHostState())
+        #expect(storage.hostStates[phantom.bundleURL] == nil)
+        #expect(storage.lastCloneFilesToCopy?.contains("host-state.json") == false)
+        #expect(instance.hostState == sourceHostState)
     }
 
     @Test("cloneVM removes phantom on storage error and selects remaining instance")

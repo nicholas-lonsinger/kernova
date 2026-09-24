@@ -1,13 +1,6 @@
 import Foundation
 import KernovaKit
 
-/// The user's preferred display hosting for a VM on start/resume.
-enum VMDisplayPreference: String, Codable, Sendable, Equatable, CaseIterable {
-    case inline
-    case popOut
-    case fullscreen
-}
-
 /// How an enabled network device attaches to the world.
 enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
     case shared
@@ -38,7 +31,8 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 /// Persistent configuration for a virtual machine, serialized to `config.json`
-/// inside each VM bundle directory.
+/// inside each VM bundle directory — what a snapshot captures and a revert
+/// restores. Per-VM state a revert must leave alone is ``VMHostState``.
 ///
 /// > Important: **Any new property must be added to the custom `init(from:)`
 /// > as well.**
@@ -49,31 +43,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var name: String
     var guestOS: VMGuestOS
     var bootMode: VMBootMode
-
-    // MARK: - Startup
-
-    /// When `true`, Kernova starts this VM as part of coming up — resuming it
-    /// from saved state when one exists, cold-booting it otherwise.
-    ///
-    /// A VM still awaiting its initial boot is left alone: its start runs an
-    /// install or an image download, which never begins unattended.
-    var startsAutomaticallyOnLaunch: Bool
-
-    /// When `true`, every power-off returns this VM to the snapshot named by
-    /// ``ephemeralBaselineSnapshotID``, its disks and, through
-    /// ``adoptingSnapshotState(_:)``, its settings, discarding the session's
-    /// guest changes and any setting edited since the capture.
-    ///
-    /// Suspend is not a power-off: a suspended session survives, reverting at
-    /// its next shutdown. Read at power-off, so it is editable while the VM runs.
-    var ephemeralModeEnabled: Bool
-
-    /// The snapshot a power-off reverts to while ``ephemeralModeEnabled``;
-    /// `nil` once the mode is turned off, which clears the choice.
-    ///
-    /// Set through ``applyEphemeralMode(enabled:baseline:)``, which holds that
-    /// pairing.
-    var ephemeralBaselineSnapshotID: UUID?
 
     // MARK: - Resources
 
@@ -108,9 +77,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     ///
     /// A macOS guest honors it from macOS 14 on; earlier ones scale instead.
     var displayAutoResizes: Bool
-
-    var displayPreference: VMDisplayPreference
-    var lastFullscreenDisplayID: UInt32?
 
     // MARK: - Network
 
@@ -213,13 +179,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// vouched for one — a fresh VM, an agent that reported no version, or the
     /// post-start watchdog concluding a previously-seen agent is gone.
     var lastSeenGuestOSVersion: String?
-
-    /// When `true`, the user has explicitly dismissed the sidebar "install
-    /// guest agent" nudge for this VM.
-    ///
-    /// Suppresses only the gentle `.waiting` affordance — `.outdated`,
-    /// `.unresponsive`, and `.expectedMissing` still surface.
-    var agentInstallNudgeDismissed: Bool
 
     // MARK: - macOS-specific
 
@@ -335,9 +294,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         name: String,
         guestOS: VMGuestOS,
         bootMode: VMBootMode,
-        startsAutomaticallyOnLaunch: Bool = false,
-        ephemeralModeEnabled: Bool = false,
-        ephemeralBaselineSnapshotID: UUID? = nil,
         cpuCount: Int? = nil,
         memorySizeInGB: Int? = nil,
         diskSizeInGB: Int? = nil,
@@ -347,8 +303,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         displaySizesToWindow: Bool = true,
         displayHiDPI: Bool = true,
         displayAutoResizes: Bool = true,
-        displayPreference: VMDisplayPreference = .inline,
-        lastFullscreenDisplayID: UInt32? = nil,
         networkEnabled: Bool = true,
         networkMode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
@@ -364,7 +318,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
         lastSeenGuestOSVersion: String? = nil,
-        agentInstallNudgeDismissed: Bool = false,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
@@ -386,9 +339,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.name = name
         self.guestOS = guestOS
         self.bootMode = bootMode
-        self.startsAutomaticallyOnLaunch = startsAutomaticallyOnLaunch
-        self.ephemeralModeEnabled = ephemeralModeEnabled
-        self.ephemeralBaselineSnapshotID = ephemeralBaselineSnapshotID
         self.cpuCount = cpuCount ?? guestOS.defaultCPUCount
         self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemoryInGB
         self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
@@ -398,8 +348,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displaySizesToWindow = displaySizesToWindow
         self.displayHiDPI = displayHiDPI
         self.displayAutoResizes = displayAutoResizes
-        self.displayPreference = displayPreference
-        self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.networkEnabled = networkEnabled
         self.networkMode = networkMode
         self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
@@ -415,7 +363,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
         self.lastSeenGuestOSVersion = lastSeenGuestOSVersion
-        self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
@@ -447,12 +394,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.name = try c.decode(String.self, forKey: .name)
         self.guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
         self.bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
-        self.startsAutomaticallyOnLaunch =
-            try c.decodeIfPresent(Bool.self, forKey: .startsAutomaticallyOnLaunch) ?? false
-        self.ephemeralModeEnabled =
-            try c.decodeIfPresent(Bool.self, forKey: .ephemeralModeEnabled) ?? false
-        self.ephemeralBaselineSnapshotID =
-            try c.decodeIfPresent(UUID.self, forKey: .ephemeralBaselineSnapshotID)
         self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
         self.memorySizeInGB = try c.decode(Int.self, forKey: .memorySizeInGB)
         self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
@@ -462,8 +403,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displaySizesToWindow = try c.decodeIfPresent(Bool.self, forKey: .displaySizesToWindow) ?? true
         self.displayHiDPI = try c.decodeIfPresent(Bool.self, forKey: .displayHiDPI) ?? true
         self.displayAutoResizes = try c.decodeIfPresent(Bool.self, forKey: .displayAutoResizes) ?? true
-        self.displayPreference = try c.decode(VMDisplayPreference.self, forKey: .displayPreference)
-        self.lastFullscreenDisplayID = try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
         self.networkMode = try c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode) ?? .shared
         self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
@@ -485,7 +424,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
-        self.agentInstallNudgeDismissed = try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed) ?? false
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
@@ -530,18 +468,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         return try makeJSONDecoder().decode(VMConfiguration.self, from: data)
     }
 
-    // MARK: - Ephemeral mode
-
-    /// Turns Ephemeral Mode on with `baseline`, or off — which clears the
-    /// baseline choice.
-    ///
-    /// The pairing lives here so no caller can leave a baseline recorded
-    /// against a mode that is off.
-    mutating func applyEphemeralMode(enabled: Bool, baseline: UUID?) {
-        ephemeralModeEnabled = enabled
-        ephemeralBaselineSnapshotID = enabled ? baseline : nil
-    }
-
     // MARK: - Network mode
 
     /// The network this VM joins, or `nil` when it carries no device at all.
@@ -583,18 +509,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Snapshot revert
 
     /// The configuration a revert to `captured` installs: everything the
-    /// snapshot recorded, carrying this VM's identity and its Ephemeral Mode
-    /// policy across.
+    /// snapshot recorded, carrying this VM's identity across.
     ///
     /// `VZVirtualMachine.restoreMachineStateFrom` restores only into the
     /// configuration the state was saved from, so a settings edit made after the
     /// capture has to give way for the saved state to load at all. Subtracting
     /// identity rather than listing the hardware to take back is what keeps a
     /// device added here from being silently dropped from a revert.
-    ///
-    /// Ephemeral Mode is subtracted for a different reason: it is the policy
-    /// that *drives* the power-off revert, so taking a snapshot's copy back
-    /// would let the first automatic revert turn the mode off.
     func adoptingSnapshotState(_ captured: VMConfiguration) -> VMConfiguration {
         var restored = captured
         restored.id = id
@@ -603,8 +524,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         restored.hardwareModelData = hardwareModelData
         restored.machineIdentifierData = machineIdentifierData
         restored.genericMachineIdentifierData = genericMachineIdentifierData
-        restored.ephemeralModeEnabled = ephemeralModeEnabled
-        restored.ephemeralBaselineSnapshotID = ephemeralBaselineSnapshotID
         return restored
     }
 
@@ -621,8 +540,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.id = UUID()
         clone.createdAt = Date()
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
-        clone.displayPreference = .inline
-        clone.lastFullscreenDisplayID = nil
 
         // Regenerate IDs so virtio block device identifiers and USB UUIDs don't
         // collide with the source bundle. Everything else, including the note,
@@ -653,19 +570,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.installContext = nil
         clone.pendingGuestAccount = nil
         clone.linuxInstallContext = nil
-
-        // A clone's guest-agent state hasn't been evaluated by the user, so let
-        // the install nudge surface again rather than inheriting the dismissal.
-        clone.agentInstallNudgeDismissed = false
-
-        // Duplicating a VM asks for a copy, not for a second guest booting at
-        // every launch — and a clone keeping the source's machine ID would be
-        // refused by the duplicate-identity guard every time.
-        clone.startsAutomaticallyOnLaunch = false
-
-        // A clone's bundle carries no `Snapshots/`, so the baseline this VM
-        // names is not a restore point the clone holds.
-        clone.applyEphemeralMode(enabled: false, baseline: nil)
 
         return clone
     }

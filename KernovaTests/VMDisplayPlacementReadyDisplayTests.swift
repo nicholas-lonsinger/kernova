@@ -30,7 +30,9 @@ struct VMDisplayPlacementReadyDisplayTests {
     }
 
     private func makeInstance(preference: VMDisplayPreference) -> VMInstance {
-        VMInstanceFixture.make(name: "Readied VM") { $0.displayPreference = preference }
+        let instance = VMInstanceFixture.make(name: "Readied VM")
+        instance.hostState.displayPreference = preference
+        return instance
     }
 
     private func makeController(posture: GUIPosture)
@@ -115,7 +117,7 @@ struct VMDisplayPlacementReadyDisplayTests {
         #expect(!window.isKeyWindow)
         #expect(!window.styleMask.contains(.fullScreen))
         #expect(instance.displayMode == .popOut)
-        #expect(instance.configuration.displayPreference == .fullscreen)
+        #expect(instance.hostState.displayPreference == .fullscreen)
         #expect(residency.prepareCount == 1)
     }
 }

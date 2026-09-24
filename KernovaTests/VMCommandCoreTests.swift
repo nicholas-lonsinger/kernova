@@ -810,7 +810,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
 
         let error = try #require(
             await commandError {
@@ -1297,7 +1297,7 @@ struct VMCommandCoreTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         // Nothing to shut down: this stop deletes the suspended session and
@@ -1724,7 +1724,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
 
         let error = try #require(
             await commandError {
@@ -2362,7 +2362,7 @@ struct VMCommandCoreTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let error = try #require(
@@ -2385,7 +2385,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         // A power-off revert has no call waiting on it, so its failure has only
@@ -3192,7 +3192,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let restart = Task { try await harness.core.restart(.id(instance.id), timeout: nil) }
@@ -3336,7 +3336,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         try await harness.core.stop(
@@ -3427,7 +3427,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()))
         let baseline = VMSnapshot(name: "Clean install")
         instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
-        instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        instance.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let restart = Task {

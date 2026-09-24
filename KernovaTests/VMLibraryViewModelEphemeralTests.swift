@@ -37,12 +37,14 @@ struct VMLibraryViewModelEphemeralTests {
         let later = VMSnapshot(
             name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
 
-        var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        if ephemeral {
-            config.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        }
+        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let bundleURL = try storage.bundleURL(for: config)
         storage.bundles[bundleURL] = config
+        if ephemeral {
+            var hostState = VMHostState()
+            hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+            storage.hostStates[bundleURL] = hostState
+        }
         snapshots.setManifest(
             VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), for: bundleURL)
         // What each snapshot's own config.json holds, so a revert has something
@@ -214,7 +216,7 @@ struct VMLibraryViewModelEphemeralTests {
     @Test("A mode left on with a baseline the manifest lost reverts nothing")
     func danglingBaselineRevertsNothing() async throws {
         let harness = try await makeHarness()
-        harness.instance.configuration.ephemeralBaselineSnapshotID = UUID()
+        harness.instance.hostState.ephemeralBaselineSnapshotID = UUID()
 
         await harness.viewModel.stop(harness.instance)
         await settleEphemeralRevert(harness)
@@ -229,8 +231,31 @@ struct VMLibraryViewModelEphemeralTests {
         await harness.viewModel.stop(harness.instance)
         await settleEphemeralRevert(harness)
 
-        #expect(harness.instance.configuration.ephemeralModeEnabled)
-        #expect(harness.instance.configuration.ephemeralBaselineSnapshotID == harness.baseline.id)
+        #expect(harness.instance.hostState.ephemeralModeEnabled)
+        #expect(harness.instance.hostState.ephemeralBaselineSnapshotID == harness.baseline.id)
+    }
+
+    @Test("A power-off takes back the settings edited since the baseline, and no host state")
+    func revertKeepsTheHostState() async throws {
+        let harness = try await makeHarness()
+        let instance = harness.instance
+        let capturedCPUs = instance.configuration.cpuCount
+        harness.viewModel.updateSettings(of: instance) {
+            $0.configuration.cpuCount = capturedCPUs + 1
+            $0.hostState.startsAutomaticallyOnLaunch = true
+            $0.hostState.displayPreference = .fullscreen
+            $0.hostState.lastFullscreenDisplayID = 4_280_803_137
+            $0.hostState.agentInstallNudgeDismissed = true
+        }
+        let editedHostState = instance.hostState
+
+        await harness.viewModel.stop(instance)
+        await settleEphemeralRevert(harness)
+
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+        #expect(instance.configuration.cpuCount == capturedCPUs)
+        #expect(instance.hostState == editedHostState)
+        #expect(harness.storage.hostStates[instance.bundleURL] == editedHostState)
     }
 
     @Test("A baseline revert that fails surfaces the error")
@@ -336,7 +361,7 @@ struct VMLibraryViewModelEphemeralTests {
     @Test("Turning the mode off releases the baseline for deletion")
     func turningTheModeOffReleasesTheBaseline() async throws {
         let harness = try await makeHarness()
-        harness.instance.configuration.applyEphemeralMode(enabled: false, baseline: nil)
+        harness.instance.hostState.applyEphemeralMode(enabled: false, baseline: nil)
 
         await harness.viewModel.deleteSnapshot(harness.instance, snapshot: harness.baseline)
             .value

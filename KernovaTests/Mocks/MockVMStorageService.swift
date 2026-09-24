@@ -20,6 +20,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     // MARK: - Storage
 
     var bundles: [URL: VMConfiguration] = [:]
+    /// Each bundle's `host-state.json`. A bundle with no entry reads the real
+    /// file, so a bundle `importVM` copies on disk arrives with the host state
+    /// its source held, as it does through the real copy.
+    var hostStates: [URL: VMHostState] = [:]
     private let baseDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("MockVMs-\(UUID().uuidString)", isDirectory: true)
 
@@ -34,6 +38,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     var listVMBundlesCallCount = 0
     var saveConfigurationCallCount = 0
+    var saveHostStateCallCount = 0
     var deleteVMBundleCallCount = 0
     var permanentlyDeleteVMBundleCallCount = 0
     var createVMBundleCallCount = 0
@@ -54,11 +59,14 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var cloneVMBundleError: (any Error)?
     var publishBundleError: (any Error)?
     var saveConfigurationError: (any Error)?
+    var saveHostStateError: (any Error)?
     var deleteVMBundleError: (any Error)?
     var permanentlyDeleteVMBundleError: (any Error)?
     var listVMBundlesError: (any Error)?
     /// Set of bundle URLs whose loadConfiguration should throw.
     var loadConfigurationFailURLs: Set<URL> = []
+    /// Set of bundle URLs whose host-state file reads as present but unreadable.
+    var loadHostStateFailURLs: Set<URL> = []
 
     // MARK: - VMStorageProviding
 
@@ -122,6 +130,21 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         bundles[bundleURL] = configuration
     }
 
+    func loadHostState(from bundleURL: URL) throws -> VMHostState {
+        if loadHostStateFailURLs.contains(bundleURL) {
+            throw VMBundleSidecarFile.Unreadable(
+                fileName: "host-state.json", underlying: CocoaError(.fileReadCorruptFile))
+        }
+        if let hostState = hostStates[bundleURL] { return hostState }
+        return try VMStorageService().loadHostState(from: bundleURL)
+    }
+
+    func saveHostState(_ hostState: VMHostState, to bundleURL: URL) throws {
+        saveHostStateCallCount += 1
+        if let error = saveHostStateError { throw error }
+        hostStates[bundleURL] = hostState
+    }
+
     func createVMBundle(_ configuration: VMConfiguration, at bundleURL: URL) throws {
         createVMBundleCallCount += 1
         if let error = createVMBundleError { throw error }
@@ -144,8 +167,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     /// Renames the staged tree when one is really on disk — clone and import tests
-    /// write real files — and re-keys the in-memory entry either way, so an
-    /// assertion on `bundles[finalURL]` reads the published bundle.
+    /// write real files — and re-keys the in-memory entries either way, so an
+    /// assertion on `bundles[finalURL]` or `hostStates[finalURL]` reads the
+    /// published bundle.
     func publishBundle(from stagedURL: URL, to bundleURL: URL) throws {
         publishBundleCallCount += 1
         if let error = publishBundleError { throw error }
@@ -159,6 +183,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         if let staged = bundles.removeValue(forKey: stagedURL) {
             bundles[bundleURL] = staged
         }
+        if let staged = hostStates.removeValue(forKey: stagedURL) {
+            hostStates[bundleURL] = staged
+        }
     }
 
     @discardableResult
@@ -171,11 +198,13 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         deleteVMBundleCallCount += 1
         if let error = deleteVMBundleError { throw error }
         bundles.removeValue(forKey: bundleURL)
+        hostStates.removeValue(forKey: bundleURL)
     }
 
     func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
         permanentlyDeleteVMBundleCallCount += 1
         if let error = permanentlyDeleteVMBundleError { throw error }
         bundles.removeValue(forKey: bundleURL)
+        hostStates.removeValue(forKey: bundleURL)
     }
 }

@@ -340,23 +340,30 @@ final class VMCommandCore: VMCommanding {
         return sourceAuthority
     }
 
-    /// Applies `mutate` to the VM's configuration, refusing when the result did
-    /// not reach disk.
+    /// Applies `mutate` to the VM's settings, refusing when the result did not
+    /// reach disk.
     ///
     /// The one write convention every verb in the core shares. A failed save
     /// leaves the new value in memory and the old one on disk, so the next
     /// library read takes it back — answering `ok` would report a change the
     /// user is about to lose. A mutation the write funnel *refused* returns the
     /// same `false` and is refused here too, having changed nothing.
-    func writeConfiguration(
-        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
+    func writeSettings(
+        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) -> Void
     ) throws {
-        guard library.updateConfiguration(of: instance, mutate: mutate) else {
+        guard library.updateSettings(of: instance, mutate: mutate) else {
             throw CommandError.operationFailed(
                 verb: verb,
                 message:
                     "The change to \u{201C}\(instance.name)\u{201D} was not saved.")
         }
+    }
+
+    /// ``writeSettings(of:verb:_:)`` for a mutation of the configuration alone.
+    func writeConfiguration(
+        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
+    ) throws {
+        try writeSettings(of: instance, verb: verb) { mutate(&$0.configuration) }
     }
 
     /// The refusal a verb gets while `instance` is still copying, shared by
@@ -401,7 +408,7 @@ final class VMCommandCore: VMCommanding {
             ipAddress: library.guestAddresses.address(for: instance),
             agentStatus: instance.agentStatus.wireName,
             hasSavedState: instance.hasSaveFile,
-            isEphemeral: config.ephemeralModeEnabled,
+            isEphemeral: instance.hostState.ephemeralModeEnabled,
             snapshotCount: instance.snapshotManifest.snapshots.count,
             bundlePath: instance.bundleURL.path(percentEncoded: false)
         )

@@ -119,7 +119,7 @@ struct SidebarViewControllerTests {
     @Test("Agent indicator suppressed once the install nudge is dismissed")
     func agentSuppressedWhenDismissed() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.configuration.agentInstallNudgeDismissed = true
+        instance.hostState.agentInstallNudgeDismissed = true
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -170,7 +170,7 @@ struct SidebarViewControllerTests {
 
         // Even a dismissed install nudge doesn't suppress it — the dismissal
         // gate is scoped to `.waiting`.
-        instance.configuration.agentInstallNudgeDismissed = true
+        instance.hostState.agentInstallNudgeDismissed = true
         #expect(
             visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
@@ -185,7 +185,7 @@ struct SidebarViewControllerTests {
                 == nil)
         // The per-VM flag is overridden, never written: turning the preference
         // back on must restore what this VM was set to.
-        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(instance.hostState.agentInstallNudgeDismissed == false)
         #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 

@@ -39,10 +39,10 @@ the facade and present its refusals in their own idiom:
 
 ## Models (`Kernova/Models/`)
 
-`VMConfiguration` is what persists (`config.json`); `VMInstance` is the
-`@MainActor` runtime owner of one, holding at most one `VMSessionContext`, whose
-`VMSession` actor alone touches the `VZVirtualMachine`. `VMBundleLayout`
-derives every in-bundle path.
+`VMConfiguration` (`config.json`) and `VMHostState` (`host-state.json`) are
+what persists; `VMInstance` is the `@MainActor` runtime owner of both, holding
+at most one `VMSessionContext`, whose `VMSession` actor alone touches the
+`VZVirtualMachine`. `VMBundleLayout` derives every in-bundle path.
 
 Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `MacOSGuestProvisioning` each carry one `MacOSVersion` floor and read
