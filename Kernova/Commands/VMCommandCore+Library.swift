@@ -404,8 +404,10 @@ extension VMCommandCore {
                 },
                 onSuccess: { [weak self] in
                     // The phantom was wired before its bundle existed, so any
-                    // snapshots that arrived with the copy are read now.
+                    // snapshots that arrived with the copy are read now — and
+                    // the addresses they hold join the duplicate trace then.
                     self?.reloadSnapshots(for: phantom)
+                    self?.library.macAddresses.logDuplicateMACAddressHolders()
                     #log(
                         Self.logger, .notice,
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
