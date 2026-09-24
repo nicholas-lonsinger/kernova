@@ -21,9 +21,7 @@ struct VMLibraryTests {
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
-        downloadsDirectory: URL? = FileManager.default.urls(
-            for: .downloadsDirectory, in: .userDomainMask
-        ).first,
+        downloadsDirectory: URL? = nil,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         arpTable: ScriptedARPTable = ScriptedARPTable()
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
@@ -422,45 +420,6 @@ struct VMLibraryTests {
         #expect(instance.configuration == written)
         #expect(storage.saveConfigurationCallCount == saves)
         #expect(!failures.showError)
-    }
-
-    @Test("A row still preparing takes no configuration write, having nowhere to save it")
-    func preparingRowRefusesAWrite() {
-        let (library, storage, _, _) = makeLibrary()
-        let phantom = VMInstanceFixture.make(name: "Copy") {
-            $0.agentInstallNudgeDismissed = true
-        }
-        library.register(phantom, storage: storage)
-        markPreparing(phantom)
-        let saves = storage.saveConfigurationCallCount
-
-        let outcome = library.updateConfiguration(of: phantom, ifNotSaved: .keep) {
-            $0.agentInstallNudgeDismissed = false
-        }
-
-        #expect(outcome.refusedWhilePreparing)
-        #expect(phantom.configuration.agentInstallNudgeDismissed)
-        #expect(storage.saveConfigurationCallCount == saves)
-    }
-
-    @Test("A guest-account retraction refused while preparing keeps both halves")
-    func refusedRetractionKeepsTheAccountAndItsPassword() {
-        let (library, storage, _, _) = makeLibrary()
-        let intent = GuestAccountIntent(
-            fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-            enablesRemoteLogin: false)
-        let phantom = VMInstanceFixture.make(name: "Creating", guestOS: .macOS) {
-            $0.pendingGuestAccount = intent
-        }
-        library.register(phantom, storage: storage)
-        library.holdGuestAccountPassword(GuestAccountPassword("analytical-engine"), for: phantom)
-        markPreparing(phantom, operation: .creating)
-
-        let outcome = library.retractGuestAccount(for: phantom)
-
-        #expect(outcome.refusedWhilePreparing)
-        #expect(phantom.configuration.pendingGuestAccount == intent)
-        #expect(library.heldGuestAccountPassword(for: phantom) != nil)
     }
 
     @Test("A preparing row takes on the configuration its copy wrote when it publishes")

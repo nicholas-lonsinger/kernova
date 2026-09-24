@@ -16,14 +16,9 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization: any VirtualizationProviding = MockVirtualizationService(),
         returnTimeout: Duration = .seconds(5)
     ) -> (VMLifecycleCoordinator, MockUSBAccessoryService) {
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: virtualization,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            usbAccessoryService: accessories,
-            usbAccessoryReturnTimeout: returnTimeout
-        )
+        let coordinator = makeTestLifecycle(
+            virtualization: virtualization, usbAccessoryService: accessories,
+            usbAccessoryReturnTimeout: returnTimeout)
         return (coordinator, accessories)
     }
 

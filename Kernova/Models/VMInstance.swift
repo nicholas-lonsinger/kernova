@@ -274,13 +274,13 @@ final class VMInstance {
 
     /// Applies a configuration mutation through ``onUpdateConfiguration``,
     /// answering how the write ended. An instance no library has wired changes
-    /// nothing and is refused as ``VMLibrary/ConfigurationRefusal/notInLibrary``.
+    /// nothing and is refused as ``VMLibrary/ConfigurationRefusal/noLibrary``.
     @discardableResult
     func performConfigurationMutation(
         ifNotSaved unsaved: VMLibrary.UnsavedConfiguration,
         _ mutate: (inout VMConfiguration) -> Void
     ) -> VMLibrary.ConfigurationWrite {
-        onUpdateConfiguration?(unsaved, mutate) ?? .refused(.notInLibrary)
+        onUpdateConfiguration?(unsaved, mutate) ?? .refused(.noLibrary)
     }
 
     /// Replaces ``configuration``; `key` is what confines the call to

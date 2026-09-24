@@ -718,8 +718,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// it describes — the intent as a question about an account that can never be
     /// created, the password as a secret nothing will ever spend.
     ///
-    /// A refused retraction — the VM is still being created — leaves both
-    /// halves as they were.
+    /// The intent is written first and the password dropped only after, so a
+    /// write the library refuses leaves both halves as they were.
     @discardableResult
     func retractGuestAccount(for instance: VMInstance) -> ConfigurationWrite {
         // Kept when the save fails: every caller retracts an account nothing
@@ -818,7 +818,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `instances`.
         instance.onUpdateConfiguration = { [weak self, weak instance] unsaved, mutate in
-            guard let self, let instance else { return .refused(.notInLibrary) }
+            guard let self, let instance else { return .refused(.noLibrary) }
             return self.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
         }
         // Auto-eject the installer disk once the agent handshakes a current version.
@@ -882,20 +882,16 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         /// The removable-media list changed while the VM's live session is in
         /// a phase no reconcile can drive.
         case sessionNotAttachable
-        /// The VM's bundle is still being created, cloned or imported: there is
-        /// nowhere yet for a save to land, and publication installs the
-        /// configuration the copy wrote.
-        case preparing
-        /// No library holds the VM.
-        case notInLibrary
+        /// The write reached no library: the instance was never wired to one,
+        /// or the library that wired it is gone.
+        case noLibrary
 
         var errorDescription: String? {
             switch self {
             case .macAddressInUse: "Another virtual machine holds that MAC address."
             case .sessionNotAttachable:
                 "The virtual machine can\u{2019}t take a removable-media change in its current state."
-            case .preparing: "The virtual machine is still being created, cloned, or imported."
-            case .notInLibrary: "The virtual machine is not in the library."
+            case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."
             }
         }
     }
@@ -906,8 +902,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     ///
     /// Refused whole — no field it also sets is applied — when it moves the VM
     /// onto a MAC address another VM holds, in its configuration or in one of
-    /// its snapshots; when it changes `removableMedia` while the VM's live
-    /// session is not attachable; and while the VM is still preparing.
+    /// its snapshots; and when it changes `removableMedia` while the VM's live
+    /// session is not attachable.
     @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
@@ -918,7 +914,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         var new = old
         mutate(&new)
         guard new != old else { return .saved }
-        guard !instance.isPreparing else { return .refused(.preparing) }
         if let conflict = macAddresses.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) {
             return .refused(.macAddressInUse(conflict))
         }

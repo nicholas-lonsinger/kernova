@@ -27,9 +27,7 @@ struct VMLibraryViewModelTests {
         removableMediaDeviceService: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
-        downloadsDirectory: URL? = FileManager.default.urls(
-            for: .downloadsDirectory, in: .userDomainMask
-        ).first,
+        downloadsDirectory: URL? = nil,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
@@ -69,6 +67,7 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -693,6 +692,7 @@ struct VMLibraryViewModelTests {
             ipswService: ipswService,
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -2595,6 +2595,7 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: fileSystem,
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -3388,6 +3389,8 @@ struct VMLibraryViewModelTests {
             installService: raceInstaller,
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -5228,6 +5231,8 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -5317,6 +5322,8 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
@@ -5729,6 +5736,7 @@ struct VMLibraryViewModelTests {
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             usbAccessoryService: MockUSBAccessoryService(),
             fileSystem: fileSystem,
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )

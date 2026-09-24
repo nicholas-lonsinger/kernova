@@ -325,7 +325,7 @@ extension VMCommandCore {
             throw CommandError.operationFailed(
                 verb: .editRemovableMedia,
                 message:
-                    "The disk image was created at \(created), but \(instance.name) is \(instance.status.rawValue) and could not take it. Attach the file once the VM is running."
+                    "The disk image was created at \(created), but it isn\u{2019}t attached: \u{201C}\(instance.name)\u{201D} is \(instance.status.displayName.lowercased()), and couldn\u{2019}t take a removable-media change."
             )
         case .refused(let refusal):
             #log(

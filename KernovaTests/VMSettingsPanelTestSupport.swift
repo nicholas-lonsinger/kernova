@@ -24,6 +24,8 @@ func makeSettingsViewModel(
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         removableMediaDeviceService: MockRemovableMediaDeviceService(),
+        fileSystem: MockFileSystem(),
+        downloadsDirectory: nil,
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,

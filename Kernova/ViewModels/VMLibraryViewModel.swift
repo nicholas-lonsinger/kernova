@@ -465,8 +465,9 @@ final class VMLibraryViewModel {
     // MARK: - Initialization
 
     /// A collaborator over the user's own state — the VMs directory, the
-    /// defaults domain, the host's vmnet networks and their store, its ARP
-    /// table, the signature's entitlements — takes no default: the test host
+    /// defaults domain, the Trash, the Downloads folder, the host's vmnet
+    /// networks and their store, its ARP table, the signature's entitlements —
+    /// takes no default: the test host
     /// runs as the app, in its container and with its signature, so a default
     /// would hand that state to every test that left it out. ``AppDelegate``
     /// supplies each.
@@ -485,10 +486,8 @@ final class VMLibraryViewModel {
         usbAccessoryService: (any USBAccessoryProviding)? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
-        fileSystem: any FileSystemOperating = FileManager.default,
-        downloadsDirectory: URL? = FileManager.default.urls(
-            for: .downloadsDirectory, in: .userDomainMask
-        ).first,
+        fileSystem: any FileSystemOperating,
+        downloadsDirectory: URL?,
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,

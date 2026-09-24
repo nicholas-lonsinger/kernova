@@ -370,9 +370,9 @@ final class VMCommandCore: VMCommanding {
         switch refusal {
         case .macAddressInUse(let conflict):
             .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
-        case .sessionNotAttachable, .preparing:
+        case .sessionNotAttachable:
             invalidState(instance)
-        case .notInLibrary:
+        case .noLibrary:
             .notFound(.id(instance.id))
         }
     }

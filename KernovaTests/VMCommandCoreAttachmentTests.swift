@@ -562,6 +562,12 @@ struct VMCommandCoreAttachmentTests {
         let refusal = await creation.value
 
         #expect(refusal?.isOperationFailure == true)
+        // What is known: where the file is, and the state that turned it away.
+        #expect(
+            refusal?.message
+                == "The disk image was created at \(destination.path(percentEncoded: false)), "
+                + "but it isn\u{2019}t attached: \u{201C}\(instance.name)\u{201D} is suspending, "
+                + "and couldn\u{2019}t take a removable-media change.")
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.storage.saveConfigurationCallCount == 0)
         // The file at the user's chosen path is theirs to keep.

@@ -84,6 +84,7 @@ struct VMLibraryViewModelEphemeralTests {
             ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(),
+            downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )

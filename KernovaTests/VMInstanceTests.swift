@@ -1750,7 +1750,7 @@ struct VMInstanceTests {
         #expect(
             instance.performConfigurationMutation(ifNotSaved: .discard) {
                 $0.displayHiDPI.toggle()
-            }.refusedOutsideALibrary)
+            }.refusedForNoLibrary)
         #expect(instance.configuration == before)
     }
 

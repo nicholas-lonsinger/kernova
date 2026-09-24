@@ -15,12 +15,8 @@ extension VMLibrary.ConfigurationWrite {
         if case .refused(.sessionNotAttachable) = self { true } else { false }
     }
 
-    var refusedWhilePreparing: Bool {
-        if case .refused(.preparing) = self { true } else { false }
-    }
-
-    var refusedOutsideALibrary: Bool {
-        if case .refused(.notInLibrary) = self { true } else { false }
+    var refusedForNoLibrary: Bool {
+        if case .refused(.noLibrary) = self { true } else { false }
     }
 
     var failedToSave: Bool {

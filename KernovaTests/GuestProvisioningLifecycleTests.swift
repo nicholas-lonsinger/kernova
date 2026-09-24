@@ -13,11 +13,7 @@ import Testing
 struct GuestProvisioningLifecycleTests {
     private func makeCoordinator() -> (VMLifecycleCoordinator, MockMacOSInstallService) {
         let installService = MockMacOSInstallService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: installService,
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService())
+        let coordinator = makeTestLifecycle(installService: installService)
         return (coordinator, installService)
     }
 

@@ -29,14 +29,9 @@ struct VMLifecycleCoordinatorTests {
         let installService = MockMacOSInstallService()
         let ipswService = MockIPSWService()
         let removableMediaService = MockRemovableMediaDeviceService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: virtService,
-            installService: installService,
-            ipswService: ipswService,
-            removableMediaDeviceService: removableMediaService,
-            downloadsDirectory: downloadsDirectory
-                ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-        )
+        let coordinator = makeTestLifecycle(
+            virtualization: virtService, installService: installService, ipswService: ipswService,
+            removableMedia: removableMediaService, downloadsDirectory: downloadsDirectory)
         return (coordinator, virtService, installService, ipswService, removableMediaService)
     }
 
@@ -45,12 +40,7 @@ struct VMLifecycleCoordinatorTests {
         SuspendingMockVirtualizationService
     ) {
         let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService()
-        )
+        let coordinator = makeTestLifecycle(virtualization: suspendingService)
         return (coordinator, suspendingService)
     }
 
@@ -1088,16 +1078,9 @@ struct VMLifecycleCoordinatorTests {
         downloadService.downloadedContents = contents
         let fileSystem = MockFileSystem()
 
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            linuxImageResolveService: resolveService,
-            downloadService: downloadService,
-            fileSystem: fileSystem,
-            downloadsDirectory: downloads
-        )
+        let coordinator = makeTestLifecycle(
+            linuxImageResolveService: resolveService, downloadService: downloadService,
+            fileSystem: fileSystem, downloadsDirectory: downloads)
         let storage = MockVMStorageService()
         return LinuxFixture(
             coordinator: coordinator, resolveService: resolveService,
@@ -1295,13 +1278,7 @@ struct VMLifecycleCoordinatorTests {
         // With normalization disabled the persisted path is all there is, and
         // it is taken only while it still names an ISO: the download writes
         // over it and a digest failure trashes it.
-        let unnormalized = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            downloadsDirectory: nil
-        )
+        let unnormalized = makeTestLifecycle(downloadsDirectory: nil)
         let persisted = URL(fileURLWithPath: "/Users/Shared/old.iso")
         #expect(
             unnormalized.linuxDownloadDestination(persisted: persisted, filename: "debian.iso")
@@ -1437,7 +1414,7 @@ struct VMLifecycleCoordinatorTests {
         let persist = instance.onUpdateConfiguration
         instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.notInLibrary)
+            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1656,7 +1633,7 @@ struct VMLifecycleCoordinatorTests {
         let persist = instance.onUpdateConfiguration
         instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.notInLibrary)
+            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1715,7 +1692,7 @@ struct VMLifecycleCoordinatorTests {
         let persist = instance.onUpdateConfiguration
         instance.onUpdateConfiguration = { unsaved, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.notInLibrary)
+            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1944,9 +1921,9 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("normalizedDownloadDestination keeps Downloads paths and redirects others to the default")
     func normalizedDownloadDestinationEnforcesDownloads() throws {
-        let (coordinator, _, _, _, _) = makeCoordinator()
-        let downloads = try #require(
-            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first)
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Downloads-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let inDownloads = downloads.appendingPathComponent("Custom.ipsw")
         #expect(coordinator.normalizedDownloadDestination(for: inDownloads) == inDownloads)
 
@@ -1954,8 +1931,7 @@ struct VMLifecycleCoordinatorTests {
         // written under the sandbox — it must fall back to the default.
         let elsewhere = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
         let normalized = coordinator.normalizedDownloadDestination(for: elsewhere)
-        #expect(
-            normalized.path(percentEncoded: false) == VMCreationViewModel.defaultIPSWDownloadPath)
+        #expect(normalized == downloads.appendingPathComponent(RestoreImageFilename.fallback))
     }
 
     @Test("Every destination a hand-edited config can name lands inside Downloads")
@@ -2041,14 +2017,8 @@ struct VMLifecycleCoordinatorTests {
     @Test("With normalization disabled the persisted destination is what the install writes")
     func latestDestinationKeepsPersistedWithoutDownloads() throws {
         // No Downloads directory at all — the one state that leaves a persisted
-        // path unexamined, so the `makeCoordinator` fallback is bypassed here.
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            removableMediaDeviceService: MockRemovableMediaDeviceService(),
-            downloadsDirectory: nil
-        )
+        // path unexamined.
+        let coordinator = makeTestLifecycle(downloadsDirectory: nil)
         let persisted = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
         let resolved = try #require(
             URL(

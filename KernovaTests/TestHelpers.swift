@@ -33,27 +33,31 @@ func makeTestPreferences() -> AppPreferences {
 
 // MARK: - Library construction
 
-/// A `VMLifecycleCoordinator` over mocks — the one a test library is built on,
-/// for a test that also drives the coordinator itself.
+/// A `VMLifecycleCoordinator` over mocks — the test target's one construction
+/// of one, which a test library is built on too.
+///
+/// No Downloads directory unless a test names one: a test that needs it passes
+/// a temporary directory, never the user's own.
 @MainActor
 func makeTestLifecycle(
     virtualization: any VirtualizationProviding = MockVirtualizationService(),
     installService: any MacOSInstallProviding = MockMacOSInstallService(),
+    ipswService: any IPSWProviding = MockIPSWService(),
     removableMedia: any RemovableMediaAttaching = MockRemovableMediaDeviceService(),
     usbAccessoryService: (any USBAccessoryProviding)? = nil,
+    usbAccessoryReturnTimeout: Duration = .seconds(5),
     linuxImageResolveService: any LinuxImageResolving = MockLinuxImageResolveService(),
     downloadService: any Downloading = MockDownloadService(),
     fileSystem: MockFileSystem = MockFileSystem(),
-    downloadsDirectory: URL? = FileManager.default.urls(
-        for: .downloadsDirectory, in: .userDomainMask
-    ).first
+    downloadsDirectory: URL? = nil
 ) -> VMLifecycleCoordinator {
     VMLifecycleCoordinator(
         virtualizationService: virtualization,
         installService: installService,
-        ipswService: MockIPSWService(),
+        ipswService: ipswService,
         removableMediaDeviceService: removableMedia,
         usbAccessoryService: usbAccessoryService,
+        usbAccessoryReturnTimeout: usbAccessoryReturnTimeout,
         linuxImageResolveService: linuxImageResolveService,
         downloadService: downloadService,
         fileSystem: fileSystem,
