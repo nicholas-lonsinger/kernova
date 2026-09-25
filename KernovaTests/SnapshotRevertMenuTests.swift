@@ -46,9 +46,9 @@ struct SnapshotRevertMenuTests {
     @Test("Items list the snapshots newest first")
     func itemsAreNewestFirst() {
         let instance = makeInstance()
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [
             makeSnapshot("Older"), makeSnapshot("Newer", offsetSeconds: 60),
-        ])
+        ]))
 
         let menu = rebuild(for: instance)
 
@@ -70,7 +70,7 @@ struct SnapshotRevertMenuTests {
     func itemsCarryTheirIdentity() {
         let instance = makeInstance()
         let snapshot = makeSnapshot("Only")
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
 
         let ref = rebuild(for: instance).items.first?.representedObject as? SnapshotMenuRef
 
@@ -81,7 +81,7 @@ struct SnapshotRevertMenuTests {
     @Test("Items are disabled while the VM is mid-transition")
     func itemsDisabledWhileTransitioning() {
         let instance = makeInstance(phase: .starting(sessionID: nil))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [makeSnapshot("Only")])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
 
         #expect(rebuild(for: instance).items.allSatisfy { !$0.isEnabled })
     }
@@ -89,7 +89,7 @@ struct SnapshotRevertMenuTests {
     @Test("Items are enabled on a running VM, which the revert terminates")
     func itemsEnabledWhileRunning() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [makeSnapshot("Only")])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
 
         #expect(rebuild(for: instance).items.allSatisfy { $0.isEnabled })
     }
@@ -97,7 +97,7 @@ struct SnapshotRevertMenuTests {
     @Test("The caller's gate decides, so a busy VM's items are disabled")
     func callerGateDisablesItems() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [makeSnapshot("Only")])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
 
         // `canRevertToSnapshot` alone reads `true` here: the VM is settled. The
         // menu still has to follow the caller, which folds in whether an

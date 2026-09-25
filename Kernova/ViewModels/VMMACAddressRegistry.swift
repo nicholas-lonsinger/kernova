@@ -54,23 +54,14 @@ final class VMMACAddressRegistry {
         let reason: ConflictReason
     }
 
-    /// Refuses a configuration edit that would put two guests on one MAC
-    /// address, surfacing the alert the refusal owes.
-    ///
-    /// - Returns: The conflict refused, or `nil` when the edit is admissible.
-    func refuseMACAddressConflict(
-        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
-    ) -> MACAddressConflict? {
-        guard let conflict = macAddressConflict(on: instance, movingFrom: old, to: new) else {
-            return nil
-        }
+    /// Surfaces the alert a configuration edit refused for `conflict` owes.
+    func presentRefusal(_ conflict: MACAddressConflict, on instance: VMInstance) {
         let failure = commandFailure(conflict, on: instance)
         #log(
             Self.logger, .notice,
             "Refused a configuration change to '\(instance.name, privacy: .public)': \(failure.message, privacy: .public)"
         )
         onFailure?(failure.title, failure.message)
-        return conflict
     }
 
     /// The VM a configuration change would collide with, and what on — the one

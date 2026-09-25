@@ -92,11 +92,12 @@ protocol VirtualizationProviding: Sendable {
     /// that was live when reverted onto a warm snapshot is resumed into it, a
     /// failure there arriving as
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` with the files
-    /// already written. `adopt` receives the plan once the store has written it
-    /// to the bundle, and before anything reads the VM's configuration to bring
-    /// it back up.
+    /// already written. `commitConfiguration` receives the plan once the
+    /// snapshot's files are staged and before any of them is swapped into the
+    /// bundle; a throw there discards the staging and leaves the bundle as it
+    /// was.
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
-        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
+        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws
 }

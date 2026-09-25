@@ -259,10 +259,10 @@ final class USBAccessoryCoordinator {
     // MARK: - The User's Own Edits
 
     /// Records the pairing an attach the user asked for creates, and takes the
-    /// accessory's key off every other VM.
-    func userAttached(_ accessory: USBAccessoryInfo, to instance: VMInstance) {
+    /// accessory's key off every other VM; throws when a pairing write fails.
+    func userAttached(_ accessory: USBAccessoryInfo, to instance: VMInstance) throws {
         guard let pairing = USBAccessoryPairing.make(for: accessory) else { return }
-        pairings.pairUSBAccessory(pairing, with: instance)
+        try pairings.pairUSBAccessory(pairing, with: instance)
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will take USB accessory \(accessory.displayName, privacy: .public) back automatically"
@@ -275,11 +275,13 @@ final class USBAccessoryCoordinator {
     /// Both halves or neither: the detach re-enumerates the device and macOS
     /// hands it straight back, so a forgotten pairing without the token would
     /// prompt on every detach, and a token without the forgetting would attach
-    /// the device again before the user could pick it up.
-    func userReleased(_ accessory: USBAccessoryInfo, from instance: VMInstance) {
+    /// the device again before the user could pick it up. The token is armed
+    /// only once the forgetting landed, so a write that fails arms nothing and
+    /// throws.
+    func userReleased(_ accessory: USBAccessoryInfo, from instance: VMInstance) throws {
         guard let identity = accessory.identity else { return }
+        try pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
         releasedByUser.insert(identity)
-        pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(accessory.displayName, privacy: .public) back automatically"

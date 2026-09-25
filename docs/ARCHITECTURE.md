@@ -39,15 +39,21 @@ the facade and present its refusals in their own idiom:
 
 ## Models (`Kernova/Models/`)
 
-`VMConfiguration` (`config.json`) and `VMHostState` (`host-state.json`) are
-what persists; `VMInstance` is the `@MainActor` runtime owner of both, holding
-at most one `VMSessionContext`, whose `VMSession` actor alone touches the
+`VMConfiguration` (`config.json`), `VMHostState` (`host-state.json`),
+`VMSnapshotManifest` (`Snapshots/manifest.json`) and `USBAccessoryPairingSet`
+(`usb-accessories.json`) are what persists. `VMBundle` holds their committed
+values and is the one reader and writer of those files, through
+`VMBundleFiles` over the `VMBundleFileAccessing` seam
+(`CoordinatedBundleFileAccess` in production); `VMLibrary` owns the policy a
+configuration write passes on its way there. `VMInstance` is the `@MainActor`
+runtime owner of one VM: it reads its state off its `VMBundle` and holds at
+most one `VMSessionContext`, whose `VMSession` actor alone touches the
 `VZVirtualMachine`. `VMBundleLayout` derives every in-bundle path.
 
 Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `MacOSGuestProvisioning` each carry one `MacOSVersion` floor and read
-`VMConfiguration.effectiveGuestMacOSVersion`, the one source of a guest's
-version.
+`VMConfiguration.effectiveGuestMacOSVersion` of
+`VMInstance.effectiveConfiguration`, the one source of a guest's version.
 
 ## Services (`Kernova/Services/`)
 

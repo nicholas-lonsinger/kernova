@@ -7,7 +7,7 @@ import Foundation
 enum RegisteredVMInstanceFixture {
     /// Wired the way every real construction site is, so the per-instance
     /// hooks a verb answers — the power-off that starts an Ephemeral revert,
-    /// above all — are actually connected.
+    /// above all — are actually connected, and with its bundle in `storage`.
     ///
     /// `snapshots` seeds the manifest. `mutate` runs after networking is
     /// turned off, so it can turn it back on.
@@ -20,13 +20,11 @@ enum RegisteredVMInstanceFixture {
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
             name: name, guestOS: guestOS, phase: phase, preferences: preferences, hostState: hostState,
+            snapshots: VMSnapshotManifest(snapshots: snapshots), files: storage.files,
             mutate: {
                 $0.networkEnabled = false
                 mutate(&$0)
             })
-        if !snapshots.isEmpty {
-            instance.snapshotManifest = VMSnapshotManifest(snapshots: snapshots)
-        }
         library.register(instance, storage: storage)
         return instance
     }

@@ -239,7 +239,7 @@ final class DetailContainerViewController: NSViewController {
                         // destination when the guest agent comes and goes, the
                         // VM pauses, or the toggle flips.
                         _ = inst.configuration.dropFilesEnabled
-                        _ = inst.configuration.lastSeenAgentVersion
+                        _ = inst.lastSeenAgentVersion
                         _ = inst.vsockDropService?.isConnected
                         _ = inst.vsockControlService?.guestSupportsDropFiles
                     }

@@ -63,11 +63,13 @@ extension VMCommandCore {
         guard instance.usbPairings.pairing(forKey: key) != nil else {
             throw itemNotFound(instance, item: "remembered USB accessory \u{201C}\(key)\u{201D}")
         }
-        guard library.updateUSBPairings(of: instance, mutate: { $0.remove(key: key) }) else {
+        do {
+            try library.updateUSBPairings(of: instance, mutate: { $0.remove(key: key) })
+        } catch {
             throw CommandError.operationFailed(
                 verb: .forgetUSBPairing,
                 message:
-                    "That accessory was forgotten for now, but the change could not be written to the virtual machine's bundle."
+                    "Nothing changed: the virtual machine\u{2019}s remembered accessories could not be written. \(error.localizedDescription)"
             )
         }
         #log(
@@ -103,7 +105,9 @@ extension VMCommandCore {
             // rule created only by the prompt would leave a user who plugs a
             // drive in with nothing running, and attaches it from the menu,
             // re-placing it every time.
-            onUserAttachedAccessory?(instance, attached.accessory)
+            rememberAccessoryEdit(on: instance) {
+                try onUserAttachedAccessory?(instance, attached.accessory)
+            }
             #log(
                 Self.logger, .notice,
                 "Attached USB accessory \(attached.accessory.displayName, privacy: .public) to '\(instance.name, privacy: .public)'"
@@ -132,13 +136,34 @@ extension VMCommandCore {
             // back by hand is how a user ends a pairing without opening
             // settings, and it is the only way the returning device stays with
             // the Mac.
-            onUserReleasedAccessory?(instance, held.accessory)
+            rememberAccessoryEdit(on: instance) {
+                try onUserReleasedAccessory?(instance, held.accessory)
+            }
             #log(
                 Self.logger, .notice,
                 "Detached USB accessory \(deviceID, privacy: .public) from '\(instance.name, privacy: .public)'"
             )
         } catch {
             throw usbRefusal(error, on: instance)
+        }
+    }
+
+    /// Records what an attach or detach means for the accessories `instance`
+    /// takes back, reporting a pairing write that fails.
+    ///
+    /// Reported rather than thrown: the device change the verb made stands,
+    /// and only its remembering did not land.
+    private func rememberAccessoryEdit(on instance: VMInstance, _ record: () throws -> Void) {
+        do {
+            try record()
+        } catch {
+            report(
+                .operationFailed(
+                    verb: .editUSBAccessory,
+                    message:
+                        "\u{201C}\(instance.name)\u{201D} has the change, but whether it takes the accessory back automatically could not be written. \(error.localizedDescription)"
+                ),
+                on: instance)
         }
     }
 

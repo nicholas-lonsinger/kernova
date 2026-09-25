@@ -843,7 +843,7 @@ struct ClipboardPassthroughSwitchTests {
         #expect(vc.isPassthroughSwitchOnForTesting == false)
 
         // The settings pane's write path, landing on the same model.
-        _ = viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) {
+        _ = viewModel.updateConfiguration(of: instance) {
             $0.clipboardPassthroughEnabled = true
         }
 

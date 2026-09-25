@@ -489,7 +489,7 @@ extension VMSettingsViewController {
     /// of them when the view model refuses so no control is left showing a value
     /// the model does not hold.
     private func writeMirrored(_ mutate: (inout VMSettings) -> Void) {
-        guard case .saved = viewModel.updateSettings(of: instance, ifNotSaved: .discard, mutate: mutate)
+        guard case .saved = viewModel.updateSettings(of: instance, mutate: mutate)
         else {
             apply()
             return

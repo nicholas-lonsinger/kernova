@@ -237,7 +237,7 @@ struct VMOverviewSummaryTests {
 
         let older = VMSnapshot(name: "Older", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
         let newer = VMSnapshot(name: "Newer", createdAt: Date(timeIntervalSince1970: 1_700_003_600), macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [older, newer], currentID: newer.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [older, newer], currentID: newer.id))
 
         #expect(rows(.snapshots, instance).map(\.label) == ["Latest"])
         #expect(value("Latest", .snapshots, instance)?.hasPrefix("Newer") == true)
@@ -256,7 +256,7 @@ struct VMOverviewSummaryTests {
 
         let one = VMSnapshot(name: "Base", macAddress: nil)
         let two = VMSnapshot(name: "Later", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [one, two], currentID: two.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [one, two], currentID: two.id))
 
         // The size read lands after the count, so the count stands on its own
         // until it does.
@@ -270,8 +270,8 @@ struct VMOverviewSummaryTests {
     func onlySnapshotsCarryAHeaderSummary() {
         let instance = makeInstance()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(
-            snapshots: [snapshot], currentID: snapshot.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(
+            snapshots: [snapshot], currentID: snapshot.id))
         for category in VMSettingsCategory.allCases {
             let summary = VMOverviewSummary.headerSummary(
                 for: category, instance: instance, resolved: VMOverviewResolved())
@@ -317,8 +317,8 @@ struct VMOverviewSummaryTests {
         #expect(ephemeral(instance)?.isEnabled == false)
 
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(
-            snapshots: [snapshot], currentID: snapshot.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(
+            snapshots: [snapshot], currentID: snapshot.id))
         #expect(ephemeral(instance)?.isEnabled == true)
 
         // A VM already in the mode can always be taken back out of it.

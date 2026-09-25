@@ -64,8 +64,17 @@ extension VMCommandCore {
         }
         // The cold boot is the one that spent the window, whether or not it
         // carried an account: the other two routes never reach the one boot
-        // `GuestStartRoute.deliversGuestProvisioning` names.
-        if route == .coldBoot { library.retractGuestAccount(for: instance) }
+        // `GuestStartRoute.deliversGuestProvisioning` names. A retraction that
+        // does not land is reported with the start that spent it — the VM
+        // stays up, and the password is kept with the intent it answers.
+        guard route == .coldBoot, instance.configuration.pendingGuestAccount != nil else { return }
+        guard case .saved = library.retractGuestAccount(for: instance) else {
+            throw CommandError.operationFailed(
+                verb: .start,
+                message:
+                    "\u{201C}\(instance.name)\u{201D} started, but Kernova could not record that its macOS account was created."
+            )
+        }
     }
 
     // MARK: - Joining a Bring-Up
@@ -227,8 +236,17 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Skipping the account '\(account.username, privacy: .public)' '\(instance.name, privacy: .public)' was set up with — macOS asks for one in Setup Assistant instead"
         )
-        if case .refused(let refusal) = library.retractGuestAccount(for: instance) {
+        switch library.retractGuestAccount(for: instance) {
+        case .saved:
+            return
+        case .refused(let refusal):
             throw refusalError(refusal, on: instance)
+        case .notSaved:
+            throw CommandError.operationFailed(
+                verb: .start,
+                message:
+                    "The account \u{201C}\(account.username)\u{201D} could not be skipped: the change to \u{201C}\(instance.name)\u{201D} was not saved."
+            )
         }
     }
 
@@ -269,7 +287,7 @@ extension VMCommandCore {
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: surface.pointSize, backingScaleFactor: scale)
         switch library.updateConfiguration(
-            of: instance, ifNotSaved: .discard, mutate: { $0.displayResolution = resolution })
+            of: instance, mutate: { $0.displayResolution = resolution })
         {
         case .saved:
             break
@@ -488,8 +506,16 @@ extension VMCommandCore {
             instance.setupTask = nil
             // Before the boot, which would otherwise ask about an account this
             // is about to end: the setup that just landed is the first thing to
-            // read the guest's real version.
-            self.dropGuestAccountBelowProvisioningFloor(on: instance)
+            // read the guest's real version. A drop that does not land stops
+            // the chain, since the boot would ask about that account.
+            do {
+                try self.dropGuestAccountBelowProvisioningFloor(on: instance)
+            } catch {
+                self.reportUnattendedFailure(
+                    .operationFailed(verb: .start, message: error.localizedDescription),
+                    on: instance)
+                return
+            }
             do {
                 try await self.start(instance)
             } catch let failure as CommandError {
@@ -510,16 +536,16 @@ extension VMCommandCore {
     /// pinned URL or a picked file can name anything. Dropped rather than
     /// refused: the install has already landed, and there is no per-VM editor to
     /// turn the intent off with.
-    private func dropGuestAccountBelowProvisioningFloor(on instance: VMInstance) {
+    private func dropGuestAccountBelowProvisioningFloor(on instance: VMInstance) throws {
         guard instance.configuration.pendingGuestAccount != nil,
-            !MacOSGuestProvisioning.canProvision(instance.configuration)
+            !MacOSGuestProvisioning.canProvision(instance.effectiveConfiguration)
         else { return }
         let image = instance.configuration.installedImage?.displayName ?? "the installed image"
         #log(
             Self.logger, .warning,
             "Dropping the guest account for '\(instance.name, privacy: .public)': \(image, privacy: .public) does not run the guest provisioning protocol"
         )
-        library.retractGuestAccount(for: instance)
+        try library.retractGuestAccount(for: instance).get()
     }
 
     /// Drives the macOS install pipeline, then chains the boot that spends the

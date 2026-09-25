@@ -33,17 +33,33 @@ final class VMInstance {
 
     let instanceID: UUID
 
-    /// Written only by ``VMLibrary``, through
-    /// ``replaceConfiguration(with:key:)``; each library entry point that
-    /// writes it states what it persists and what it refuses.
-    private(set) var configuration: VMConfiguration
+    /// What this instance's state is read from: the bundle on disk, or — for a
+    /// row whose create, clone or import has not published a bundle yet — the
+    /// configuration that write was asked for.
+    private enum Backing {
+        case arriving(VMConfiguration)
+        case bundle(VMBundle)
+    }
 
-    /// Kernova's own state for this VM, mirrored from `host-state.json`.
-    ///
-    /// Written only by ``VMLibrary``, through ``replaceHostState(with:key:)``.
-    /// A snapshot revert installs a new ``configuration`` and leaves this as it
-    /// was.
-    private(set) var hostState: VMHostState
+    private var backing: Backing
+
+    /// The bundle this VM's state files are committed through, `nil` while its
+    /// row is still arriving.
+    var bundle: VMBundle? {
+        if case .bundle(let bundle) = backing { bundle } else { nil }
+    }
+
+    /// The configuration committed to the bundle — or, while arriving, the one
+    /// being written.
+    var configuration: VMConfiguration {
+        switch backing {
+        case .arriving(let configuration): configuration
+        case .bundle(let bundle): bundle.configuration
+        }
+    }
+
+    /// Kernova's own state for this VM, as committed to `host-state.json`.
+    var hostState: VMHostState { bundle?.hostState ?? VMHostState() }
 
     /// ``configuration`` and ``hostState`` as one value.
     var settings: VMSettings { VMSettings(configuration: configuration, hostState: hostState) }
@@ -141,20 +157,13 @@ final class VMInstance {
 
     var isPreparing: Bool { preparingState != nil }
 
-    /// The named restore points this VM's bundle holds, mirrored from
+    /// The named restore points this VM's bundle holds, as committed to
     /// `Snapshots/manifest.json`.
-    ///
-    /// The library and its adapter are the only writers — they keep this and the
-    /// on-disk manifest in step; every surface reads it.
-    var snapshotManifest = VMSnapshotManifest()
+    var snapshotManifest: VMSnapshotManifest { bundle?.snapshotManifest ?? VMSnapshotManifest() }
 
-    /// The host USB accessories this VM takes back on its own, mirrored from
+    /// The host USB accessories this VM takes back on its own, as committed to
     /// `usb-accessories.json`.
-    ///
-    /// The library is the only writer — it keeps this and the file in step
-    /// through ``VMLibrary/updateUSBPairings(of:mutate:)``; every surface
-    /// reads it.
-    var usbPairings = USBAccessoryPairingSet()
+    var usbPairings: USBAccessoryPairingSet { bundle?.usbPairings ?? USBAccessoryPairingSet() }
 
     /// Where this VM's display currently lives.
     ///
@@ -226,7 +235,7 @@ final class VMInstance {
     @ObservationIgnored let dropDataSink = VsockDataConnectionSink()
 
     /// `true` when this VM has reached `.running`, the host previously saw a
-    /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
+    /// guest agent connect (``lastSeenAgentVersion`` is not `nil`), and a
     /// grace period has elapsed without a `Hello` arriving over the control
     /// channel.
     var agentExpectedButMissing: Bool { sessionContext?.agentExpectedButMissing ?? false }
@@ -244,17 +253,12 @@ final class VMInstance {
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
     /// Routes a host-side mutation of this instance's settings through
-    /// ``VMLibrary/updateSettings(of:ifNotSaved:mutate:)``, answering what
-    /// that answers.
+    /// ``VMLibrary/updateSettings(of:mutate:)``, answering what that answers.
     ///
     /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateSettings:
-        (
-            @MainActor (VMLibrary.UnsavedSettings, (inout VMSettings) -> Void) ->
-                VMLibrary.SettingsWrite
-        )?
+    var onUpdateSettings: (@MainActor ((inout VMSettings) -> Void) -> VMLibrary.SettingsWrite)?
 
     /// The live VM whose identity bringing this one up would duplicate, or `nil`
     /// when nothing collides — what ``beginBringUp(_:)`` refuses on.
@@ -294,35 +298,53 @@ final class VMInstance {
     /// the write ended. An instance no library has wired changes nothing and
     /// is refused as ``VMLibrary/SettingsRefusal/noLibrary``.
     @discardableResult
-    func performSettingsMutation(
-        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
-        _ mutate: (inout VMSettings) -> Void
-    ) -> VMLibrary.SettingsWrite {
-        onUpdateSettings?(unsaved, mutate) ?? .refused(.noLibrary)
+    func performSettingsMutation(_ mutate: (inout VMSettings) -> Void) -> VMLibrary.SettingsWrite {
+        onUpdateSettings?(mutate) ?? .refused(.noLibrary)
     }
 
-    /// ``performSettingsMutation(ifNotSaved:_:)`` for a mutation of the
-    /// configuration alone.
+    /// ``performSettingsMutation(_:)`` for a mutation of the configuration
+    /// alone.
     @discardableResult
-    func performConfigurationMutation(
-        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
-        _ mutate: (inout VMConfiguration) -> Void
-    ) -> VMLibrary.SettingsWrite {
-        performSettingsMutation(ifNotSaved: unsaved) { mutate(&$0.configuration) }
+    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void)
+        -> VMLibrary.SettingsWrite
+    {
+        performSettingsMutation { mutate(&$0.configuration) }
     }
 
-    /// Replaces ``configuration``; `key` is what confines the call to
-    /// ``VMLibrary``.
-    func replaceConfiguration(
-        with configuration: VMConfiguration, key _: VMLibrary.SettingsWriteKey
-    ) {
-        self.configuration = configuration
+    // MARK: - Session Projection
+
+    /// The guest agent version this VM last reported: this session's Hello when
+    /// one arrived, the committed record otherwise.
+    var lastSeenAgentVersion: String? {
+        if let observed = sessionContext?.observedAgentInfo { return observed.agentVersion }
+        return configuration.lastSeenAgentVersion
     }
 
-    /// Replaces ``hostState``; `key` is what confines the call to
-    /// ``VMLibrary``.
-    func replaceHostState(with hostState: VMHostState, key _: VMLibrary.SettingsWriteKey) {
-        self.hostState = hostState
+    /// The guest OS version this VM last reported, on the same terms as
+    /// ``lastSeenAgentVersion`` — and unknown once this session's watchdog has
+    /// found no agent, since nothing vouched for the recorded one.
+    var reportedGuestOSVersion: String? {
+        if let observed = sessionContext?.observedAgentInfo { return observed.osVersion }
+        if sessionContext?.agentExpectedButMissing == true { return nil }
+        return configuration.lastSeenGuestOSVersion
+    }
+
+    /// The committed configuration with what this session re-derived laid over
+    /// it: the file references its boot healed, and what the guest agent
+    /// reported (``lastSeenAgentVersion``, ``reportedGuestOSVersion``).
+    ///
+    /// What a configuration build and every guest-version floor read, so each
+    /// acts on what the session knows whether or not the write recording it
+    /// landed.
+    var effectiveConfiguration: VMConfiguration {
+        var config = configuration
+        guard let context = sessionContext else { return config }
+        for heal in context.heals {
+            config.healExternalReference(heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
+        }
+        config.lastSeenAgentVersion = lastSeenAgentVersion
+        config.lastSeenGuestOSVersion = reportedGuestOSVersion
+        return config
     }
 
     /// The current install/version/liveness state of the guest agent for this VM.
@@ -338,7 +360,7 @@ final class VMInstance {
         case .macOS:
             return AgentStatus.synthesize(
                 upstream: vsockControlService?.agentStatus ?? .waiting,
-                lastSeenAgentVersion: configuration.lastSeenAgentVersion,
+                lastSeenAgentVersion: lastSeenAgentVersion,
                 isInLiveSession: hasLiveVirtualMachine,
                 agentExpectedButMissing: agentExpectedButMissing
             )
@@ -390,13 +412,32 @@ final class VMInstance {
 
     // MARK: - Initializer
 
-    init(
-        configuration: VMConfiguration, bundleURL: URL, phase: VMLifecyclePhase = .stopped,
-        hostState: VMHostState = VMHostState(), preferences: AppPreferences = .shared
+    /// A VM whose bundle is on disk.
+    convenience init(bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences) {
+        self.init(
+            backing: .bundle(bundle), id: bundle.configuration.id, bundleURL: bundle.url,
+            phase: phase, preferences: preferences)
+    }
+
+    /// The row for a create, clone or import whose bundle is still being
+    /// written: `configuration` is what the write was asked for, and
+    /// ``takeBundle(_:)`` hands it the bundle once it is published at
+    /// `bundleURL`.
+    convenience init(
+        arriving configuration: VMConfiguration, bundleURL: URL, phase: VMLifecyclePhase,
+        preferences: AppPreferences
     ) {
-        self.instanceID = configuration.id
-        self.configuration = configuration
-        self.hostState = hostState
+        self.init(
+            backing: .arriving(configuration), id: configuration.id, bundleURL: bundleURL,
+            phase: phase, preferences: preferences)
+    }
+
+    private init(
+        backing: Backing, id: UUID, bundleURL: URL, phase: VMLifecyclePhase,
+        preferences: AppPreferences
+    ) {
+        self.instanceID = id
+        self.backing = backing
         self.bundleURL = bundleURL
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.phase = phase
@@ -404,6 +445,15 @@ final class VMInstance {
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
         }
+    }
+
+    /// Takes on the bundle an arriving row's write just published.
+    func takeBundle(_ bundle: VMBundle) {
+        guard case .arriving = backing, bundle.url == bundleURL, bundle.configuration.id == id else {
+            assertionFailure("takeBundle on '\(name)' with a bundle that is not the one it awaits")
+            return
+        }
+        backing = .bundle(bundle)
     }
 
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
@@ -1035,7 +1085,7 @@ final class VMInstance {
                 admissionGate: vsockAdmissionGate,
                 clipboardDataSink: clipboardDataSink,
                 dropDataSink: dropDataSink))
-        openRuntimeFileAccess(into: context.fileAccess)
+        openRuntimeFileAccess(into: context)
         sessionContext = context
         return context
     }
@@ -1491,7 +1541,7 @@ final class VMInstance {
         guard configuration.guestOS == .macOS else { return }
         guard !context.bootedIntoRecovery else { return }
         guard status == .running else { return }
-        guard configuration.lastSeenAgentVersion != nil else { return }
+        guard lastSeenAgentVersion != nil else { return }
         guard context.vsock.control?.agentVersion == nil else { return }
         guard setupState == nil else { return }
         guard context.agentPostStartTask == nil else { return }
@@ -1524,8 +1574,12 @@ final class VMInstance {
             if armed.vsock.control?.agentVersion == nil {
                 #log(
                     Self.logger, .notice,
-                    "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
+                    "Guest agent expected (last seen \(self.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
+                // Set first: it is also what ``reportedGuestOSVersion`` reads
+                // as unknown for the rest of the session, whether or not the
+                // write below lands — and a write that fails is attempted
+                // again by the next session's watchdog.
                 armed.agentExpectedButMissing = true
                 // An agent that never showed up at all outranks the nudge the
                 // user silenced — reset the dismissal so a future `.waiting`
@@ -1539,7 +1593,7 @@ final class VMInstance {
                     self.hostState.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performSettingsMutation(ifNotSaved: .keep) {
+                    self.performSettingsMutation {
                         $0.hostState.agentInstallNudgeDismissed = false
                         $0.configuration.lastSeenGuestOSVersion = nil
                     }
@@ -1574,13 +1628,19 @@ final class VMInstance {
         // Any Hello proves the agent is alive, so clear the watchdog state
         // before the changed guards below.
         cancelAgentPostStartWatchdog()
+        let agentVersionChanged = lastSeenAgentVersion != info.agentVersion
         sessionContext?.agentExpectedButMissing = false
         sessionContext?.hasSeenAgentThisSession = true
+        // The session holds what the guest reported, so every surface shows it
+        // whether or not the write below lands; the next Hello that differs
+        // from the committed record writes again.
+        sessionContext?.observedAgentInfo = info
         // Skip the no-op write: a `config.json` rewrite on every Hello would
         // re-fire `VMDirectoryWatcher` reconcile.
-        let agentVersionChanged = configuration.lastSeenAgentVersion != info.agentVersion
-        if agentVersionChanged || configuration.lastSeenGuestOSVersion != info.osVersion {
-            performConfigurationMutation(ifNotSaved: .keep) {
+        if configuration.lastSeenAgentVersion != info.agentVersion
+            || configuration.lastSeenGuestOSVersion != info.osVersion
+        {
+            performConfigurationMutation {
                 $0.lastSeenAgentVersion = info.agentVersion
                 $0.lastSeenGuestOSVersion = info.osVersion
             }

@@ -1712,7 +1712,7 @@ struct VMLibraryViewModelTests {
         switching.enter(.running(sessionID: UUID()))
         other.enter(.running(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: switching, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: switching) {
             $0.networkMode = .shared
         }
 
@@ -1729,7 +1729,7 @@ struct VMLibraryViewModelTests {
         switching.enter(.stopped)
         other.enter(.running(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: switching, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: switching) {
             $0.networkMode = .shared
         }
 
@@ -1745,7 +1745,7 @@ struct VMLibraryViewModelTests {
         switching.enter(.running(sessionID: UUID()))
         other.enter(.running(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: switching, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: switching) {
             $0.memorySizeInGB = 6
         }
 
@@ -1759,9 +1759,9 @@ struct VMLibraryViewModelTests {
     /// A registered VM holding one removable-media entry, in `phase` with a
     /// session context — the shape a save or live snapshot leaves behind.
     private func appendVMWithMedia(
-        to viewModel: VMLibraryViewModel, in phase: VMLifecyclePhase
+        to viewModel: VMLibraryViewModel, storage: MockVMStorageService, in phase: VMLifecyclePhase
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: "Media VM") {
+        let instance = VMInstanceFixture.make(name: "Media VM", files: storage.files) {
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/media.iso", readOnly: true)]
         }
         instance.enter(phase)
@@ -1775,9 +1775,9 @@ struct VMLibraryViewModelTests {
     @Test("a media edit is refused whole while the VM is saving, changing nothing")
     func mediaEditIsRefusedWhileSaving() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, in: .saving(sessionID: UUID()))
+        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .saving(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: instance) {
             $0.removableMedia = nil
         }
 
@@ -1790,9 +1790,9 @@ struct VMLibraryViewModelTests {
     @Test("a media edit is refused whole while the VM is capturing a live snapshot")
     func mediaEditIsRefusedWhileCapturingLive() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, in: .capturingLive(sessionID: UUID()))
+        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .capturingLive(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: instance) {
             $0.removableMedia = nil
             $0.memorySizeInGB = 6
         }
@@ -1807,9 +1807,9 @@ struct VMLibraryViewModelTests {
     @Test("an edit leaving the media list alone is accepted while capturing a live snapshot")
     func nonMediaEditIsAcceptedWhileCapturingLive() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, in: .capturingLive(sessionID: UUID()))
+        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .capturingLive(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: instance) {
             $0.memorySizeInGB = 6
         }
 
@@ -1823,9 +1823,9 @@ struct VMLibraryViewModelTests {
     func mediaEditIsAcceptedWithoutASession() {
         for phase in [VMLifecyclePhase.stopped, .suspended] {
             let (viewModel, storage, _, _, _) = makeViewModel()
-            let instance = appendVMWithMedia(to: viewModel, in: phase)
+            let instance = appendVMWithMedia(to: viewModel, storage: storage, in: phase)
 
-            let accepted = viewModel.updateConfiguration(of: instance, ifNotSaved: .discard) {
+            let accepted = viewModel.updateConfiguration(of: instance) {
                 $0.removableMedia = nil
             }
 
@@ -1922,10 +1922,10 @@ struct VMLibraryViewModelTests {
     /// A VM whose display is sized to its window at every cold start, at the
     /// screen's scale — both defaults.
     private func makeMatchWindowInstance(
-        guestOS: VMGuestOS = .macOS,
+        guestOS: VMGuestOS = .macOS, files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        VMInstanceFixture.make(guestOS: guestOS, mutate: mutate)
+        VMInstanceFixture.make(guestOS: guestOS, files: files, mutate: mutate)
     }
 
     private static let retinaSurface = DisplayBootSurface(
@@ -1936,7 +1936,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, virtService, _) = makeViewModel()
         let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
         viewModel.displayBootGeometryProvider = provider
-        let instance = makeMatchWindowInstance()
+        let instance = makeMatchWindowInstance(files: storage.files)
         viewModel.instances.append(instance)
 
         await viewModel.start(instance)
@@ -2026,7 +2026,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, virtService, _) = makeViewModel()
         let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
         viewModel.displayBootGeometryProvider = provider
-        let instance = makeMatchWindowInstance()
+        let instance = makeMatchWindowInstance(files: storage.files)
         let original = instance.configuration.displayResolution
         viewModel.instances.append(instance)
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
@@ -2866,7 +2866,7 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
             storage: storage)
 
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2884,7 +2884,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "AA:BB:CC:DD:EE:0F", editing: "aa:bb:cc:dd:ee:10")
 
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2899,7 +2899,7 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
         viewModel.library.editConfiguration(of: holder) { $0.networkEnabled = false }
 
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2913,7 +2913,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.name = "Renamed"
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
@@ -2931,7 +2931,7 @@ struct VMLibraryViewModelTests {
 
         // Only a change of address is refused, so a pair that arrived from disk
         // sharing one stays editable in every other respect.
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.name = "Renamed"
         }
 
@@ -2946,10 +2946,10 @@ struct VMLibraryViewModelTests {
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        viewModel.updateConfiguration(of: holder, ifNotSaved: .discard) {
+        viewModel.updateConfiguration(of: holder) {
             $0.macAddress = "aa:bb:cc:dd:ee:11"
         }
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2965,7 +2965,7 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
         await viewModel.delete(holder)
-        let accepted = viewModel.updateConfiguration(of: editor, ifNotSaved: .discard) {
+        let accepted = viewModel.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -3696,7 +3696,7 @@ struct VMLibraryViewModelTests {
     @Test("setAgentInstallNudgeDismissed persists in both directions")
     func setAgentInstallNudgeDismissedPersistsBothDirections() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make()
+        let instance = VMInstanceFixture.make(files: storage.files)
         viewModel.instances.append(instance)
 
         viewModel.setAgentInstallNudgeDismissed(true, for: instance)
@@ -3715,7 +3715,7 @@ struct VMLibraryViewModelTests {
     @Test("setAgentInstallNudgeDismissed no-ops when unchanged")
     func setAgentInstallNudgeDismissedNoOpsWhenUnchanged() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make()
+        let instance = VMInstanceFixture.make(files: storage.files)
         viewModel.instances.append(instance)
 
         // Default is already false; setting false again writes nothing.
@@ -3726,7 +3726,7 @@ struct VMLibraryViewModelTests {
     @Test("dismissAgentInstallNudge still sets the flag to true")
     func dismissAgentInstallNudgeSetsTrue() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make()
+        let instance = VMInstanceFixture.make(files: storage.files)
         viewModel.instances.append(instance)
 
         viewModel.dismissAgentInstallNudge(for: instance)
@@ -4000,7 +4000,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename updates name and persists")
     func commitRenameUpdatesName() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(name: "Old Name")
+        let instance = VMInstanceFixture.make(name: "Old Name", files: storage.files)
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4027,7 +4027,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename rejects empty name and preserves original")
     func commitRenameRejectsEmpty() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(name: "Keep Me")
+        let instance = VMInstanceFixture.make(name: "Keep Me", files: storage.files)
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4041,7 +4041,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename rejects whitespace-only name and preserves original")
     func commitRenameRejectsWhitespace() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(name: "Keep Me")
+        let instance = VMInstanceFixture.make(name: "Keep Me", files: storage.files)
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
@@ -4055,7 +4055,7 @@ struct VMLibraryViewModelTests {
     @Test("commitRename from a superseded surface commits but keeps the newer rename active")
     func commitRenameFromSupersededSurfaceKeepsNewerRename() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(name: "Old Name")
+        let instance = VMInstanceFixture.make(name: "Old Name", files: storage.files)
         viewModel.instances.append(instance)
         // The sidebar rename was superseded by a detail rename (clicking the
         // settings pane's Name button while the sidebar edit was pending); the
@@ -4386,9 +4386,8 @@ struct VMLibraryViewModelTests {
 
     /// Builds a `.kernova`-shaped source bundle URL under a per-call-unique temp parent.
     ///
-    /// The parent keeps parallel tests from colliding. Registers the configuration with
-    /// `storage` so the mocked `loadConfiguration(from:)` succeeds. When `createOnDisk` is true
-    /// (the default), also creates the directory on disk — `importVM` copies real files via
+    /// The parent keeps parallel tests from colliding. When `createOnDisk` is true (the
+    /// default), writes the bundle and its `config.json` on disk — `importVM` copies real files via
     /// `FileManager`, so tests exercising a successful copy need an actual source directory;
     /// tests modeling a missing/never-copied source (duplicate-UUID short-circuit,
     /// copy-failure) pass `false` and have nothing to clean up. Callers that do create on disk
@@ -4403,8 +4402,11 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         if createOnDisk {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess()).writeInitial(config)
+        } else {
+            // Nothing is copied, so the source only has to read.
+            storage.bundles[url] = config
         }
-        storage.bundles[url] = config
         return (url, config)
     }
 
@@ -4436,9 +4438,9 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Pre-marked VM", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
         // A real file, since the import copies the source directory itself.
-        try VMStorageService().saveHostState(
-            VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut),
-            to: source.url)
+        try VMBundleFiles(url: source.url, access: CoordinatedBundleFileAccess()).update(.hostState) {
+            $0 = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut)
+        }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         await viewModel.awaitPreparingForTesting()
@@ -4446,7 +4448,8 @@ struct VMLibraryViewModelTests {
         let imported = try #require(viewModel.instances.first)
         #expect(imported.hostState.startsAutomaticallyOnLaunch == false)
         // …and the cleared flag reached the imported bundle, not just the row.
-        #expect(storage.hostStates[imported.bundleURL]?.startsAutomaticallyOnLaunch == false)
+        let importedFiles = VMBundleFiles(url: imported.bundleURL, access: CoordinatedBundleFileAccess())
+        #expect(try importedFiles.read().hostState.startsAutomaticallyOnLaunch == false)
         // The rest of the host state arrives with the bundle: the row reads the
         // published bundle rather than keeping the defaults it was built with.
         #expect(imported.hostState.displayPreference == .popOut)
@@ -4526,7 +4529,9 @@ struct VMLibraryViewModelTests {
         let config = VMConfiguration(name: "Already There", guestOS: .linux, bootMode: .efi)
         let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
-        let existing = VMInstance(configuration: config, bundleURL: bundleURL)
+        let existing = VMInstance(
+            bundle: VMBundle(VMInstanceFixture.read(bundleURL, from: storage.files)), phase: .stopped,
+            preferences: makeTestPreferences())
         viewModel.instances.append(existing)
 
         _ = viewModel.importVMs(fromDroppedURLs: [bundleURL])
@@ -4760,7 +4765,9 @@ struct VMLibraryViewModelTests {
         await phantom.preparingState?.task.value
 
         #expect(phantom.hostState == VMHostState())
-        #expect(storage.hostStates[phantom.bundleURL] == nil)
+        #expect(
+            storage.files.data(
+                atRelativePath: VMBundleLayout.hostStateRelativePath, in: phantom.bundleURL) == nil)
         #expect(storage.lastCloneFilesToCopy?.contains("host-state.json") == false)
         #expect(instance.hostState == sourceHostState)
     }
@@ -5575,7 +5582,7 @@ struct VMLibraryViewModelTests {
                     path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
             ]
         }
-        departed.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Base", macAddress: nil)])
+        departed.seedSnapshotManifest(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Base", macAddress: nil)]))
         let sharer = VMInstanceFixture.make(name: "Sharer") {
             $0.storageDisks = [
                 StorageDisk(
@@ -5792,16 +5799,20 @@ struct VMLibraryViewModelTests {
         let instance = VMInstanceFixture.make(name: "Work")
         viewModel.library.wireHooks(for: instance)
         viewModel.library.instances.append(instance)
-        instance.usbPairings.upsert(
-            USBAccessoryPairing(
-                key: key, form: .serialNumber, displayName: "Samsung Type-C",
-                receptacleLabel: nil))
+        instance.seedUSBPairings(
+            USBAccessoryPairingSet(pairings: [
+                USBAccessoryPairing(
+                    key: key, form: .serialNumber, displayName: "Samsung Type-C",
+                    receptacleLabel: nil)
+            ]))
         return (viewModel, instance)
     }
 
     @Test("A remembered accessory that cannot be forgotten on disk says so")
     func forgetUSBAccessoryReportsAFailedWrite() {
         let (viewModel, instance) = makeViewModelRememberingAnAccessory(key: "k")
+        instance.fixtureBundleFiles.setReplaceError(
+            CocoaError(.fileWriteUnknown), for: VMBundleLayout.usbPairingsRelativePath)
 
         viewModel.forgetUSBAccessory(key: "k", on: instance)
 

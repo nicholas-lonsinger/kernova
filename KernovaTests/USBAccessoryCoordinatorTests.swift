@@ -49,7 +49,9 @@ struct USBAccessoryCoordinatorTests {
         -> USBAccessoryPairing
     {
         let pairing = try #require(USBAccessoryPairing.make(for: accessory))
-        instance.usbPairings.upsert(pairing)
+        var pairings = instance.usbPairings
+        pairings.upsert(pairing)
+        instance.seedUSBPairings(pairings)
         return pairing
     }
 
@@ -486,7 +488,7 @@ struct USBAccessoryCoordinatorTests {
         let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "0373")
         try pair(accessory, with: first)
 
-        coordinator.userAttached(accessory, to: second)
+        try coordinator.userAttached(accessory, to: second)
 
         // Moving a device between guests is a detach then an attach, and the
         // rewrite is what makes one key name one VM.
@@ -508,7 +510,7 @@ struct USBAccessoryCoordinatorTests {
         try pair(accessory, with: instance)
         service.accessories.append(accessory)
 
-        coordinator.userReleased(accessory, from: instance)
+        try coordinator.userReleased(accessory, from: instance)
         #expect(instance.usbPairings.isEmpty)
 
         // The detach resets the device, so macOS hands the same stick back
@@ -532,7 +534,7 @@ struct USBAccessoryCoordinatorTests {
         coordinator.onPairingNeeded = { recorder.requests.append($0) }
         let accessory = MockUSBAccessoryService.accessory(
             registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        coordinator.userReleased(accessory, from: instance)
+        try coordinator.userReleased(accessory, from: instance)
 
         service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
         #expect(recorder.requests.isEmpty)

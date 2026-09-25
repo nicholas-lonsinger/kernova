@@ -54,44 +54,58 @@ final class RuntimeFileAccess {
 
 // MARK: - VMInstance boot-time scope acquisition
 
+/// An external file reference a boot found moved, and where its bookmark now
+/// resolves.
+struct ExternalReferenceHeal {
+    let reference: ExternalFileReference
+    let path: String
+    let bookmark: Data
+}
+
 extension VMInstance {
     /// Opens scoped access for every bookmarked external path in the
     /// configuration, healing stale or moved bookmarks on the way.
     ///
     /// Called by ``beginSessionContext(bootedIntoRecovery:)`` at the top of each
-    /// boot attempt with the freshly opened context's `fileAccess`, before the
-    /// configuration builder resolves any paths. The walk is
+    /// boot attempt with the freshly opened context, before the configuration
+    /// builder resolves any paths. The walk is
     /// ``VMConfiguration/externalFileReferences``, and
     /// ``ExternalFileReference/Kind/opensRuntimeScope`` decides which kinds a
     /// boot takes a scope on.
-    func openRuntimeFileAccess(into fileAccess: RuntimeFileAccess) {
+    ///
+    /// The heals land on the context, which the build reads
+    /// (``effectiveConfiguration``), and are written to the bundle as well; a
+    /// write that fails is reported, and the next boot heals again from the
+    /// same bookmarks.
+    func openRuntimeFileAccess(into context: VMSessionContext) {
         var scopes: [ScopedAccess] = []
-        var heals: [(reference: ExternalFileReference, path: String, bookmark: Data)] = []
+        var heals: [ExternalReferenceHeal] = []
 
         for reference in configuration.externalFileReferences
         where reference.kind.opensRuntimeScope {
             guard let opened = ScopedAccess.open(reference) else { continue }
             if let healed = opened.healedTo {
-                heals.append((reference, healed.path, healed.bookmark))
+                heals.append(
+                    ExternalReferenceHeal(
+                        reference: reference, path: healed.path, bookmark: healed.bookmark))
             }
             switch reference.kind {
             case .removableMedia:
-                fileAccess.addHotAttach(id: reference.id, opened.scope)
+                context.fileAccess.addHotAttach(id: reference.id, opened.scope)
             case .kernel, .initrd, .storageDisk, .sharedDirectory, .localIPSW:
                 scopes.append(opened.scope)
             }
         }
 
+        context.heals = heals
         if !heals.isEmpty {
-            // Kept even when it does not reach disk: the configuration build
-            // that follows reads these paths, and the files have moved.
-            performConfigurationMutation(ifNotSaved: .keep) { config in
+            performConfigurationMutation { config in
                 for heal in heals {
                     config.healExternalReference(
                         heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
                 }
             }
         }
-        fileAccess.adoptConfigScopes(scopes)
+        context.fileAccess.adoptConfigScopes(scopes)
     }
 }

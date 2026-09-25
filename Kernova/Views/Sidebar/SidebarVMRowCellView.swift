@@ -201,7 +201,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.agentStatus
                 _ = instance.setupState
                 _ = instance.hostState.agentInstallNudgeDismissed
-                _ = instance.configuration.lastSeenAgentVersion
+                _ = instance.lastSeenAgentVersion
                 _ = instance.hostState.ephemeralModeEnabled
             },
             apply: { [weak self] in

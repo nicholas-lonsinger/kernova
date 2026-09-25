@@ -5,8 +5,8 @@ import KernovaLogging
 /// The set of VMs the app knows about, and the bookkeeping that keeps it in
 /// step with the bundles on disk: membership and sidebar ordering, the library
 /// read, the directory-watched reconcile, `prepareBundle`/`registerPhantom`/
-/// `evict`, every write of a VM's configuration and host state, and the
-/// revert registry.
+/// `evict`, the policy every write of a VM's settings and pairings passes on
+/// its way to that VM's ``VMBundle``, and the revert registry.
 ///
 /// It also sequences the collaborators it owns — ``macAddresses``,
 /// ``removableMedia`` and ``guestAddresses`` — because only the library knows
@@ -28,7 +28,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
     private let storageService: any VMStorageProviding
     private let snapshotStore: any VMSnapshotStoring
-    private let usbPairingStore: any USBAccessoryPairingStoring
     private let lifecycle: VMLifecycleCoordinator
 
     /// Where each VM's answer for the account it owes its guest is held — the
@@ -191,13 +190,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
-        usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore(),
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore()
     ) {
         self.storageService = storageService
         self.snapshotStore = snapshotStore
-        self.usbPairingStore = usbPairingStore
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.fileSystem = fileSystem
@@ -269,63 +266,51 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// `VMInstance` is `@MainActor`, so the read and the model construction have
     /// to be separable: this is what crosses back from the reading task.
     private struct ScannedBundle: Sendable {
-        let configuration: VMConfiguration
-        let bundleURL: URL
+        let read: VMBundleRead
         let phase: VMLifecyclePhase
-        let contents: BundleContents
     }
 
-    /// What a VM's bundle holds beside its configuration, which the library
-    /// takes on wherever a bundle enters it: the load, a reconcile that finds
-    /// one, and a preparing row's publication.
+    /// What a bundle is read through, gathered so the reads can run off the
+    /// main actor.
     ///
-    /// Read whole or not at all: a bundle whose host state or snapshot manifest
-    /// is present but unreadable does not enter the library — the way one whose
-    /// configuration cannot be read does not — so no write can replace a file
-    /// whose contents were never known. Pairings are the exception
-    /// ``USBAccessoryPairingStoring/load(bundleURL:)`` states.
-    struct BundleContents: Sendable {
-        let hostState: VMHostState
-        let snapshots: VMSnapshotManifest
-        let usbPairings: USBAccessoryPairingSet
-    }
-
-    /// The stores a bundle is read through, gathered so the reads can run off
-    /// the main actor.
+    /// A bundle enters the library whole or not at all — at the load, at a
+    /// reconcile that finds one, and at a preparing row's publication: one
+    /// whose configuration, host state or snapshot manifest cannot be read
+    /// stays out, so no write can replace a file whose contents were never
+    /// known. Pairings are the exception ``VMBundleFiles/read()`` states.
     private struct BundleReader: Sendable {
         let storage: any VMStorageProviding
         let snapshots: any VMSnapshotStoring
-        let pairings: any USBAccessoryPairingStoring
 
-        /// Reads the bundle's configuration and everything beside it.
-        func bundle(at bundleURL: URL) throws -> ScannedBundle {
-            let config = try storage.loadConfiguration(from: bundleURL)
-            return ScannedBundle(
-                configuration: config, bundleURL: bundleURL,
-                phase: VMLibrary.initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL)),
-                contents: try readContents(ofBundleAt: bundleURL))
+        func files(at bundleURL: URL) -> VMBundleFiles {
+            VMBundleFiles(url: bundleURL, access: storage.bundleFiles)
         }
 
-        /// Reads what the bundle at `bundleURL` holds, reclaiming the staging
-        /// directory an interrupted revert left there.
+        /// Reads the bundle and the phase it rests in.
+        func bundle(at bundleURL: URL) throws -> ScannedBundle {
+            let read = try read(at: bundleURL)
+            return ScannedBundle(
+                read: read,
+                phase: VMLibrary.initialPhase(
+                    for: read.configuration, layout: VMBundleLayout(bundleURL: bundleURL)))
+        }
+
+        /// Reads the bundle's state files, reclaiming the staging directory an
+        /// interrupted revert left there.
         ///
-        /// Blocks on the filesystem — every snapshot's configuration is opened
-        /// for the address it reserves — so it runs where the other bundle
-        /// reads do. No bundle handed here can have a revert running — it has
-        /// no instance yet, or only a phantom's, which `canRevertToSnapshot`
+        /// Blocks on the filesystem, so it runs where the other bundle reads
+        /// do. No bundle handed here can have a revert running — it has no
+        /// instance yet, or only a phantom's, which `canRevertToSnapshot`
         /// refuses — so a staging directory found belongs to no running revert.
-        func readContents(ofBundleAt bundleURL: URL) throws -> BundleContents {
-            let contents = BundleContents(
-                hostState: try storage.loadHostState(from: bundleURL),
-                snapshots: try snapshots.loadManifest(bundleURL: bundleURL),
-                usbPairings: pairings.load(bundleURL: bundleURL))
+        func read(at bundleURL: URL) throws -> VMBundleRead {
+            let read = try files(at: bundleURL).read()
             snapshots.sweepRestoreStaging(bundleURL: bundleURL)
-            return contents
+            return read
         }
     }
 
     private var bundleReader: BundleReader {
-        BundleReader(storage: storageService, snapshots: snapshotStore, pairings: usbPairingStore)
+        BundleReader(storage: storageService, snapshots: snapshotStore)
     }
 
     /// The whole library as read from disk in one pass.
@@ -358,11 +343,23 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Builds the instance for a bundle read from disk, wired to this library.
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
-            configuration: scanned.configuration, bundleURL: scanned.bundleURL,
-            phase: scanned.phase, preferences: preferences)
+            bundle: VMBundle(scanned.read), phase: scanned.phase, preferences: preferences)
         wireHooks(for: instance)
-        take(scanned.contents, on: instance)
+        reportUnreadablePairings(of: scanned.read)
         return instance
+    }
+
+    /// Tells the user about a pairings file a read left in place because it
+    /// could not decode it.
+    private func reportUnreadablePairings(of read: VMBundleRead) {
+        guard let unreadable = read.pairingsUnreadable else { return }
+        #log(
+            Self.logger, .error,
+            "The USB accessory pairings of '\(read.configuration.name, privacy: .public)' could not be read and were left in place: \(unreadable.localizedDescription, privacy: .public)"
+        )
+        surfaceError(
+            "\u{201C}\(read.configuration.name)\u{201D} won\u{2019}t take any USB accessory back automatically. \(unreadable.localizedDescription)",
+            title: "USB Accessories Not Read")
     }
 
     /// Replaces the library with what is on disk.
@@ -404,7 +401,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         let addedDuringReadIDs = Set(addedDuringRead.map(\.id))
         instances =
             scan.bundles
-            .filter { !addedDuringReadIDs.contains($0.configuration.id) }
+            .filter { !addedDuringReadIDs.contains($0.read.configuration.id) }
             .map(makeInstance) + addedDuringRead
         macAddresses.logDuplicateMACAddressHolders()
 
@@ -512,10 +509,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// staged tree is hidden from every enumeration that finds VMs, so the row
     /// becomes a bundle on disk at one instant — the publication rename below —
     /// and an abnormal exit at any point before it leaves nothing to adopt.
-    /// It answers the configuration it wrote there. Publication is where the
-    /// row takes on its bundle whole — that configuration, and everything
-    /// ``BundleContents`` reads from the staged tree before the rename — so no
-    /// path follows a copy with a read of its own.
+    /// Publication is where the row takes on its bundle whole: the
+    /// ``VMBundleRead`` of the staged tree, taken before the rename and moved
+    /// with it, so no path follows a copy with a read of its own.
     ///
     /// `copyWork` is uninterruptible (a blocking `FileManager` call), so a user cancel cancels this
     /// outer `Task` while the copy keeps writing. This task is the single owner of the settle: on
@@ -527,7 +523,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     func prepareBundle(
         _ phantom: VMInstance,
         operation: VMInstance.PreparingOperation,
-        copyWork: @escaping (URL) async throws -> VMConfiguration,
+        copyWork: @escaping (URL) async throws -> Void,
         onSuccess: @escaping () -> Void,
         onFailure: @escaping (Error) -> Void
     ) {
@@ -552,12 +548,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 let staged = try storage.makeStagedBundleURL()
                 written = staged
                 self?.writeLocations[phantom.id] = staged
-                let configuration = try await copyWork(staged)
+                try await copyWork(staged)
                 // Read before publication, so a written tree holding a file the
                 // library cannot read — an import's, say — never becomes a
                 // bundle.
-                let contents = try await Task.detached { try reader.readContents(ofBundleAt: staged) }
-                    .value
+                let read = try await Task.detached { try reader.read(at: staged) }.value
                 guard let self else {
                     if Task.isCancelled {
                         Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
@@ -588,8 +583,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 try await Task.detached { try storage.publishBundle(from: staged, to: finalURL) }.value
                 written = finalURL
                 self.writeLocations[phantom.id] = finalURL
-                self.adopt(configuration, on: phantom)
-                self.take(contents, on: phantom)
+                phantom.takeBundle(VMBundle(read.relocated(to: finalURL)))
+                self.reportUnreadablePairings(of: read)
                 self.macAddresses.logDuplicateMACAddressHolders()
                 if Task.isCancelled {
                     self.cleanupPhantomInstance(phantom, bundleAt: finalURL)
@@ -743,31 +738,16 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// it describes — the intent as a question about an account that can never be
     /// created, the password as a secret nothing will ever spend.
     ///
-    /// The intent is written first and the password dropped only after, so a
-    /// write the library refuses leaves both halves as they were.
-    @discardableResult
+    /// The intent is written first and the password dropped only once it
+    /// landed, so a write that is refused or not saved leaves both halves as
+    /// they were — and the caller, whose operation this retraction is a step
+    /// of, reports the outcome.
     func retractGuestAccount(for instance: VMInstance) -> SettingsWrite {
-        // Kept when the save fails: every caller retracts an account nothing
-        // will create any more, so this session must not ask for it again.
-        let outcome = updateConfiguration(of: instance, ifNotSaved: .keep) {
-            $0.pendingGuestAccount = nil
-        }
-        switch outcome {
-        case .saved:
-            break
-        case .notSaved:
-            // Memory and disk now disagree, and disk is what the next launch
-            // reads: the bundle still names an account whose window this boot
-            // spent, so a later start asks for one macOS will no longer create.
-            // The write reported its own failure to the user.
-            #log(
-                Self.logger, .warning,
-                "The guest account for '\(instance.name, privacy: .public)' stays in its bundle — the retraction did not reach disk, so a later start asks for an account whose boot window is spent"
-            )
-        case .refused(let refusal):
+        let outcome = updateConfiguration(of: instance) { $0.pendingGuestAccount = nil }
+        guard case .saved = outcome else {
             #log(
                 Self.logger, .notice,
-                "Kept the guest account for '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
+                "Kept the guest account for '\(instance.name, privacy: .public)': the retraction did not land"
             )
             return outcome
         }
@@ -807,44 +787,19 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         preferences.vmOrder = customOrder
     }
 
-    // MARK: - Configuration Writes
-
-    /// Writes `instance.configuration` to its bundle again, reporting whether
-    /// it landed; a failure is logged and presented.
-    @discardableResult
-    func saveConfiguration(for instance: VMInstance) -> Bool {
-        persist(instance.configuration, for: instance) == nil
-    }
-
-    /// Writes `configuration` to `instance`'s bundle, answering the error when
-    /// it did not land; a failure is logged and presented.
-    @discardableResult
-    private func persist(_ configuration: VMConfiguration, for instance: VMInstance) -> (any Error)? {
-        do {
-            try storageService.saveConfiguration(configuration, to: instance.bundleURL)
-            return nil
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Failed to save configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-            return error
-        }
-    }
+    // MARK: - Settings Writes
 
     /// Connects `instance`'s hooks to this library.
     ///
     /// Called at every `VMInstance` construction site the library and its
-    /// adapter own. What the VM's bundle holds is taken on separately, where
-    /// the bundle is read (``BundleContents``).
+    /// adapter own.
     func wireHooks(for instance: VMInstance) {
         // Every closure is stored *on* `instance`, so it must capture it weakly:
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `instances`.
-        instance.onUpdateSettings = { [weak self, weak instance] unsaved, mutate in
+        instance.onUpdateSettings = { [weak self, weak instance] mutate in
             guard let self, let instance else { return .refused(.noLibrary) }
-            return self.updateSettings(of: instance, ifNotSaved: unsaved, mutate: mutate)
+            return self.updateSettings(of: instance, mutate: mutate)
         }
         instance.liveIdentityConflict = { [weak self, weak instance] in
             guard let self, let instance else { return nil }
@@ -870,70 +825,44 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         }
     }
 
-    /// The single entry point for a mutation that touches `instance`'s host
-    /// state, alone or beside its configuration.
-    ///
-    /// The configuration half goes through
-    /// ``updateConfiguration(of:ifNotSaved:mutate:)`` first, and a refusal
-    /// there — or a failed save that `unsaved` discards — leaves the host
-    /// state unapplied. The host-state half saves before it assigns, and
-    /// `unsaved` decides what memory holds when that save fails.
-    ///
-    /// - Returns: The configuration half's outcome when it did not save,
-    ///   otherwise the host-state half's.
-    @discardableResult
-    func updateSettings(
-        of instance: VMInstance,
-        ifNotSaved unsaved: UnsavedSettings,
-        mutate: (inout VMSettings) -> Void
-    ) -> SettingsWrite {
-        var new = instance.settings
-        mutate(&new)
-        let configurationWrite = updateConfiguration(
-            of: instance, ifNotSaved: unsaved, mutate: { $0 = new.configuration })
-        switch configurationWrite {
-        case .saved: return updateHostState(of: instance, to: new.hostState, ifNotSaved: unsaved)
-        case .refused: return configurationWrite
-        case .notSaved:
-            if unsaved == .keep {
-                updateHostState(of: instance, to: new.hostState, ifNotSaved: unsaved)
-            }
-            return configurationWrite
-        }
-    }
-
-    /// Mirrors `contents`, read from `instance`'s bundle, onto the instance.
-    private func take(_ contents: BundleContents, on instance: VMInstance) {
-        instance.replaceHostState(with: contents.hostState, key: SettingsWriteKey())
-        instance.snapshotManifest = contents.snapshots
-        instance.usbPairings = contents.usbPairings
-    }
-
-    /// What a settings write leaves in memory when its save does not
-    /// land.
-    enum UnsavedSettings {
-        /// Memory takes the new value anyway, and live policy applies it: the
-        /// write records something that already happened — an install that
-        /// finished, a boot window spent, a file found moved, a version the
-        /// guest reported — and this session goes on acting on it.
-        case keep
-        /// Memory keeps the old value, as disk does, and the running VM is not
-        /// told: the write is a request, and a request that did not land did
-        /// not happen.
-        case discard
-    }
-
     /// How a settings write ended.
     enum SettingsWrite {
-        /// The new settings are in memory and in the bundle — or the
-        /// mutation changed nothing.
+        /// The change is committed to the bundle — or it changed nothing.
         case saved
         /// Nothing changed.
         case refused(SettingsRefusal)
-        /// The save failed with this error, which the library has already
-        /// presented; memory holds what the write's ``UnsavedSettings``
-        /// says.
-        case notSaved(any Error)
+        /// A file's write failed, which the library has already presented;
+        /// memory equals what each file holds.
+        case notSaved(SettingsWriteFailure)
+
+        /// Throws whatever kept the write from landing, for a write that is a
+        /// step of a larger operation.
+        func get() throws {
+            switch self {
+            case .saved: return
+            case .refused(let refusal): throw refusal
+            case .notSaved(let failure): throw failure
+            }
+        }
+    }
+
+    /// A settings write that did not land whole: the file whose write failed,
+    /// and the files the same write had already committed.
+    struct SettingsWriteFailure: LocalizedError {
+        enum File: Sendable, Equatable {
+            case configuration
+            case hostState
+        }
+
+        let failed: File
+        let landed: [File]
+        let underlying: any Error
+
+        var errorDescription: String? {
+            guard !landed.isEmpty else { return underlying.localizedDescription }
+            return "The change was saved only in part \u{2014} the virtual machine\u{2019}s configuration changed, "
+                + "but Kernova\u{2019}s own settings for it did not: \(underlying.localizedDescription)"
+        }
     }
 
     /// Why the library turned a settings write away.
@@ -947,6 +876,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         /// The write reached no library: the instance was never wired to one,
         /// or the library that wired it is gone.
         case noLibrary
+        /// The VM's bundle is still being created, cloned or imported, so
+        /// there is no file to write yet.
+        case noBundle
 
         var errorDescription: String? {
             switch self {
@@ -954,144 +886,217 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             case .sessionNotAttachable:
                 "The virtual machine can\u{2019}t take a removable-media change in its current state."
             case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."
+            case .noBundle: "The virtual machine\u{2019}s files are still being written."
             }
         }
     }
 
-    /// Applies a mutation of `instance.configuration`, persists it, and
-    /// dispatches the live policy and removable-media reconcile. No-ops when
-    /// the mutation produces the same value.
+    /// A refusal thrown out of a configuration commit, which leaves the file as
+    /// it was.
+    private struct Refused: Error {
+        let refusal: SettingsRefusal
+    }
+
+    /// How a configuration commit ended, before the host-state half of an
+    /// ``updateSettings(of:mutate:)`` runs.
+    private enum ConfigurationCommit {
+        /// Committed; `wrote` says whether the change moved what the file holds.
+        case committed(wrote: Bool)
+        /// Refused or not saved.
+        case stopped(SettingsWrite)
+    }
+
+    /// Commits a mutation of `instance`'s configuration, then dispatches the
+    /// live policy and removable-media reconcile for what moved.
     ///
-    /// Refused whole — no field it also sets is applied — when it moves the VM
-    /// onto a MAC address another VM holds, in its configuration or in one of
-    /// its snapshots; and when it changes `removableMedia` while the VM's live
-    /// session is not attachable.
+    /// `mutate` applies to what `config.json` holds, not to memory, so a field
+    /// another process changed since this one last read survives. Refused
+    /// whole — no field it also sets is applied — when it moves the VM onto a
+    /// MAC address another VM holds, in its configuration or in one of its
+    /// snapshots; and when it changes `removableMedia` while the VM's live
+    /// session is not attachable. A save that fails is presented, and memory
+    /// stays equal to the file.
+    ///
+    /// `mutate` runs inside the coordinated write, so it must be pure.
     @discardableResult
     func updateConfiguration(
-        of instance: VMInstance,
-        ifNotSaved unsaved: UnsavedSettings,
-        mutate: (inout VMConfiguration) -> Void
+        of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
     ) -> SettingsWrite {
-        let old = instance.configuration
-        var new = old
-        mutate(&new)
-        guard new != old else { return .saved }
-        if let conflict = macAddresses.refuseMACAddressConflict(on: instance, movingFrom: old, to: new) {
-            return .refused(.macAddressInUse(conflict))
+        switch commitConfiguration(of: instance, mutate: mutate) {
+        case .committed: .saved
+        case .stopped(let write): write
         }
-        guard !removableMedia.refuseUnattachableEdit(on: instance, movingFrom: old, to: new) else {
-            return .refused(.sessionNotAttachable)
+    }
+
+    /// ``updateConfiguration(of:mutate:)``'s commit, answering whether the
+    /// change moved the file.
+    private func commitConfiguration(
+        of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
+    ) -> ConfigurationCommit {
+        guard let bundle = instance.bundle else { return .stopped(.refused(.noBundle)) }
+        let old = bundle.configuration
+        var wrote = false
+        do {
+            try bundle.commitConfiguration(key: ConfigurationWriteKey()) { config in
+                let onDisk = config
+                mutate(&config)
+                guard config != onDisk else { return }
+                if let conflict = macAddresses.macAddressConflict(
+                    on: instance, movingFrom: onDisk, to: config)
+                {
+                    throw Refused(refusal: .macAddressInUse(conflict))
+                }
+                if removableMedia.refuseUnattachableEdit(on: instance, movingFrom: onDisk, to: config) {
+                    throw Refused(refusal: .sessionNotAttachable)
+                }
+                wrote = true
+            }
+        } catch let refused as Refused {
+            if case .macAddressInUse(let conflict) = refused.refusal {
+                macAddresses.presentRefusal(conflict, on: instance)
+            }
+            return .stopped(.refused(refused.refusal))
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to save the configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+            return .stopped(
+                .notSaved(SettingsWriteFailure(failed: .configuration, landed: [], underlying: error)))
         }
-        let saveError = persist(new, for: instance)
-        if let saveError, unsaved == .discard { return .notSaved(saveError) }
-        instance.replaceConfiguration(with: new, key: SettingsWriteKey())
-        applyLivePolicy(for: instance, old: old, new: new)
-        // A live switch onto an app-managed network starts a guest worth
-        // watching without starting a session.
-        guestAddresses.watch()
-        return saveError.map { .notSaved($0) } ?? .saved
+        let new = bundle.configuration
+        if new != old {
+            applyLivePolicy(for: instance, old: old, new: new)
+            // A live switch onto an app-managed network starts a guest worth
+            // watching without starting a session.
+            guestAddresses.watch()
+        }
+        return .committed(wrote: wrote)
+    }
+
+    /// The single entry point for a mutation that touches `instance`'s host
+    /// state, alone or beside its configuration.
+    ///
+    /// Each file commits separately, configuration first:
+    /// ``updateConfiguration(of:mutate:)`` runs `mutate` against what
+    /// `config.json` holds, and a refusal or failed save there leaves the host
+    /// state unattempted; then `mutate` runs again against what
+    /// `host-state.json` holds. A host-state save that fails reports, in its
+    /// ``SettingsWriteFailure``, that the configuration half landed.
+    ///
+    /// `mutate` runs once per file, inside each coordinated write, so it must
+    /// be pure and must not read the instance it mutates.
+    @discardableResult
+    func updateSettings(
+        of instance: VMInstance, mutate: (inout VMSettings) -> Void
+    ) -> SettingsWrite {
+        guard let bundle = instance.bundle else { return .refused(.noBundle) }
+        let configurationWrote: Bool
+        switch commitConfiguration(
+            of: instance,
+            mutate: { config in
+                var settings = VMSettings(configuration: config, hostState: bundle.hostState)
+                mutate(&settings)
+                config = settings.configuration
+            })
+        {
+        case .stopped(let write): return write
+        case .committed(let wrote): configurationWrote = wrote
+        }
+        do {
+            try bundle.commitHostState { hostState in
+                var settings = VMSettings(configuration: bundle.configuration, hostState: hostState)
+                mutate(&settings)
+                hostState = settings.hostState
+            }
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            let failure = SettingsWriteFailure(
+                failed: .hostState, landed: configurationWrote ? [.configuration] : [],
+                underlying: error)
+            presentError(failure)
+            return .notSaved(failure)
+        }
+        return .saved
     }
 
     /// Points `instance`'s removable-media list at what its live session
     /// actually holds, after the session refused some of the list it was asked
     /// for.
     ///
-    /// Writes that one field and saves it. It refuses nothing and dispatches
-    /// nothing to the running VM, which the list already describes — and for
-    /// the same reason memory takes the list even when the save fails.
+    /// Commits that one field. It refuses nothing and dispatches nothing to
+    /// the running VM, which the list already describes. A save that fails is
+    /// presented and leaves the configuration as the bundle holds it; the live
+    /// list stays in ``VMInstance/liveRemovableMedia``.
     func settleRemovableMedia(of instance: VMInstance, toLive media: [RemovableMediaItem]?) {
-        var new = instance.configuration
-        new.removableMedia = media
-        guard new != instance.configuration else { return }
-        instance.replaceConfiguration(with: new, key: SettingsWriteKey())
-        persist(new, for: instance)
+        guard let bundle = instance.bundle else { return }
+        let old = bundle.configuration.removableMedia
+        do {
+            try bundle.commitConfiguration(key: ConfigurationWriteKey()) { $0.removableMedia = media }
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Failed to settle the removable media config for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+            return
+        }
+        guard bundle.configuration.removableMedia != old else { return }
         #log(
             Self.logger, .notice,
             "Settled the removable media config for '\(instance.name, privacy: .public)' on its live state after a reconcile error"
         )
     }
 
-    /// Takes on the configuration a snapshot revert has just written to
-    /// `instance`'s bundle.
+    /// Commits the configuration a snapshot revert installs, ahead of the
+    /// revert swapping the snapshot's files into `instance`'s bundle.
     ///
-    /// Disk already holds it, so nothing is saved; the session it would apply
-    /// to is gone, so no live policy runs; and nothing is refused — the
-    /// snapshot's saved state restores only under the MAC address it was taken
-    /// with, which ``VMMACAddressRegistry`` keeps for this VM while the
-    /// snapshot is listed.
-    func adoptRevertedConfiguration(_ plan: VMSnapshotRestorePlan, on instance: VMInstance) {
-        adopt(plan.configuration, on: instance)
-    }
-
-    /// Installs `configuration`, which `instance`'s bundle already holds.
-    private func adopt(_ configuration: VMConfiguration, on instance: VMInstance) {
-        instance.replaceConfiguration(with: configuration, key: SettingsWriteKey())
-    }
-
-    /// ``updateSettings(of:ifNotSaved:mutate:)``'s host-state half: writes the
-    /// bundle's host-state file and installs `new`, no-oping when nothing
-    /// changed.
-    ///
-    /// A failed write is presented, and memory holds what `unsaved` says.
-    @discardableResult
-    private func updateHostState(
-        of instance: VMInstance, to new: VMHostState, ifNotSaved unsaved: UnsavedSettings
-    ) -> SettingsWrite {
-        guard new != instance.hostState else { return .saved }
-        do {
-            try storageService.saveHostState(new, to: instance.bundleURL)
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
-            if unsaved == .keep { instance.replaceHostState(with: new, key: SettingsWriteKey()) }
-            return .notSaved(error)
+    /// The snapshot's configuration is applied to what `config.json` holds, so
+    /// the VM keeps the name and identity its bundle carries now. No live
+    /// policy runs — the revert has already ended the session it would apply
+    /// to — and nothing is refused: the snapshot's saved state restores only
+    /// under the MAC address it was taken with, which ``VMMACAddressRegistry``
+    /// keeps for this VM while the snapshot is listed.
+    func commitRevertedConfiguration(_ plan: VMSnapshotRestorePlan, on instance: VMInstance) throws {
+        guard let bundle = instance.bundle else { throw SettingsRefusal.noBundle }
+        try bundle.commitConfiguration(key: ConfigurationWriteKey()) {
+            $0 = $0.adoptingSnapshotState(plan.configuration)
         }
-        instance.replaceHostState(with: new, key: SettingsWriteKey())
-        return .saved
     }
 
     /// The single entry point for any change to what a VM takes its USB
     /// accessories back from — the attach and detach verbs, the prompt's
     /// answer, and the settings row's remove button alike.
     ///
-    /// Applies the mutation, writes the bundle file, and no-ops when the
-    /// mutation produces the same set.
-    ///
-    /// - Returns: Whether the new set reached disk. A no-op mutation returns
-    ///   `true`; a failed write leaves the new value in memory, which is what
-    ///   the session it was made for acts on.
-    @discardableResult
+    /// Commits the mutation to the bundle's pairings file; a mutation that
+    /// changes nothing writes nothing. Throws when the write fails, leaving the
+    /// pairings as the bundle holds them.
     func updateUSBPairings(
         of instance: VMInstance,
         mutate: (inout USBAccessoryPairingSet) -> Void
-    ) -> Bool {
-        let old = instance.usbPairings
-        var new = old
-        mutate(&new)
-        guard new != old else { return true }
-        instance.usbPairings = new
+    ) throws {
+        guard let bundle = instance.bundle else { throw SettingsRefusal.noBundle }
         do {
-            try usbPairingStore.save(new, bundleURL: instance.bundleURL)
-            return true
+            try bundle.commitUSBPairings(mutate)
         } catch {
-            // Not surfaced: nothing the user did is refused by it — the guest
-            // still gets the accessory, and only the *remembering* is lost.
             #log(
                 Self.logger, .error,
                 "Failed to save the USB accessory pairings for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            return false
+            throw error
         }
     }
 
-    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) {
-        for other in instances where other !== instance {
-            updateUSBPairings(of: other) { $0.remove(key: pairing.key) }
+    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) throws {
+        for other in instances
+        where other !== instance && other.usbPairings.pairing(forKey: pairing.key) != nil {
+            try updateUSBPairings(of: other) { $0.remove(key: pairing.key) }
         }
-        updateUSBPairings(of: instance) { $0.upsert(pairing) }
+        try updateUSBPairings(of: instance) { $0.upsert(pairing) }
     }
 
     /// Pushes a configuration change to a running VM.
@@ -1141,7 +1146,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             for bundleURL in diskBundles {
                 let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 do {
-                    let config = try storageService.loadConfiguration(from: bundleURL)
+                    let config = try bundleReader.files(at: bundleURL).readConfiguration()
                     diskConfigs.append((config, bundleURL))
                 } catch {
                     #log(
@@ -1158,11 +1163,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             let reader = bundleReader
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
                 do {
-                    let scanned = ScannedBundle(
-                        configuration: config, bundleURL: bundleURL,
-                        phase: Self.initialPhase(for: config, layout: VMBundleLayout(bundleURL: bundleURL)),
-                        contents: try reader.readContents(ofBundleAt: bundleURL))
-                    instances.append(makeInstance(scanned))
+                    instances.append(makeInstance(try reader.bundle(at: bundleURL)))
                     #log(
                         Self.logger, .info,
                         "Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
@@ -1309,11 +1310,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 }
 
 extension VMLibrary {
-    /// What ``VMInstance/replaceConfiguration(with:key:)`` and
-    /// ``VMInstance/replaceHostState(with:key:)`` ask for, so only this file
-    /// can write a VM's configuration or host state: the initializer is
-    /// `fileprivate`, which `@testable import` does not open.
-    struct SettingsWriteKey {
+    /// What ``VMBundle/commitConfiguration(key:_:)`` asks for, so only this
+    /// file can write a VM's configuration past the refusals it owns: the
+    /// initializer is `fileprivate`, which `@testable import` does not open.
+    struct ConfigurationWriteKey {
         fileprivate init() {}
     }
 }

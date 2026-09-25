@@ -156,7 +156,7 @@ extension VMSettingsPanel {
     func writeSettings(_ mutate: (inout VMSettings) -> Void) -> Bool {
         guard
             case .saved = viewModel.updateSettings(
-                of: instance, ifNotSaved: .discard, mutate: mutate)
+                of: instance, mutate: mutate)
         else { return false }
         return true
     }

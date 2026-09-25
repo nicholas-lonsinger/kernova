@@ -33,7 +33,7 @@ struct VMCommandCoreUSBAccessoryTests {
 
     private func makeHarness(withAccessorySupport: Bool = true) -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMSnapshotStore(files: storage.files)
         let fileSystem = MockFileSystem()
         let accessories = withAccessorySupport ? MockUSBAccessoryService() : nil
         let lifecycle = makeTestLifecycle(
@@ -45,8 +45,7 @@ struct VMCommandCoreUSBAccessoryTests {
             snapshotStore: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences,
-            usbPairingStore: MockUSBAccessoryPairingStore())
+            preferences: preferences)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -59,10 +58,10 @@ struct VMCommandCoreUSBAccessoryTests {
         let pairingCoordinator = USBAccessoryCoordinator(
             lifecycle: lifecycle, roster: library, pairings: library)
         core.onUserAttachedAccessory = { [weak pairingCoordinator] instance, accessory in
-            pairingCoordinator?.userAttached(accessory, to: instance)
+            try pairingCoordinator?.userAttached(accessory, to: instance)
         }
         core.onUserReleasedAccessory = { [weak pairingCoordinator] instance, accessory in
-            pairingCoordinator?.userReleased(accessory, from: instance)
+            try pairingCoordinator?.userReleased(accessory, from: instance)
         }
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,

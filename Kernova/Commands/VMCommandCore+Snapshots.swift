@@ -86,10 +86,8 @@ extension VMCommandCore {
             )
             throw failure(error, verb: .takeSnapshot, on: instance)
         }
-        var manifest = instance.snapshotManifest
-        manifest.insert(captured)
         do {
-            try writeSnapshotManifest(manifest, for: instance, verb: .takeSnapshot)
+            try commitSnapshotManifest(of: instance, verb: .takeSnapshot) { $0.insert(captured) }
         } catch {
             // Unlisted files are files no surface can reach or remove, so the
             // capture is undone rather than left orphaned in the bundle.
@@ -256,7 +254,7 @@ extension VMCommandCore {
             try await lifecycle.revertToSnapshot(
                 instance, snapshot: snapshot, store: snapshotStore
             ) { [library] plan in
-                library.adoptRevertedConfiguration(plan, on: instance)
+                try library.commitRevertedConfiguration(plan, on: instance)
             }
         } catch {
             #log(
@@ -271,9 +269,9 @@ extension VMCommandCore {
             guard case VirtualizationError.revertResumeFailed = error else { throw mapped }
             revertFailure = mapped
         }
-        var manifest = instance.snapshotManifest
-        manifest.currentID = snapshot.id
-        try writeSnapshotManifest(manifest, for: instance, verb: .revertToSnapshot)
+        try commitSnapshotManifest(of: instance, verb: .revertToSnapshot) {
+            $0.currentID = snapshot.id
+        }
         if let revertFailure { throw revertFailure }
     }
 
@@ -344,18 +342,32 @@ extension VMCommandCore {
             throw CommandError.confirmationRequired(
                 Self.deleteSnapshotPrompt(snapshot, on: instance))
         }
+        // Unlisted first, then trashed: a manifest write that fails leaves the
+        // snapshot listed with its files in place, and a trash that fails
+        // leaves no entry pointing at files that are gone — only an unlisted
+        // directory, which costs space and no data.
+        var unlisted = false
         do {
-            try await lifecycle.discardSnapshot(instance, snapshotID: id, store: snapshotStore)
+            try await lifecycle.discardSnapshot(instance, snapshotID: id, store: snapshotStore) {
+                try self.commitSnapshotManifest(of: instance, verb: .deleteSnapshot) {
+                    $0.remove(id: id)
+                }
+                unlisted = true
+            }
+        } catch let failure as CommandError {
+            throw failure
         } catch {
             #log(
                 Self.logger, .error,
                 "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            throw failure(error, verb: .deleteSnapshot, on: instance)
+            guard unlisted else { throw failure(error, verb: .deleteSnapshot, on: instance) }
+            throw CommandError.operationFailed(
+                verb: .deleteSnapshot,
+                message:
+                    "\u{201C}\(snapshot.name)\u{201D} was removed from the list, but its files could not be moved to the Trash. \(error.localizedDescription)"
+            )
         }
-        var manifest = instance.snapshotManifest
-        manifest.remove(id: id)
-        try writeSnapshotManifest(manifest, for: instance, verb: .deleteSnapshot)
         #log(
             Self.logger, .notice,
             "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
@@ -391,10 +403,9 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        var manifest = instance.snapshotManifest
-        manifest.rename(id: id, to: trimmed)
-        guard manifest != instance.snapshotManifest else { return }
-        try writeSnapshotManifest(manifest, for: instance, verb: .renameSnapshot)
+        try commitSnapshotManifest(of: instance, verb: .renameSnapshot) {
+            $0.rename(id: id, to: trimmed)
+        }
     }
 
     /// Replaces a snapshot's note; a metadata-only manifest write, and a write
@@ -405,10 +416,9 @@ extension VMCommandCore {
     func setSnapshotNotes(_ selector: VMSelector, snapshot id: UUID, notes: String) throws {
         let instance = try resolve(selector)
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        var manifest = instance.snapshotManifest
-        manifest.setNotes(id: id, to: trimmed)
-        guard manifest != instance.snapshotManifest else { return }
-        try writeSnapshotManifest(manifest, for: instance, verb: .setSnapshotNotes)
+        try commitSnapshotManifest(of: instance, verb: .setSnapshotNotes) {
+            $0.setNotes(id: id, to: trimmed)
+        }
     }
 
     // MARK: - Manifest
@@ -422,16 +432,17 @@ extension VMCommandCore {
         return snapshot
     }
 
-    /// Writes `manifest` to the bundle and mirrors it onto the instance.
+    /// Commits `change` to the bundle's manifest, applied to what the file
+    /// holds; a change that moves nothing writes nothing.
     ///
-    /// On failure the in-memory manifest is left alone, so what the UI shows
-    /// still matches what is stored.
-    private func writeSnapshotManifest(
-        _ manifest: VMSnapshotManifest, for instance: VMInstance, verb: VMVerb
+    /// On failure the manifest stays as the bundle holds it, and the verb is
+    /// refused.
+    private func commitSnapshotManifest(
+        of instance: VMInstance, verb: VMVerb, _ change: (inout VMSnapshotManifest) -> Void
     ) throws {
         do {
-            try snapshotStore.saveManifest(manifest, bundleURL: instance.bundleURL)
-            instance.snapshotManifest = manifest
+            guard let bundle = instance.bundle else { throw VMLibrary.SettingsRefusal.noBundle }
+            try bundle.commitSnapshotManifest(change)
         } catch {
             #log(
                 Self.logger, .error,

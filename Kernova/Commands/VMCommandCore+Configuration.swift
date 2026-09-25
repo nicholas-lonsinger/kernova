@@ -6,7 +6,7 @@ import KernovaLogging
 /// two list edits a caller names by path rather than by id, and the reads that
 /// answer those two lists.
 ///
-/// Every write lands as one ``VMLibrary/updateSettings(of:ifNotSaved:mutate:)``: the
+/// Every write lands as one ``VMLibrary/updateSettings(of:mutate:)``: the
 /// gates and the values are all checked first, so a batch that names one bad
 /// key writes nothing at all.
 extension VMCommandCore {

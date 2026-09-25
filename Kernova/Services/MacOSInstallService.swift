@@ -59,19 +59,14 @@ final class MacOSInstallService {
         // the configuration's hardware model over the bundle's file, which
         // `setupPlatformFiles` writes only when absent, so a model an earlier
         // attempt recorded would stand in for this image's.
-        let recorded = instance.performConfigurationMutation(ifNotSaved: .discard) {
+        try instance.performConfigurationMutation {
             $0.hardwareModelData = hardwareModelData
             $0.machineIdentifierData = machineIDData
-        }
-        switch recorded {
-        case .saved: break
-        case .notSaved(let error): throw error
-        case .refused(let refusal): throw refusal
-        }
+        }.get()
 
         instance.beginSessionContext()
         let result = try configBuilder.build(
-            from: instance.configuration,
+            from: instance.effectiveConfiguration,
             bundleURL: instance.bundleURL
         )
 

@@ -64,11 +64,10 @@ func makeTestLifecycle(
         downloadsDirectory: downloadsDirectory)
 }
 
-/// A real `VMLibrary` over mocks — the pairing store aside, which is the
-/// production one unless a test passes its own — holding `instances`
-/// registered as a load would have left them: the test target's one
-/// construction of a library, and what a test changes a VM's configuration
-/// through once the VM exists, since only the library writes it.
+/// A real `VMLibrary` over mocks, holding `instances` registered as a load
+/// would have left them: the test target's one construction of a library, and
+/// what a test changes a VM's configuration through once the VM exists, since
+/// only the library writes it.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
 /// reaches it weakly.
@@ -76,24 +75,22 @@ func makeTestLifecycle(
 func makeWiredLibrary(
     holding instances: [VMInstance] = [],
     storage: MockVMStorageService = MockVMStorageService(),
-    snapshotStore: any VMSnapshotStoring = MockVMSnapshotStore(),
+    snapshotStore: (any VMSnapshotStoring)? = nil,
     lifecycle: VMLifecycleCoordinator? = nil,
     fileSystem: MockFileSystem = MockFileSystem(),
     preferences: AppPreferences = makeTestPreferences(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
-    arpTable: ScriptedARPTable = ScriptedARPTable(),
-    usbPairingStore: any USBAccessoryPairingStoring = USBAccessoryPairingStore()
+    arpTable: ScriptedARPTable = ScriptedARPTable()
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
-        snapshotStore: snapshotStore,
+        snapshotStore: snapshotStore ?? MockVMSnapshotStore(files: storage.files),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
         fileSystem: fileSystem,
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
-        entitlements: .entitled,
-        usbPairingStore: usbPairingStore)
+        entitlements: .entitled)
     for instance in instances {
         library.register(instance, storage: storage)
     }
@@ -101,13 +98,14 @@ func makeWiredLibrary(
 }
 
 extension VMLibrary {
-    /// Wires `instance` and adds it to the library, with its configuration in
-    /// `storage`'s bundles as a load would have found it. What the instance
-    /// already holds — its snapshots, its pairings — stands for what its
-    /// bundle holds.
+    /// Wires `instance` and adds it to the library, with its bundle's files in
+    /// `storage` as a load would have found them: a fixture built over a store
+    /// of its own hands that store's files to `storage` and writes through it
+    /// from then on.
     func register(_ instance: VMInstance, storage: MockVMStorageService) {
-        storage.bundles[instance.bundleURL] = instance.configuration
-        storage.hostStates[instance.bundleURL] = instance.hostState
+        if let files = instance.bundle?.fileAccessForTesting as? InMemoryVMBundleFiles {
+            files.forward(to: storage.files)
+        }
         wireHooks(for: instance)
         instances.append(instance)
     }
@@ -120,8 +118,7 @@ extension VMLibrary {
         _ mutate: (inout VMHostState) -> Void
     ) {
         guard
-            case .saved = updateSettings(
-                of: instance, ifNotSaved: .discard, mutate: { mutate(&$0.hostState) })
+            case .saved = updateSettings(of: instance, mutate: { mutate(&$0.hostState) })
         else {
             Issue.record("the host-state edit did not land", sourceLocation: sourceLocation)
             return
@@ -135,10 +132,55 @@ extension VMLibrary {
         sourceLocation: SourceLocation = #_sourceLocation,
         _ mutate: (inout VMConfiguration) -> Void
     ) {
-        guard case .saved = updateConfiguration(of: instance, ifNotSaved: .discard, mutate: mutate)
+        guard case .saved = updateConfiguration(of: instance, mutate: mutate)
         else {
             Issue.record("the configuration edit did not land", sourceLocation: sourceLocation)
             return
+        }
+    }
+}
+
+extension VMInstance {
+    /// Puts `manifest` in this fixture VM's bundle as though the bundle already
+    /// held it, snapshot MAC stubs included, and has the bundle read it back.
+    ///
+    /// For a VM built over ``InMemoryVMBundleFiles`` — what every fixture is.
+    func seedSnapshotManifest(_ manifest: VMSnapshotManifest) {
+        seedBundleFiles { $0.setManifest(manifest, at: bundleURL) }
+        refreshBundle { try $0.commitSnapshotManifest { _ in } }
+    }
+
+    /// Puts `pairings` in this fixture VM's bundle as though the bundle
+    /// already held them, and has the bundle read them back.
+    func seedUSBPairings(_ pairings: USBAccessoryPairingSet) {
+        seedBundleFiles { $0.setPairings(pairings, at: bundleURL) }
+        refreshBundle { try $0.commitUSBPairings { _ in } }
+    }
+
+    /// The in-memory store this fixture VM's bundle files live in — the store
+    /// a library it was registered with owns, once registered.
+    var fixtureBundleFiles: InMemoryVMBundleFiles {
+        guard let files = bundle?.fileAccessForTesting as? InMemoryVMBundleFiles else {
+            preconditionFailure("'\(name)' is not a fixture VM over in-memory bundle files")
+        }
+        return files
+    }
+
+    /// The snapshot manifest this fixture VM's bundle holds on "disk".
+    var manifestOnDisk: VMSnapshotManifest? { fixtureBundleFiles.manifest(at: bundleURL) }
+
+    private func seedBundleFiles(_ seed: (InMemoryVMBundleFiles) -> Void) {
+        seed(fixtureBundleFiles)
+    }
+
+    /// A commit that changes nothing reads the file and publishes what it
+    /// holds, which is how a seeded file reaches memory.
+    private func refreshBundle(_ commit: (VMBundle) throws -> Void) {
+        guard let bundle else { preconditionFailure("'\(name)' has no bundle") }
+        do {
+            try commit(bundle)
+        } catch {
+            preconditionFailure("A seeded bundle file could not be read back: \(error)")
         }
     }
 }

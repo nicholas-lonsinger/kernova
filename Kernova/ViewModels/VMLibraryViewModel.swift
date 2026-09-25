@@ -111,26 +111,17 @@ final class VMLibraryViewModel {
     }
 
     @discardableResult
-    func saveConfiguration(for instance: VMInstance) -> Bool {
-        library.saveConfiguration(for: instance)
-    }
-
-    @discardableResult
     func updateConfiguration(
-        of instance: VMInstance,
-        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
-        mutate: (inout VMConfiguration) -> Void
+        of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
     ) -> VMLibrary.SettingsWrite {
-        library.updateConfiguration(of: instance, ifNotSaved: unsaved, mutate: mutate)
+        library.updateConfiguration(of: instance, mutate: mutate)
     }
 
     @discardableResult
     func updateSettings(
-        of instance: VMInstance,
-        ifNotSaved unsaved: VMLibrary.UnsavedSettings,
-        mutate: (inout VMSettings) -> Void
+        of instance: VMInstance, mutate: (inout VMSettings) -> Void
     ) -> VMLibrary.SettingsWrite {
-        library.updateSettings(of: instance, ifNotSaved: unsaved, mutate: mutate)
+        library.updateSettings(of: instance, mutate: mutate)
     }
 
     // MARK: - Command Forwarding
@@ -586,10 +577,10 @@ final class VMLibraryViewModel {
         // back on its own. Both hang off the verb rather than the surface, so
         // the menu, the CLI and the prompt's answer write the same rule.
         core.onUserAttachedAccessory = { [weak usbAccessories] instance, accessory in
-            usbAccessories?.userAttached(accessory, to: instance)
+            try usbAccessories?.userAttached(accessory, to: instance)
         }
         core.onUserReleasedAccessory = { [weak usbAccessories] instance, accessory in
-            usbAccessories?.userReleased(accessory, from: instance)
+            try usbAccessories?.userReleased(accessory, from: instance)
         }
         library.onSessionBecameAttachable = { [weak usbAccessories] instance in
             usbAccessories?.sessionBecameAttachable(instance)
@@ -1238,7 +1229,7 @@ final class VMLibraryViewModel {
             Self.logger, .notice,
             "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
         )
-        updateSettings(of: instance, ifNotSaved: .discard) {
+        updateSettings(of: instance) {
             $0.hostState.agentInstallNudgeDismissed = dismissed
         }
     }

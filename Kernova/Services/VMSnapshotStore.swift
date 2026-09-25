@@ -1,10 +1,9 @@
 import Foundation
 import KernovaLogging
 
-/// Manages the `Snapshots/` directory inside a VM bundle: the manifest, one
-/// directory per snapshot holding its VZ saved state, the configuration it was
-/// captured under and copy-on-write disk copies, and the sizes those copies
-/// occupy.
+/// Manages the snapshot directories inside a VM bundle's `Snapshots/`: one
+/// per snapshot, holding its VZ saved state, the configuration it was captured
+/// under and copy-on-write disk copies, and the sizes those copies occupy.
 ///
 /// `VMBundleLayout` owns the names; this owns the file operations.
 struct VMSnapshotStore: VMSnapshotStoring {
@@ -49,44 +48,6 @@ struct VMSnapshotStore: VMSnapshotStoring {
             }
         }
         return paths
-    }
-
-    // MARK: - Manifest
-
-    func loadManifest(bundleURL: URL) throws -> VMSnapshotManifest {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        guard
-            let record = try VMBundleSidecarFile.read(
-                VMSnapshotManifestRecord.self, at: layout.snapshotManifestURL)
-        else { return VMSnapshotManifest() }
-        return VMSnapshotManifest(
-            snapshots: record.snapshots.map { snapshot in
-                VMSnapshot(
-                    snapshot,
-                    macAddress: Self.capturedMACAddress(in: layout.snapshotLayout(id: snapshot.id)))
-            },
-            currentID: record.currentID)
-    }
-
-    /// The `macAddress` of the configuration a snapshot directory holds, or
-    /// `nil` when it holds none or carries no address.
-    ///
-    /// Decodes that one key rather than the whole configuration, so a snapshot
-    /// whose configuration no longer decodes still reserves its address.
-    private static func capturedMACAddress(in snapshotLayout: VMBundleLayout) -> String? {
-        struct CapturedAddress: Decodable {
-            let macAddress: String?
-        }
-        guard let data = try? Data(contentsOf: snapshotLayout.configURL) else { return nil }
-        return (try? VMConfiguration.makeJSONDecoder().decode(CapturedAddress.self, from: data))?
-            .macAddress
-    }
-
-    func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        try FileManager.default.createDirectory(
-            at: layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
-        try VMBundleSidecarFile.write(manifest.record, to: layout.snapshotManifestURL)
     }
 
     // MARK: - Capture
@@ -175,17 +136,12 @@ struct VMSnapshotStore: VMSnapshotStoring {
             configuration: configuration, relativePaths: relativePaths, kind: kind)
     }
 
-    /// Clones the snapshot's files into a staging directory, then swaps each one
-    /// into the bundle.
+    /// Clones the snapshot's files into the staging directory.
     ///
-    /// Nothing in the bundle is touched until every file — the saved state and
-    /// the configuration included — is staged, so a failure during the copies
-    /// leaves the bundle exactly as it was, and each swap is a rename: a file
-    /// the bundle holds is never absent, whatever interrupts the revert.
-    ///
-    /// A cold plan stages no saved state and drops the bundle's own, so the VM
-    /// comes back stopped on the captured disks.
-    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
+    /// Nothing in the bundle is touched, so a failure here — or anything that
+    /// stops the revert before ``installRestore(bundleURL:plan:)`` — leaves the
+    /// bundle exactly as it was. A cold plan stages no saved state.
+    func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let sourceLayout = layout.snapshotLayout(id: snapshotID)
         let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
@@ -195,27 +151,38 @@ struct VMSnapshotStore: VMSnapshotStoring {
         // A staging directory left behind by an interrupted revert holds clones
         // that may be truncated, so it is discarded rather than resumed.
         try? manager.removeItem(at: staging)
-        try manager.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? manager.removeItem(at: staging) }
+        do {
+            try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+            // Same volume, so APFS clones each file rather than duplicating its
+            // blocks — the staged copy shares them with the snapshot's own.
+            for relativePath in plan.relativePaths {
+                let source = sourceLayout.bundleURL.appendingPathComponent(relativePath)
+                let staged = staging.appendingPathComponent(relativePath)
+                try manager.createDirectory(
+                    at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try manager.copyItem(at: source, to: staged)
+            }
+            if plan.kind == .warm {
+                try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
+            }
+        } catch {
+            try? manager.removeItem(at: staging)
+            throw error
+        }
+    }
 
-        // Same volume, so APFS clones each file rather than duplicating its
-        // blocks — the staged copy shares them with the snapshot's own.
-        for relativePath in plan.relativePaths {
-            let source = sourceLayout.bundleURL.appendingPathComponent(relativePath)
-            let staged = staging.appendingPathComponent(relativePath)
-            try manager.createDirectory(
-                at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try manager.copyItem(at: source, to: staged)
-        }
-        if plan.kind == .warm {
-            try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
-        }
-        // Staged rather than written straight into the bundle: it is the one
-        // file of the set that needs fresh blocks, so a volume with none left
-        // sails through the clones above and fails here — where the failure
-        // still costs the bundle nothing.
-        let data = try VMConfiguration.makeJSONEncoder().encode(plan.configuration)
-        try data.write(to: stagingLayout.configURL, options: .atomic)
+    /// Swaps each staged file into the bundle, then removes the staging
+    /// directory.
+    ///
+    /// Each swap is a rename, so a file the bundle holds is never absent,
+    /// whatever interrupts the revert. A cold plan drops the bundle's own saved
+    /// state, so the VM comes back stopped on the captured disks.
+    func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
+        let manager = FileManager.default
+        let staging = stagingLayout.bundleURL
+        defer { try? manager.removeItem(at: staging) }
 
         do {
             if plan.kind == .cold {
@@ -231,7 +198,6 @@ struct VMSnapshotStore: VMSnapshotStoring {
                     staged: staging.appendingPathComponent(relativePath),
                     destination: layout.bundleURL.appendingPathComponent(relativePath))
             }
-            try swapIntoPlace(staged: stagingLayout.configURL, destination: layout.configURL)
             if plan.kind == .warm {
                 // Last, so the VM only reads as suspended-on-the-snapshot once the
                 // disks and configuration that state belongs to are already in place.

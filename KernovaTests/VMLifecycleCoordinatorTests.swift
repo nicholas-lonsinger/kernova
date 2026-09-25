@@ -359,7 +359,7 @@ struct VMLifecycleCoordinatorTests {
 
         // A revert reads the very directory this would move to the Trash.
         await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
-            try await coordinator.discardSnapshot(instance, snapshotID: UUID(), store: store)
+            try await coordinator.discardSnapshot(instance, snapshotID: UUID(), store: store) {}
         }
         #expect(store.discardedIDs.isEmpty)
 
@@ -532,6 +532,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSLocalFile() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
         try await coordinator.installMacOS(on: instance, context: context)
@@ -546,6 +548,8 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: downloads)
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         // What the wizard persisted: the fallback name it shows before its own
         // lookup answers.
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
@@ -606,6 +610,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSCatalogUsesPinnedURL() async throws {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         let pinned = try #require(Self.pinnedRestoreImageURL)
         let context = MacOSInstallContext(
             source: .catalogVersion,
@@ -1412,9 +1418,9 @@ struct VMLifecycleCoordinatorTests {
 
         var observedSteps: [Int] = []
         let persist = instance.onUpdateSettings
-        instance.onUpdateSettings = { unsaved, mutate in
+        instance.onUpdateSettings = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
+            return persist?(mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1631,9 +1637,9 @@ struct VMLifecycleCoordinatorTests {
         // runs, and the ISO is attached once Verify has finished.
         var observedSteps: [Int] = []
         let persist = instance.onUpdateSettings
-        instance.onUpdateSettings = { unsaved, mutate in
+        instance.onUpdateSettings = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
+            return persist?(mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1690,9 +1696,9 @@ struct VMLifecycleCoordinatorTests {
 
         var observedSteps: [Int] = []
         let persist = instance.onUpdateSettings
-        instance.onUpdateSettings = { unsaved, mutate in
+        instance.onUpdateSettings = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
+            return persist?(mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)

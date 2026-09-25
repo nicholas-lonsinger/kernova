@@ -16,20 +16,20 @@ protocol VMInstanceRoster: AnyObject {
 ///
 /// Separate from ``VMInstanceRoster`` so that stays a pure read: a collaborator
 /// that only lists VMs cannot reach a bundle write, and one that needs the
-/// write reaches the library's funnel rather than the mirror on the instance.
+/// write reaches the library's funnel.
 @MainActor
 protocol USBAccessoryPairingWriting: AnyObject {
-    /// Applies `mutate` to `instance`'s pairings and writes them to its bundle,
-    /// answering whether the result reached disk.
-    @discardableResult
+    /// Commits `mutate` to `instance`'s pairings file, throwing when the write
+    /// fails and leaving the pairings as the bundle holds them.
     func updateUSBPairings(
         of instance: VMInstance, mutate: (inout USBAccessoryPairingSet) -> Void
-    ) -> Bool
+    ) throws
 
     /// Records `pairing` against `instance` and drops its key from every other
     /// VM, so one key names at most one VM.
     ///
     /// This is what makes moving a device between guests rewrite the rule: the
-    /// rewrite *is* the uniqueness, not a mechanism beside it.
-    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance)
+    /// rewrite *is* the uniqueness, not a mechanism beside it. The other VMs
+    /// are written first, so a write that fails never leaves the key on two.
+    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) throws
 }

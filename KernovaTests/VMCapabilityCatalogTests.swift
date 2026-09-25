@@ -858,7 +858,7 @@ struct VMCapabilityCatalogTests {
         harness.library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance)
 
-        harness.library.retractGuestAccount(for: instance)
+        #expect(harness.library.retractGuestAccount(for: instance).landed)
 
         // Not "asks again": the window is gone, so the question is gone with it.
         #expect(instance.configuration.pendingGuestAccount == nil)
@@ -873,7 +873,7 @@ struct VMCapabilityCatalogTests {
         let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
         let writesBefore = harness.storage.saveConfigurationCallCount
 
-        harness.library.retractGuestAccount(for: instance)
+        #expect(harness.library.retractGuestAccount(for: instance).landed)
 
         #expect(harness.storage.saveConfigurationCallCount == writesBefore)
     }

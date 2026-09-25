@@ -849,7 +849,7 @@ final class VirtualizationService {
     /// in place by then, so the caller records the revert as having landed.
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
-        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
+        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws {
         #log(
             Self.logger, .debug,
@@ -868,8 +868,6 @@ final class VirtualizationService {
         let plan = try await Task.detached {
             try store.planRestore(bundleURL: bundleURL, snapshotID: snapshotID, kind: kind)
         }.value
-        var restore = plan
-        restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
 
         // A live guest's memory and disks are exactly what the revert replaces,
         // and the user confirmed losing them — so terminate rather than save.
@@ -889,10 +887,23 @@ final class VirtualizationService {
         }
         instance.tearDownSession(restingAt: .revertingToSnapshot)
 
-        let written = restore
+        // Staged, then committed, then installed: nothing in the bundle moves
+        // until the files are cloned aside and the configuration — which the
+        // saved state only loads back into — has landed, so a full volume or
+        // a failed write stops the revert while it still costs the bundle
+        // nothing.
         do {
             try await Task.detached {
-                try store.restore(bundleURL: bundleURL, snapshotID: snapshotID, plan: written)
+                try store.stageRestore(bundleURL: bundleURL, snapshotID: snapshotID, plan: plan)
+            }.value
+            do {
+                try commitConfiguration(plan)
+            } catch {
+                await Task.detached { store.sweepRestoreStaging(bundleURL: bundleURL) }.value
+                throw error
+            }
+            try await Task.detached {
+                try store.installRestore(bundleURL: bundleURL, plan: plan)
             }.value
         } catch {
             #log(
@@ -902,10 +913,6 @@ final class VirtualizationService {
             instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
-
-        // The saved state only loads back into the configuration it was written
-        // under, so the VM takes the captured settings along with the disks.
-        adopt(written)
 
         // A warm revert leaves the snapshot's saved state in the bundle and a
         // cold one leaves none, so the write that just landed is what says
@@ -1095,7 +1102,7 @@ final class VirtualizationService {
     /// Builds a VZ configuration off the main actor to avoid blocking the UI.
     private func buildConfiguration(for instance: VMInstance) async throws -> ConfigurationBuilder.BuildResult {
         let builder = configBuilder
-        let config = instance.configuration
+        let config = instance.effectiveConfiguration
         let bundleURL = instance.bundleURL
         return try await Task.detached {
             try builder.build(from: config, bundleURL: bundleURL)

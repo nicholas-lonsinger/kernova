@@ -85,7 +85,7 @@ struct ClipboardPassthroughSetting {
 
     private func write(_ change: Change) {
         if case .saved = viewModel.updateConfiguration(
-            of: instance, ifNotSaved: .discard, mutate: { change.apply(to: &$0) })
+            of: instance, mutate: { change.apply(to: &$0) })
         {
             return
         }

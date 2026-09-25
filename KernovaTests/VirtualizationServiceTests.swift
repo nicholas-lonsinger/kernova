@@ -350,13 +350,11 @@ struct VirtualizationServiceTests {
         phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm,
         macAddress: String? = nil, capturedMACAddress: String? = nil
     ) throws -> RevertFixture {
-        let instance = VMInstanceFixture.make(name: "Revert VM", phase: phase) {
+        let instance = try VMInstanceFixture.makeOnDisk(name: "Revert VM", phase: phase) {
             $0.memorySizeInGB = 16
             $0.macAddress = macAddress
         }
         let layout = instance.bundleLayout
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
         try Data("live-disk".utf8).write(to: layout.diskImageURL)
 
         // The capture: taken while the VM had 8 GB and a second disk.
@@ -382,7 +380,7 @@ struct VirtualizationServiceTests {
             .write(to: snapshotLayout.configURL)
 
         // The VM as it stands now: more memory, and the second disk removed.
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        try instance.bundle?.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
         return RevertFixture(
             instance: instance, snapshot: snapshot, store: VMSnapshotStore(),
             capturedConfiguration: capturedConfiguration,
@@ -398,7 +396,7 @@ struct VirtualizationServiceTests {
         try await service.revertToSnapshot(
             fixture.instance, snapshot: snapshot ?? fixture.snapshot, store: store ?? fixture.store
         ) { plan in
-            fixture.library.adoptRevertedConfiguration(plan, on: fixture.instance)
+            try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
         }
     }
 
@@ -435,7 +433,7 @@ struct VirtualizationServiceTests {
         #expect(String(decoding: mainDisk, as: UTF8.self) == "captured-disk")
     }
 
-    @Test("A revert hands over the configuration it wrote before the VM leaves the revert")
+    @Test("A revert commits the captured configuration before the VM leaves the revert")
     func revertHandsTheWrittenConfigurationOverBeforeResting() async throws {
         let fixture = try makeRevertFixture(
             macAddress: "aa:bb:cc:dd:ee:02", capturedMACAddress: "aa:bb:cc:dd:ee:01")
@@ -446,14 +444,13 @@ struct VirtualizationServiceTests {
             fixture.instance, snapshot: fixture.snapshot, store: fixture.store
         ) { plan in
             // Anything that brings the VM back up reads its configuration after
-            // this, so the bundle already holds the plan and the VM has not left
-            // the revert yet.
+            // this, so the commit lands while the VM has not left the revert yet.
             #expect(fixture.instance.phase == .revertingToSnapshot)
+            adopted.append(plan)
+            try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
             let onDisk = try? VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
             #expect(onDisk?.macAddress == plan.configuration.macAddress)
             #expect(onDisk?.memorySizeInGB == plan.configuration.memorySizeInGB)
-            adopted.append(plan)
-            fixture.library.adoptRevertedConfiguration(plan, on: fixture.instance)
         }
 
         let plan = try #require(adopted.first)
@@ -503,10 +500,10 @@ struct VirtualizationServiceTests {
     func revertRestsTheVMWhenTheRestoreFails() async throws {
         let fixture = try makeRevertFixture(phase: .running(sessionID: UUID()))
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
-        // Past the pre-flight, failing at the restore itself.
+        // Past the pre-flight, failing at the restore's staging.
         let store = MockVMSnapshotStore()
         store.setCapturedConfiguration(fixture.capturedConfiguration, for: fixture.snapshot.id)
-        store.restoreError = VMSnapshotError.snapshotMissingFile("Disk.asif")
+        store.stageError = VMSnapshotError.snapshotMissingFile("Disk.asif")
 
         await #expect(throws: VMSnapshotError.self) {
             try await revert(fixture, store: store)
@@ -518,8 +515,8 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.status == .stopped)
         #expect(!fixture.instance.hasLiveVirtualMachine)
         #expect(fixture.instance.phase != .revertingToSnapshot)
-        // The captured configuration is only installed by a restore that
-        // succeeded, so the VM still holds its own 16 GB, not the snapshot's 8.
+        // The captured configuration is committed only once the restore
+        // staged, so the VM still holds its own 16 GB, not the snapshot's 8.
         #expect(fixture.instance.configuration.memorySizeInGB == 16)
     }
 
@@ -658,7 +655,7 @@ struct VirtualizationServiceTests {
             fixture.instance,
             snapshot: VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm),
             store: fixture.store)
-        fixture.instance.snapshotManifest.insert(checkpoint)
+        try fixture.instance.bundle?.commitSnapshotManifest { $0.insert(checkpoint) }
         #expect(fixture.instance.phase == .suspended)
 
         try await revert(fixture, to: checkpoint)

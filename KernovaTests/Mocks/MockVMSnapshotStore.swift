@@ -2,22 +2,30 @@ import Foundation
 
 @testable import Kernova
 
-/// In-memory mock for `VMSnapshotStoring` that records manifest writes and file
-/// operations without touching disk.
+/// In-memory mock for `VMSnapshotStoring` that records file operations without
+/// touching disk. The manifest is a bundle state file, seeded through
+/// ``MockVMStorageService/files``.
 ///
 /// Lock-based because production reads and writes it from `Task.detached`, so
 /// calls arrive off the test's isolation.
 final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
+    /// One call this store answered, in the order a revert makes them.
+    enum Event: Equatable {
+        case stageRestore
+        case installRestore
+        case sweepRestoreStaging
+    }
+
     private struct State {
-        var manifests: [URL: VMSnapshotManifest] = [:]
+        var events: [Event] = []
         var capturedPaths: [UUID: [String]] = [:]
         var capturedConfigurations: [UUID: VMConfiguration] = [:]
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
         var sizes: [UUID: UInt64] = [:]
-        var saveManifestError: (any Error)?
         var captureError: (any Error)?
+        var stageError: (any Error)?
         var restoreError: (any Error)?
         var discardError: (any Error)?
     }
@@ -25,12 +33,16 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var state = State()
 
-    // MARK: - Seeding
+    /// Where a prepared snapshot's own `config.json` is written, as the real
+    /// store writes it into the bundle — what the manifest reads each
+    /// snapshot's MAC address from. `nil` writes it nowhere.
+    private let files: InMemoryVMBundleFiles?
 
-    /// Seeds the manifest a bundle answers with.
-    func setManifest(_ manifest: VMSnapshotManifest, for bundleURL: URL) {
-        lock.withLock { state.manifests[bundleURL] = manifest }
+    init(files: InMemoryVMBundleFiles? = nil) {
+        self.files = files
     }
+
+    // MARK: - Seeding
 
     /// Seeds the on-disk size one snapshot reports.
     func setSize(_ bytes: UInt64, for snapshotID: UUID) {
@@ -45,9 +57,8 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
 
     // MARK: - Recorded calls
 
-    func manifest(for bundleURL: URL) -> VMSnapshotManifest? {
-        lock.withLock { state.manifests[bundleURL] }
-    }
+    /// The revert calls this store answered, in order.
+    var events: [Event] { lock.withLock { state.events } }
     /// Bundle-relative paths passed to `captureDisks`, keyed by snapshot id.
     var capturedPaths: [UUID: [String]] { lock.withLock { state.capturedPaths } }
     var discardedIDs: [UUID] { lock.withLock { state.discardedIDs } }
@@ -56,14 +67,16 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
 
     // MARK: - Error injection
 
-    var saveManifestError: (any Error)? {
-        get { lock.withLock { state.saveManifestError } }
-        set { lock.withLock { state.saveManifestError = newValue } }
-    }
     var captureError: (any Error)? {
         get { lock.withLock { state.captureError } }
         set { lock.withLock { state.captureError = newValue } }
     }
+    /// Thrown by the next and every later `stageRestore`.
+    var stageError: (any Error)? {
+        get { lock.withLock { state.stageError } }
+        set { lock.withLock { state.stageError = newValue } }
+    }
+    /// Thrown by the next and every later `installRestore`.
     var restoreError: (any Error)? {
         get { lock.withLock { state.restoreError } }
         set { lock.withLock { state.restoreError = newValue } }
@@ -75,31 +88,10 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
 
     // MARK: - VMSnapshotStoring
 
-    /// Carries each snapshot's MAC address from the configuration this store
-    /// captured or was seeded with, as the real store reads it from the
-    /// snapshot's own `config.json`.
-    func loadManifest(bundleURL: URL) -> VMSnapshotManifest {
-        lock.withLock {
-            let manifest = state.manifests[bundleURL] ?? VMSnapshotManifest()
-            return VMSnapshotManifest(
-                snapshots: manifest.snapshots.map {
-                    VMSnapshot(
-                        $0.record, macAddress: state.capturedConfigurations[$0.id]?.macAddress)
-                },
-                currentID: manifest.currentID)
-        }
-    }
-
-    func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws {
-        try lock.withLock {
-            if let error = state.saveManifestError { throw error }
-            state.manifests[bundleURL] = manifest
-        }
-    }
-
     func prepareSnapshot(
         bundleURL: URL, snapshotID: UUID, configuration: VMConfiguration
     ) throws -> VMSnapshotCapturePlan {
+        files?.setSnapshotConfiguration(configuration, id: snapshotID, at: bundleURL)
         let layout = VMBundleLayout(bundleURL: bundleURL)
         return lock.withLock {
             state.capturedConfigurations[snapshotID] = configuration
@@ -144,8 +136,16 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         }
     }
 
-    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
+    func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         try lock.withLock {
+            state.events.append(.stageRestore)
+            if let error = state.stageError { throw error }
+        }
+    }
+
+    func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
+        try lock.withLock {
+            state.events.append(.installRestore)
             if let error = state.restoreError { throw error }
         }
     }
@@ -162,7 +162,10 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     }
 
     func sweepRestoreStaging(bundleURL: URL) {
-        lock.withLock { state.sweptStagingBundleURLs.append(bundleURL) }
+        lock.withLock {
+            state.events.append(.sweepRestoreStaging)
+            state.sweptStagingBundleURLs.append(bundleURL)
+        }
     }
 
     func onDiskBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {

@@ -9,10 +9,21 @@ import KernovaTestSupport
 struct VMStorageServiceTests {
     private let service = VMStorageService()
 
+    private func files(_ bundleURL: URL) -> VMBundleFiles {
+        VMBundleFiles(url: bundleURL, access: CoordinatedBundleFileAccess())
+    }
+
+    /// Creates the bundle directory at `url` and writes its first `config.json`,
+    /// as a create does.
+    private func createBundle(_ configuration: VMConfiguration, at url: URL) throws {
+        try service.createVMBundle(at: url)
+        try files(url).writeInitial(configuration)
+    }
+
     /// Creates a bundle at its final URL, the shape publication leaves one in.
     private func makeBundle(_ configuration: VMConfiguration) throws -> URL {
         let url = try service.bundleURL(for: configuration)
-        try service.createVMBundle(configuration, at: url)
+        try createBundle(configuration, at: url)
         return url
     }
 
@@ -49,7 +60,7 @@ struct VMStorageServiceTests {
         let bundleURL = try makeBundle(config)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        let loaded = try service.loadConfiguration(from: bundleURL)
+        let loaded = try files(bundleURL).readConfiguration()
         #expect(loaded.id == config.id)
         #expect(loaded.name == config.name)
         #expect(loaded.cpuCount == 6)
@@ -58,7 +69,7 @@ struct VMStorageServiceTests {
 
     @Test("Save updated configuration")
     func saveUpdatedConfiguration() throws {
-        var config = VMConfiguration(
+        let config = VMConfiguration(
             name: "Original Name",
             guestOS: .linux,
             bootMode: .efi
@@ -68,12 +79,13 @@ struct VMStorageServiceTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         // Update and save
-        config.name = "Updated Name"
-        config.cpuCount = 8
-        try service.saveConfiguration(config, to: bundleURL)
+        try files(bundleURL).update(.configuration) {
+            $0.name = "Updated Name"
+            $0.cpuCount = 8
+        }
 
         // Reload and verify
-        let loaded = try service.loadConfiguration(from: bundleURL)
+        let loaded = try files(bundleURL).readConfiguration()
         #expect(loaded.name == "Updated Name")
         #expect(loaded.cpuCount == 8)
     }
@@ -188,7 +200,7 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(name: "Interrupted Write", guestOS: .linux, bootMode: .efi)
 
         let staged = try service.makeStagedBundleURL()
-        try service.createVMBundle(config, at: staged)
+        try createBundle(config, at: staged)
         defer { try? FileManager.default.removeItem(at: staged) }
 
         let configURL = VMBundleLayout(bundleURL: staged).configURL
@@ -201,7 +213,7 @@ struct VMStorageServiceTests {
         let config = VMConfiguration(name: "Published", guestOS: .linux, bootMode: .efi)
 
         let staged = try service.makeStagedBundleURL()
-        try service.createVMBundle(config, at: staged)
+        try createBundle(config, at: staged)
         let finalURL = try service.bundleURL(for: config)
         defer {
             try? FileManager.default.removeItem(at: staged)
@@ -213,7 +225,7 @@ struct VMStorageServiceTests {
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
         #expect(try service.listVMBundles().contains(finalURL))
-        #expect(try service.loadConfiguration(from: finalURL).id == config.id)
+        #expect(try files(finalURL).readConfiguration().id == config.id)
     }
 
     @Test("Publishing onto an occupied destination throws and leaves the staged bundle intact")
@@ -222,7 +234,7 @@ struct VMStorageServiceTests {
 
         let finalURL = try makeBundle(config)
         let staged = try service.makeStagedBundleURL()
-        try service.createVMBundle(config, at: staged)
+        try createBundle(config, at: staged)
         defer {
             try? FileManager.default.removeItem(at: staged)
             try? FileManager.default.removeItem(at: finalURL)
@@ -240,7 +252,7 @@ struct VMStorageServiceTests {
     func reclaimDiscardsOnlyStagedBundles() async throws {
         let staleConfig = VMConfiguration(name: "Abandoned", guestOS: .linux, bootMode: .efi)
         let staged = try service.makeStagedBundleURL()
-        try service.createVMBundle(staleConfig, at: staged)
+        try createBundle(staleConfig, at: staged)
 
         let survivor = try makeBundle(
             VMConfiguration(name: "Survivor", guestOS: .linux, bootMode: .efi))
@@ -265,21 +277,21 @@ struct VMStorageServiceTests {
             try? FileManager.default.removeItem(at: sourceURL)
             try? FileManager.default.removeItem(at: cloneURL)
         }
-        let store = USBAccessoryPairingStore()
-        try store.save(
-            USBAccessoryPairingSet(pairings: [
+        try files(sourceURL).update(.usbPairings) {
+            $0 = USBAccessoryPairingSet(pairings: [
                 USBAccessoryPairing(
                     key: "04e8:6300:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
                     receptacleLabel: "Port-USB-C@2")
-            ]), bundleURL: sourceURL)
+            ])
+        }
 
         try service.cloneVMBundle(
-            from: sourceURL, to: cloneURL, newConfiguration: clone,
-            filesToCopy: ["Disk.asif", "EFIVariableStore"])
+            from: sourceURL, to: cloneURL, filesToCopy: ["Disk.asif", "EFIVariableStore"])
 
         // The omission is silent by construction — nothing lists the file — so
         // it is asserted here: two VMs expecting one device would race for it.
-        #expect(store.load(bundleURL: cloneURL).isEmpty)
-        #expect(!store.load(bundleURL: sourceURL).isEmpty)
+        // A change that moves nothing answers what the file holds.
+        #expect(try files(cloneURL).update(.usbPairings) { _ in }.isEmpty)
+        #expect(try !files(sourceURL).update(.usbPairings) { _ in }.isEmpty)
     }
 }
