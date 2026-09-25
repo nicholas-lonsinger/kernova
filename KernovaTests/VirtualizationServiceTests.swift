@@ -520,6 +520,86 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.configuration.memorySizeInGB == 16)
     }
 
+    /// The text of the file at `url`, `nil` when there is none.
+    private func contents(of url: URL) -> String? {
+        (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    @Test("A revert whose configuration commit fails leaves the disks and suspend slot untouched")
+    func revertWhoseCommitFailsTouchesNoFile() async throws {
+        let fixture = try makeRevertFixture(phase: .suspended)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        let layout = fixture.instance.bundleLayout
+        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
+        struct CommitFailed: Error {}
+
+        await #expect(throws: CommitFailed.self) {
+            try await service.revertToSnapshot(
+                fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+            ) { _ in throw CommitFailed() }
+        }
+
+        #expect(contents(of: layout.diskImageURL) == "live-disk")
+        #expect(contents(of: layout.saveFileURL) == "own-suspend-slot")
+        #expect(fixture.instance.configuration.memorySizeInGB == 16)
+        #expect(!FileManager.default.fileExists(atPath: layout.restoreStagingURL.path(percentEncoded: false)))
+        #expect(fixture.instance.phase == .suspended)
+    }
+
+    @Test("A revert commits the configuration before any file is swapped")
+    func revertCommitsBeforeSwappingAnyFile() async throws {
+        let fixture = try makeRevertFixture(phase: .suspended)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        let layout = fixture.instance.bundleLayout
+        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
+        var diskAtCommit: String?
+        var slotAtCommit: String?
+
+        try await service.revertToSnapshot(
+            fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+        ) { plan in
+            diskAtCommit = contents(of: layout.diskImageURL)
+            slotAtCommit = contents(of: layout.saveFileURL)
+            try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
+        }
+
+        #expect(diskAtCommit == "live-disk")
+        #expect(slotAtCommit == "own-suspend-slot")
+        #expect(contents(of: layout.diskImageURL) == "captured-disk")
+        #expect(contents(of: layout.saveFileURL) == "captured-state")
+        #expect(fixture.instance.configuration.memorySizeInGB == 8)
+    }
+
+    /// Nothing rolls back: the swap is renames on one volume, and the disks it
+    /// replaced are what the user chose to discard.
+    @Test(
+        "A revert whose install fails after the commit leaves the snapshot's configuration committed and no save file, and surfaces the error"
+    )
+    func revertWhoseInstallFailsLeavesTheCommittedConfigurationAndNoSaveFile() async throws {
+        let fixture = try makeRevertFixture(phase: .suspended)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        let layout = fixture.instance.bundleLayout
+        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
+        let stagedSlot = VMBundleLayout(bundleURL: layout.restoreStagingURL).saveFileURL
+
+        await #expect(throws: (any Error).self) {
+            try await service.revertToSnapshot(
+                fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+            ) { plan in
+                try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
+                // The install's last swap, the saved state's, finds nothing to
+                // move.
+                try FileManager.default.removeItem(at: stagedSlot)
+            }
+        }
+
+        #expect(fixture.instance.configuration.memorySizeInGB == 8)
+        #expect(try VMConfiguration.load(fromBundle: fixture.instance.bundleURL).memorySizeInGB == 8)
+        #expect(contents(of: layout.diskImageURL) == "captured-disk")
+        #expect(!layout.hasSaveFile)
+        #expect(fixture.instance.status == .stopped)
+    }
+
     // MARK: - Disks-only snapshots
 
     @Test("A disks-only capture of a stopped VM writes the disks, no saved state, and rests stopped")
@@ -1285,5 +1365,44 @@ struct VirtualizationServiceTests {
         }
         #expect(instance.status == .error)
         #expect(instance.errorMessage != nil)
+    }
+
+    @Test("A boot whose heal cannot be saved builds from the healed references")
+    func bootWhoseHealFailsBuildsFromTheHealedReferences() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bootHeal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let picked = directory.appendingPathComponent("Picked.kernel")
+        try Data("kernel".utf8).write(to: picked)
+        let bookmark = try #require(SecurityScopedBookmark.make(for: picked))
+        // Moved since the pick, so only the bookmark still finds it.
+        try FileManager.default.moveItem(
+            at: picked, to: directory.appendingPathComponent("Moved.kernel"))
+        let instance = VMInstanceFixture.make(phase: .stopped) {
+            $0.bootMode = .linuxKernel
+            $0.kernelPath = picked.path(percentEncoded: false)
+            $0.kernelBookmark = bookmark
+        }
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        var thrown: (any Error)?
+        do {
+            _ = try await service.start(instance)
+        } catch {
+            thrown = error
+        }
+
+        // The build got past the kernel, which only the healed path names, and
+        // failed on the bundle's missing main disk instead.
+        guard case ConfigurationBuilderError.storageDiskNotFound = try #require(thrown) else {
+            Issue.record("expected the build to reach the main disk, got \(String(describing: thrown))")
+            return
+        }
+        #expect(instance.configuration.kernelPath == picked.path(percentEncoded: false))
+        #expect(storage.bundles[instance.bundleURL]?.kernelPath == picked.path(percentEncoded: false))
     }
 }

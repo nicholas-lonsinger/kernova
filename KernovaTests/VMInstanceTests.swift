@@ -1605,6 +1605,30 @@ struct VMInstanceTests {
         #expect(storage.saveHostStateCallCount == 0)
     }
 
+    @Test(
+        "A watchdog whose reset cannot be saved leaves the configuration as the bundle holds it, and the surfaces show the guest version as unknown"
+    )
+    func watchdogWhoseResetFailsShowsTheVersionAsUnknown() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)", agentInstallNudgeDismissed: true)
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        let held = instance.settings
+
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.settings == held)
+        #expect(storage.bundles[instance.bundleURL] == held.configuration)
+        #expect(storage.hostStates[instance.bundleURL] == held.hostState)
+        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.guestOSVersionDisplay == nil)
+        #expect(instance.effectiveConfiguration.effectiveGuestMacOSVersion == nil)
+    }
+
     @Test("A mid-session firing leaves the nudge dismissal and guest OS version alone")
     func watchdogPreservesPersistedStateAfterAMidSessionDeath() async throws {
         // The clearing exists for an agent that never showed up: nothing
@@ -1905,6 +1929,29 @@ struct VMInstanceTests {
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
+    }
+
+    @Test(
+        "A Hello whose record cannot be saved leaves the configuration as the bundle holds it, and the surfaces show the reported versions"
+    )
+    func helloWhoseRecordFailsShowsTheReportedVersions() {
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeen: "0.9.0", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(holding: [instance], storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        let held = instance.configuration
+
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.1 (Build 25B456)"))
+
+        #expect(instance.configuration == held)
+        #expect(storage.bundles[instance.bundleURL] == held)
+        #expect(instance.lastSeenAgentVersion == "0.9.2")
+        #expect(instance.guestOSVersionDisplay == "26.1")
+        #expect(instance.effectiveConfiguration.lastSeenAgentVersion == "0.9.2")
+        #expect(instance.effectiveConfiguration.effectiveGuestMacOSVersion == MacOSVersion("26.1"))
     }
 
     // MARK: - guestOSVersionDisplay

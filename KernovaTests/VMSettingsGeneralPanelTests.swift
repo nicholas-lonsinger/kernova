@@ -332,8 +332,9 @@ struct VMSettingsGeneralPanelTests {
         let instance = makeSettingsInstance(
             guestOS: .linux,
             hostState: baseline.map { .ephemeral(baseline: $0.id) } ?? VMHostState())
-        instance.seedSnapshotManifest(VMSnapshotManifest(
-            snapshots: snapshots, currentID: snapshots.first?.id))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: snapshots, currentID: snapshots.first?.id))
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()

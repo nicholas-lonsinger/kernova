@@ -491,6 +491,28 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(second.usbPairings.pairings.map(\.key) == [accessory.identity?.key])
     }
 
+    @Test("An attach whose pairing cannot be written is reported and remembers nothing")
+    func attachWhosePairingWriteFailsIsReportedAndRemembersNothing() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        harness.storage.files.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.usbPairingsRelativePath)
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+
+        let deviceID = try await attach(accessory, to: instance, in: harness)
+
+        // The device change stands; only its remembering did not land.
+        #expect(service.attachedRegistryIDs == [7])
+        #expect(instance.liveUSBAccessories.map(\.deviceID) == [deviceID])
+        #expect(reported.count == 1)
+        #expect(instance.usbPairings.isEmpty)
+        #expect(harness.storage.files.pairings(at: instance.bundleURL)?.isEmpty == true)
+    }
+
     @Test("A detach the user asked for forgets the rule")
     func detachForgetsThePairing() async throws {
         let harness = makeHarness()

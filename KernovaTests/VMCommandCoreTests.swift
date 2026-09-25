@@ -2806,6 +2806,24 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.lastStartProvisioning == nil)
     }
 
+    @available(macOS 27.0, *)
+    @Test("Skipping an account whose retraction fails throws")
+    func skipWhoseRetractionFailsThrows() async throws {
+        let harness = makeHarness()
+        let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
+        try harness.core.provideGuestAccountPassword(
+            .id(instance.id), password: "analytical-engine")
+        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        let failure = commandError { try harness.core.skipGuestAccount(.id(instance.id)) }
+
+        #expect(failure?.message.contains("could not be skipped") == true)
+        // Both halves stay, so the question is still there to answer.
+        #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.storage.bundles[instance.bundleURL]?.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.library.heldGuestAccountPassword(for: instance) != nil)
+    }
+
     // MARK: - What a start does about it
 
     @available(macOS 27.0, *)
@@ -2879,6 +2897,26 @@ struct VMCommandCoreTests {
         #expect(instance.configuration.pendingGuestAccount == nil)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
         #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A cold boot whose account retraction fails reports it with the start and keeps the password")
+    func aColdBootWhoseRetractionFailsReportsItAndKeepsThePassword() async throws {
+        let harness = makeHarness()
+        let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
+        try harness.core.provideGuestAccountPassword(
+            .id(instance.id), password: "analytical-engine")
+        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        let failure = await commandError { try await harness.core.start(instance) }
+
+        #expect(harness.virtualization.lastStartRoute == .coldBoot)
+        #expect(failure?.message.contains("started, but") == true)
+        // The VM came up; only the record of the spent window is missing.
+        #expect(instance.status == .running)
+        #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.storage.bundles[instance.bundleURL]?.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.library.heldGuestAccountPassword(for: instance)?.value == "analytical-engine")
     }
 
     @available(macOS 27.0, *)

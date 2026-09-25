@@ -239,8 +239,9 @@ struct VMOverviewResolverTests {
     func snapshotFootprintFollowsItsSet() async throws {
         let instance = VMInstanceFixture.make()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(
-            snapshots: [snapshot], currentID: snapshot.id))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [snapshot], currentID: snapshot.id))
         let resolver = makeResolver(instance: instance, inLibrary: true)
 
         resolver.refresh()
@@ -267,8 +268,9 @@ struct VMOverviewResolverTests {
         // Capturing a second snapshot re-issues the walk, which takes seconds on
         // a real VM — the row already measured keeps its figure meanwhile.
         let second = VMSnapshot(name: "Second", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(
-            snapshots: [first, second], currentID: second.id))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [first, second], currentID: second.id))
         resolver.refresh()
 
         #expect(resolver.resolved.snapshotSizes[first.id] == measured)
@@ -286,8 +288,9 @@ struct VMOverviewResolverTests {
         let instance = VMInstanceFixture.make()
         let first = VMSnapshot(name: "First", macAddress: nil)
         let second = VMSnapshot(name: "Second", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(
-            snapshots: [first, second], currentID: second.id))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [first, second], currentID: second.id))
         let resolver = makeResolver(instance: instance, inLibrary: true)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
@@ -308,8 +311,9 @@ struct VMOverviewResolverTests {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = VMInstanceFixture.make()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(
-            snapshots: [snapshot], currentID: snapshot.id))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [snapshot], currentID: snapshot.id))
         let resolver = makeResolver(instance: instance, viewModel: viewModel, inLibrary: true)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
@@ -330,8 +334,9 @@ struct VMOverviewResolverTests {
     func resolvedReadsReportTheirCategory() async {
         let instance = VMInstanceFixture.make()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(
-            snapshots: [snapshot], currentID: snapshot.id))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [snapshot], currentID: snapshot.id))
         let resolver = makeResolver(instance: instance, inLibrary: true)
         var reported: [VMSettingsCategory] = []
         resolver.onCategoryResolved = { reported.append($0) }

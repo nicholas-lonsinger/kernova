@@ -11,6 +11,10 @@ final class MockMacOSInstallService: MacOSInstallProviding {
 
     var installError: (any Error)?
 
+    /// Runs as the install starts, before it reports anything — where a test
+    /// reads what the VM holds while the install runs.
+    var onInstall: (@MainActor () -> Void)?
+
     func install(
         into instance: VMInstance,
         restoreImageURL: URL,
@@ -18,6 +22,7 @@ final class MockMacOSInstallService: MacOSInstallProviding {
     ) async throws -> InstalledImage {
         installCallCount += 1
         lastRestoreImageURL = restoreImageURL
+        onInstall?()
         if let error = installError { throw error }
         // Mirror the real `MacOSInstallService` post-install state: VM
         // released (via `guestDidStop` → `restAfterPowerOff` in production

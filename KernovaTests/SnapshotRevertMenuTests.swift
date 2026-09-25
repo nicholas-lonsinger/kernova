@@ -46,9 +46,10 @@ struct SnapshotRevertMenuTests {
     @Test("Items list the snapshots newest first")
     func itemsAreNewestFirst() {
         let instance = makeInstance()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [
-            makeSnapshot("Older"), makeSnapshot("Newer", offsetSeconds: 60),
-        ]))
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(snapshots: [
+                makeSnapshot("Older"), makeSnapshot("Newer", offsetSeconds: 60),
+            ]))
 
         let menu = rebuild(for: instance)
 

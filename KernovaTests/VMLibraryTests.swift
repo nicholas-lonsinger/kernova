@@ -378,6 +378,61 @@ struct VMLibraryTests {
         #expect(!failures.showError)
     }
 
+    @Test("A reverted configuration keeps the name and identity the bundle holds")
+    func commitRevertedConfigurationKeepsTheBundleIdentity() throws {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = VMInstanceFixture.make(name: "Loaded")
+        library.register(instance, storage: storage)
+        // Another copy renamed the VM and gave it a machine identifier after
+        // this one read the bundle.
+        var onDisk = instance.configuration
+        onDisk.name = "Renamed Elsewhere"
+        onDisk.genericMachineIdentifierData = Data([0x01, 0x02, 0x03])
+        storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+        var captured = VMConfiguration(name: "Captured", guestOS: .linux, bootMode: .efi)
+        captured.memorySizeInGB = onDisk.memorySizeInGB + 2
+        captured.genericMachineIdentifierData = Data([0x0A])
+
+        try library.commitRevertedConfiguration(
+            VMSnapshotRestorePlan(configuration: captured, relativePaths: [], kind: .cold),
+            on: instance)
+
+        #expect(instance.configuration.name == "Renamed Elsewhere")
+        #expect(instance.configuration.id == onDisk.id)
+        #expect(instance.configuration.createdAt == onDisk.createdAt)
+        #expect(instance.configuration.genericMachineIdentifierData == Data([0x01, 0x02, 0x03]))
+        #expect(instance.configuration.memorySizeInGB == captured.memorySizeInGB)
+        #expect(storage.bundles[instance.bundleURL] == instance.configuration)
+    }
+
+    @Test(
+        "An updateSettings whose host-state write fails reports that the configuration landed, and memory equals both files"
+    )
+    func updateSettingsWhoseHostStateWriteFailsReportsTheConfigurationLanded() {
+        let (library, storage, _, _) = makeLibrary()
+        let instance = VMInstanceFixture.make()
+        library.register(instance, storage: storage)
+        let memory = instance.configuration.memorySizeInGB
+        storage.saveHostStateError = NSError(domain: "test", code: 1)
+
+        let outcome = library.updateSettings(of: instance) {
+            $0.configuration.memorySizeInGB = memory + 2
+            $0.hostState.startsAutomaticallyOnLaunch = true
+        }
+
+        guard case .notSaved(let failure) = outcome else {
+            Issue.record("expected a partial write, got \(outcome)")
+            return
+        }
+        #expect(failure.failed == .hostState)
+        #expect(failure.landed == [.configuration])
+        #expect(instance.configuration.memorySizeInGB == memory + 2)
+        #expect(!instance.hostState.startsAutomaticallyOnLaunch)
+        #expect(instance.configuration == storage.bundles[instance.bundleURL])
+        #expect(instance.hostState == storage.hostStates[instance.bundleURL])
+        #expect(failures.showError)
+    }
+
     @Test("A preparing row takes on the configuration its copy wrote when it publishes")
     func preparedRowAdoptsTheWrittenConfiguration() async {
         let (library, storage, _, _) = makeLibrary()
