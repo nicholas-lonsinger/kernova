@@ -4,8 +4,8 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMSnapshotStore Tests", .admissionGated)
-struct VMSnapshotStoreTests {
+@Suite("VMBundleMachineFiles Tests", .admissionGated)
+struct VMBundleMachineFilesTests {
     /// A throwaway bundle directory holding the files a snapshot captures.
     private struct Fixture {
         let bundleURL: URL
@@ -19,7 +19,7 @@ struct VMSnapshotStoreTests {
         includeAuxiliaryStorage: Bool = true
     ) throws -> Fixture {
         let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SnapshotStoreTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("BundleMachineFilesTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
         let layout = VMBundleLayout(bundleURL: bundleURL)
 
@@ -57,7 +57,7 @@ struct VMSnapshotStoreTests {
     /// Stages `plan` and installs it, the two steps a revert runs around the
     /// configuration commit that is not this store's job.
     private func restore(
-        with store: VMSnapshotStore, _ fixture: Fixture, snapshotID: UUID, plan: VMSnapshotRestorePlan
+        with store: VMBundleMachineFiles, _ fixture: Fixture, snapshotID: UUID, plan: VMSnapshotRestorePlan
     ) throws {
         try store.stageRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
         try store.installRestore(bundleURL: fixture.bundleURL, plan: plan)
@@ -75,7 +75,7 @@ struct VMSnapshotStoreTests {
         let fixture = try makeFixture(additionalDiskID: extraID)
         defer { cleanUp(fixture) }
 
-        let paths = VMSnapshotStore.capturedRelativePaths(
+        let paths = VMBundleMachineFiles.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(paths.contains("Disk.asif"))
         #expect(paths.contains("AdditionalDisks/\(extraID.uuidString).asif"))
@@ -87,7 +87,7 @@ struct VMSnapshotStoreTests {
         let fixture = try makeFixture(externalDiskPath: "/Volumes/Elsewhere/Extra.asif")
         defer { cleanUp(fixture) }
 
-        let paths = VMSnapshotStore.capturedRelativePaths(
+        let paths = VMBundleMachineFiles.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(!paths.contains("/Volumes/Elsewhere/Extra.asif"))
         #expect(!paths.contains("HardwareModel"))
@@ -100,7 +100,7 @@ struct VMSnapshotStoreTests {
         defer { cleanUp(fixture) }
         fixture.configuration.storageDisks = nil
 
-        let paths = VMSnapshotStore.capturedRelativePaths(
+        let paths = VMBundleMachineFiles.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(paths == ["Disk.asif"])
     }
@@ -111,7 +111,7 @@ struct VMSnapshotStoreTests {
         defer { cleanUp(fixture) }
         fixture.configuration.storageDisks = []
 
-        let paths = VMSnapshotStore.capturedRelativePaths(
+        let paths = VMBundleMachineFiles.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(paths == ["Disk.asif"])
     }
@@ -123,7 +123,7 @@ struct VMSnapshotStoreTests {
         let extraID = UUID()
         let fixture = try makeFixture(additionalDiskID: extraID)
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -144,7 +144,7 @@ struct VMSnapshotStoreTests {
     func captureReportsMissingSource() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         _ = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -162,7 +162,7 @@ struct VMSnapshotStoreTests {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         try Data("suspend-slot".utf8).write(to: fixture.layout.saveFileURL)
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         _ = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -180,7 +180,7 @@ struct VMSnapshotStoreTests {
     func captureSuspendSlotReportsMissingSource() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         _ = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -195,7 +195,7 @@ struct VMSnapshotStoreTests {
     func restoreWritesBackAndKeepsTheSnapshot() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -226,7 +226,7 @@ struct VMSnapshotStoreTests {
     func restoredSuspendSlotIsRecognisableAsTheCapturedCopy() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -263,7 +263,7 @@ struct VMSnapshotStoreTests {
     func noSuspendSlotIsNotTheCapturedCopy() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -278,7 +278,7 @@ struct VMSnapshotStoreTests {
     func failedRestoreLeavesTheBundleUntouched() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -317,7 +317,7 @@ struct VMSnapshotStoreTests {
         let extraID = UUID()
         let fixture = try makeFixture(additionalDiskID: extraID)
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -357,7 +357,7 @@ struct VMSnapshotStoreTests {
     func restoreRefusesAnIncompleteSnapshot() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         let prepared = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -379,7 +379,7 @@ struct VMSnapshotStoreTests {
     func coldPlanNeedsNoSavedState() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         let prepared = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -398,7 +398,7 @@ struct VMSnapshotStoreTests {
     func coldRestoreDropsTheSuspendSlot() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         let prepared = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -426,7 +426,7 @@ struct VMSnapshotStoreTests {
     func coldRestoreToleratesAnAbsentSaveFile() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         let prepared = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -448,7 +448,7 @@ struct VMSnapshotStoreTests {
     func captureRecordsTheConfiguration() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         var configuration = fixture.configuration
         configuration.memorySizeInGB = 8
@@ -469,7 +469,7 @@ struct VMSnapshotStoreTests {
         let extraID = UUID()
         let fixture = try makeFixture(additionalDiskID: extraID)
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
 
         let prepared = try store.prepareSnapshot(
@@ -489,7 +489,7 @@ struct VMSnapshotStoreTests {
     func planRefusesASnapshotWithoutAConfiguration() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         let snapshotLayout = fixture.layout.snapshotLayout(id: snapshotID)
         try FileManager.default.createDirectory(
@@ -505,7 +505,7 @@ struct VMSnapshotStoreTests {
     func hostStateStaysOutOfSnapshots() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let files = VMBundleFiles(url: fixture.bundleURL, access: CoordinatedBundleFileAccess())
         let snapshotID = UUID()
         try files.update(.hostState) { $0.displayPreference = .fullscreen }
@@ -543,7 +543,7 @@ struct VMSnapshotStoreTests {
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
 
-        VMSnapshotStore().sweepRestoreStaging(bundleURL: fixture.bundleURL)
+        VMBundleMachineFiles(fileSystem: MockFileSystem()).sweepRestoreStaging(bundleURL: fixture.bundleURL)
 
         #expect(
             !FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
@@ -555,7 +555,7 @@ struct VMSnapshotStoreTests {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
 
-        VMSnapshotStore().sweepRestoreStaging(bundleURL: fixture.bundleURL)
+        VMBundleMachineFiles(fileSystem: MockFileSystem()).sweepRestoreStaging(bundleURL: fixture.bundleURL)
 
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
     }
@@ -567,7 +567,7 @@ struct VMSnapshotStoreTests {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         let fileSystem = MockFileSystem()
-        let store = VMSnapshotStore(fileSystem: fileSystem)
+        let store = VMBundleMachineFiles(fileSystem: fileSystem)
         let snapshotID = UUID()
         _ = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -584,7 +584,7 @@ struct VMSnapshotStoreTests {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         let fileSystem = MockFileSystem()
-        let store = VMSnapshotStore(fileSystem: fileSystem)
+        let store = VMBundleMachineFiles(fileSystem: fileSystem)
 
         try store.discardSnapshot(bundleURL: fixture.bundleURL, snapshotID: UUID())
 
@@ -595,7 +595,7 @@ struct VMSnapshotStoreTests {
     func removeSnapshotDirectoryDeletes() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         _ = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -611,7 +611,7 @@ struct VMSnapshotStoreTests {
     func onDiskBytesCountsCapturedFiles() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let captured = UUID()
         let empty = UUID()
         let prepared = try store.prepareSnapshot(
@@ -626,5 +626,113 @@ struct VMSnapshotStoreTests {
 
         #expect((sizes[captured] ?? 0) > 0)
         #expect(sizes[empty] == 0)
+    }
+
+    // MARK: - Suspend slot
+
+    @Test("Removing the suspend slot deletes it, and a bundle holding none is a success")
+    func removeSaveFileDeletesTheSlot() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
+        try Data("slot".utf8).write(to: fixture.layout.saveFileURL)
+
+        try store.removeSaveFile(bundleURL: fixture.bundleURL)
+        #expect(!fixture.layout.hasSaveFile)
+
+        try store.removeSaveFile(bundleURL: fixture.bundleURL)
+        #expect(!fixture.layout.hasSaveFile)
+    }
+
+    // MARK: - Firmware and platform
+
+    @Test("The EFI variable store is created when absent and kept when present")
+    func ensureEFIVariableStoreCreatesOnce() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
+        let url = fixture.layout.efiVariableStoreURL
+
+        try store.ensureEFIVariableStore(bundleURL: fixture.bundleURL)
+        let created = try Data(contentsOf: url)
+        #expect(!created.isEmpty)
+
+        try Data("guest-written".utf8).write(to: url)
+        try store.ensureEFIVariableStore(bundleURL: fixture.bundleURL)
+        #expect(contents(of: url) == "guest-written")
+    }
+
+    @Test("Platform files for a hardware model that does not decode write nothing")
+    func macPlatformFilesRefuseAnUndecodableModel() throws {
+        let fixture = try makeFixture(includeAuxiliaryStorage: false)
+        defer { cleanUp(fixture) }
+        try FileManager.default.removeItem(at: fixture.layout.hardwareModelURL)
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
+
+        #expect(throws: ConfigurationBuilderError.self) {
+            _ = try store.createMacPlatformFiles(
+                bundleURL: fixture.bundleURL, hardwareModel: Data("not a model".utf8))
+        }
+
+        let manager = FileManager.default
+        #expect(!manager.fileExists(atPath: fixture.layout.hardwareModelURL.path(percentEncoded: false)))
+        #expect(!manager.fileExists(atPath: fixture.layout.auxiliaryStorageURL.path(percentEncoded: false)))
+    }
+
+    // MARK: - In-bundle disks
+
+    @Test("An in-bundle disk is written at the path its id names, under the bundle")
+    func createInternalDiskWritesUnderTheBundle() async throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
+        let diskImages = MockDiskImageService()
+        let id = UUID()
+
+        let relativePath = try await store.createInternalDisk(
+            bundleURL: fixture.bundleURL, id: id, sizeInGB: 64, diskImages: diskImages)
+
+        #expect(relativePath == VMBundleLayout.additionalDiskRelativePath(id: id))
+        #expect(diskImages.lastCreatedDiskImageURL == fixture.layout.additionalDiskURL(id: id))
+        #expect(diskImages.lastCreatedSizeInGB == 64)
+    }
+
+    @Test("A failed in-bundle disk write removes what it left, and an earlier failure removes nothing")
+    func createInternalDiskCleansUpOnlyAfterAWrite() async throws {
+        for (error, expectsCleanup) in [
+            (DiskImageError.writeFailed(NSError(domain: "t", code: 1)), true),
+            (DiskImageError.templateMissing(sizeInGB: 32), false),
+        ] {
+            let fixture = try makeFixture()
+            defer { cleanUp(fixture) }
+            let fileSystem = MockFileSystem()
+            let store = VMBundleMachineFiles(fileSystem: fileSystem)
+            let diskImages = MockDiskImageService()
+            diskImages.createDiskImageError = error
+            let id = UUID()
+
+            await #expect(throws: DiskImageError.self) {
+                _ = try await store.createInternalDisk(
+                    bundleURL: fixture.bundleURL, id: id, sizeInGB: 32, diskImages: diskImages)
+            }
+
+            #expect(
+                fileSystem.removedURLs
+                    == (expectsCleanup ? [fixture.layout.additionalDiskURL(id: id)] : []),
+                "\(error)")
+            #expect(fileSystem.trashedURLs.isEmpty)
+        }
+    }
+
+    @Test("Trashing an in-bundle disk trashes the file its path names inside the bundle")
+    func trashInternalDiskTrashesInsideTheBundle() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let fileSystem = MockFileSystem()
+        let store = VMBundleMachineFiles(fileSystem: fileSystem)
+
+        try store.trashInternalDisk(bundleURL: fixture.bundleURL, relativePath: "Disk.asif")
+
+        #expect(fileSystem.trashedURLs == [fixture.layout.diskImageURL])
     }
 }

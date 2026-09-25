@@ -73,12 +73,23 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent(Self.usbPairingsRelativePath)
     }
 
+    /// The directory holding the in-bundle disks other than the main disk,
+    /// relative to the bundle root.
+    static let additionalDisksRelativePath = "AdditionalDisks"
+
     var additionalDisksDirectoryURL: URL {
-        bundleURL.appendingPathComponent("AdditionalDisks")
+        bundleURL.appendingPathComponent(Self.additionalDisksRelativePath)
+    }
+
+    /// The in-bundle disk `id` names, relative to the bundle root — the path
+    /// its ``StorageDisk`` entry carries, so the entry travels with the bundle
+    /// on clone or move.
+    static func additionalDiskRelativePath(id: UUID) -> String {
+        "\(additionalDisksRelativePath)/\(id.uuidString).asif"
     }
 
     func additionalDiskURL(id: UUID) -> URL {
-        additionalDisksDirectoryURL.appendingPathComponent("\(id.uuidString).asif")
+        bundleURL.appendingPathComponent(Self.additionalDiskRelativePath(id: id))
     }
 
     var hasSaveFile: Bool {

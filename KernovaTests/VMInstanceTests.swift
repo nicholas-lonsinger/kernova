@@ -56,7 +56,7 @@ struct VMInstanceTests {
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
-            atPath: instance.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         #expect(instance.canTakeSnapshot)
@@ -231,39 +231,6 @@ struct VMInstanceTests {
         instance.restAfterPowerOff()
         #expect(instance.status == .stopped)
         #expect(instance.session == nil)
-    }
-
-    // MARK: - removeSaveFile
-
-    @Test("removeSaveFile is a no-op when no save file exists")
-    func removeSaveFileNoOp() {
-        let instance = VMInstanceFixture.make()
-        // Should not throw — silently succeeds
-        instance.removeSaveFile()
-        #expect(!instance.hasSaveFile)
-    }
-
-    @Test("removeSaveFile deletes an existing save file")
-    func removeSaveFileDeletesFile() throws {
-        let instance = VMInstanceFixture.make()
-
-        // Create the bundle directory and a fake save file
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL,
-            withIntermediateDirectories: true
-        )
-        FileManager.default.createFile(
-            atPath: instance.saveFileURL.path(percentEncoded: false),
-            contents: Data("fake save".utf8)
-        )
-
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-
-        #expect(FileManager.default.fileExists(atPath: instance.saveFileURL.path(percentEncoded: false)))
-
-        instance.removeSaveFile()
-
-        #expect(!FileManager.default.fileExists(atPath: instance.saveFileURL.path(percentEncoded: false)))
     }
 
     // MARK: - The suspend slot
@@ -669,8 +636,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make()
 
         #expect(instance.diskImageURL.lastPathComponent == "Disk.asif")
-        #expect(instance.auxiliaryStorageURL.lastPathComponent == "AuxiliaryStorage")
-        #expect(instance.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
+        #expect(instance.bundle.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
     }
 
     // MARK: - Serial Console
@@ -1044,7 +1010,7 @@ struct VMInstanceTests {
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
 
-        try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
+        try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
         #expect(instance.isRestingAtEphemeralBaseline)
     }
 
@@ -1053,7 +1019,7 @@ struct VMInstanceTests {
         let (instance, _, temp) = try makeEphemeralInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: temp) }
 
-        try Data("captured".utf8).write(to: instance.saveFileURL)
+        try Data("captured".utf8).write(to: instance.bundle.saveFileURL)
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
@@ -1062,7 +1028,7 @@ struct VMInstanceTests {
         let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
-        try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
+        try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
 
         instance.enter(.running(sessionID: UUID()))
         #expect(!instance.isRestingAtEphemeralBaseline)
@@ -1073,7 +1039,7 @@ struct VMInstanceTests {
         let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
-        try FileManager.default.copyItem(at: captured, to: instance.saveFileURL)
+        try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
 
         #expect(!instance.isRestingAtEphemeralBaseline)
     }

@@ -20,7 +20,7 @@ struct VMCommandCoreTests {
         let lifecycle: VMLifecycleCoordinator
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
-        let snapshots: MockVMSnapshotStore
+        let snapshots: MockVMBundleMachineFiles
         let fileSystem: MockFileSystem
         let vmnet: MockVmnetNetworkProvider
         let arpTable: ScriptedARPTable
@@ -37,7 +37,7 @@ struct VMCommandCoreTests {
         clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let fileSystem = MockFileSystem()
         let vmnet = MockVmnetNetworkProvider()
         let arpTable = ScriptedARPTable()
@@ -48,7 +48,7 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences,
@@ -59,7 +59,6 @@ struct VMCommandCoreTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: snapshots,
             diskImageService: diskImages,
             fileSystem: fileSystem,
             preferences: preferences,
@@ -78,7 +77,7 @@ struct VMCommandCoreTests {
         let library: VMLibrary
         let storage: MockVMStorageService
         let virtualization: SuspendingMockVirtualizationService
-        let snapshots: MockVMSnapshotStore
+        let snapshots: MockVMBundleMachineFiles
     }
 
     /// A core whose virtualization service holds one operation suspended, so a
@@ -87,7 +86,7 @@ struct VMCommandCoreTests {
         clock: any EngineClock = makePlatformEngineClock()
     ) -> SuspendingHarness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
         let lifecycle = makeTestLifecycle(
@@ -95,7 +94,7 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
@@ -103,7 +102,6 @@ struct VMCommandCoreTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences,
@@ -1072,7 +1070,7 @@ struct VMCommandCoreTests {
     @Test("A cancel accepted as the pipeline finishes stops the chained auto-boot")
     func cancelAtTheTailOfSetupDoesNotBoot() async throws {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let fileSystem = MockFileSystem()
         let virtualization = MockVirtualizationService()
         // Returns normally once released, so the pipeline succeeds *after* the
@@ -1084,13 +1082,13 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
-            snapshotStore: snapshots, diskImageService: MockDiskImageService(),
+            diskImageService: MockDiskImageService(),
             fileSystem: fileSystem, preferences: preferences)
 
         let instance = VMInstanceFixture.make(
@@ -1565,7 +1563,7 @@ struct VMCommandCoreTests {
                 + "bypassing the Trash. You can't undo this action.")
 
         FileManager.default.createFile(
-            atPath: instance.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         let suspended = VMCommandCore.deletePrompt(instance, permanently: true, externals: [])
@@ -3004,7 +3002,7 @@ struct VMCommandCoreTests {
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        try Data().write(to: instance.saveFileURL)
+        try Data().write(to: instance.bundle.saveFileURL)
 
         try await harness.core.start(instance)
 

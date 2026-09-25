@@ -253,9 +253,10 @@ struct VirtualizationServiceTests {
     @Test("A guest that dies mid-capture leaves the VM where the teardown put it, not running")
     func warmCaptureDoesNotHandTheVMBackToADeadSession() async throws {
         let sessionID = UUID()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
+        let store = MockVMBundleMachineFiles()
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
-        let store = MockVMSnapshotStore()
         let snapshot = VMSnapshotRecord(name: "Before the update")
         // `didStopWithError` lands while the disks copy, exactly as a guest
         // shutdown or a VZ error does — and `resumeIfPaused` returns rather than
@@ -272,7 +273,7 @@ struct VirtualizationServiceTests {
         }
 
         try await VirtualizationService.captureWarmSnapshot(
-            instance, snapshot: snapshot, store: store, session: session, sessionID: sessionID)
+            instance, snapshot: snapshot, session: session, sessionID: sessionID)
 
         // The snapshot is complete — its state and disks were both written
         // before the guest went away — so the caller records it.
@@ -289,13 +290,14 @@ struct VirtualizationServiceTests {
     @Test("A capture that keeps its session hands the VM back to it")
     func warmCaptureRestoresTheRunningPhase() async throws {
         let sessionID = UUID()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
+        let store = MockVMBundleMachineFiles()
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
-        let store = MockVMSnapshotStore()
         let snapshot = VMSnapshotRecord(name: "Before the update")
 
         try await VirtualizationService.captureWarmSnapshot(
-            instance, snapshot: snapshot, store: store, session: session, sessionID: sessionID)
+            instance, snapshot: snapshot, session: session, sessionID: sessionID)
 
         #expect(instance.phase == .running(sessionID: sessionID))
     }
@@ -303,12 +305,13 @@ struct VirtualizationServiceTests {
     @Test("A capture of a live-paused guest hands it back live-paused")
     func warmCaptureRestoresTheLivePausedPhase() async throws {
         let sessionID = UUID()
-        let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: sessionID))
+        let store = MockVMBundleMachineFiles()
+        let instance = VMInstanceFixture.make(
+            phase: .livePaused(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .paused)
-        let store = MockVMSnapshotStore()
 
         try await VirtualizationService.captureWarmSnapshot(
-            instance, snapshot: VMSnapshotRecord(name: "Paused"), store: store, session: session,
+            instance, snapshot: VMSnapshotRecord(name: "Paused"), session: session,
             sessionID: sessionID)
 
         #expect(instance.phase == .livePaused(sessionID: sessionID))
@@ -317,14 +320,15 @@ struct VirtualizationServiceTests {
     @Test("A failed capture puts a running guest back, and a dead session's answer is dropped")
     func warmCaptureFailureRestsWhereTheGuestIs() async throws {
         let sessionID = UUID()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
+        let store = MockVMBundleMachineFiles()
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
-        let store = MockVMSnapshotStore()
         store.captureError = VMSnapshotError.snapshotMissingSavedState
 
         await #expect(throws: VMSnapshotError.self) {
             try await VirtualizationService.captureWarmSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Doomed"), store: store, session: session,
+                instance, snapshot: VMSnapshotRecord(name: "Doomed"), session: session,
                 sessionID: sessionID)
         }
 
@@ -338,7 +342,6 @@ struct VirtualizationServiceTests {
     private struct RevertFixture {
         let instance: VMInstance
         let snapshot: VMSnapshot
-        let store: VMSnapshotStore
         /// What the snapshot recorded, which the revert has to install.
         let capturedConfiguration: VMConfiguration
         /// Holds the instance, as the library a revert hands the written
@@ -348,9 +351,13 @@ struct VirtualizationServiceTests {
 
     private func makeRevertFixture(
         phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm,
-        macAddress: String? = nil, capturedMACAddress: String? = nil
+        macAddress: String? = nil, capturedMACAddress: String? = nil,
+        machineFiles: (any VMBundleMachineFileWorking)? = nil
     ) throws -> RevertFixture {
-        let instance = try VMInstanceFixture.makeOnDisk(name: "Revert VM", phase: phase) {
+        let instance = try VMInstanceFixture.makeOnDisk(
+            name: "Revert VM", phase: phase,
+            bundleFactory: machineFiles.map(VMBundle.Factory.init(machineFiles:))
+        ) {
             $0.memorySizeInGB = 16
             $0.macAddress = macAddress
         }
@@ -382,19 +389,16 @@ struct VirtualizationServiceTests {
         // The VM as it stands now: more memory, and the second disk removed.
         try instance.bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
         return RevertFixture(
-            instance: instance, snapshot: snapshot, store: VMSnapshotStore(),
+            instance: instance, snapshot: snapshot,
             capturedConfiguration: capturedConfiguration,
             library: makeWiredLibrary(holding: [instance]))
     }
 
     /// Reverts `fixture`'s VM to `snapshot` — the fixture's own unless named —
     /// handing the written configuration to the fixture's library.
-    private func revert(
-        _ fixture: RevertFixture, to snapshot: VMSnapshot? = nil,
-        store: (any VMSnapshotStoring)? = nil
-    ) async throws {
+    private func revert(_ fixture: RevertFixture, to snapshot: VMSnapshot? = nil) async throws {
         try await service.revertToSnapshot(
-            fixture.instance, snapshot: snapshot ?? fixture.snapshot, store: store ?? fixture.store
+            fixture.instance, snapshot: snapshot ?? fixture.snapshot
         ) { plan in
             try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
         }
@@ -441,7 +445,7 @@ struct VirtualizationServiceTests {
         var adopted: [VMSnapshotRestorePlan] = []
 
         try await service.revertToSnapshot(
-            fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+            fixture.instance, snapshot: fixture.snapshot
         ) { plan in
             // Anything that brings the VM back up reads its configuration after
             // this, so the commit lands while the VM has not left the revert yet.
@@ -467,7 +471,7 @@ struct VirtualizationServiceTests {
         let snapshot = VMSnapshotRecord(name: "Before first boot", kind: .cold)
 
         let captured = try await service.takeSnapshot(
-            fixture.instance, snapshot: snapshot, store: fixture.store)
+            fixture.instance, snapshot: snapshot)
 
         #expect(captured.id == snapshot.id)
         #expect(captured.macAddress == "aa:bb:cc:dd:ee:03")
@@ -498,15 +502,16 @@ struct VirtualizationServiceTests {
 
     @Test("A restore that fails rests the VM rather than leaving it mid-revert, and reaches the caller")
     func revertRestsTheVMWhenTheRestoreFails() async throws {
-        let fixture = try makeRevertFixture(phase: .running(sessionID: UUID()))
-        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
         // Past the pre-flight, failing at the restore's staging.
-        let store = MockVMSnapshotStore()
+        let store = MockVMBundleMachineFiles()
+        let fixture = try makeRevertFixture(
+            phase: .running(sessionID: UUID()), machineFiles: store)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
         store.setCapturedConfiguration(fixture.capturedConfiguration, for: fixture.snapshot.id)
         store.stageError = VMSnapshotError.snapshotMissingFile("Disk.asif")
 
         await #expect(throws: VMSnapshotError.self) {
-            try await revert(fixture, store: store)
+            try await revert(fixture)
         }
 
         // The teardown already happened, so the VM rests where a failed restore
@@ -535,7 +540,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: CommitFailed.self) {
             try await service.revertToSnapshot(
-                fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+                fixture.instance, snapshot: fixture.snapshot
             ) { _ in throw CommitFailed() }
         }
 
@@ -556,7 +561,7 @@ struct VirtualizationServiceTests {
         var slotAtCommit: String?
 
         try await service.revertToSnapshot(
-            fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+            fixture.instance, snapshot: fixture.snapshot
         ) { plan in
             diskAtCommit = contents(of: layout.diskImageURL)
             slotAtCommit = contents(of: layout.saveFileURL)
@@ -584,7 +589,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: (any Error).self) {
             try await service.revertToSnapshot(
-                fixture.instance, snapshot: fixture.snapshot, store: fixture.store
+                fixture.instance, snapshot: fixture.snapshot
             ) { plan in
                 try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
                 // The install's last swap, the saved state's, finds nothing to
@@ -609,7 +614,7 @@ struct VirtualizationServiceTests {
         let snapshot = VMSnapshotRecord(name: "Before first boot", kind: .cold)
 
         _ = try await service.takeSnapshot(
-            fixture.instance, snapshot: snapshot, store: fixture.store)
+            fixture.instance, snapshot: snapshot)
 
         let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
         let captured = try Data(contentsOf: snapshotLayout.diskImageURL)
@@ -625,8 +630,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VirtualizationError.self) {
             _ = try await service.takeSnapshot(
-                fixture.instance, snapshot: VMSnapshotRecord(name: "No session", kind: .warm),
-                store: fixture.store)
+                fixture.instance, snapshot: VMSnapshotRecord(name: "No session", kind: .warm))
         }
         #expect(fixture.instance.status == .stopped)
     }
@@ -638,8 +642,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VirtualizationError.self) {
             _ = try await service.takeSnapshot(
-                fixture.instance, snapshot: VMSnapshotRecord(name: "Still live", kind: .cold),
-                store: fixture.store)
+                fixture.instance, snapshot: VMSnapshotRecord(name: "Still live", kind: .cold))
         }
         #expect(fixture.instance.status == .running)
     }
@@ -657,7 +660,7 @@ struct VirtualizationServiceTests {
         let snapshot = VMSnapshotRecord(name: "Suspended", kind: .warm)
 
         _ = try await service.takeSnapshot(
-            fixture.instance, snapshot: snapshot, store: fixture.store)
+            fixture.instance, snapshot: snapshot)
 
         let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
         let capturedSlot = try Data(contentsOf: snapshotLayout.saveFileURL)
@@ -685,7 +688,7 @@ struct VirtualizationServiceTests {
         let snapshot = VMSnapshotRecord(name: "Suspended", kind: .warm)
 
         _ = try await service.takeSnapshot(
-            fixture.instance, snapshot: snapshot, store: fixture.store)
+            fixture.instance, snapshot: snapshot)
 
         let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
         let capturedSlot = try Data(contentsOf: snapshotLayout.saveFileURL)
@@ -705,8 +708,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VirtualizationError.self) {
             _ = try await service.takeSnapshot(
-                fixture.instance, snapshot: VMSnapshotRecord(name: "No slot", kind: .warm),
-                store: fixture.store)
+                fixture.instance, snapshot: VMSnapshotRecord(name: "No slot", kind: .warm))
         }
         #expect(fixture.instance.phase == .suspended)
     }
@@ -719,8 +721,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VirtualizationError.self) {
             _ = try await service.takeSnapshot(
-                fixture.instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold),
-                store: fixture.store)
+                fixture.instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold))
         }
         #expect(fixture.instance.phase == .suspended)
     }
@@ -733,8 +734,7 @@ struct VirtualizationServiceTests {
         try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
         let checkpoint = try await service.takeSnapshot(
             fixture.instance,
-            snapshot: VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm),
-            store: fixture.store)
+            snapshot: VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm))
         try fixture.instance.bundle.commitSnapshotManifest { $0.insert(checkpoint) }
         #expect(fixture.instance.phase == .suspended)
 

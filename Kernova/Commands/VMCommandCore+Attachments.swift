@@ -75,17 +75,11 @@ extension VMCommandCore {
         try require(.editStorageDisks, on: instance)
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         let diskID = UUID()
-        let diskURL = layout.additionalDiskURL(id: diskID)
+        let relativePath: String
         do {
-            try FileManager.default.createDirectory(
-                at: layout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
-            try await diskImageService.createDiskImage(at: diskURL, sizeInGB: sizeInGB)
+            relativePath = try await instance.bundle.createInternalDisk(
+                id: diskID, sizeInGB: sizeInGB, using: diskImageService)
         } catch {
-            // Only when the write itself failed — the earlier phases throw
-            // before the destination file is touched.
-            if case DiskImageError.writeFailed = error {
-                cleanUpPartialDiskImage(at: diskURL)
-            }
             #log(
                 Self.logger, .error,
                 "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -94,8 +88,6 @@ extension VMCommandCore {
                 verb: .editStorageDisk, message: error.localizedDescription)
         }
 
-        // Bundle-relative so the entry travels with the bundle on clone / move.
-        let relativePath = "AdditionalDisks/\(diskID.uuidString).asif"
         // The unique default label is picked *inside* the mutate closure against
         // the live config, so two rapid creates can't read the same snapshot and
         // land on the same "… 2" suffix.
@@ -177,12 +169,18 @@ extension VMCommandCore {
             )
             return
         }
-        await trashExternalFile(
-            at: disk.isInternal
-                ? instance.bundleURL.appendingPathComponent(disk.path)
-                : URL(fileURLWithPath: disk.path),
-            bookmark: disk.isInternal ? nil : disk.bookmark,
-            label: disk.label, vmName: instance.name, verb: .editStorageDisk)
+        guard disk.isInternal else {
+            await trashExternalFile(
+                at: URL(fileURLWithPath: disk.path), bookmark: disk.bookmark,
+                label: disk.label, vmName: instance.name, verb: .editStorageDisk)
+            return
+        }
+        await reportFileRemoval(
+            of: instance.bundleURL.appendingPathComponent(disk.path), label: disk.label,
+            vmName: instance.name, verb: .editStorageDisk
+        ) {
+            try await instance.bundle.trashInternalDisk(atRelativePath: disk.path)
+        }
     }
 
     private func refuseSoleStorageDiskRemoval(of disk: StorageDisk, on instance: VMInstance) throws {
@@ -783,21 +781,18 @@ extension VMCommandCore {
 
     // MARK: - Trashing
 
-    /// Trashes one file an attachment or a deleted VM referenced, to the Trash
-    /// or immediately depending on `permanently`.
+    /// Trashes one file an attachment or a deleted VM referenced outside any
+    /// bundle, to the Trash or immediately depending on `permanently`.
     ///
-    /// Missing files are swallowed at `.notice` — the source may have been
-    /// moved or deleted out of band, and there is nothing for the user to act
-    /// on; every other failure logs `.warning` and surfaces one error. The
-    /// blocking call runs off the main actor: `trashItem` can hang for seconds
-    /// on a slow or unresponsive volume.
+    /// The blocking call runs off the main actor: `trashItem` can hang for
+    /// seconds on a slow or unresponsive volume.
     func trashExternalFile(
         at url: URL, bookmark: Data?, label: String, vmName: String, verb: VMVerb,
         permanently: Bool = false
     ) async {
         let fileSystem = fileSystem
-        let outcome = await Task.detached(priority: .userInitiated) { () -> String? in
-            do {
+        await reportFileRemoval(of: url, label: label, vmName: vmName, verb: verb) {
+            try await Task.detached(priority: .userInitiated) {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
                     target in
                     if permanently {
@@ -806,27 +801,35 @@ extension VMCommandCore {
                         try fileSystem.trashItem(at: target)
                     }
                 }
-                return nil
-            } catch let error as CocoaError
-                where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile
-            {
-                return ""
-            } catch {
-                return error.localizedDescription
-            }
-        }.value
-        switch outcome {
-        case .none:
+            }.value
+        }
+    }
+
+    /// Runs `remove` for the file at `url` an attachment or a deleted VM
+    /// referenced, and says how it went.
+    ///
+    /// Missing files are swallowed at `.notice` — the source may have been
+    /// moved or deleted out of band, and there is nothing for the user to act
+    /// on; every other failure logs `.warning` and surfaces one error.
+    private func reportFileRemoval(
+        of url: URL, label: String, vmName: String, verb: VMVerb,
+        _ remove: () async throws -> Void
+    ) async {
+        do {
+            try await remove()
             #log(
                 Self.logger, .notice,
                 "Removed the file behind '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
             )
-        case .some(let message) where message.isEmpty:
+        } catch let error as CocoaError
+            where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile
+        {
             #log(
                 Self.logger, .notice,
                 "File already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)'; skipping"
             )
-        case .some(let message):
+        } catch {
+            let message = error.localizedDescription
             #log(
                 Self.logger, .warning,
                 "Failed to remove the file behind '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)': \(message, privacy: .public)"

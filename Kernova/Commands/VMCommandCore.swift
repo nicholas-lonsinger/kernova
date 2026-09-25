@@ -22,7 +22,6 @@ final class VMCommandCore: VMCommanding {
     let library: VMLibrary
     let lifecycle: VMLifecycleCoordinator
     let storageService: any VMStorageProviding
-    let snapshotStore: any VMSnapshotStoring
     let diskImageService: any DiskImageProviding
     let fileSystem: any FileSystemOperating
     let preferences: AppPreferences
@@ -161,7 +160,6 @@ final class VMCommandCore: VMCommanding {
         library: VMLibrary,
         lifecycle: VMLifecycleCoordinator,
         storageService: any VMStorageProviding,
-        snapshotStore: any VMSnapshotStoring,
         diskImageService: any DiskImageProviding,
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
@@ -170,7 +168,6 @@ final class VMCommandCore: VMCommanding {
         self.library = library
         self.lifecycle = lifecycle
         self.storageService = storageService
-        self.snapshotStore = snapshotStore
         self.diskImageService = diskImageService
         self.fileSystem = fileSystem
         self.preferences = preferences

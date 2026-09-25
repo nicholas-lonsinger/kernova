@@ -8,15 +8,20 @@ import Virtualization
 struct ConfigurationBuilderTests {
     // MARK: - Helpers
 
-    /// Creates a temp directory with a dummy disk image.
+    /// Creates a temp directory with a dummy disk image, holding the EFI
+    /// variable store a bring-up creates before an EFI build unless
+    /// `withEFIVariableStore` is off.
     ///
     /// Caller must `defer` removal of the returned URL.
-    private func makeTempBundle(withDisk: Bool = false) throws -> URL {
+    private func makeTempBundle(withDisk: Bool = false, withEFIVariableStore: Bool = true) throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         if withDisk {
             try Data().write(to: VMBundleLayout(bundleURL: tempDir).diskImageURL)
+        }
+        if withEFIVariableStore {
+            try VMBundleMachineFiles(fileSystem: MockFileSystem()).ensureEFIVariableStore(bundleURL: tempDir)
         }
         return tempDir
     }
@@ -43,6 +48,8 @@ struct ConfigurationBuilderTests {
             .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
             .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
             Issue.record("Unexpected path validation error: \(error)")
+        case .efiVariableStoreMissing:
+            Issue.record("The fixture bundle holds no EFI variable store")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
             .storageDiskAttachFailed, .removableMediaAttachFailed,
             .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled:
@@ -89,6 +96,29 @@ struct ConfigurationBuilderTests {
             else { return false }
             return true
         }
+    }
+
+    @Test("An EFI build over a bundle with no variable store fails naming it, and ensuring the store fixes it")
+    func efiBootWithoutVariableStore() throws {
+        let bundleURL = try makeTempBundle(withDisk: true, withEFIVariableStore: false)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let builder = makeBuilder()
+        let storeURL = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
+
+        #expect {
+            try builder.assemble(from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError, case .efiVariableStoreMissing = e
+            else { return false }
+            return true
+        }
+        // The builder only reads the bundle.
+        #expect(!FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
+
+        try VMBundleMachineFiles(fileSystem: MockFileSystem()).ensureEFIVariableStore(bundleURL: bundleURL)
+
+        #expect(FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
+        _ = try builder.assemble(from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
     }
 
     @Test("Builder throws for kernel boot without kernel path")

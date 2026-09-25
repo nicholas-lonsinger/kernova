@@ -20,8 +20,35 @@ extension VMLibrary {
     /// still in flight can never name a path this run is about to use.
     func startLibrary() async {
         storageService.reclaimStagedBundles()
+        await reclaimRestoreStaging()
         await loadVMs()
         startDirectoryWatcher()
+    }
+
+    /// Removes the restore staging directory an interrupted revert left in any
+    /// listed bundle.
+    ///
+    /// Finished before the load, so no VM of this run exists yet and no revert
+    /// of its own can be staging there. A bundle that arrives later keeps what
+    /// it holds until its next revert, whose staging discards it first.
+    private func reclaimRestoreStaging() async {
+        let storage = storageService
+        let bundleFactory = bundleFactory
+        await Task.detached(priority: .userInitiated) {
+            let bundles: [URL]
+            do {
+                bundles = try storage.listVMBundles()
+            } catch {
+                // The load that follows lists the directory again and reports
+                // it to the user.
+                #log(
+                    Self.logger, .warning,
+                    "Could not list the VM bundles to reclaim revert staging: \(error.localizedDescription, privacy: .public)"
+                )
+                return
+            }
+            bundleFactory.reclaimRestoreStaging(in: bundles)
+        }.value
     }
 
     // MARK: - Initial Phase
@@ -51,7 +78,6 @@ extension VMLibrary {
     /// Pairings are the exception ``VMBundleFiles/read()`` states.
     struct BundleReader: Sendable {
         let storage: any VMStorageProviding
-        let snapshots: any VMSnapshotStoring
 
         func files(at bundleURL: URL) -> VMBundleFiles {
             VMBundleFiles(url: bundleURL, access: storage.bundleFiles)
@@ -66,22 +92,17 @@ extension VMLibrary {
                     for: read.configuration, layout: VMBundleLayout(bundleURL: bundleURL)))
         }
 
-        /// Reads the bundle's state files, reclaiming the staging directory an
-        /// interrupted revert left there.
+        /// Reads the bundle's state files, and nothing else in it.
         ///
         /// Blocks on the filesystem, so it runs where the other bundle reads
-        /// do. A bundle handed here has no VM yet, or is being re-read at a
-        /// path its VM does not hold, so a revert staging directory found
-        /// belongs to no running revert.
+        /// do.
         func read(at bundleURL: URL) throws -> VMBundleRead {
-            let read = try files(at: bundleURL).read()
-            snapshots.sweepRestoreStaging(bundleURL: bundleURL)
-            return read
+            try files(at: bundleURL).read()
         }
     }
 
     var bundleReader: BundleReader {
-        BundleReader(storage: storageService, snapshots: snapshotStore)
+        BundleReader(storage: storageService)
     }
 
     /// The order bundles are adopted in, so which of two bundles holding one

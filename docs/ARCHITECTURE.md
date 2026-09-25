@@ -45,7 +45,10 @@ the facade and present its refusals in their own idiom:
 values and is the one reader and writer of those files, through
 `VMBundleFiles` over the `VMBundleFileAccessing` seam
 (`CoordinatedBundleFileAccess` in production); `VMLibrary` owns the policy a
-configuration write passes on its way there. `VMInstance` is the `@MainActor`
+configuration write passes on its way there. `VMBundle` is also the one writer
+of the bundle's machine files, through the `VMBundleMachineFileWorking` seam
+(`VMBundleMachineFiles` in production) that only `VMBundle.Factory` holds.
+`VMInstance` is the `@MainActor`
 runtime owner of one VM: it reads its state off its `VMBundle`, and its
 `VMActivity` holds the lifecycle phase and at most one `VMSessionContext`,
 whose `VMSession` actor alone touches the `VZVirtualMachine`. `VMLibrary`

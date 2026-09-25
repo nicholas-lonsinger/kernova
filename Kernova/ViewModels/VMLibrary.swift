@@ -29,7 +29,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     // MARK: - Services
 
     let storageService: any VMStorageProviding
-    let snapshotStore: any VMSnapshotStoring
+    /// What every VM's bundle is built by.
+    let bundleFactory: VMBundle.Factory
     let lifecycle: VMLifecycleCoordinator
 
     /// Where each VM's answer for the account it owes its guest is held — the
@@ -206,7 +207,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
     init(
         storageService: any VMStorageProviding,
-        snapshotStore: any VMSnapshotStoring,
+        bundleFactory: VMBundle.Factory,
         lifecycle: VMLifecycleCoordinator,
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
@@ -216,7 +217,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             InMemoryGuestAccountPasswordStore()
     ) {
         self.storageService = storageService
-        self.snapshotStore = snapshotStore
+        self.bundleFactory = bundleFactory
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.preferences = preferences
@@ -316,7 +317,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
                 Self.logger, .notice,
                 "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
             )
-            instance.rebind(to: VMBundle(scanned.read))
+            instance.rebind(to: bundleFactory.make(scanned.read))
             reportUnreadablePairings(of: scanned.read)
             return .rebound(instance)
         }
@@ -350,7 +351,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Builds the instance for a bundle read from disk, wired to this library.
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
-            bundle: VMBundle(scanned.read), phase: scanned.phase, preferences: preferences)
+            bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences)
         wireHooks(for: instance)
         reportUnreadablePairings(of: scanned.read)
         return instance

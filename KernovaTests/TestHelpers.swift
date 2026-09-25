@@ -75,7 +75,7 @@ func makeTestLifecycle(
 func makeWiredLibrary(
     holding instances: [VMInstance] = [],
     storage: MockVMStorageService = MockVMStorageService(),
-    snapshotStore: (any VMSnapshotStoring)? = nil,
+    machineFiles: (any VMBundleMachineFileWorking)? = nil,
     lifecycle: VMLifecycleCoordinator? = nil,
     fileSystem: MockFileSystem = MockFileSystem(),
     preferences: AppPreferences = makeTestPreferences(),
@@ -85,7 +85,8 @@ func makeWiredLibrary(
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
-        snapshotStore: snapshotStore ?? MockVMSnapshotStore(files: storage.files),
+        bundleFactory: VMBundle.Factory(
+            machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files)),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,

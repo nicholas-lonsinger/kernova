@@ -271,7 +271,9 @@ extension VMCommandCore {
             originalDisks, clonedDisks
         )
         .compactMap { original, cloned in
-            guard cloned.isInternal, cloned.path.hasPrefix("AdditionalDisks/") else { return nil }
+            guard cloned.isInternal,
+                cloned.path.hasPrefix(VMBundleLayout.additionalDisksRelativePath + "/")
+            else { return nil }
             return (sourceID: original.id, clonedDisk: cloned)
         }
 
@@ -351,7 +353,7 @@ extension VMCommandCore {
                     uniqueKeysWithValues: diskMapping.map { mapping in
                         (
                             mapping.clonedDisk.id,
-                            "AdditionalDisks/\(mapping.clonedDisk.id.uuidString).asif"
+                            VMBundleLayout.additionalDiskRelativePath(id: mapping.clonedDisk.id)
                         )
                     }
                 )

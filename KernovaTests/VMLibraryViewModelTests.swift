@@ -2074,7 +2074,7 @@ struct VMLibraryViewModelTests {
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        try Data().write(to: instance.saveFileURL)
+        try Data().write(to: instance.bundle.saveFileURL)
         viewModel.library.admitForTesting(instance)
 
         await viewModel.start(instance)
@@ -2307,7 +2307,7 @@ struct VMLibraryViewModelTests {
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
-            atPath: instance.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         let failure = StartFailedAttachment(
@@ -4366,7 +4366,7 @@ struct VMLibraryViewModelTests {
             at: suspended.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: suspended.bundleURL) }
         FileManager.default.createFile(
-            atPath: suspended.saveFileURL.path(percentEncoded: false),
+            atPath: suspended.bundle.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
         let following = makeAutoStartInstance(name: "Following")
         viewModel.library.admitForTesting([suspended, following])
@@ -4631,7 +4631,9 @@ struct VMLibraryViewModelTests {
         let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
         let existing = VMInstance(
-            bundle: VMBundle(VMInstanceFixture.read(bundleURL, from: storage.files)), phase: .stopped,
+            bundle: viewModel.library.bundleFactory.make(
+                VMInstanceFixture.read(bundleURL, from: storage.files)),
+            phase: .stopped,
             preferences: makeTestPreferences())
         viewModel.library.admitForTesting(existing)
 

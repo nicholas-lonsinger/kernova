@@ -47,6 +47,16 @@ struct VMBundleTests {
         try body(url)
     }
 
+    /// Records what a machine-file operation trashes, so nothing reaches the
+    /// user's own Trash.
+    private let fileSystem = MockFileSystem()
+
+    /// A bundle over `read` whose machine files go through the real file work,
+    /// trashing through ``fileSystem``.
+    private func makeBundle(_ read: VMBundleRead) -> VMBundle {
+        VMBundle.Factory(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem)).make(read)
+    }
+
     /// The bundle's files through `access`, the production access by default.
     private func files(
         _ url: URL, _ access: any VMBundleFileAccessing = CoordinatedBundleFileAccess()
@@ -63,7 +73,7 @@ struct VMBundleTests {
     /// a library — the only writer of a configuration.
     private func makeVM(at url: URL, access: any VMBundleFileAccessing) throws -> (VMLibrary, VMInstance) {
         let instance = VMInstance(
-            bundle: VMBundle(try files(url, access).read()), phase: .stopped,
+            bundle: makeBundle(try files(url, access).read()), phase: .stopped,
             preferences: makeTestPreferences())
         let library = makeWiredLibrary()
         library.wireHooks(for: instance)
@@ -176,7 +186,7 @@ struct VMBundleTests {
     @Test("A sidecar absent at load and present before a write keeps what it holds")
     func aSidecarCopiedInAfterLoadSurvivesAWrite() throws {
         try withBundle { url in
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
             // The copy that was still arriving when the bundle was read.
             try Data(#"{"startsAutomaticallyOnLaunch":true}"#.utf8).write(
                 to: VMBundleLayout(bundleURL: url).hostStateURL)
@@ -211,7 +221,7 @@ struct VMBundleTests {
             let pairingsURL = VMBundleLayout(bundleURL: url).usbPairingsURL
             let corrupt = Data("{ not json".utf8)
             try corrupt.write(to: pairingsURL)
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
 
             #expect(throws: UnreadableBundleFile.self) {
                 try bundle.commitUSBPairings { $0.upsert(pairing("new")) }
@@ -243,7 +253,7 @@ struct VMBundleTests {
     func aNoOpWriteReplacesNothing() throws {
         try withBundle { url in
             let access = ReplaceFailingBundleFileAccess()
-            let bundle = VMBundle(try files(url, access).read())
+            let bundle = makeBundle(try files(url, access).read())
 
             try bundle.commitHostState { $0.displayPreference = .inline }
             try bundle.commitSnapshotManifest { $0.remove(id: UUID()) }
@@ -259,7 +269,7 @@ struct VMBundleTests {
     @Test("A committed value is what the file holds, down to the second a date keeps")
     func aCommittedValueIsWhatTheFileHolds() throws {
         try withBundle { url in
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
             let taken = VMSnapshot(
                 name: "Now", createdAt: Date(timeIntervalSince1970: 1_700_000_000.75), macAddress: nil)
 
@@ -352,7 +362,7 @@ struct VMBundleTests {
                 lastFullscreenDisplayID: 0xDEAD_BEEF, agentInstallNudgeDismissed: true)
             written.applyEphemeralMode(
                 enabled: true, baseline: UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF"))
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
 
             try bundle.commitHostState { $0 = written }
 
@@ -375,7 +385,7 @@ struct VMBundleTests {
         try withBundle { url in
             let configURL = VMBundleLayout(bundleURL: url).configURL
             let configBefore = try Data(contentsOf: configURL)
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
 
             try bundle.commitHostState { $0.startsAutomaticallyOnLaunch = true }
 
@@ -386,7 +396,7 @@ struct VMBundleTests {
     @Test("Committed pairings read back as themselves")
     func pairingsRoundTrip() throws {
         try withBundle { url in
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
             let written = USBAccessoryPairingSet(pairings: [
                 pairing("04e8:6300:0100:0373"),
                 USBAccessoryPairing(
@@ -430,7 +440,7 @@ struct VMBundleTests {
     @Test("A committed manifest reads back as itself")
     func manifestRoundTrips() throws {
         try withBundle { url in
-            let bundle = VMBundle(try onDisk(url))
+            let bundle = makeBundle(try onDisk(url))
             let taken = VMSnapshot(
                 name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                 notes: "tools configured", macAddress: nil)
@@ -452,7 +462,7 @@ struct VMBundleTests {
                 name: "Captured", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                 macAddress: "aa:bb:cc:dd:ee:09")
             let unrecorded = snapshot("No settings")
-            _ = try VMSnapshotStore().prepareSnapshot(
+            _ = try VMBundleMachineFiles(fileSystem: MockFileSystem()).prepareSnapshot(
                 bundleURL: url, snapshotID: captured.id, configuration: configuration)
             try files(url).update(.snapshotManifest) {
                 $0 = VMSnapshotManifest(snapshots: [captured, unrecorded])
@@ -467,5 +477,167 @@ struct VMBundleTests {
             let manifestData = try Data(contentsOf: VMBundleLayout(bundleURL: url).snapshotManifestURL)
             #expect(!String(decoding: manifestData, as: UTF8.self).contains("macAddress"))
         }
+    }
+
+    // MARK: - Machine files
+
+    /// A bundle over a real directory holding `config.json` and a main disk;
+    /// the caller removes ``VMBundle/url`` when done.
+    private func makeOnDiskBundle() throws -> VMBundle {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-bundle-\(UUID().uuidString).kernova", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess()).writeInitial(
+            VMConfiguration(name: "Machine VM", guestOS: .linux, bootMode: .efi))
+        try Data("live-disk".utf8).write(to: VMBundleLayout(bundleURL: url).diskImageURL)
+        return makeBundle(try onDisk(url))
+    }
+
+    private func text(at url: URL) -> String? {
+        (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    private func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    }
+
+    @Test("A capture prepares the snapshot's directory, copies the disks, and counts toward its size")
+    func captureWritesTheSnapshotDirectory() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let snapshot = VMSnapshot(name: "Captured", macAddress: nil)
+        let layout = VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: snapshot.id)
+
+        let plan = try await bundle.prepareSnapshot(snapshot.id, configuration: bundle.configuration)
+        try await bundle.captureDisks(intoSnapshot: snapshot.id, relativePaths: plan.relativePaths)
+        try bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
+        let sizes = await bundle.snapshotSizes()
+
+        #expect(plan.saveFileURL == layout.saveFileURL)
+        #expect(plan.relativePaths == ["Disk.asif"])
+        #expect(exists(layout.configURL))
+        #expect(text(at: layout.diskImageURL) == "live-disk")
+        #expect((sizes[snapshot.id] ?? 0) > 0)
+    }
+
+    @Test("A suspended capture clones the suspend slot and leaves it in place")
+    func captureSuspendSlotClonesTheSlot() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let id = UUID()
+        try Data("slot".utf8).write(to: bundle.saveFileURL)
+        _ = try await bundle.prepareSnapshot(id, configuration: bundle.configuration)
+
+        try await bundle.captureSuspendSlot(intoSnapshot: id)
+
+        #expect(text(at: VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: id).saveFileURL) == "slot")
+        #expect(text(at: bundle.saveFileURL) == "slot")
+    }
+
+    @Test("A partial capture's directory is removed outright, and a listed one is trashed")
+    func snapshotDirectoriesAreRemovedOrTrashed() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let layout = VMBundleLayout(bundleURL: bundle.url)
+        let partial = UUID()
+        let listed = UUID()
+        _ = try await bundle.prepareSnapshot(partial, configuration: bundle.configuration)
+        _ = try await bundle.prepareSnapshot(listed, configuration: bundle.configuration)
+
+        await bundle.removeSnapshotDirectory(partial)
+        try await bundle.discardSnapshot(listed)
+
+        #expect(!exists(layout.snapshotDirectoryURL(id: partial)))
+        #expect(fileSystem.trashedURLs == [layout.snapshotDirectoryURL(id: listed)])
+    }
+
+    @Test("A restore plans, stages and installs a snapshot's disks, leaving no staging behind")
+    func restoreWritesTheSnapshotBack() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let layout = VMBundleLayout(bundleURL: bundle.url)
+        let id = UUID()
+        let captured = try await bundle.prepareSnapshot(id, configuration: bundle.configuration)
+        try await bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
+        try Data("written-since".utf8).write(to: layout.diskImageURL)
+
+        let plan = try await bundle.planRestore(fromSnapshot: id, kind: .cold)
+        try await bundle.stageRestore(fromSnapshot: id, plan: plan)
+        #expect(text(at: layout.diskImageURL) == "written-since")
+        try await bundle.installRestore(plan)
+
+        #expect(text(at: layout.diskImageURL) == "live-disk")
+        #expect(!exists(layout.restoreStagingURL))
+    }
+
+    @Test("Discarding the restore staging removes what a revert staged")
+    func discardRestoreStagingRemovesIt() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let layout = VMBundleLayout(bundleURL: bundle.url)
+        let id = UUID()
+        let captured = try await bundle.prepareSnapshot(id, configuration: bundle.configuration)
+        try await bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
+        try await bundle.stageRestore(
+            fromSnapshot: id, plan: try await bundle.planRestore(fromSnapshot: id, kind: .cold))
+        #expect(exists(layout.restoreStagingURL))
+
+        await bundle.discardRestoreStaging()
+
+        #expect(!exists(layout.restoreStagingURL))
+        #expect(text(at: layout.diskImageURL) == "live-disk")
+    }
+
+    @Test("Removing the suspend slot deletes it, and a bundle holding none stays without one")
+    func removeSaveFileDeletesTheSlot() throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        try Data("slot".utf8).write(to: bundle.saveFileURL)
+
+        bundle.removeSaveFile()
+        #expect(!exists(bundle.saveFileURL))
+
+        bundle.removeSaveFile()
+        #expect(!exists(bundle.saveFileURL))
+    }
+
+    @Test("Ensuring the EFI variable store creates it in the bundle")
+    func ensureEFIVariableStoreCreatesIt() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let storeURL = VMBundleLayout(bundleURL: bundle.url).efiVariableStoreURL
+        #expect(!exists(storeURL))
+
+        try await bundle.ensureEFIVariableStore()
+
+        #expect(exists(storeURL))
+    }
+
+    @Test("Platform files for a hardware model that does not decode are refused")
+    func macPlatformFilesRefuseAnUndecodableModel() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+        await #expect(throws: ConfigurationBuilderError.self) {
+            _ = try await bundle.createMacPlatformFiles(hardwareModel: Data("not a model".utf8))
+        }
+
+        #expect(!exists(VMBundleLayout(bundleURL: bundle.url).machineIdentifierURL))
+    }
+
+    @Test("An in-bundle disk is written inside the bundle, and trashed from there")
+    func internalDisksAreWrittenAndTrashedInBundle() async throws {
+        let bundle = try makeOnDiskBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let diskImages = MockDiskImageService()
+        let id = UUID()
+
+        let relativePath = try await bundle.createInternalDisk(
+            id: id, sizeInGB: 16, using: diskImages)
+        try await bundle.trashInternalDisk(atRelativePath: relativePath)
+
+        let diskURL = VMBundleLayout(bundleURL: bundle.url).additionalDiskURL(id: id)
+        #expect(diskImages.lastCreatedDiskImageURL == diskURL)
+        #expect(fileSystem.trashedURLs == [diskURL])
     }
 }

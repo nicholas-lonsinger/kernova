@@ -14,17 +14,17 @@ struct VMLibraryViewModelSnapshotTests {
         let viewModel: VMLibraryViewModel
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
-        let snapshots: MockVMSnapshotStore
+        let snapshots: MockVMBundleMachineFiles
     }
 
     private func makeHarness() -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
@@ -44,7 +44,7 @@ struct VMLibraryViewModelSnapshotTests {
         let viewModel: VMLibraryViewModel
         let storage: MockVMStorageService
         let virtualization: SuspendingMockVirtualizationService
-        let snapshots: MockVMSnapshotStore
+        let snapshots: MockVMBundleMachineFiles
     }
 
     /// A harness whose virtualization service holds the revert suspended until
@@ -53,11 +53,11 @@ struct VMLibraryViewModelSnapshotTests {
     private func makeSuspendingHarness() -> SuspendingHarness {
         let virtualization = SuspendingMockVirtualizationService()
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
@@ -81,7 +81,8 @@ struct VMLibraryViewModelSnapshotTests {
         name: String = "Snapshot VM", _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
-            name: name, phase: phase, preferences: preferences, files: files, mutate: mutate)
+            name: name, phase: phase, preferences: preferences, files: files,
+            bundleFactory: viewModel.library.bundleFactory, mutate: mutate)
         viewModel.library.admitForTesting(instance)
         return instance
     }
@@ -121,15 +122,17 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.viewModel.instances.first?.snapshotManifest.currentID == snapshot.id)
     }
 
-    @Test("Loading a VM reclaims the staging directory an interrupted revert left behind")
-    func loadSweepsRevertStaging() async throws {
+    @Test("Launch reclaims the staging directory an interrupted revert left, and a load alone does not")
+    func launchSweepsRevertStaging() async throws {
         let harness = makeHarness()
         let config = VMConfiguration(name: "Interrupted", guestOS: .linux, bootMode: .efi)
         let bundleURL = try harness.storage.bundleURL(for: config)
         harness.storage.bundles[bundleURL] = config
 
         await harness.viewModel.loadVMs()
+        #expect(harness.snapshots.sweptStagingBundleURLs.isEmpty)
 
+        await harness.viewModel.startLibrary()
         // Otherwise the reclaim waits on the next revert of this same VM, which
         // may never come — and its clones own their blocks outright once the
         // snapshot they were cloned from is discarded.
@@ -182,7 +185,7 @@ struct VMLibraryViewModelSnapshotTests {
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
-            atPath: instance.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         await harness.viewModel.takeSnapshot(instance, name: "Suspended").value
@@ -230,8 +233,7 @@ struct VMLibraryViewModelSnapshotTests {
 
         await #expect(throws: VirtualizationError.self) {
             _ = try await harness.virtualization.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold),
-                store: harness.snapshots)
+                instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold))
         }
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)

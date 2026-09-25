@@ -22,14 +22,14 @@ struct VMCommandCoreConfigurationTests {
 
     private func makeHarness() -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMBundleMachineFiles()
         let fileSystem = MockFileSystem()
         let lifecycle = makeTestLifecycle(
             virtualization: MockVirtualizationService(),
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
@@ -37,7 +37,6 @@ struct VMCommandCoreConfigurationTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences

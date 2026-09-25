@@ -33,7 +33,7 @@ final class VMInstance: VMActivityOwner {
 
     let instanceID: UUID
 
-    /// The bundle this VM's state files are committed through.
+    /// The bundle this VM's state and machine files are written through.
     ///
     /// Replaced only by ``rebind(to:)``, when the bundle has moved.
     private(set) var bundle: VMBundle
@@ -351,10 +351,7 @@ final class VMInstance: VMActivityOwner {
     }
 
     var diskImageURL: URL { bundleLayout.diskImageURL }
-    var auxiliaryStorageURL: URL { bundleLayout.auxiliaryStorageURL }
-    var hardwareModelURL: URL { bundleLayout.hardwareModelURL }
     var machineIdentifierURL: URL { bundleLayout.machineIdentifierURL }
-    var saveFileURL: URL { bundleLayout.saveFileURL }
     var serialLogURL: URL { bundleLayout.serialLogURL }
 
     /// `true` while `savedStateReadsAsDiscarded` is standing in for the file —
@@ -906,8 +903,8 @@ final class VMInstance: VMActivityOwner {
     /// The two are one call because a suspension whose slot is gone is a dead
     /// end — Resume has nothing to load and the settings stay locked behind a
     /// file that is not there. A restore *consuming* the slot on its way to
-    /// running calls ``removeSaveFile()`` instead, and leaves the phase to the
-    /// bring-up.
+    /// running calls ``VMBundle/removeSaveFile()`` instead, and leaves the
+    /// phase to the bring-up.
     ///
     /// Refuses a VM that is not at rest, rather than deleting a slot a
     /// bring-up already in flight is reading: a caller that means to end a
@@ -927,7 +924,7 @@ final class VMInstance: VMActivityOwner {
             assertionFailure("discardSavedState() on a VM that is not at rest")
             return !hasSaveFile
         }
-        removeSaveFile()
+        bundle.removeSaveFile()
         enter(restingPhase(withoutSlot: .stopped))
         return !hasSaveFile
     }
@@ -949,24 +946,7 @@ final class VMInstance: VMActivityOwner {
     /// one that may be half a session.
     func dropTruncatedSaveFile() {
         guard case .saving = phase else { return }
-        removeSaveFile()
-    }
-
-    /// Removes the persisted save file from the bundle, if it exists.
-    func removeSaveFile() {
-        do {
-            try FileManager.default.removeItem(at: saveFileURL)
-        } catch let error as NSError
-            where error.domain == NSCocoaErrorDomain
-            && error.code == NSFileNoSuchFileError
-        {
-            // File already absent — expected in some flows
-        } catch {
-            #log(
-                Self.logger, .warning,
-                "Failed to remove save file for '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
+        bundle.removeSaveFile()
     }
 
     // MARK: - Serial Console I/O

@@ -29,13 +29,14 @@ struct VMSnapshotRestorePlan: Sendable {
     let kind: VMSnapshotKind
 }
 
-/// The `Snapshots/` store inside a VM bundle: the captured disk copies, and
-/// their on-disk footprints. The manifest is a bundle state file, which only
-/// ``VMBundle`` reads and writes.
+/// The file work behind ``VMBundle``'s machine files, which a
+/// ``VMBundle/Factory`` holds for the bundles it builds.
 ///
-/// Every method blocks on the filesystem, so callers run them off the main
-/// actor.
-protocol VMSnapshotStoring: Sendable {
+/// Every method blocks on the filesystem, so ``VMBundle`` calls them off the
+/// main actor.
+protocol VMBundleMachineFileWorking: Sendable {
+    // MARK: Snapshots
+
     /// Creates the snapshot's directory and writes the configuration the
     /// capture is taken under, ready for a saved state to be written beside it.
     func prepareSnapshot(
@@ -99,4 +100,36 @@ protocol VMSnapshotStoring: Sendable {
     /// side changes, so a snapshot's figure counts blocks the VM — and every
     /// other snapshot cloned from the same disk — also counts.
     func onDiskBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64]
+
+    // MARK: Suspend slot
+
+    /// Removes the bundle's suspend slot; a bundle holding none is a success.
+    func removeSaveFile(bundleURL: URL) throws
+
+    // MARK: Firmware and platform
+
+    /// Creates the bundle's EFI variable store unless it already holds one.
+    func ensureEFIVariableStore(bundleURL: URL) throws
+
+    /// Writes the macOS platform files an install boots from, answering the
+    /// machine identifier the bundle now holds.
+    ///
+    /// `HardwareModel` and `MachineIdentifier` are written only when absent, so
+    /// the guest keeps one identity across install retries; `AuxiliaryStorage`
+    /// is always created afresh for `hardwareModel`, since it carries the
+    /// firmware state a fresh install run must match.
+    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data
+
+    // MARK: In-bundle disks
+
+    /// Writes a new disk image of `sizeInGB` at the in-bundle path `id` names,
+    /// answering that path relative to the bundle.
+    ///
+    /// A write that fails removes whatever it left there.
+    func createInternalDisk(
+        bundleURL: URL, id: UUID, sizeInGB: Int, diskImages: any DiskImageProviding
+    ) async throws -> String
+
+    /// Moves the in-bundle disk at `relativePath` to the Trash.
+    func trashInternalDisk(bundleURL: URL, relativePath: String) throws
 }

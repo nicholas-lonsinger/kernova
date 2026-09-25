@@ -39,7 +39,7 @@ struct VMCommandEnvelopeRouterTests {
         let library: VMLibrary
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
-        let snapshots: MockVMSnapshotStore
+        let snapshots: MockVMBundleMachineFiles
     }
 
     /// A transport over anything that speaks the facade.
@@ -53,7 +53,7 @@ struct VMCommandEnvelopeRouterTests {
         clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMBundleMachineFiles()
         let fileSystem = MockFileSystem()
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization,
@@ -61,7 +61,7 @@ struct VMCommandEnvelopeRouterTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
@@ -69,7 +69,6 @@ struct VMCommandEnvelopeRouterTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences,
@@ -480,7 +479,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("The cancelGuestSetup gate clears before the chained auto-boot, not after it")
     func cancelGuestSetupGateClosesBeforeAutoBoot() async throws {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMBundleMachineFiles()
         let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
         let lifecycle = makeTestLifecycle(
@@ -488,13 +487,13 @@ struct VMCommandEnvelopeRouterTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
-            snapshotStore: snapshots, diskImageService: MockDiskImageService(),
+            diskImageService: MockDiskImageService(),
             fileSystem: fileSystem, preferences: preferences)
         let transport = makeTransport(over: core)
 

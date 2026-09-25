@@ -161,7 +161,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         let snapshot = VMSnapshotRecord(name: "Snap", kind: .warm)
         _ = try await coordinator.takeSnapshot(
-            instance, snapshot: snapshot, store: MockVMSnapshotStore())
+            instance, snapshot: snapshot)
 
         // The handle it went off under names nothing now; it goes back on under
         // the one macOS assigned it after the reset.
@@ -184,8 +184,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-                store: MockVMSnapshotStore())
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }()
         // Event-driven both ways: the assignment lands only once the put-back
         // is actually parked on it.
@@ -210,8 +209,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.answersMissingAccessoryImmediately = true
 
         _ = try await coordinator.takeSnapshot(
-            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-            store: MockVMSnapshotStore())
+            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
 
         // The snapshot the user asked for is written; the hardware is simply
         // where a surprise unplug would have left it.
@@ -231,8 +229,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         _ = try await coordinator.takeSnapshot(
-            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-            store: MockVMSnapshotStore())
+            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
 
         #expect(service.awaitedIdentities.isEmpty)
         #expect(service.attachedRegistryIDs == [9])
@@ -256,8 +253,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-                store: MockVMSnapshotStore())
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }()
         // Both waits parked at once is the thing under test: a put-back that
         // waited one at a time could never have two, and the second one's
@@ -289,8 +285,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-                store: MockVMSnapshotStore())
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }()
         try await service.waitStarted.wait { service.parkedWaitCount > 0 }
         instance.tearDownSession(restingAt: .stopped)
@@ -322,8 +317,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-                store: MockVMSnapshotStore())
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }
 
         // The snapshot is gone and the guest is still running, so the user's
@@ -354,8 +348,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-                store: MockVMSnapshotStore())
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }
 
         // Only the one the sweep ejected is waited for and put back; the one it
@@ -381,8 +374,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm),
-                store: MockVMSnapshotStore())
+                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }()
         await service.attachStarted()
         // The guest goes away while VZ is capturing the device for the put-back.
