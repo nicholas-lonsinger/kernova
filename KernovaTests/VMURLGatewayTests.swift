@@ -12,7 +12,7 @@ import Testing
 struct VMURLGatewayTests {
     /// What the gateway did, in the order it did it.
     private enum Step: Equatable {
-        case activated
+        case prepared
         case summoned
         case presented(CommandError)
     }
@@ -49,6 +49,7 @@ struct VMURLGatewayTests {
     }
 
     /// Records everything the gateway asked of the app, in order.
+    @MainActor
     private final class Trace {
         private(set) var steps: [Step] = []
 
@@ -72,7 +73,7 @@ struct VMURLGatewayTests {
         VMURLGateway(
             commands: commands,
             readiness: LibraryReadiness(awaitReady: awaitReady),
-            activate: { trace.record(.activated) },
+            prepareToSurface: { trace.record(.prepared) },
             summonLibrary: { trace.record(.summoned) },
             present: { trace.record(.presented($0)) })
     }
@@ -105,7 +106,7 @@ struct VMURLGatewayTests {
         #expect(trace.presented.isEmpty)
     }
 
-    @Test("A link that runs brings the app forward and summons nothing")
+    @Test("A link that runs readies the app to surface and summons nothing")
     func aLinkThatRunsSummonsNothing() async throws {
         let commands = MockVMCommanding()
         let trace = Trace()
@@ -113,10 +114,11 @@ struct VMURLGatewayTests {
 
         // The verb opens exactly the surface the link asked for; a library
         // window behind it is one nobody asked for.
-        #expect(trace.steps == [.activated])
+        #expect(trace.steps == [.prepared])
     }
 
-    @Test("A verb refusal summons the library, in front, before it is shown")
+    /// Readied once, for the alert: the refused verb itself surfaced nothing.
+    @Test("A verb refusal readies the app once and summons the library before it is shown")
     func aVerbRefusalSummonsTheLibraryBeforePresenting() async throws {
         let commands = MockVMCommanding()
         let refusal = CommandError.notFound(.idOrName("Sonoma"))
@@ -124,7 +126,7 @@ struct VMURLGatewayTests {
         let trace = Trace()
         await makeGateway(commands, trace: trace).handle(try url("kernova://open/Sonoma"))
 
-        #expect(trace.steps == [.activated, .summoned, .presented(refusal)])
+        #expect(trace.steps == [.prepared, .summoned, .presented(refusal)])
     }
 
     @Test("The verb waits for the app's first library read")
@@ -196,7 +198,7 @@ struct VMURLGatewayTests {
         #expect(commands.revealSelectors.isEmpty)
         #expect(
             trace.steps == [
-                .activated, .summoned,
+                .prepared, .summoned,
                 .presented(.invalidArgument(VMURLRoute.Refusal.unknownRoute("start").message)),
             ])
     }
@@ -210,7 +212,7 @@ struct VMURLGatewayTests {
         #expect(commands.openSelectors.isEmpty)
         #expect(
             trace.steps == [
-                .activated, .summoned,
+                .prepared, .summoned,
                 .presented(.invalidArgument(VMURLRoute.Refusal.noVM(route: .open).message)),
             ])
     }

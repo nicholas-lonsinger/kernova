@@ -203,41 +203,6 @@ struct VMCommandEnvelopeTests {
         #expect(GuestAgentDiskEdit.allCases == [.mount, .unmount])
     }
 
-    @Test("Only the verbs that put something on screen ask the app forward")
-    func surfacingVerbsAreNamedExhaustively() {
-        // The whole vocabulary, so a new verb has to answer the question rather
-        // than inherit a `false` nobody looked at.
-        #expect(Set(VMVerb.allCases.filter(\.surfacesInterface)) == [.open, .reveal])
-        let surfacing: [VMCommandRequest.Verb] = [
-            .open(selector),
-            .reveal(selector),
-        ]
-        for verb in surfacing {
-            #expect(verb.surfacesInterface, "\(verb)")
-        }
-        // A quit takes the app down; there is nothing to bring forward first,
-        // and doing so would flash a window on the way out. A Finder reveal
-        // brings the Finder forward, and an import asks for permission only
-        // when it has to, bringing the app forward itself at that point. The
-        // three bring-up verbs put a guest on the CPU, not on the screen.
-        let silent: [VMCommandRequest.Verb] = [
-            .quit,
-            .list,
-            .info(selector),
-            .snapshotOnDiskBytes(selector),
-            .sharedDirectories(selector),
-            .showInFinder(selector),
-            .importVM(path: "/Users/somebody/Downloads/Alpha.kernova"),
-            .awaitPreparing(selector),
-            .start(selector, recovery: false),
-            .resume(selector),
-            .restart(selector, timeout: nil),
-        ]
-        for verb in silent {
-            #expect(!verb.surfacesInterface, "\(verb)")
-        }
-    }
-
     @Test("Every response result round-trips")
     func everyResponseRoundTrips() throws {
         let results: [VMCommandResponse.Result] = [
@@ -284,6 +249,7 @@ struct VMCommandEnvelopeTests {
             .refused(.authorizationRefused(reason: "not this team")),
             .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
             .refused(.undecodableRequest("the bytes are not JSON")),
+            .activate,
         ]
         for result in results {
             let response = VMCommandResponse(result: result)

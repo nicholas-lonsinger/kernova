@@ -29,9 +29,10 @@ final class VMScriptingGateway {
     private let commands: any VMCommanding
     /// The app's first library read, shared with every other front door.
     private let readiness: LibraryReadiness
-    /// Brings the app forward for a surface something outside the process asked
-    /// for.
-    private let activate: @MainActor () -> Void
+    /// Readies the app to put up a surface something outside the process asked
+    /// for, without activating it: a script that wants Kernova in front says
+    /// `activate`.
+    private let prepareToSurface: @MainActor @Sendable () -> Void
 
     /// Cocoa's own commands suspended on a read that arrived before the library
     /// landed, each answered once it has.
@@ -51,11 +52,11 @@ final class VMScriptingGateway {
 
     init(
         commands: any VMCommanding, readiness: LibraryReadiness,
-        activate: @escaping @MainActor () -> Void
+        prepareToSurface: @escaping @MainActor @Sendable () -> Void
     ) {
         self.commands = commands
         self.readiness = readiness
-        self.activate = activate
+        self.prepareToSurface = prepareToSurface
     }
 
     // MARK: - Reads
@@ -289,27 +290,28 @@ final class VMScriptingGateway {
     /// Runs `verb` on each VM once the library read has landed, logging and
     /// rethrowing the first refusal.
     ///
-    /// A verb that puts something on screen (``VMVerb/surfacesInterface``)
-    /// brings the app forward first, so the window it puts up opens in front of
-    /// the person who ran the script rather than behind Script Editor. A refusal
-    /// stops the run where it happened: an event addressing several VMs carries
-    /// back one error, and finishing the rest would leave a script unable to
-    /// tell how far the verb got.
+    /// The verbs run under an ``ActivationRequester`` that only readies the
+    /// app, so a verb that surfaces readies it at that moment — a window put up
+    /// from a hidden, headless app is on screen — and a refused one leaves it
+    /// as it was. A refusal stops the run where it happened: an event
+    /// addressing several VMs carries back one error, and finishing the rest
+    /// would leave a script unable to tell how far the verb got.
     private func perform(
         _ verb: VMVerb, on selectors: [VMSelector],
         _ body: (VMSelector) async throws -> Void
     ) async throws {
         await readiness.ready()
-        if verb.surfacesInterface, !selectors.isEmpty { activate() }
-        for selector in selectors {
-            do {
-                try await body(selector)
-            } catch let failure as CommandError {
-                #log(
-                    Self.logger, .notice,
-                    "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message, privacy: .public)"
-                )
-                throw failure
+        try await ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
+            for selector in selectors {
+                do {
+                    try await body(selector)
+                } catch let failure as CommandError {
+                    #log(
+                        Self.logger, .notice,
+                        "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message, privacy: .public)"
+                    )
+                    throw failure
+                }
             }
         }
     }

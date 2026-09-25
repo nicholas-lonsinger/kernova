@@ -474,6 +474,46 @@ struct VMCommandCoreTests {
         instance.preparingState = nil
     }
 
+    /// What a surfacing verb did, in order, under an installed requester.
+    @MainActor
+    private final class SurfaceSteps {
+        var steps: [String] = []
+    }
+
+    @Test("open and reveal ask the request's requester once, just before they surface")
+    func surfacingVerbsAskTheRequesterBeforeSurfacing() throws {
+        let harness = makeHarness()
+        let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
+        let stopped = makeInstance(in: harness, name: "Stopped")
+        let trace = SurfaceSteps()
+        harness.core.surfaceDisplay = { trace.steps.append("display \($0.name)") }
+        harness.core.revealInLibrary = { trace.steps.append("library \($0.name)") }
+        let requester = ActivationRequester { trace.steps.append("activate") }
+
+        try ActivationRequester.$current.withValue(requester) {
+            try harness.core.open(.id(running.id))
+            try harness.core.reveal(.id(stopped.id))
+        }
+
+        #expect(
+            trace.steps == ["activate", "display Running", "activate", "library Stopped"])
+    }
+
+    @Test("A refused open or reveal asks the requester nothing")
+    func refusedSurfacingVerbsAskNothing() {
+        let harness = makeHarness()
+        let stopped = makeInstance(in: harness, name: "Stopped")
+        let trace = SurfaceSteps()
+        let requester = ActivationRequester { trace.steps.append("activate") }
+
+        ActivationRequester.$current.withValue(requester) {
+            #expect(commandError { try harness.core.open(.id(stopped.id)) } != nil)
+            #expect(commandError { try harness.core.reveal(.name("Ghost")) } != nil)
+        }
+
+        #expect(trace.steps.isEmpty)
+    }
+
     @Test("reveal refuses a selector no VM answers to, as open does")
     func revealRefusesAnUnknownSelector() throws {
         let harness = makeHarness()

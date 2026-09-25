@@ -101,6 +101,9 @@ final class MockVMCommanding: VMCommanding {
     var externalAttachmentsToReturn: [ExternalAttachment] = []
     /// What `sharingVMNames(_:path:bookmark:)` answers with.
     var sharingVMNamesToReturn: [String] = []
+    /// Consulted by `importVM(atPath:)` for the grant, as the core consults its
+    /// own; unset, the named path is read as given.
+    var sourceAuthority: (any SandboxSourceAuthorizing)?
 
     // MARK: - Recorded calls
 
@@ -434,14 +437,18 @@ final class MockVMCommanding: VMCommanding {
         if let restartError { throw restartError }
     }
 
+    /// Asks the request's requester once it would surface, as the core does.
     func open(_ selector: VMSelector) throws {
         openSelectors.append(selector)
         if let openError { throw openError }
+        ActivationRequester.requestActivation()
     }
 
+    /// Asks the request's requester once it would surface, as the core does.
     func reveal(_ selector: VMSelector) throws {
         revealSelectors.append(selector)
         if let revealError { throw revealError }
+        ActivationRequester.requestActivation()
     }
 
     func showInFinder(_ selector: VMSelector) throws {
@@ -537,7 +544,9 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func importVM(atPath path: String) async throws -> VMSummary {
-        try importVM(from: URL(fileURLWithPath: path))
+        let named = URL(fileURLWithPath: path)
+        guard let sourceAuthority else { return try importVM(from: named) }
+        return try importVM(from: try await sourceAuthority.readableURL(for: named, as: .vmBundle))
     }
 
     func importVM(from url: URL) throws -> VMSummary {

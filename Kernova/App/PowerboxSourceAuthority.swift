@@ -18,13 +18,15 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "PowerboxSourceAuthority")
 
-    /// Brings the app forward, for the panel that is about to go up: a request
-    /// arriving from a terminal has no window of its own, and a panel ordered in
-    /// behind the app that asked for it has asked nobody anything.
-    private let activate: () -> Void
+    /// Puts the panel up and answers how the user dismissed it.
+    private let present: @MainActor (NSOpenPanel) async -> NSApplication.ModalResponse
 
-    init(activate: @escaping () -> Void) {
-        self.activate = activate
+    init(
+        present: @escaping @MainActor (NSOpenPanel) async -> NSApplication.ModalResponse = {
+            await $0.begin()
+        }
+    ) {
+        self.present = present
     }
 
     func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL {
@@ -34,7 +36,9 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         #log(
             Self.logger, .notice,
             "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
-        activate()
+        // A request arriving from a terminal has no window of its own, and a
+        // panel ordered in behind the app that asked has asked nobody anything.
+        ActivationRequester.requestActivation()
 
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
@@ -58,7 +62,7 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
 
         let dismissal = PanelDismissal(panel)
         let response = await withTaskCancellationHandler {
-            await panel.begin()
+            await present(panel)
         } onCancel: {
             // The caller is gone, and a panel nobody is waiting on is a
             // question left on the Mac's screen that no answer reaches.

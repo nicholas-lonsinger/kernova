@@ -68,11 +68,11 @@ struct VMScriptingGatewayTests {
     private func makeGateway(
         _ commands: MockVMCommanding,
         awaitReady: @escaping @Sendable () async -> Void = {},
-        activate: @escaping @MainActor () -> Void = {}
+        prepareToSurface: @escaping @MainActor @Sendable () -> Void = {}
     ) -> VMScriptingGateway {
         VMScriptingGateway(
             commands: commands, readiness: LibraryReadiness(awaitReady: awaitReady),
-            activate: activate)
+            prepareToSurface: prepareToSurface)
     }
 
     /// Cocoa's own `get`, as the command a property read is answered for.
@@ -418,26 +418,31 @@ struct VMScriptingGatewayTests {
         #expect(container.evaluationErrorNumber == 0)
     }
 
-    // MARK: - Activation
+    // MARK: - Preparation
 
-    @Test("A verb that puts a window up brings the app forward first")
-    func surfacingVerbsActivate() async throws {
+    /// A tally a preparation closure writes and the test reads.
+    @MainActor
+    private final class Tally {
+        var count = 0
+    }
+
+    @Test("A verb that puts a window up readies the app")
+    func surfacingVerbsPrepare() async throws {
         let commands = MockVMCommanding()
-        var activations = 0
-        let gateway = makeGateway(commands, activate: { activations += 1 })
+        let preparations = Tally()
+        let gateway = makeGateway(commands, prepareToSurface: { preparations.count += 1 })
 
         try await gateway.reveal([.name("Alpha")])
 
-        #expect(activations == 1)
+        #expect(preparations.count == 1)
     }
 
-    /// Bringing a guest up is not a request to look at it, so a scripted start
-    /// leaves the script's own app in front.
-    @Test("A verb that puts nothing up leaves the app where it is, as does one addressing no VM")
-    func nonSurfacingVerbsDoNotActivate() async throws {
+    /// Bringing a guest up is not a request to look at it.
+    @Test("A verb that puts nothing up readies nothing, as does one addressing no VM")
+    func nonSurfacingVerbsDoNotPrepare() async throws {
         let commands = MockVMCommanding()
-        var activations = 0
-        let gateway = makeGateway(commands, activate: { activations += 1 })
+        let preparations = Tally()
+        let gateway = makeGateway(commands, prepareToSurface: { preparations.count += 1 })
         let alpha = VMSelector.name("Alpha")
 
         try await gateway.start([alpha], recoveryMode: false)
@@ -448,21 +453,21 @@ struct VMScriptingGatewayTests {
         try await gateway.suspend([alpha])
         try await gateway.reveal([])
 
-        #expect(activations == 0)
+        #expect(preparations.count == 0)
     }
 
-    @Test("The app comes forward before the verb, so a refused verb has already activated")
-    func activationPrecedesTheVerb() async throws {
+    @Test("A refused verb readies nothing")
+    func refusedVerbDoesNotPrepare() async throws {
         let commands = MockVMCommanding()
         commands.revealError = CommandError.notFound(.name("Alpha"))
-        var activations = 0
-        let gateway = makeGateway(commands, activate: { activations += 1 })
+        let preparations = Tally()
+        let gateway = makeGateway(commands, prepareToSurface: { preparations.count += 1 })
 
         await #expect(throws: CommandError.self) {
             try await gateway.reveal([.name("Alpha")])
         }
 
-        #expect(activations == 1)
+        #expect(preparations.count == 0)
     }
 
     // MARK: - Readiness

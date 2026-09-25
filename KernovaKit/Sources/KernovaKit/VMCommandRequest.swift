@@ -106,10 +106,6 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// running and paused VMs on the way out.
         case quit
 
-        /// Whether answering this request puts something on screen — see
-        /// ``VMVerb/surfacesInterface``.
-        public var surfacesInterface: Bool { verb.surfacesInterface }
-
         /// Which verb this is, for a transport mapping onto its own naming.
         public var verb: VMVerb {
             switch self {

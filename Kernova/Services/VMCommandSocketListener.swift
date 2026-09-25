@@ -29,7 +29,7 @@ final class VMCommandSocketListener {
     private let authorizer: (any PeerAuthorizing)?
     private let copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>
     private let awaitReady: @MainActor @Sendable () async -> Void
-    private let onSurfaceRequested: @MainActor @Sendable () -> Void
+    private let prepareToSurface: @MainActor @Sendable () -> Void
     private let queue = DispatchQueue(label: "app.kernova.command-socket")
 
     private var listener: UnixSocketListener?
@@ -55,18 +55,21 @@ final class VMCommandSocketListener {
     /// that read lands, so a client that just launched the app finds something
     /// to connect to, which means a verb answered eagerly would report an empty
     /// library as the truth. Every request waits on it.
+    ///
+    /// `prepareToSurface` readies the app to put a window on screen without
+    /// activating it; the client that asked is the one that activates it.
     init(
         router: VMCommandEnvelopeRouter,
         authorizer: (any PeerAuthorizing)?,
         copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
-        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void
+        prepareToSurface: @MainActor @Sendable @escaping () -> Void
     ) {
         self.router = router
         self.authorizer = authorizer
         self.copyClaim = copyClaim
         self.awaitReady = awaitReady
-        self.onSurfaceRequested = onSurfaceRequested
+        self.prepareToSurface = prepareToSurface
     }
 
     /// Binds the socket and begins accepting same-team clients.
@@ -105,12 +108,12 @@ final class VMCommandSocketListener {
             path: socketPath, queue: queue, backlog: 8, fileMode: Self.socketFileMode)
         let router = self.router
         let awaitReady = self.awaitReady
-        let onSurfaceRequested = self.onSurfaceRequested
+        let prepareToSurface = self.prepareToSurface
         do {
             try listener.start { [weak self] fd in
                 Self.admit(
                     fd, authorizer: authorizer, router: router, awaitReady: awaitReady,
-                    onSurfaceRequested: onSurfaceRequested, queue: self?.queue
+                    prepareToSurface: prepareToSurface, queue: self?.queue
                 ) {
                     connection in
                     Task { @MainActor [weak self] in
@@ -182,7 +185,7 @@ final class VMCommandSocketListener {
         authorizer: any PeerAuthorizing,
         router: VMCommandEnvelopeRouter,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
-        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void,
+        prepareToSurface: @MainActor @Sendable @escaping () -> Void,
         queue: DispatchQueue?,
         adopt: (VMCommandConnection) -> Void
     ) {
@@ -201,7 +204,7 @@ final class VMCommandSocketListener {
         adopt(
             VMCommandConnection(
                 fd: fd, queue: queue, router: router, awaitReady: awaitReady,
-                onSurfaceRequested: onSurfaceRequested))
+                prepareToSurface: prepareToSurface))
     }
 
     /// Writes one refusal frame, best-effort, and closes the descriptor.
@@ -261,7 +264,7 @@ final class VMCommandConnection: @unchecked Sendable {
     private let queue: DispatchQueue
     private let router: VMCommandEnvelopeRouter
     private let awaitReady: @MainActor @Sendable () async -> Void
-    private let onSurfaceRequested: @MainActor @Sendable () -> Void
+    private let prepareToSurface: @MainActor @Sendable () -> Void
 
     private var decoder = StreamFrameDecoder()
     private var readSource: DispatchSourceRead?
@@ -289,13 +292,13 @@ final class VMCommandConnection: @unchecked Sendable {
         queue: DispatchQueue,
         router: VMCommandEnvelopeRouter,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
-        onSurfaceRequested: @MainActor @Sendable @escaping () -> Void
+        prepareToSurface: @MainActor @Sendable @escaping () -> Void
     ) {
         self.fd = fd
         self.queue = queue
         self.router = router
         self.awaitReady = awaitReady
-        self.onSurfaceRequested = onSurfaceRequested
+        self.prepareToSurface = prepareToSurface
     }
 
     /// Begins reading, and arms the silent-client deadline.
@@ -432,17 +435,33 @@ final class VMCommandConnection: @unchecked Sendable {
                         })
                 }
             } else {
-                let onSurfaceRequested = self.onSurfaceRequested
+                let requester = activationRequester()
                 track { [self] in
                     // The library read has to have landed: a verb run against a
                     // library that has not is not refused, it is answered wrong.
                     await awaitReady()
-                    // Before the verb, so the window it surfaces opens in front
-                    // of the person who asked rather than behind their terminal.
-                    if request.verb.surfacesInterface { onSurfaceRequested() }
-                    send(router.encode(await router.respond(to: request)))
+                    let response = await ActivationRequester.$current.withValue(requester) {
+                        await router.respond(to: request)
+                    }
+                    send(router.encode(response))
                 }
             }
+        }
+    }
+
+    /// Readies the app to surface, then asks this connection's client to
+    /// activate it by pid — the one process that can, and the one copy of the
+    /// app it asked.
+    ///
+    /// The ``VMCommandResponse/Result/activate`` frame is queued ahead of the
+    /// answer to the request it serves, so the client acts on it before it
+    /// reads that answer.
+    private func activationRequester() -> ActivationRequester {
+        let prepareToSurface = self.prepareToSurface
+        let router = self.router
+        return ActivationRequester { [self] in
+            prepareToSurface()
+            send(router.encode(VMCommandResponse(result: .activate)))
         }
     }
 

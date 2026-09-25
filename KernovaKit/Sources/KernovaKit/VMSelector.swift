@@ -151,29 +151,6 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
             false
         }
     }
-
-    /// Whether performing this verb puts something on screen.
-    ///
-    /// A door outside the app brings the app forward before it does — a window
-    /// ordered front behind the terminal, script or link that asked for it has
-    /// not answered anybody. Only the two verbs whose whole purpose is to show
-    /// something qualify: bringing a guest up is not a request to look at it,
-    /// and `open` is the verb that asks for that.
-    public var surfacesInterface: Bool {
-        switch self {
-        case .open, .reveal:
-            true
-        case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
-            .usbAccessories, .availableUSBAccessories, .usbPairings,
-            .forgetUSBPairing, .events, .start, .cancelGuestSetup, .stop, .pause, .resume,
-            .suspend, .restart, .showInFinder, .takeSnapshot, .revertToSnapshot, .deleteSnapshot,
-            .renameSnapshot, .setSnapshotNotes, .create, .clone, .rename, .delete, .importVM,
-            .cancelPreparing, .awaitPreparing, .editStorageDisk, .editRemovableMedia,
-            .editSharedDirectory, .editUSBAccessory, .configurationKeys,
-            .configuration, .setConfiguration, .guestAgentDisk, .quit:
-            false
-        }
-    }
 }
 
 /// How a stop should reach a powered-off guest.
