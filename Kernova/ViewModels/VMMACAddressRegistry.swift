@@ -99,7 +99,7 @@ final class VMMACAddressRegistry {
         // VM already running can form the collision this way, and only a
         // configuration not already in one is refused — a VM that reached a
         // collision by some other route has to stay editable to leave it.
-        guard instance.isActive || instance.isLivePaused,
+        guard instance.holdsLiveIdentity,
             !Self.claimSameNetwork(old, new),
             let live = liveMACAddressConflict(for: new, excluding: instance),
             liveMACAddressConflict(for: old, excluding: instance) == nil
@@ -213,8 +213,7 @@ final class VMMACAddressRegistry {
     /// The first live VM sharing `config`'s MAC address on the network `config`
     /// joins, if any.
     ///
-    /// Live means VZ holds the attachment, as it does for the machine identity.
-    /// The mode names the network, so two holders collide only where both
+    /// Live is ``VMInstance/holdsLiveIdentity``. The mode names the network, so two holders collide only where both
     /// guests attach: networking off puts no address on a wire, and Shared,
     /// Host Only and Bridged are separate networks. Two bridged VMs compare as
     /// one network whatever interface each names — Automatic resolves at start,
@@ -225,7 +224,7 @@ final class VMMACAddressRegistry {
     ) -> VMInstance? {
         guard config.networkEnabled, let mac = config.macAddress else { return nil }
         return configurationHolders(of: mac, otherThan: instance).first { other in
-            (other.isActive || other.isLivePaused)
+            other.holdsLiveIdentity
                 && other.configuration.networkEnabled
                 && other.configuration.networkMode == config.networkMode
         }

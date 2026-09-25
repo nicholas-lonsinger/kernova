@@ -14,8 +14,8 @@ extension VMCommandCore {
     /// The start every surface reaches, with the instance already resolved.
     func start(_ instance: VMInstance, recovery: Bool = false) async throws {
         try require(.start, on: instance)
-        // Both phases a bring-up stands in: a boot with a save file leaves
-        // `.starting` for `.restoringSavedState` before its first await.
+        // Both phases a start's bring-up stands in: a boot with a save file
+        // enters `.restoringSavedState` rather than `.starting`.
         switch instance.phase {
         case .starting, .restoringSavedState:
             guard !recovery else {
@@ -33,11 +33,6 @@ extension VMCommandCore {
             throw CommandError.unsupported(capability: "starting in macOS Recovery")
         }
 
-        // Ahead of the setup dispatch: guest setup builds and runs a
-        // `VZVirtualMachine` carrying the configured machine identity and MAC
-        // address, so a conflicting one must be refused before it reaches the
-        // installer, not only on the auto-boot that follows.
-        try refuseDuplicateIdentity(instance)
         // Before the setup dispatch, so an install nobody answered for is
         // turned back rather than running and chaining a boot that is.
         let provisioning = try guestProvisioning(for: instance, recovery: recovery)
@@ -111,34 +106,6 @@ extension VMCommandCore {
                 "Joined bring-up of '\(instance.name, privacy: .public)' did not leave it running: \(message, privacy: .public)"
             )
             throw CommandError.operationFailed(verb: verb, message: message)
-        }
-    }
-
-    // MARK: - Duplicate Identity
-
-    /// Refuses an operation that would put a second guest on an identity
-    /// another live VM already claims.
-    private func refuseDuplicateIdentity(_ instance: VMInstance) throws {
-        if preferences.blockDuplicateMachineIDBoot,
-            let conflict = liveMachineIDConflict(for: instance)
-        {
-            #log(
-                Self.logger, .notice,
-                "Refused to run '\(instance.name, privacy: .public)': shares a machine ID with active VM '\(conflict.name, privacy: .public)'"
-            )
-            throw CommandError.conflict(
-                vm: summary(instance), with: summary(conflict), reason: .machineIdentity)
-        }
-        if let conflict = library.macAddresses.liveMACAddressConflict(
-            for: instance.configuration, excluding: instance),
-            let mac = instance.configuration.macAddress
-        {
-            #log(
-                Self.logger, .notice,
-                "Refused to run '\(instance.name, privacy: .public)': shares the MAC address \(mac, privacy: .public) with active VM '\(conflict.name, privacy: .public)'"
-            )
-            throw CommandError.conflict(
-                vm: summary(instance), with: summary(conflict), reason: .macAddress)
         }
     }
 
@@ -279,39 +246,6 @@ extension VMCommandCore {
             + "setting up the account."
     }
 
-    /// The first VM holding a live machine identity matching `instance`'s.
-    ///
-    /// Live means VZ holds the identity: any active status, or paused with the
-    /// virtual machine still in memory. A cold-paused VM has released it, and
-    /// blocking its twin on a saved state that claims nothing would be wrong.
-    private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
-        library.instances.first { other in
-            other !== instance
-                && (other.isActive || other.isLivePaused)
-                && Self.sharesMachineIdentifier(instance, other)
-        }
-    }
-
-    /// Whether two VMs would claim the same machine identity.
-    ///
-    /// macOS identifiers compare the *effective* value, which falls back to the
-    /// bundle's identifier file exactly as the boot path does; generic
-    /// identifiers have no such file, so they compare configuration fields.
-    private static func sharesMachineIdentifier(_ a: VMInstance, _ b: VMInstance) -> Bool {
-        if let lhs = a.effectiveMachineIdentifierData, let rhs = b.effectiveMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        if let lhs = a.configuration.genericMachineIdentifierData,
-            let rhs = b.configuration.genericMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        return false
-    }
-
     // MARK: - Boot Geometry
 
     /// Resizes a cold-booting VM's display to the surface it is about to appear
@@ -366,6 +300,9 @@ extension VMCommandCore {
     private func bringUpFailure(
         _ error: Error, verb: VMVerb, on instance: VMInstance
     ) -> CommandError {
+        // A refusal, not a failure: the VM never left where it was, and the
+        // refusal logged itself where it was raised.
+        if error is VMIdentityConflict { return failure(error, verb: verb, on: instance) }
         #log(
             Self.logger, .error,
             "Failed to \(verb.rawValue, privacy: .public) '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -534,8 +471,7 @@ extension VMCommandCore {
                         on: instance)
                 } else {
                     self.reportUnattendedFailure(
-                        .operationFailed(verb: .start, message: error.localizedDescription),
-                        on: instance)
+                        self.failure(error, verb: .start, on: instance), on: instance)
                 }
                 return
             }
@@ -889,14 +825,6 @@ extension VMCommandCore {
             return try await joinBringUp(instance, verb: .resume) {
                 bringUpFailure($0, verb: .resume, on: instance)
             }
-        }
-
-        // A cold resume builds a fresh VZVirtualMachine from the save file, so it
-        // claims the machine identity — and puts its MAC address back on a
-        // network — just as a cold boot does. A hot resume's live object already
-        // holds both, and refusing would be refusing a VM its own identity.
-        if instance.holdsSuspendedSession {
-            try refuseDuplicateIdentity(instance)
         }
 
         readyDisplay?(instance)

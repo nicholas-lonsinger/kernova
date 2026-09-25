@@ -48,6 +48,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// The uniqueness of each VM's MAC address across the library.
     @ObservationIgnored let macAddresses: VMMACAddressRegistry
 
+    /// Which identity another live VM already claims, for the refusal every
+    /// bring-up passes.
+    @ObservationIgnored let liveIdentities: VMLiveIdentities
+
     /// The address each running VM's guest is seen using on its network.
     @ObservationIgnored let guestAddresses: GuestAddressObserver
 
@@ -204,7 +208,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             canObserve: entitlements.supportsGuestAddressObservation,
             isVMNetworkingEntitled: entitlements.hasVMNetworking)
         self.guestAddresses = guestAddresses
-        self.macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
+        let macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
+        self.macAddresses = macAddresses
+        self.liveIdentities = VMLiveIdentities(macAddresses: macAddresses, preferences: preferences)
 
         // Assigned after every stored property is set: each closure — and the
         // roster — references the library, which cannot be named before then.
@@ -215,6 +221,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             self?.presentError(error)
         }
         macAddresses.roster = self
+        liveIdentities.roster = self
         macAddresses.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
         }
@@ -838,6 +845,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         instance.onUpdateSettings = { [weak self, weak instance] unsaved, mutate in
             guard let self, let instance else { return .refused(.noLibrary) }
             return self.updateSettings(of: instance, ifNotSaved: unsaved, mutate: mutate)
+        }
+        instance.liveIdentityConflict = { [weak self, weak instance] in
+            guard let self, let instance else { return nil }
+            return self.liveIdentities.conflict(for: instance)
         }
         // Auto-eject the installer disk once the agent handshakes a current version.
         // Wired here so it fires regardless of which window is open.

@@ -394,12 +394,18 @@ final class VMCommandCore: VMCommanding {
 
     /// Maps an error a lifecycle call threw into the command vocabulary.
     ///
-    /// The serialization rejection is the one that carries meaning of its own:
-    /// it says the VM already has an operation, which is exactly ``busy``.
+    /// Two carry meaning of their own: the serialization rejection says the VM
+    /// already has an operation, which is exactly ``busy``, and a bring-up
+    /// refused over another live VM's identity is a ``conflict``.
     func failure(_ error: Error, verb: VMVerb, on instance: VMInstance) -> CommandError {
         if case VMLifecycleCoordinator.LifecycleError.operationInProgress = error {
             return .busy(
                 vm: summary(instance), operation: instance.status.displayName.lowercased())
+        }
+        if let conflict = error as? VMIdentityConflict {
+            return .conflict(
+                vm: summary(instance), with: summary(conflict.other),
+                reason: conflict.reason.conflictReason)
         }
         return .operationFailed(verb: verb, message: error.localizedDescription)
     }

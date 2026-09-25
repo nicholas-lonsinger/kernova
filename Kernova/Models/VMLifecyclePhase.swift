@@ -203,6 +203,24 @@ enum VMLifecyclePhase: Sendable, Equatable {
         return false
     }
 
+    /// Whether the VM counts as holding its machine identity and MAC address
+    /// against another VM's bring-up and a live network-mode switch.
+    ///
+    /// Every phase with a `VZVirtualMachine` in memory or a bring-up that will
+    /// create one, and also ``capturingAtRest`` and ``revertingToSnapshot``,
+    /// which hold no VM. ``suspended`` and the other at-rest phases hold
+    /// nothing: a saved state claims no identity until it is restored.
+    /// Exhaustive rather than `default`, so a new phase has to choose a side.
+    var holdsLiveIdentity: Bool {
+        switch self {
+        case .running, .livePaused, .starting, .installing, .saving, .capturingLive,
+            .capturingAtRest, .restoringSavedState, .revertingToSnapshot:
+            true
+        case .suspended, .stopped, .failed, .initialBoot:
+            false
+        }
+    }
+
     // MARK: - Command Predicates
 
     /// Whether the VM is settled with no `VZVirtualMachine` in memory and no
@@ -271,6 +289,28 @@ enum VMLifecyclePhase: Sendable, Equatable {
             true
         case .starting, .installing, .stopped, .failed, .initialBoot:
             false
+        }
+    }
+}
+
+/// A phase a VM leaves rest into to bring a guest up — the only phases
+/// ``VMInstance/attachSession(from:)`` promotes to name a session, so the only
+/// ones that can put a machine identity and a MAC address in front of VZ.
+///
+/// Entered only through ``VMInstance/beginBringUp(_:)``, which refuses one
+/// another live VM's identity already claims.
+enum VMBringUpPhase: Sendable, Equatable {
+    case starting
+    case restoringSavedState
+    case installing
+
+    /// The sessionless lifecycle phase this bring-up stands in until its
+    /// `VZVirtualMachine` exists.
+    var lifecyclePhase: VMLifecyclePhase {
+        switch self {
+        case .starting: .starting(sessionID: nil)
+        case .restoringSavedState: .restoringSavedState(sessionID: nil)
+        case .installing: .installing(sessionID: nil)
         }
     }
 }

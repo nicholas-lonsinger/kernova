@@ -165,4 +165,41 @@ struct VMSleepWakeCoordinatorTests {
         #expect(virtService.resumeCallCount == 0)
         #expect(coordinator.sleepPausedInstanceIDs.isEmpty)
     }
+
+    @Test("A wake-time cold resume onto an identity another live VM holds is refused")
+    func wakeColdResumeOntoALiveIdentityIsRefused() async throws {
+        let virtService = MockVirtualizationService()
+        let lifecycle = makeTestLifecycle(virtualization: virtService, fileSystem: fileSystem)
+        let mac = "aa:bb:cc:dd:ee:30"
+        let sleeper = VMInstanceFixture.make(name: "Sleeper") {
+            $0.networkEnabled = true
+            $0.macAddress = mac
+        }
+        sleeper.enter(.running(sessionID: UUID()))
+        let twin = VMInstanceFixture.make(name: "Twin") {
+            $0.networkEnabled = true
+            $0.macAddress = mac
+        }
+        let library = makeWiredLibrary(holding: [sleeper, twin], lifecycle: lifecycle)
+        let coordinator = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
+        coordinator.onFailure = { [failures] error in
+            failures.record(title: "Error", message: error.localizedDescription)
+        }
+        defer { VMInstanceFixture.removeBundle(of: sleeper) }
+
+        await coordinator.pauseAllForSleep()
+        // Between sleep and wake the paused VM came to rest on its suspend slot,
+        // releasing its address, and its twin came up on it.
+        try VMInstanceFixture.writeSaveFile(for: sleeper)
+        sleeper.tearDownSession(restingAt: .suspended)
+        twin.enter(.running(sessionID: UUID()))
+
+        await coordinator.resumeAllAfterWake()
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(sleeper.phase == .suspended)
+        #expect(sleeper.hasSaveFile)
+        #expect(twin.status == .running)
+        #expect(failures.errorMessage?.contains("Sleeper") == true)
+    }
 }

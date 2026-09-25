@@ -88,9 +88,13 @@ protocol VirtualizationProviding: Sendable {
     /// keeping the snapshot itself.
     ///
     /// The VM lands in the state the snapshot captured: paused on a warm
-    /// snapshot's memory image, stopped on a cold snapshot's disks. `adopt`
-    /// receives the plan once the store has written it to the bundle, and
-    /// before anything reads the VM's configuration to bring it back up.
+    /// snapshot's memory image, stopped on a cold snapshot's disks — and a VM
+    /// that was live when reverted onto a warm snapshot is resumed into it, a
+    /// failure there arriving as
+    /// ``VirtualizationError/revertResumeFailed(underlying:)`` with the files
+    /// already written. `adopt` receives the plan once the store has written it
+    /// to the bundle, and before anything reads the VM's configuration to bring
+    /// it back up.
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
         adopt: @MainActor (VMSnapshotRestorePlan) -> Void
