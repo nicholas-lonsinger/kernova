@@ -198,12 +198,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             view.window?.makeFirstResponder(nil)
         }
         macAddressRow?.isHidden = hidden
-        // A field with an open editor is mid-edit: any refresh — a status change
-        // started from the toolbar, say — would otherwise discard the keystrokes
-        // typed so far.
-        if macAddressField.currentEditor() == nil {
-            macAddressField.stringValue = instance.configuration.macAddress ?? ""
-        }
+        macAddressField.showUnlessEditing(instance.configuration.macAddress ?? "")
     }
 
     /// While the pane is read-only, whether the Mode picker stays live as the
@@ -411,15 +406,11 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// address refused because another VM holds it or the VM's state pins it,
     /// both snap the field back. The tooltip names the accepted spelling; the
     /// refusal carries its own alert.
-    ///
-    /// The field is written directly rather than through
-    /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
-    /// refresh defers to is the very one being reconciled away.
     private func applyMACAddressFieldEdit() {
         if let normalized = GuestMACAddress.normalized(macAddressField.stringValue) {
             write(VMConfigurationKeyRegistry.networkMAC.assigning(normalized))
         }
-        macAddressField.stringValue = instance.configuration.macAddress ?? ""
+        macAddressField.showEndedEdit(instance.configuration.macAddress ?? "")
     }
 
     // MARK: - Panel

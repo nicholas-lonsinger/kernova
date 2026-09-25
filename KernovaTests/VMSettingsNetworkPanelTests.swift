@@ -520,6 +520,29 @@ struct VMSettingsNetworkPanelTests {
         #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
     }
 
+    @Test("A refused MAC end-edit puts the model's address back in a field whose editor is still attached")
+    func refusedMACEndEditRevertsAFieldStillBeingEdited() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeViewModel()
+        viewModel.presenter = presenter
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        let editor = try #require(field.currentEditor())
+        editor.string = "aa:bb:cc:dd:ee:01"
+
+        instance.enter(.running(sessionID: UUID()))
+        // The refresh the start makes leaves the typed address to its end-edit.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == "aa:bb:cc:dd:ee:01")
+        commitEdit(field)
+
+        #expect(presenter.errors.count == 1)
+        #expect(field.stringValue == instance.configuration.macAddress)
+    }
+
     private static let duplicateMACBanner =
         "This MAC address is also used by “Holder”. Each virtual machine needs its own."
 

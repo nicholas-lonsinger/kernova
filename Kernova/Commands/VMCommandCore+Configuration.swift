@@ -41,16 +41,17 @@ extension VMCommandCore {
     ///
     /// An assignment that leaves the VM's settings where they are is no edit:
     /// no gate applies to it and nothing is written for it, so `get` output is
-    /// `set` input in any state. A gate that refuses names every key it
+    /// `set` input in any state. A gate that refuses names every assignment it
     /// refused.
     ///
     /// Each file's assignments apply once, to what that file holds rather than
     /// to memory, so a field another process changed since this one last read
-    /// survives. The configuration's refusals are judged on its result, so
-    /// turning clipboard sharing on in the same call as passthrough works
-    /// whichever order they arrive in. A key whose write derives another key's
-    /// value — `network.mode` minting a MAC address — sees the batch in the
-    /// order given.
+    /// survives — and whether an assignment moves a value is judged there too.
+    /// The configuration's refusals are judged on its result, so turning
+    /// clipboard sharing on in the same call as passthrough works whichever
+    /// order they arrive in. A key whose write derives another key's value —
+    /// `network.mode` minting a MAC address — sees the batch in the order
+    /// given.
     @discardableResult
     func setConfiguration(
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
@@ -59,79 +60,120 @@ extension VMCommandCore {
         let context = VMConfigurationWriteContext(instance)
 
         var answered: [VMConfigurationKey] = []
-        var edits: [(key: VMConfigurationKey, value: String)] = []
-        var candidate = instance.settings
+        var configurationWrites: [ConfigurationWrite] = []
+        var hostStateWrites: [HostStateWrite] = []
         for assignment in assignments {
             let key = try requireKey(named: assignment.key, on: instance.configuration)
             answered.append(key)
-            let before = candidate
-            do {
-                try key.apply(assignment.value, to: &candidate, context: context)
-            } catch {
-                // Still an edit: the gate answers it before the write below
-                // refuses the value.
-                edits.append((key, assignment.value))
-                continue
-            }
-            if candidate != before { edits.append((key, assignment.value)) }
-        }
-        try requireGates(for: edits, on: instance)
-        guard !edits.isEmpty else {
-            let held = instance.settings
-            return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(held)) }
-        }
-
-        var configurationWrites: [(field: VMConfigurationKey.ConfigurationField, value: String)] =
-            []
-        var hostStateChanges: [(inout VMHostState) -> Void] = []
-        for edit in edits {
-            switch edit.key.field {
-            case .configuration(let field): configurationWrites.append((field, edit.value))
-            case .hostState(let field): hostStateChanges.append(try field.change(edit.value, context))
+            switch key.field {
+            case .configuration(let field):
+                configurationWrites.append(
+                    ConfigurationWrite(key: key, field: field, value: assignment.value))
+            case .hostState(let field):
+                hostStateWrites.append(HostStateWrite(key: key, field: field, value: assignment.value))
             }
         }
+        // Before either file is touched: host state commits after the
+        // configuration, where nothing may refuse.
+        try requireGates(for: hostStateWrites.map { ($0.key, $0.value) }, on: instance)
+        let hostStateChanges = try hostStateWrites.map { write in
+            HostStateChange(
+                key: write.key, field: write.field, change: try write.field.change(write.value, context))
+        }
 
+        var moved: [VMConfigurationKey] = []
         try requireSaved(
             library.updateSettings(
                 of: instance,
                 configuration: { config in
-                    let held = config
-                    for write in configurationWrites {
-                        try write.field.write(write.value, &config, context)
-                    }
-                    for write in configurationWrites
-                    where write.field.read(config) != write.field.read(held) {
-                        // Only a key this call actually moved is judged: writing
-                        // back what a read answered has to stay a no-op, so `get`
-                        // output is `set` input on a VM whose stored value is
-                        // already inert.
-                        guard let message = write.field.refusalOnResult(config) else { continue }
-                        throw CommandError.invalidArgument(message)
-                    }
-                    try requireClipboardPassthroughConsent(
-                        on: instance, from: held, to: config, confirmed: confirmed)
-                    if let conflict = library.macAddresses.macAddressConflict(
-                        on: instance, movingFrom: held, to: config)
-                    {
-                        throw CommandError.conflict(
-                            vm: summary(instance), with: summary(conflict.other),
-                            reason: conflict.reason)
-                    }
+                    moved = try apply(
+                        configurationWrites, to: &config, on: instance, context: context,
+                        confirmed: confirmed)
                 },
                 hostState: { hostState in
-                    for change in hostStateChanges { change(&hostState) }
+                    for change in hostStateChanges {
+                        let before = change.field.read(hostState)
+                        change.change(&hostState)
+                        if change.field.read(hostState) != before { moved.append(change.key) }
+                    }
                 }),
             of: instance, verb: .setConfiguration)
-        #log(
-            Self.logger, .notice,
-            "Changed \(edits.map(\.key.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
-        )
+        if !moved.isEmpty {
+            #log(
+                Self.logger, .notice,
+                "Changed \(moved.map(\.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
+            )
+        }
         let written = instance.settings
         return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(written)) }
     }
 
-    /// Refuses unless `instance` takes every one of `edits`, naming each key
-    /// its state refused.
+    /// One configuration assignment of a ``setConfiguration(_:assignments:confirmed:)`` batch.
+    private struct ConfigurationWrite {
+        let key: VMConfigurationKey
+        let field: VMConfigurationKey.ConfigurationField
+        let value: String
+    }
+
+    /// One host-state assignment of the same batch.
+    private struct HostStateWrite {
+        let key: VMConfigurationKey
+        let field: VMConfigurationKey.HostStateField
+        let value: String
+    }
+
+    /// A ``HostStateWrite`` parsed into the change it makes.
+    private struct HostStateChange {
+        let key: VMConfigurationKey
+        let field: VMConfigurationKey.HostStateField
+        let change: (inout VMHostState) -> Void
+    }
+
+    /// Lands `writes` on `config` — what `config.json` holds — refusing unless
+    /// `instance` takes every one that moves it, answering the keys that moved.
+    ///
+    /// The gate answers an assignment whose value this key refuses too, so a
+    /// VM whose state pins the key says so rather than naming the value.
+    private func apply(
+        _ writes: [ConfigurationWrite], to config: inout VMConfiguration, on instance: VMInstance,
+        context: VMConfigurationWriteContext, confirmed: Bool
+    ) throws -> [VMConfigurationKey] {
+        let held = config
+        var moved: [(key: VMConfigurationKey, value: String)] = []
+        var valueRefusal: (any Error)?
+        for write in writes {
+            let before = config
+            do {
+                try write.field.write(write.value, &config, context)
+            } catch {
+                valueRefusal = valueRefusal ?? error
+                moved.append((write.key, write.value))
+                continue
+            }
+            if config != before { moved.append((write.key, write.value)) }
+        }
+        try requireGates(for: moved, on: instance)
+        if let valueRefusal { throw valueRefusal }
+        for write in writes where write.field.read(config) != write.field.read(held) {
+            // Only a key this call actually moved is judged: writing back what
+            // a read answered has to stay a no-op, so `get` output is `set`
+            // input on a VM whose stored value is already inert.
+            guard let message = write.field.refusalOnResult(config) else { continue }
+            throw CommandError.invalidArgument(message)
+        }
+        try requireClipboardPassthroughConsent(
+            on: instance, from: held, to: config, confirmed: confirmed)
+        if let conflict = library.macAddresses.macAddressConflict(
+            on: instance, movingFrom: held, to: config)
+        {
+            throw CommandError.conflict(
+                vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
+        }
+        return moved.map(\.key)
+    }
+
+    /// Refuses unless `instance` takes every one of `edits`, naming each
+    /// assignment its state refused.
     private func requireGates(
         for edits: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
     ) throws {
@@ -141,9 +183,13 @@ extension VMCommandCore {
         guard !refused.isEmpty else { return }
         let error = refusal(for: refused.map { $0.key.capability(writing: $0.value) }, on: instance)
         guard case .invalidState(let vm, let current, let allowed, _) = error else { throw error }
-        var names: [String] = []
-        for edit in refused where !names.contains(edit.key.name) { names.append(edit.key.name) }
-        throw CommandError.invalidState(vm: vm, current: current, allowed: allowed, settings: names)
+        var settings: [ConfigurationEntry] = []
+        for edit in refused {
+            let entry = ConfigurationEntry(key: edit.key.name, value: edit.value)
+            if !settings.contains(entry) { settings.append(entry) }
+        }
+        throw CommandError.invalidState(
+            vm: vm, current: current, allowed: allowed, settings: settings)
     }
 
     /// Refuses a change that turns automatic clipboard passthrough on without

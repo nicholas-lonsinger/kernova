@@ -114,11 +114,17 @@ struct VMConfigurationKey: Sendable {
             ConfigurationField(read: read, write: write, refusalOnResult: refusalOnResult))
     }
 
-    /// A key over the VM's host state.
+    /// A key over the VM's host state, which is always ``VMConfigurationKeyGate/live``.
+    ///
+    /// Its gate is asked before either file is touched, whether or not the
+    /// value moves: host state commits after the configuration, where a
+    /// refusal would leave the configuration landed without it. A live gate
+    /// refuses only a VM still being created, cloned or imported, which has no
+    /// bundle to write, so an unmoved assignment passes wherever any write
+    /// could land.
     init(
         name: String,
         summary: String,
-        gate: VMConfigurationKeyGate,
         applies: @escaping @Sendable (VMConfiguration) -> Bool = { _ in true },
         readHostState: @escaping @Sendable (VMHostState) -> String,
         changeHostState:
@@ -127,7 +133,7 @@ struct VMConfigurationKey: Sendable {
     ) {
         self.name = name
         self.summary = summary
-        self.gate = gate
+        self.gate = .live
         self.applies = applies
         field = .hostState(HostStateField(read: readHostState, change: changeHostState))
     }
@@ -344,7 +350,6 @@ enum VMConfigurationKeyRegistry {
     static let displayPreference = VMConfigurationKey(
         name: "display.preference",
         summary: "Where the display opens: inline, popOut or fullscreen.",
-        gate: .live,
         readHostState: { $0.displayPreference.rawValue },
         changeHostState: { value, _ in
             let preference: VMDisplayPreference = try ConfigurationValue.choice(
@@ -462,7 +467,6 @@ enum VMConfigurationKeyRegistry {
     static let autoStart = VMConfigurationKey(
         name: "autoStart",
         summary: "Start the VM each time Kernova opens: true or false.",
-        gate: .live,
         readHostState: { String($0.startsAutomaticallyOnLaunch) },
         changeHostState: { value, _ in
             let enabled = try ConfigurationValue.boolean(value, key: "autoStart")
@@ -472,7 +476,6 @@ enum VMConfigurationKeyRegistry {
     static let ephemeral = VMConfigurationKey(
         name: "ephemeral",
         summary: "Return the VM to its baseline snapshot at every shutdown: true or false.",
-        gate: .live,
         readHostState: { String($0.ephemeralModeEnabled) },
         changeHostState: { value, context in
             let enabled = try ConfigurationValue.boolean(value, key: "ephemeral")
@@ -498,7 +501,6 @@ enum VMConfigurationKeyRegistry {
         summary:
             "The snapshot Ephemeral Mode returns to, by identifier or name; setting one turns "
             + "the mode on.",
-        gate: .live,
         readHostState: { $0.ephemeralBaselineSnapshotID?.uuidString ?? "" },
         changeHostState: { value, context in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -576,7 +578,6 @@ enum VMConfigurationKeyRegistry {
     static let agentInstallReminder = VMConfigurationKey(
         name: "agent.installReminder",
         summary: "Remind in the sidebar while the guest agent has not connected: true or false.",
-        gate: .live,
         applies: { $0.guestOS == .macOS },
         readHostState: { String(!$0.agentInstallNudgeDismissed) },
         changeHostState: { value, _ in

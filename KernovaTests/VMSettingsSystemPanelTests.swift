@@ -474,8 +474,12 @@ struct VMSettingsSystemPanelTests {
     }
 
     /// A stopped, registered macOS VM in a pane open on System that is not
-    /// read-only, with a presenter recording what the refusal shows.
-    private func makeMachineEditController() -> (
+    /// read-only, booting at `resolution` in manual mode, with a presenter
+    /// recording what the refusal shows.
+    private func makeMachineEditController(
+        resolution: DisplayBootSizing.Resolution = DisplayBootSizing.Resolution(
+            width: 1920, height: 1200, ppi: DisplayBootSizing.standardPixelsPerInch)
+    ) -> (
         VMSettingsViewController, VMInstance, MockVMLibraryPresenting, MockVMStorageService
     ) {
         let presenter = MockVMLibraryPresenting()
@@ -490,10 +494,9 @@ struct VMSettingsSystemPanelTests {
             entitlements: .entitled)
         viewModel.presenter = presenter
         let instance = VMInstanceFixture.make(guestOS: .macOS) {
-            $0.displayResolution = DisplayBootSizing.Resolution(
-                width: 1920, height: 1200, ppi: DisplayBootSizing.standardPixelsPerInch)
+            $0.displayResolution = resolution
             $0.displaySizesToWindow = false
-            $0.displayHiDPI = false
+            $0.displayHiDPI = DisplayBootSizing.isHiDPI(ppi: resolution.ppi)
         }
         viewModel.library.register(instance, storage: storage)
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
@@ -636,9 +639,23 @@ struct VMSettingsSystemPanelTests {
         }
     }
 
-    @Test("Ending an unchanged edit after the VM started raises nothing and writes nothing")
-    func endingAnUnchangedEditAfterAStartRaisesNothing() throws {
-        let (vc, instance, presenter, storage) = makeMachineEditController()
+    /// The boot resolutions an unchanged size field has to write back exactly:
+    /// a standard one, and a Retina one whose "looks like" size is odd — the
+    /// half of a window-fitted pixel count a start can leave behind.
+    nonisolated static let unchangedResolutions = [
+        DisplayBootSizing.Resolution(
+            width: 1920, height: 1200, ppi: DisplayBootSizing.standardPixelsPerInch),
+        DisplayBootSizing.Resolution(
+            width: 1602, height: 1202, ppi: DisplayBootSizing.hiDPIPixelsPerInch),
+    ]
+
+    @Test(
+        "Ending an unchanged edit after the VM started raises nothing and writes nothing",
+        arguments: unchangedResolutions)
+    func endingAnUnchangedEditAfterAStartRaisesNothing(
+        _ resolution: DisplayBootSizing.Resolution
+    ) throws {
+        let (vc, instance, presenter, storage) = makeMachineEditController(resolution: resolution)
         let before = instance.configuration
         let onDisk = storage.bundles[instance.bundleURL]
 
@@ -650,6 +667,130 @@ struct VMSettingsSystemPanelTests {
         #expect(presenter.errors.isEmpty)
         #expect(instance.configuration == before)
         #expect(storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    /// Every end-edit field, which a start can catch mid-edit.
+    enum TypedField: String, CaseIterable, Sendable {
+        case cpus = "CPU cores"
+        case memory = "Memory"
+        case width = "Width"
+        case height = "Height"
+
+        /// The key the field writes, which a refusal names.
+        var key: String {
+            switch self {
+            case .cpus: "cpus"
+            case .memory: "memory"
+            case .width: "display.width"
+            case .height: "display.height"
+            }
+        }
+
+        /// A value the VM does not hold, within the field's range.
+        func changedValue(from config: VMConfiguration) -> Int {
+            switch self {
+            case .cpus: config.cpuCount == config.guestOS.minCPUCount ? config.cpuCount + 1 : config.cpuCount - 1
+            case .memory:
+                config.memorySizeInGB == config.guestOS.minMemoryInGB
+                    ? config.memorySizeInGB + 1 : config.memorySizeInGB - 1
+            case .width: config.displayBaseSize.width == 1440 ? 1680 : 1440
+            case .height: config.displayBaseSize.height == 900 ? 1050 : 900
+            }
+        }
+
+        /// What the VM holds for the field.
+        func modelValue(of config: VMConfiguration) -> Int {
+            switch self {
+            case .cpus: config.cpuCount
+            case .memory: config.memorySizeInGB
+            case .width: config.displayBaseSize.width
+            case .height: config.displayBaseSize.height
+            }
+        }
+    }
+
+    @Test(
+        "Text typed before a start survives the refresh the start makes, and its end-edit is refused",
+        arguments: TypedField.allCases)
+    func aTypedEditSurvivesTheStartsRefreshAndIsRefused(_ typed: TypedField) throws {
+        let (vc, instance, presenter, storage) = makeMachineEditController()
+        let before = instance.configuration
+        let onDisk = storage.bundles[instance.bundleURL]
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField(typed.rawValue, in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        let editor = try #require(field.currentEditor())
+        let text = String(typed.changedValue(from: before))
+        editor.string = text
+
+        instance.enter(.running(sessionID: UUID()))
+        // Stands in for the observation pass the status change drives.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == text)
+        commitEdit(field)
+
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains(typed.key) == true)
+        #expect(instance.configuration == before)
+        #expect(storage.bundles[instance.bundleURL] == onDisk)
+        #expect(field.integerValue == typed.modelValue(of: instance.configuration))
+    }
+
+    // MARK: - Resolution caption
+
+    private func resolutionCaption(in vc: VMSettingsViewController) -> String? {
+        allSubviews(NSTextField.self, in: vc.view) { $0.stringValue.hasPrefix("Boots at") }
+            .first?.stringValue
+    }
+
+    private func toggleHiDPI(_ isOn: Bool, in vc: VMSettingsViewController) throws {
+        let hiDPI = try #require(firstSwitch(action: "displayHiDPIToggled", in: vc.view))
+        hiDPI.state = isOn ? .on : .off
+        hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
+    }
+
+    @Test("The resolution caption follows HiDPI off, then on")
+    func resolutionCaptionFollowsHiDPI() throws {
+        let (vc, _) = makeDisplayController(width: 1600, height: 1800, ppi: 220)
+
+        try toggleHiDPI(false, in: vc)
+        #expect(resolutionCaption(in: vc) == "Boots at 800 × 900 pixels.")
+
+        try toggleHiDPI(true, in: vc)
+        #expect(resolutionCaption(in: vc) == "Boots at 1600 × 1800 pixels (looks like 800 × 900).")
+    }
+
+    @Test("In match mode the caption names the HiDPI change the next start applies")
+    func matchModeCaptionNamesThePendingDensity() throws {
+        let (vc, _) = makeDisplayController(
+            sizesToWindow: true, width: 1600, height: 1800, ppi: 220)
+
+        try toggleHiDPI(false, in: vc)
+        #expect(
+            resolutionCaption(in: vc)
+                == "Boots at 1600 × 1800 pixels (looks like 800 × 900), until the next start "
+                + "resizes it to the window without HiDPI.")
+
+        try toggleHiDPI(true, in: vc)
+        #expect(
+            resolutionCaption(in: vc)
+                == "Boots at 1600 × 1800 pixels (looks like 800 × 900), until the next start "
+                + "resizes it to the window.")
+    }
+
+    @Test("The resolution caption follows a HiDPI write made through the verb")
+    func resolutionCaptionFollowsAVerbWrite() async throws {
+        let (vc, instance) = makeDisplayController(width: 1600, height: 1800, ppi: 220)
+        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
+
+        // Not the pane's own write: the caption hears of it only through the
+        // model, as it does a CLI `set`.
+        let outcome = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.displayHiDPI.assigning(false)], on: instance)
+        #expect(outcome == .applied)
+
+        try await waitForChange { resolutionCaption(in: vc) == "Boots at 800 × 900 pixels." }
     }
 
     @Test("A refused end-edit puts the model's value back in a field whose editor is still attached")

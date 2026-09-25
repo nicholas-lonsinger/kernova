@@ -128,17 +128,31 @@ struct DisplayBootSizingTests {
         #expect(DisplayBootSizing.isHiDPI(ppi: DisplayBootSizing.hiDPIPixelsPerInch))
     }
 
-    // MARK: - Explicit clamping
+    // MARK: - A chosen base size
 
-    @Test("clamped honors a lowered ceiling for a size that will be doubled")
-    func clampedHonorsLoweredCeiling() {
-        let base = DisplayBootSizing.clamped(
-            width: 6000, height: 5000, ppi: DisplayBootSizing.standardPixelsPerInch,
-            maximum: DisplayBootSizing.maximumDimension / 2)
+    @Test("A HiDPI base fits half the ceiling, so doubling it lands on the real one")
+    func hiDPIBaseHonorsLoweredCeiling() {
+        let retina = DisplayBootSizing.resolution(base: 6000, height: 5000, hiDPI: true)
 
-        #expect(base.width == DisplayBootSizing.maximumDimension / 2)
-        #expect(base.height == 3412)
-        // Doubling it lands exactly on the real ceiling.
-        #expect(DisplayBootSizing.doubled(base).width == DisplayBootSizing.maximumDimension)
+        #expect(retina.width == DisplayBootSizing.maximumDimension)
+        #expect(retina.height == 6826)
+        #expect(retina.ppi == DisplayBootSizing.hiDPIPixelsPerInch)
+    }
+
+    @Test("An odd HiDPI base keeps its parity, so halving the stored pixels gives it back")
+    func hiDPIBaseKeepsAnOddSize() {
+        let retina = DisplayBootSizing.resolution(base: 801, height: 901, hiDPI: true)
+
+        #expect(retina == DisplayBootSizing.Resolution(width: 1602, height: 1802, ppi: 220))
+    }
+
+    @Test("A standard base rounds down to even pixels")
+    func standardBaseRoundsToEven() {
+        let standard = DisplayBootSizing.resolution(base: 1281, height: 801, hiDPI: false)
+
+        #expect(
+            standard
+                == DisplayBootSizing.Resolution(
+                    width: 1280, height: 800, ppi: DisplayBootSizing.standardPixelsPerInch))
     }
 }

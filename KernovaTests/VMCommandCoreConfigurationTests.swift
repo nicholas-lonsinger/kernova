@@ -186,6 +186,71 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
     }
 
+    @Test("A set of the value memory holds is written when the bundle holds another")
+    func anAssignmentIsJudgedAgainstTheBundle() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let held = instance.configuration.cpuCount
+        // Another Kernova copy changed the count after this one read the bundle.
+        var onDisk = instance.configuration
+        onDisk.cpuCount = held + 1
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [ConfigurationEntry(key: "cpus", value: String(held))],
+            confirmed: false)
+
+        #expect(try value(answered, "cpus") == String(held))
+        #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held)
+        #expect(instance.configuration.cpuCount == held)
+    }
+
+    @Test("A running VM refuses the value memory holds when it would move the bundle's")
+    func aRunningVMRefusesWhatMovesTheBundle() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let held = instance.configuration.cpuCount
+        var onDisk = instance.configuration
+        onDisk.cpuCount = held + 1
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+        let assignment = ConfigurationEntry(key: "cpus", value: String(held))
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Alpha"), assignments: [assignment], confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                return
+            }
+            #expect(settings == [assignment])
+        }
+        #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held + 1)
+    }
+
+    @Test("A Retina display's odd size reads back as a set that changes nothing")
+    func anOddRetinaSizeRoundTrips() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1602, height: 1202, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = true
+        }
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let read = try harness.core.configuration(
+            .name("Alpha"), keys: ["display.width", "display.height"])
+        #expect(read.map(\.value) == ["801", "601"])
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, confirmed: false)
+
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
     @Test("One bad value in a batch writes nothing at all")
     func aBatchIsAtomic() throws {
         let harness = makeHarness()
@@ -294,7 +359,7 @@ struct VMCommandCoreConfigurationTests {
                     Issue.record("expected invalidState, got \(error)")
                     continue
                 }
-                #expect(settings == [assignment.key])
+                #expect(settings == [assignment])
                 #expect(error.message.contains(assignment.key))
             }
         }
@@ -311,7 +376,7 @@ struct VMCommandCoreConfigurationTests {
                 return
             }
             // The live key in the batch is not what the state refused.
-            #expect(settings == ["audio.input", "audio.output", "input.devices"])
+            #expect(settings == moved)
         }
         #expect(instance.configuration == before)
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
@@ -381,6 +446,29 @@ struct VMCommandCoreConfigurationTests {
         #expect(try value(answered, "cpus") == String(before.cpuCount))
         #expect(instance.configuration == before)
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A refusal names the value the state refused, not the whole key")
+    func aRefusalNamesTheRefusedValue() throws {
+        let harness = makeHarness()
+        makeInstance(in: harness, phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+        }
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: [ConfigurationEntry(key: "network.mode", value: "none")],
+                confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            // Other modes hot-swap, so the copy says which value is refused.
+            #expect(
+                error.message.hasPrefix(
+                    "\u{201C}Alpha\u{201D} is running, so network.mode cannot be set to "
+                        + "\u{201C}none\u{201D} while it is. "))
+        }
     }
 
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")

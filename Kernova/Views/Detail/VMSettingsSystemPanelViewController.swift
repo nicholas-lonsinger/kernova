@@ -428,11 +428,11 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         cpuStepper.minValue = Double(os.minCPUCount)
         cpuStepper.maxValue = Double(os.maxCPUCount)
         cpuStepper.integerValue = instance.configuration.cpuCount
-        cpuField.integerValue = instance.configuration.cpuCount
+        cpuField.showUnlessEditing(String(instance.configuration.cpuCount))
         memoryStepper.minValue = Double(os.minMemoryInGB)
         memoryStepper.maxValue = Double(os.maxMemoryInGB)
         memoryStepper.integerValue = instance.configuration.memorySizeInGB
-        memoryField.integerValue = instance.configuration.memorySizeInGB
+        memoryField.showUnlessEditing(String(instance.configuration.memorySizeInGB))
     }
 
     /// The density the user asked for, which a match-window boot applies to the
@@ -462,15 +462,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // differ until the next boot materializes the trio.
         displayHiDPISwitch.state = displayHiDPIIntent ? .on : .off
         displayAutoResizeSwitch.state = config.displayAutoResizes ? .on : .off
-        // A field with an open editor is mid-edit: any refresh — a status change
-        // started from the toolbar, say — would otherwise discard the keystrokes
-        // typed so far.
-        if displayWidthField.currentEditor() == nil {
-            displayWidthField.integerValue = base.width
-        }
-        if displayHeightField.currentEditor() == nil {
-            displayHeightField.integerValue = base.height
-        }
+        displayWidthField.showUnlessEditing(String(base.width))
+        displayHeightField.showUnlessEditing(String(base.height))
 
         let stored = DisplayResolutionPreset(width: base.width, height: base.height)
         let presetItem =
@@ -504,10 +497,14 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             let base = displayBaseSize
             text += " (looks like \(base.width) × \(base.height))"
         }
-        if config.displaySizesToWindow {
+        guard config.displaySizesToWindow else { return "\(text)." }
+        // The trio is the last boot's, at the density that boot used; a HiDPI
+        // change since then applies only when the next start recomputes it.
+        guard displayHiDPIIntent != displayResolutionIsHiDPI else {
             return "\(text), until the next start resizes it to the window."
         }
-        return "\(text)."
+        let density = displayHiDPIIntent ? "with HiDPI" : "without HiDPI"
+        return "\(text), until the next start resizes it to the window \(density)."
     }
 
     private func refreshAudio() {
@@ -655,8 +652,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             Keys.displayWidth.assigning(String(fitted.width)),
             Keys.displayHeight.assigning(String(fitted.height)))
         let stored = displayBaseSize
-        show(stored.width, in: displayWidthField)
-        show(stored.height, in: displayHeightField)
+        displayWidthField.showEndedEdit(String(stored.width))
+        displayHeightField.showEndedEdit(String(stored.height))
         refreshDisplay()
     }
 
@@ -719,7 +716,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         let os = instance.configuration.guestOS
         let clamped = Swift.min(Swift.max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
         write(Keys.cpus.assigning(String(clamped)))
-        show(instance.configuration.cpuCount, in: cpuField)
+        cpuField.showEndedEdit(String(instance.configuration.cpuCount))
         cpuStepper.integerValue = instance.configuration.cpuCount
     }
 
@@ -728,20 +725,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         let os = instance.configuration.guestOS
         let clamped = Swift.min(Swift.max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
         write(Keys.memory.assigning(String(clamped)))
-        show(instance.configuration.memorySizeInGB, in: memoryField)
+        memoryField.showEndedEdit(String(instance.configuration.memorySizeInGB))
         memoryStepper.integerValue = instance.configuration.memorySizeInGB
-    }
-
-    /// Shows `value` in a field whose edit just ended, written or refused.
-    ///
-    /// Set here rather than by a refresh, which leaves alone a field whose
-    /// editor is still attached — and at end-edit time it can be. That editor
-    /// holds the text just consumed, so it is discarded before the value is
-    /// set; set beneath it, the value does not read back
-    /// (`refusedEndEditRevertsAFieldStillBeingEdited`).
-    private func show(_ value: Int, in field: NSTextField) {
-        field.abortEditing()
-        field.integerValue = value
     }
 }
 

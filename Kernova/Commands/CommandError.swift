@@ -39,9 +39,10 @@ enum CommandError: Error, Sendable, Equatable {
     /// More than one VM answers to the selector; the candidates say which.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
-    /// verbs it does admit, and `settings` the configuration keys a refused
-    /// `setConfiguration` would have changed.
-    case invalidState(vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [String] = [])
+    /// verbs it does admit, and `settings` the assignments a refused
+    /// `setConfiguration` would have made.
+    case invalidState(
+        vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
     /// The VM has work in flight that this verb would race.
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.

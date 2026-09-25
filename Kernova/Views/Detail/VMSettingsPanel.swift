@@ -174,6 +174,30 @@ extension VMSettingsPanel {
     }
 }
 
+extension NSTextField {
+    /// Paints `value` from the model unless the user is typing in the field.
+    ///
+    /// Every panel refresh paints its fields through this: any refresh — an
+    /// observation pass, a status change a CLI start makes — would otherwise
+    /// replace the keystrokes typed so far, and the edit reaches the model only
+    /// through its end-edit, which ends in ``showEndedEdit(_:)``.
+    func showUnlessEditing(_ value: String) {
+        guard currentEditor() == nil else { return }
+        stringValue = value
+    }
+
+    /// Shows `value` in a field whose edit just ended, written or refused.
+    ///
+    /// At end-edit time the editor can still be attached, holding the text just
+    /// consumed; a value set beneath it does not read back
+    /// (`refusedEndEditRevertsAFieldStillBeingEdited`), so the editor is
+    /// discarded first.
+    func showEndedEdit(_ value: String) {
+        abortEditing()
+        stringValue = value
+    }
+}
+
 /// Puts `string` on the host pasteboard, for a panel's copy affordance.
 @MainActor
 func copyToPasteboard(_ string: String) {

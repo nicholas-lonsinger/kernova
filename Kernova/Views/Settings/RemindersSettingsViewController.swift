@@ -11,8 +11,8 @@ import KernovaLogging
 /// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
 /// app-wide *Guest Agent Install Reminder* by
 /// `VMLibraryViewModel.agentInstallPromptDisabled`, which overrides every
-/// per-VM row below it; the per-VM *guest-agent install nudge* rows are backed
-/// by each VM's bundle configuration and written through
+/// per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
+/// macOS VM, are backed by each VM's host state and written through
 /// `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
 ///
 /// `viewWillAppear()` rebuilds the per-VM rows from `viewModel.instances` and
@@ -287,7 +287,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     }
 
     /// Rebuilds the per-VM section from `viewModel.instances`: one switch row per
-    /// VM, or an empty-state caption when there are none.
+    /// VM the reminder applies to, or an empty-state caption when none does.
     private func rebuildVMRows() {
         for view in vmSection.arrangedSubviews {
             vmSection.removeArrangedSubview(view)
@@ -295,15 +295,18 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         }
         vmSwitches.removeAll()
 
-        guard !viewModel.instances.isEmpty else {
-            let empty = makeGroupedFormCaption("No virtual machines yet.")
+        let reminded = viewModel.instances.filter {
+            VMConfigurationKeyRegistry.agentInstallReminder.applies($0.configuration)
+        }
+        guard !reminded.isEmpty else {
+            let empty = makeGroupedFormCaption("No macOS virtual machines yet.")
             vmSection.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
             return
         }
 
         var rows: [NSView] = []
-        for instance in viewModel.instances {
+        for instance in reminded {
             let toggle = NSSwitch()
             toggle.controlSize = .small
             toggle.target = self
@@ -365,7 +368,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             assertionFailure("Toggled VM reminder switch not found in the rebuilt set")
             return
         }
-        viewModel.setAgentInstallNudgeDismissed(sender.state == .off, for: instance)
+        if viewModel.setAgentInstallNudgeDismissed(sender.state == .off, for: instance) != .applied {
+            refreshSwitches()
+        }
     }
 
     @objc private func resetAllReminders() {

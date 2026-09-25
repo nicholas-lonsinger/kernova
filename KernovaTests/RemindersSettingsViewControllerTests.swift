@@ -303,8 +303,8 @@ struct RemindersSettingsViewControllerTests {
     }
 
     /// Both captions describe the per-VM switches, so with none on screen they
-    /// point at nothing — "these have no effect" directly under "No virtual
-    /// machines yet." reads as a bug.
+    /// point at nothing — "these have no effect" directly under "No macOS
+    /// virtual machines yet." reads as a bug.
     @Test("Neither per-VM caption shows when there are no virtual machines")
     func perVMCaptionsHideWithoutVMs() throws {
         let controller = RemindersSettingsViewController(viewModel: makeViewModel())
@@ -320,7 +320,7 @@ struct RemindersSettingsViewControllerTests {
 
         let visible = allSubviews(NSTextField.self, in: controller.view) { !$0.isHidden }
             .map(\.stringValue)
-        #expect(visible.contains { $0.hasPrefix("No virtual machines yet") })
+        #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
         #expect(!visible.contains { $0.contains("have no effect") })
         #expect(!visible.contains { $0.contains("Turn a virtual machine off") })
     }
@@ -341,6 +341,55 @@ struct RemindersSettingsViewControllerTests {
         #expect(switches.count == 2)
         #expect(switches[0].state == .off)
         #expect(switches[1].state == .on)
+    }
+
+    @Test("Only a VM the install reminder applies to gets a per-VM row")
+    func onlyMacOSVMsGetARow() throws {
+        let viewModel = makeViewModel()
+        viewModel.instances = [
+            makeInstance(name: "Mac"), VMInstanceFixture.make(name: "Tux", guestOS: .linux),
+        ]
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).count == 1)
+        #expect(findLabel(withText: "Mac", in: controller.view) != nil)
+        #expect(findLabel(withText: "Tux", in: controller.view) == nil)
+    }
+
+    @Test("A per-VM switch whose edit does not land goes back to what its VM holds")
+    func unsavedPerVMEditRepaintsTheSwitch() throws {
+        let viewModel = makeViewModel()
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let instance = VMInstanceFixture.make(name: "Mac", guestOS: .macOS, files: storage.files)
+        viewModel.instances = [instance]
+        storage.saveHostStateError = CocoaError(.fileWriteNoPermission)
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+        let toggle = try #require(vmSwitches(in: controller).first)
+
+        toggle.state = .off
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(!instance.hostState.agentInstallNudgeDismissed)
+        #expect(toggle.state == .on)
+    }
+
+    @Test("With only Linux VMs the section says there is no macOS VM")
+    func onlyLinuxVMsShowTheEmptyState() throws {
+        let viewModel = makeViewModel()
+        viewModel.instances = [VMInstanceFixture.make(name: "Tux", guestOS: .linux)]
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).isEmpty)
+        #expect(findLabel(withText: "No macOS virtual machines yet.", in: controller.view) != nil)
     }
 
     @Test("A short VM list hugs the content with the text laid out")

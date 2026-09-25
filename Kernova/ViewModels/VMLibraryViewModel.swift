@@ -112,11 +112,11 @@ final class VMLibraryViewModel {
 
     // MARK: - Configuration Forwarding
 
-    /// How a settings edit a surface asked for came out.
-    enum ConfigurationEditOutcome: Equatable {
+    /// How an edit a surface asked for came out.
+    enum EditOutcome: Equatable {
         case applied
-        /// Refused or unsaved; the settings kept their old values, and the user
-        /// has been told why.
+        /// Refused or unsaved; nothing changed, and the user has been told
+        /// why.
         case refused
         /// The edit needs the user's consent first, which the caller gathers and
         /// then repeats the edit with `confirmed: true`. Nothing is presented.
@@ -128,26 +128,10 @@ final class VMLibraryViewModel {
     @discardableResult
     func setConfiguration(
         _ assignments: [ConfigurationEntry], on instance: VMInstance, confirmed: Bool = false
-    ) -> ConfigurationEditOutcome {
-        do {
-            try commands.setConfiguration(
+    ) -> EditOutcome {
+        runEdit(on: instance) {
+            try self.commands.setConfiguration(
                 .id(instance.id), assignments: assignments, confirmed: confirmed)
-            return .applied
-        } catch let error as CommandError {
-            if let prompt = error.confirmationPrompt { return .consentRequired(prompt) }
-            if error.isOperationFailure {
-                // The library presents a save it could not make itself.
-                #log(
-                    Self.logger, .debug,
-                    "Settings edit on '\(instance.name, privacy: .public)' was not saved: \(error.message, privacy: .public)"
-                )
-            } else {
-                present(error, for: instance)
-            }
-            return .refused
-        } catch {
-            present(error, for: instance)
-            return .refused
         }
     }
 
@@ -1258,8 +1242,12 @@ final class VMLibraryViewModel {
     /// Sets whether this VM's agent-install nudge is dismissed and persists the
     /// choice, through the `agent.installReminder` key.
     ///
-    /// `true` silences the `.waiting` nudge, `false` re-arms it.
-    func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance) {
+    /// `true` silences the `.waiting` nudge, `false` re-arms it. A surface
+    /// showing the flag repaints from the model unless the edit was applied.
+    @discardableResult
+    func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance)
+        -> EditOutcome
+    {
         setConfiguration(
             [VMConfigurationKeyRegistry.agentInstallReminder.assigning(!dismissed)], on: instance)
     }
@@ -1419,41 +1407,54 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Runs one attachment edit, routing refusals as ``runSync(on:_:)`` does
-    /// but logging the failure a race raises instead of alerting on it.
+    /// Runs one edit, routing refusals as ``runSync(on:_:)`` does but logging
+    /// the failure a race raises instead of alerting on it, and handing a
+    /// consent refusal back to the caller that gathers it.
     ///
     /// Two things reach here as
     /// ``CommandError/operationFailed(verb:title:message:recovery:)``: an edit
     /// naming an attachment the list no longer carries — a rename field
     /// committing after its row went, a second alert for a disk the first
-    /// already removed — and a configuration write the funnel has already told
-    /// the user about. Both were silent before there was a verb to refuse them,
+    /// already removed — and a settings write the library has already told the
+    /// user about. Both were silent before there was a verb to refuse them,
     /// and the verb throws so a wire client hears about it.
-    private func runEdit(on instance: VMInstance, _ verb: () throws -> Void) {
+    @discardableResult
+    private func runEdit(on instance: VMInstance, _ verb: () throws -> Void) -> EditOutcome {
         do {
             try verb()
-        } catch let error as CommandError where error.isOperationFailure {
-            #log(
-                Self.logger, .debug,
-                "Attachment edit on '\(instance.name, privacy: .public)' did not apply: \(error.message, privacy: .public)"
-            )
+            return .applied
         } catch {
-            present(error, for: instance)
+            return route(error, ofEditOn: instance)
         }
     }
 
     /// The asynchronous counterpart of ``runEdit(on:_:)``.
-    private func runEdit(on instance: VMInstance, _ verb: () async throws -> Void) async {
+    @discardableResult
+    private func runEdit(on instance: VMInstance, _ verb: () async throws -> Void) async
+        -> EditOutcome
+    {
         do {
             try await verb()
-        } catch let error as CommandError where error.isOperationFailure {
-            #log(
-                Self.logger, .debug,
-                "Attachment edit on '\(instance.name, privacy: .public)' did not apply: \(error.message, privacy: .public)"
-            )
+            return .applied
         } catch {
-            present(error, for: instance)
+            return route(error, ofEditOn: instance)
         }
+    }
+
+    /// Where ``runEdit(on:_:)`` sends what an edit threw.
+    private func route(_ error: any Error, ofEditOn instance: VMInstance) -> EditOutcome {
+        if let command = error as? CommandError {
+            if let prompt = command.confirmationPrompt { return .consentRequired(prompt) }
+            if command.isOperationFailure {
+                #log(
+                    Self.logger, .debug,
+                    "Edit on '\(instance.name, privacy: .public)' did not apply: \(command.message, privacy: .public)"
+                )
+                return .refused
+            }
+        }
+        present(error, for: instance)
+        return .refused
     }
 
     /// Shows a refusal nobody is waiting for.

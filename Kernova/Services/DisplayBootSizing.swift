@@ -52,11 +52,15 @@ struct DisplayBootSizing: Sendable {
     /// The one place a chosen size becomes a stored trio: it fits the pair to
     /// the ceiling the density leaves — a HiDPI base is doubled before it
     /// reaches VZ, so it clamps to half of it — and doubles it from there.
+    /// Twice any base is already even, so a HiDPI base keeps its own parity and
+    /// halving the stored pixels gives it back exactly.
     static func resolution(base width: Int, height: Int, hiDPI: Bool) -> Resolution {
-        let base = clamped(
-            width: width, height: height, ppi: standardPixelsPerInch,
-            maximum: hiDPI ? maximumDimension / 2 : maximumDimension)
-        return hiDPI ? doubled(base) : base
+        guard hiDPI else {
+            return clamped(width: width, height: height, ppi: standardPixelsPerInch)
+        }
+        let base = bounded(width: width, height: height, maximum: maximumDimension / 2)
+        return Resolution(
+            width: base.width * 2, height: base.height * 2, ppi: hiDPIPixelsPerInch)
     }
 
     /// `resolution` at twice the pixel count and HiDPI density — the rewrite
@@ -83,18 +87,10 @@ struct DisplayBootSizing: Sendable {
 
     /// `width`/`height` brought into the supported range: an oversized pair is
     /// scaled down whole so its aspect ratio survives the ceiling, then each axis
-    /// is rounded down to an even pixel count and raised to the minimum.
-    ///
-    /// `maximum` lowers the ceiling for a base ("looks like") size that will be
-    /// doubled for HiDPI.
-    static func clamped(
-        width: Int, height: Int, ppi: Int, maximum: Int = maximumDimension
-    ) -> Resolution {
-        let fitted = scaledToFit(width: width, height: height, maximum: maximum)
-        return Resolution(
-            width: clamp(fitted.width, minimum: minimumWidth, maximum: maximum),
-            height: clamp(fitted.height, minimum: minimumHeight, maximum: maximum),
-            ppi: ppi)
+    /// is raised to the minimum and rounded down to an even pixel count.
+    static func clamped(width: Int, height: Int, ppi: Int) -> Resolution {
+        let fitted = bounded(width: width, height: height, maximum: maximumDimension)
+        return Resolution(width: even(fitted.width), height: even(fitted.height), ppi: ppi)
     }
 
     // MARK: - Private
@@ -117,8 +113,21 @@ struct DisplayBootSizing: Sendable {
         return Int(min(pixels, CGFloat(Int32.max)))
     }
 
-    private static func clamp(_ value: Int, minimum: Int, maximum: Int) -> Int {
-        let even = value - abs(value % 2)
-        return min(max(even, minimum), maximum)
+    /// `width`/`height` scaled down whole to fit `maximum`, then each axis
+    /// held within the supported range.
+    private static func bounded(width: Int, height: Int, maximum: Int)
+        -> (width: Int, height: Int)
+    {
+        let fitted = scaledToFit(width: width, height: height, maximum: maximum)
+        return (
+            min(max(fitted.width, minimumWidth), maximum),
+            min(max(fitted.height, minimumHeight), maximum)
+        )
+    }
+
+    /// `value` rounded down to an even count; the bounds are even, so a value
+    /// already within them stays within them.
+    private static func even(_ value: Int) -> Int {
+        value - abs(value % 2)
     }
 }
