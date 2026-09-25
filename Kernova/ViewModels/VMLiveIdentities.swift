@@ -3,8 +3,8 @@ import KernovaKit
 import KernovaLogging
 
 /// Which identity another live VM already claims — the refusal every bring-up
-/// passes (``VMInstance/beginBringUp(_:)``). Live is
-/// ``VMInstance/holdsLiveIdentity``.
+/// passes (``VMActivity/beginBringUp(_:)``). Live is
+/// ``VMActivity/holdsLiveIdentity``.
 @MainActor
 final class VMLiveIdentities {
     nonisolated private static let logger = KernovaLogger(

@@ -195,7 +195,7 @@ final class USBAccessoryCoordinator {
     /// Hands `instance` every accessory paired with it that is sitting with the
     /// host, now that it can take one.
     ///
-    /// Wired to ``VMInstance/onSessionBecameAttachable``, so it runs once per
+    /// Wired to ``VMActivity/onSessionBecameAttachable``, so it runs once per
     /// session rather than on every arrival at a live phase.
     func sessionBecameAttachable(_ instance: VMInstance) {
         let held = Set(accessoriesHeldByGuests().map(\.registryID))

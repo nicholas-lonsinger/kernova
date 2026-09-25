@@ -204,7 +204,7 @@ final class VMMACAddressRegistry {
     /// The first live VM sharing `config`'s MAC address on the network `config`
     /// joins, if any.
     ///
-    /// Live is ``VMInstance/holdsLiveIdentity``. The mode names the network, so two holders collide only where both
+    /// Live is ``VMActivity/holdsLiveIdentity``. The mode names the network, so two holders collide only where both
     /// guests attach: networking off puts no address on a wire, and Shared,
     /// Host Only and Bridged are separate networks. Two bridged VMs compare as
     /// one network whatever interface each names — Automatic resolves at start,

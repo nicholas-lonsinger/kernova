@@ -46,12 +46,12 @@ values and is the one reader and writer of those files, through
 `VMBundleFiles` over the `VMBundleFileAccessing` seam
 (`CoordinatedBundleFileAccess` in production); `VMLibrary` owns the policy a
 configuration write passes on its way there. `VMInstance` is the `@MainActor`
-runtime owner of one VM: it reads its state off its `VMBundle` and holds at
-most one `VMSessionContext`, whose `VMSession` actor alone touches the
-`VZVirtualMachine`. `VMLibrary` lists a `VMArrival` beside its VMs for each
-create, clone or import still writing its bundle, and turns every published
-bundle into a `VMInstance` through `adopt`. `VMBundleLayout` derives every
-in-bundle path.
+runtime owner of one VM: it reads its state off its `VMBundle`, and its
+`VMActivity` holds the lifecycle phase and at most one `VMSessionContext`,
+whose `VMSession` actor alone touches the `VZVirtualMachine`. `VMLibrary`
+lists a `VMArrival` beside its VMs for each create, clone or import still
+writing its bundle, and turns every published bundle into a `VMInstance`
+through `adopt`. `VMBundleLayout` derives every in-bundle path.
 
 Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `MacOSGuestProvisioning` each carry one `MacOSVersion` floor and read

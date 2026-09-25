@@ -1292,7 +1292,7 @@ final class VMLibraryViewModel {
     ///
     /// Sequential: each guest commits its whole memory allocation at start, and
     /// the duplicate machine-ID and MAC refusal every bring-up passes
-    /// (``VMInstance/beginBringUp(_:)``) counts a VM still coming up as live, so
+    /// (``VMActivity/beginBringUp(_:)``) counts a VM still coming up as live, so
     /// a twin checked beside it would be refused by a boot that may yet fail.
     ///
     /// Per-VM failures are logged and surfaced by those two methods; the pass
