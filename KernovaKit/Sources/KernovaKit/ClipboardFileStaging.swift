@@ -202,7 +202,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let url = parent.appendingPathComponent(
             FinderStyleUniquing.sanitizedComponent(name), isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try processRoot.createDirectory(at: url)
         return url
     }
 
@@ -216,7 +216,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         defer { lock.unlock() }
         let url = try directory(for: generation)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try processRoot.createDirectory(at: url)
         return url
     }
 
@@ -278,9 +278,8 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         if let existing = generationDirs.first(where: { $0.generation == generation }) {
             return existing.dir
         }
-        try processRoot.claim()
         let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try processRoot.createDirectory(at: dir)
         generationDirs.append((generation: generation, dir: dir))
         while generationDirs.count > Self.maxGenerations {
             let oldest = generationDirs.removeFirst()

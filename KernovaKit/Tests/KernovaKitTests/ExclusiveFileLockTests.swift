@@ -11,50 +11,58 @@ struct ExclusiveFileLockTests {
     private let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
         "ExclusiveFileLockTests-\(UUID().uuidString)", isDirectory: true)
 
-    /// Where this test's lock file goes; nothing is created there.
-    private func lockFile() throws -> URL {
+    /// An empty file in this test's own directory.
+    private func makeFile() throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("file.lock")
+        let url = directory.appendingPathComponent("file")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        return url
     }
 
-    @Test("a held lock refuses a second acquire, from this process too")
-    func heldLockRefusesSecondAcquire() throws {
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = try lockFile()
-        let held = try ExclusiveFileLock.tryAcquire(at: url, creating: .exclusively)
-        #expect(held != nil)
-        #expect(try ExclusiveFileLock.tryAcquire(at: url, creating: .never) == nil)
-        withExtendedLifetime(held) {}
+    /// An empty directory inside this test's own directory.
+    private func makeDirectory() throws -> URL {
+        let url = directory.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
-    @Test("a lock is released when it is deinitialized")
-    func deinitReleases() throws {
+    @Test("a held lock on a file refuses a second acquire from this process, until released")
+    func fileLockRefusesSecondUntilReleased() throws {
         defer { try? FileManager.default.removeItem(at: directory) }
-        let url = try lockFile()
+        let url = try makeFile()
         do {
-            let held = try ExclusiveFileLock.tryAcquire(at: url, creating: .exclusively)
-            try #require(held != nil)
+            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
+            let second = try ExclusiveFileLock.tryAcquire(at: url)
+            #expect(second == nil)
+            withExtendedLifetime(held) {}
         }
-        #expect(try ExclusiveFileLock.tryAcquire(at: url, creating: .never) != nil)
+        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
+    }
+
+    @Test("a held lock on a directory refuses a second acquire from this process, until released")
+    func directoryLockRefusesSecondUntilReleased() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try makeDirectory()
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
+            let second = try ExclusiveFileLock.tryAcquire(at: url)
+            #expect(second == nil)
+            withExtendedLifetime(held) {}
+        }
+        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
     }
 
     @Test("the lock's descriptor is close-on-exec")
     func descriptorIsCloseOnExec() throws {
         defer { try? FileManager.default.removeItem(at: directory) }
-        let held = try #require(try ExclusiveFileLock.tryAcquire(at: lockFile(), creating: .exclusively))
+        let held = try #require(try ExclusiveFileLock.tryAcquire(at: makeDirectory()))
         #expect(fcntl(held.descriptor, F_GETFD) & FD_CLOEXEC != 0)
     }
 
-    @Test("never-create refuses a missing file; exclusive create refuses an existing one")
-    func creationModes() throws {
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = try lockFile()
+    @Test("nothing at the path throws rather than reporting a held lock")
+    func missingPathThrows() {
         #expect(throws: Errno.noSuchFileOrDirectory) {
-            _ = try ExclusiveFileLock.tryAcquire(at: url, creating: .never)
-        }
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        #expect(throws: Errno.fileExists) {
-            _ = try ExclusiveFileLock.tryAcquire(at: url, creating: .exclusively)
+            _ = try ExclusiveFileLock.tryAcquire(at: directory.appendingPathComponent("absent"))
         }
     }
 }

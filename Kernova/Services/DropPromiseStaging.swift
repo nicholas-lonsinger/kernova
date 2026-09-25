@@ -57,9 +57,7 @@ struct DropPromiseStaging {
     func makeDropDirectory() -> URL? {
         let directory = root.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
-            try root.claim()
-            try FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true)
+            try root.createDirectory(at: directory)
         } catch {
             #log(
                 Self.logger, .error,

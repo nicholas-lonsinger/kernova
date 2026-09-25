@@ -1,5 +1,6 @@
 import Foundation
 import KernovaTestSupport
+import System
 import Testing
 
 @testable import KernovaKit
@@ -11,10 +12,8 @@ struct ProcessStagingRootTests {
 
     /// Claims `root` and writes one file under it.
     private func stageFile(in root: ProcessStagingRoot) throws -> URL {
-        try root.claim()
         let file = root.url.appendingPathComponent("host-vm/staged.bin")
-        try FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try root.createDirectory(at: file.deletingLastPathComponent())
         try Data("bytes".utf8).write(to: file)
         return file
     }
@@ -45,8 +44,36 @@ struct ProcessStagingRootTests {
         #expect(!FileManager.default.fileExists(atPath: abandoned.path))
     }
 
-    @Test("an entry with no lock file is removed")
-    func lockLessEntryIsRemoved() throws {
+    @Test("a live root emptied from outside keeps its lock and survives reclaim")
+    func emptiedLiveRootSurvives() throws {
+        let otherProcess = staging.makeSibling()
+        _ = try stageFile(in: otherProcess)
+        for child in try FileManager.default.contentsOfDirectory(
+            at: otherProcess.url, includingPropertiesForKeys: nil)
+        {
+            try FileManager.default.removeItem(at: child)
+        }
+
+        staging.root.reclaimAbandonedRoots()
+
+        #expect(FileManager.default.fileExists(atPath: otherProcess.url.path))
+        withExtendedLifetime(otherProcess) {}
+    }
+
+    @Test("a live root removed from outside is never rebuilt without its lock")
+    func removedLiveRootIsNotRebuilt() throws {
+        let file = try stageFile(in: staging.root)
+        try FileManager.default.removeItem(at: staging.root.url)
+
+        #expect(throws: Errno.noSuchFileOrDirectory) {
+            try staging.root.createDirectory(at: file.deletingLastPathComponent())
+        }
+        #expect(!FileManager.default.fileExists(atPath: staging.root.url.path))
+    }
+
+    @Test("an entry no process holds is removed, whatever it is")
+    func unheldEntryIsRemoved() throws {
+        // Staging from before roots were locked.
         let leftover = staging.parent.appendingPathComponent("host-vm/\(UUID().uuidString)/x.bin")
         try FileManager.default.createDirectory(
             at: leftover.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -64,9 +91,7 @@ struct ProcessStagingRootTests {
     func buildingEntrySurvives() throws {
         let lockedBuild = staging.parent.appendingPathComponent(".\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: lockedBuild, withIntermediateDirectories: true)
-        let buildLock = try ExclusiveFileLock.tryAcquire(
-            at: lockedBuild.appendingPathComponent(ProcessStagingRoot.lockFileName), creating: .exclusively)
-        try #require(buildLock != nil)
+        let buildLock = try #require(try ExclusiveFileLock.tryAcquire(at: lockedBuild))
         let unlockedBuild = staging.parent.appendingPathComponent(".\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: unlockedBuild, withIntermediateDirectories: true)
 
@@ -91,10 +116,9 @@ struct ProcessStagingRootTests {
         try staging.root.claim()
         try staging.root.claim()
 
-        let lockFile = staging.root.url.appendingPathComponent(ProcessStagingRoot.lockFileName)
-        #expect(FileManager.default.fileExists(atPath: lockFile.path))
-        #expect(try ExclusiveFileLock.tryAcquire(at: lockFile, creating: .never) == nil)
+        #expect(try ExclusiveFileLock.tryAcquire(at: staging.root.url) == nil)
         let entries = try FileManager.default.contentsOfDirectory(atPath: staging.parent.path)
         #expect(entries == [staging.root.url.lastPathComponent])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: staging.root.url.path).isEmpty)
     }
 }

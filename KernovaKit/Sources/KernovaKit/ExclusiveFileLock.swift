@@ -2,25 +2,18 @@ import Darwin
 import Foundation
 import System
 
-/// An exclusive `flock(2)` lock on one file, held from a successful
-/// ``tryAcquire(at:creating:)`` until the lock is deinitialized.
+/// An exclusive `flock(2)` lock on one file or directory, held from a
+/// successful ``tryAcquire(at:)`` until the lock is deinitialized.
 ///
-/// The kernel releases the lock when its process exits, a crash included, and
-/// the descriptor is close-on-exec, so a child the process spawns never keeps
-/// it past the parent. The lock belongs to the open file description: a second
-/// ``tryAcquire(at:creating:)`` on the same file from this process is refused
-/// exactly as another process's is. All three are observed in "`F_GETLK` sees
-/// another process's `flock`"
+/// `man 2 flock` shares a lock only through `dup(2)` or `fork(2)`, and each
+/// ``tryAcquire(at:)`` is a separate `open`, so a second acquire of the same
+/// path from this process is refused exactly as another process's is
+/// (pinned by `ExclusiveFileLockTests`). The kernel
+/// releases the lock when its process exits, a crash included, and the
+/// descriptor is close-on-exec so a spawned child never keeps it past the
+/// parent — both observed in "`F_GETLK` sees another process's `flock`"
 /// (docs/research/2026-09-24-file-coordination-rename-and-flock.md).
 public final class ExclusiveFileLock: Sendable {
-    /// Whether ``tryAcquire(at:creating:)`` may create the file.
-    public enum Creation: Sendable {
-        /// Only an existing file is locked.
-        case never
-        /// The file is created, and an existing one is refused.
-        case exclusively
-    }
-
     /// The open descriptor the lock rides on.
     let descriptor: Int32
 
@@ -32,19 +25,15 @@ public final class ExclusiveFileLock: Sendable {
         Darwin.close(descriptor)
     }
 
-    /// Takes the lock on the file at `url` without waiting.
+    /// Takes the lock on the existing file or directory at `url` without
+    /// waiting.
     ///
-    /// - Returns: `nil` when the file is already locked by another open file
-    ///   description, this process's own included.
+    /// - Returns: `nil` when another open file description already holds a lock
+    ///   on it, this process's own included.
     /// - Throws: the `errno` the open failed with — `Errno.noSuchFileOrDirectory`
-    ///   or `Errno.notDirectory` for a missing file under ``Creation/never``, and
-    ///   `Errno.fileExists` for an existing one under ``Creation/exclusively``.
-    public static func tryAcquire(
-        at url: URL, creating creation: Creation
-    ) throws(Errno) -> ExclusiveFileLock? {
-        var flags = O_RDONLY | O_EXLOCK | O_NONBLOCK | O_CLOEXEC
-        if creation == .exclusively { flags |= O_CREAT | O_EXCL }
-        let descriptor = Darwin.open(url.path, flags, S_IRUSR | S_IWUSR)
+    ///   when nothing is at `url`.
+    public static func tryAcquire(at url: URL) throws(Errno) -> ExclusiveFileLock? {
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_EXLOCK | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else {
             let failure = Errno(rawValue: errno)
             if failure == .wouldBlock { return nil }
