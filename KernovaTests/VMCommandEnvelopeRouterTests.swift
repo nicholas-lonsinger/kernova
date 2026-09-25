@@ -463,7 +463,7 @@ struct VMCommandEnvelopeRouterTests {
         // Drain the setup task before asserting or firing the second cancel: the
         // window between the cancel and the task's `defer { setupTask = nil }`
         // legitimately still answers `.ok`.
-        await instance.setupTask?.value
+        await instance.setupOperationTask?.value
 
         #expect(instance.status == .initialBoot)
         #expect(instance.configuration.installContext != nil)

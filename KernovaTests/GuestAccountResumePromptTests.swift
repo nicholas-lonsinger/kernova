@@ -66,7 +66,7 @@ struct GuestAccountResumePromptTests {
     /// Lets the install pipeline the start armed unwind, so nothing outlives the
     /// test that spawned it.
     private func drainSetup(_ instance: VMInstance) async {
-        let task = instance.setupTask
+        let task = instance.setupOperationTask
         task?.cancel()
         await task?.value
     }
@@ -101,7 +101,7 @@ struct GuestAccountResumePromptTests {
         await viewModel.start(instance)
 
         #expect(presenter.guestAccountPasswordRequests.isEmpty)
-        #expect(instance.setupTask != nil)
+        #expect(instance.setupOperationTask != nil)
         await drainSetup(instance)
     }
 
@@ -187,7 +187,7 @@ struct GuestAccountResumePromptTests {
 
         await viewModel.start(instance)
 
-        #expect(instance.setupTask == nil)
+        #expect(instance.setupOperationTask == nil)
         #expect(virtualization.startCallCount == 0)
         // Walking away from a question is not a failure worth an alert.
         #expect(presenter.errors.isEmpty)
@@ -329,7 +329,7 @@ struct GuestAccountResumePromptTests {
         await viewModel.start(instance)
 
         #expect(virtualization.startCallCount == 0)
-        #expect(instance.setupTask == nil)
+        #expect(instance.setupOperationTask == nil)
         // Buffered for the window that eventually appears, and the account is
         // still there to ask about when it does.
         #expect(instance.configuration.pendingGuestAccount == makeIntent())

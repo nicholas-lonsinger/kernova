@@ -160,7 +160,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         #expect(instance.isColdPaused)
-        #expect(instance.canDelete)
+        #expect(instance.activity.admits(.operation(.deleting)))
         await viewModel.delete(instance)
 
         // The whole bundle goes, saved state included — no separate discard.
@@ -191,7 +191,6 @@ struct VMLibraryViewModelTests {
     func deleteVMRefusesWhileRestoring() async throws {
         let storage = MockVMStorageService()
         let (viewModel, suspending) = makeSuspendingViewModel(storage: storage)
-        suspending.shouldSuspendOnResume = true
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.suspended)
         defer { VMInstanceFixture.removeBundle(of: instance) }
@@ -199,15 +198,16 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let resume = Task { @MainActor in try await viewModel.lifecycle.resume(instance) }
+        let resume = Task { @MainActor in
+            try await viewModel.lifecycle.start(instance, .restoringSavedState)
+        }
         await suspending.waitUntilSuspended()
 
-        // A cold resume stands in `.restoringSavedState` for the whole of the
-        // configuration build, so the capability gate is what refuses here —
-        // the bundle this would trash is the one the restore is reading. The
-        // claim behind that gate is covered in `VMCommandCoreTests`.
+        // The restore holds the VM for the whole of the configuration build, so
+        // the capability gate is what refuses here — the bundle this would
+        // trash is the one the restore is reading.
         #expect(instance.status == .restoring)
-        #expect(!instance.canDelete)
+        #expect(!instance.activity.admits(.operation(.deleting)))
 
         await viewModel.delete(instance)
 
@@ -1693,7 +1693,7 @@ struct VMLibraryViewModelTests {
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
         await viewModel.start(starting)
-        await starting.setupTask?.value
+        await starting.setupOperationTask?.value
 
         // The installer builds and runs its own VZ virtual machine, so the
         // refusal lands where the setup pipeline leaves rest, before the
@@ -1854,7 +1854,7 @@ struct VMLibraryViewModelTests {
     @Test("a media edit is refused whole while the VM is saving, changing nothing")
     func mediaEditIsRefusedWhileSaving() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .saving(sessionID: UUID()))
+        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .operating(.saving, from: .running(sessionID: UUID())))
 
         let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.removableMedia = nil
@@ -1869,7 +1869,7 @@ struct VMLibraryViewModelTests {
     @Test("a media edit is refused whole while the VM is capturing a live snapshot")
     func mediaEditIsRefusedWhileCapturingLive() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .capturingLive(sessionID: UUID()))
+        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
 
         let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.removableMedia = nil
@@ -1886,7 +1886,7 @@ struct VMLibraryViewModelTests {
     @Test("an edit leaving the media list alone is accepted while capturing a live snapshot")
     func nonMediaEditIsAcceptedWhileCapturingLive() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .capturingLive(sessionID: UUID()))
+        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
 
         let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.memorySizeInGB = 6
@@ -2706,7 +2706,7 @@ struct VMLibraryViewModelTests {
         viewModel.library.register(instance, storage: storage)
 
         await viewModel.start(instance)
-        await instance.setupTask?.value
+        await instance.setupOperationTask?.value
 
         #expect(presenter.errorTitle == "Couldn't Install “Sequoia”")
         #expect(presenter.errorMessage?.contains("at most two macOS virtual machines") == true)
@@ -2854,8 +2854,8 @@ struct VMLibraryViewModelTests {
         // teardown hooks and its Ephemeral revert reachable, and keeps Stop and
         // Force Stop offered.
         #expect(instance.phase == .running(sessionID: sessionID))
-        #expect(instance.canStop)
-        #expect(instance.canForceStop)
+        #expect(instance.activity.admits(.sessionAction(.requestStop)))
+        #expect(instance.activity.admits(.sessionAction(.forceStop)))
     }
 
     @Test("resume presents error on service failure")
@@ -2902,7 +2902,7 @@ struct VMLibraryViewModelTests {
 
         #expect(!instance.hasSaveFile)
         #expect(instance.status == .error)
-        #expect(!instance.canResume)
+        #expect(!instance.activity.admits(.resume))
     }
 
     // MARK: - Networked instances
@@ -3442,26 +3442,22 @@ struct VMLibraryViewModelTests {
     // MARK: - Cancel Installation
 
     @Test("cancelGuestSetup preserves bundle and instance (non-destructive)")
-    func cancelGuestSetupPreservesBundle() async {
+    func cancelGuestSetupPreservesBundle() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = VMInstanceFixture.make(name: "Installing VM") {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
             )
         }
-        instance.activity.placeForTesting(.installing(sessionID: nil))
+        instance.activity.placeForTesting(.initialBoot)
         viewModel.library.admitForTesting(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        // Spawn a fake long-running install task we can observe being cancelled.
+        // A long-running install we can observe being cancelled.
         let cancelStream = AsyncStream<Void>.makeStream()
-        instance.setupTask = Task {
-            await withTaskCancellationHandler {
-                try? await Task.sleep(for: .seconds(60))
-            } onCancel: {
-                cancelStream.continuation.yield(())
-                cancelStream.continuation.finish()
-            }
+        try instance.launchParkedSetup {
+            cancelStream.continuation.yield(())
+            cancelStream.continuation.finish()
         }
 
         viewModel.cancelGuestSetup(instance)
@@ -3510,7 +3506,7 @@ struct VMLibraryViewModelTests {
         viewModel.library.register(instance, storage: storage)
 
         // Spawn the install + auto-boot pipeline; returns immediately after
-        // arming `instance.setupTask`.
+        // launching the setup operation.
         await viewModel.start(instance)
 
         // Wait until the mock install has parked, so the cancel below
@@ -3521,7 +3517,7 @@ struct VMLibraryViewModelTests {
 
         // Drain the install task to completion so post-conditions are
         // observable (the catch block runs synchronously after await).
-        await instance.setupTask?.value
+        await instance.setupOperationTask?.value
 
         // The fix routes this case through the cancel outcome: VM is back
         // to .initialBoot, no error dialog, error message cleared.
@@ -3531,7 +3527,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("cancelGuestSetup does not change selection")
-    func cancelGuestSetupKeepsSelection() async {
+    func cancelGuestSetupKeepsSelection() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let first = VMInstanceFixture.make(name: "First")
         let installing = VMInstanceFixture.make(name: "Installing") {
@@ -3539,19 +3535,15 @@ struct VMLibraryViewModelTests {
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
             )
         }
-        installing.activity.placeForTesting(.installing(sessionID: nil))
+        installing.activity.placeForTesting(.initialBoot)
         viewModel.library.admitForTesting([first, installing])
         viewModel.selectedID = installing.id
         storage.bundles[installing.bundleURL] = installing.configuration
 
         let cancelStream = AsyncStream<Void>.makeStream()
-        installing.setupTask = Task {
-            await withTaskCancellationHandler {
-                try? await Task.sleep(for: .seconds(60))
-            } onCancel: {
-                cancelStream.continuation.yield(())
-                cancelStream.continuation.finish()
-            }
+        try installing.launchParkedSetup {
+            cancelStream.continuation.yield(())
+            cancelStream.continuation.finish()
         }
 
         viewModel.cancelGuestSetup(installing)
@@ -3652,7 +3644,7 @@ struct VMLibraryViewModelTests {
         let instance = makePendingLinuxVM(in: viewModel, storage: storage)
 
         await viewModel.start(instance)
-        await instance.setupTask?.value
+        await instance.setupOperationTask?.value
 
         #expect(resolveService.resolveCallCount == 1)
         // Never fell through to a normal boot, and the intent survives for the
@@ -3687,7 +3679,7 @@ struct VMLibraryViewModelTests {
         let instance = makePendingLinuxVM(in: viewModel, storage: storage)
 
         await viewModel.start(instance)
-        await instance.setupTask?.value
+        await instance.setupOperationTask?.value
 
         #expect(instance.configuration.linuxInstallContext == nil)
         #expect(virtService.startCallCount == 1)
@@ -3697,37 +3689,33 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("A second Start during a running Linux download is ignored")
-    func startDoesNotRestartAnInFlightLinuxDownload() async {
+    @Test("A second Start during a running Linux download is refused as busy")
+    func startDoesNotRestartAnInFlightLinuxDownload() async throws {
         let resolveService = MockLinuxImageResolveService()
         let (viewModel, storage, _, _, _) = makeViewModel(
             linuxImageResolveService: resolveService)
         let instance = makePendingLinuxVM(in: viewModel, storage: storage)
-        instance.setupTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        try instance.launchParkedSetup()
 
         await viewModel.start(instance)
 
-        // Draining whatever task is stored settles the question: a second
+        // Draining the setup that holds the VM settles the question: a second
         // pipeline would have run to completion here and asked the mirror.
-        instance.setupTask?.cancel()
-        await instance.setupTask?.value
+        #expect(presenter.errorMessage?.contains("downloading its installer image") == true)
+        instance.setupOperationTask?.cancel()
+        await instance.setupOperationTask?.value
         #expect(resolveService.resolveCallCount == 0)
     }
 
     @Test("cancelGuestSetup cancels a Linux download and keeps its context")
-    func cancelGuestSetupCancelsLinuxDownload() async {
+    func cancelGuestSetupCancelsLinuxDownload() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makePendingLinuxVM(in: viewModel, storage: storage)
-        instance.activity.placeForTesting(.installing(sessionID: nil))
 
         let cancelStream = AsyncStream<Void>.makeStream()
-        instance.setupTask = Task {
-            await withTaskCancellationHandler {
-                try? await Task.sleep(for: .seconds(60))
-            } onCancel: {
-                cancelStream.continuation.yield(())
-                cancelStream.continuation.finish()
-            }
+        try instance.launchParkedSetup {
+            cancelStream.continuation.yield(())
+            cancelStream.continuation.finish()
         }
 
         viewModel.cancelGuestSetup(instance)
@@ -3913,19 +3901,23 @@ struct VMLibraryViewModelTests {
         let instance = VMInstanceFixture.make()
         viewModel.library.admitForTesting([instance])
 
-        instance.activity.placeForTesting(.saving(sessionID: UUID()))
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        instance.activity.placeForTesting(.operating(.saving, from: live))
         #expect(viewModel.hasSaveInFlight)
         // A capture writes files too, so it waits out alongside a suspend.
-        instance.activity.placeForTesting(.capturingLive(sessionID: UUID()))
+        instance.activity.placeForTesting(.operating(.capturingSnapshot(.live), from: live))
         #expect(viewModel.hasSaveInFlight)
-        instance.activity.placeForTesting(.capturingAtRest)
+        instance.activity.placeForTesting(.operating(.capturingSnapshot(.stopped), from: .stopped))
         #expect(viewModel.hasSaveInFlight)
         // Every other transition is one an explicit quit may terminate through.
         for phase in [
-            VMLifecyclePhase.starting(sessionID: UUID()),
-            .restoringSavedState(sessionID: UUID()), .revertingToSnapshot,
-            .installing(sessionID: UUID()), .running(sessionID: UUID()),
-            .livePaused(sessionID: UUID()), .suspended, .stopped,
+            VMLifecyclePhase.operating(
+                .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .operating(
+                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
+            .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
+            .running(sessionID: UUID()), .livePaused(sessionID: UUID()), .suspended, .stopped,
         ] {
             instance.activity.placeForTesting(phase)
             #expect(!viewModel.hasSaveInFlight, "\(phase)")
@@ -3938,7 +3930,7 @@ struct VMLibraryViewModelTests {
         let running = VMInstanceFixture.make()
         running.activity.placeForTesting(.running(sessionID: UUID()))
         let saving = VMInstanceFixture.make()
-        saving.activity.placeForTesting(.saving(sessionID: UUID()))
+        saving.activity.placeForTesting(.operating(.saving, from: .running(sessionID: UUID())))
         viewModel.library.admitForTesting([running, saving])
 
         #expect(viewModel.hasSaveInFlight)
@@ -3950,37 +3942,10 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.hasSaveInFlight)
     }
 
-    @Test("isBusy is false for a settled VM")
-    func isBusyIsFalseWhenSettled() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make()
-        viewModel.library.admitForTesting([instance])
-
-        for phase in [
-            VMLifecyclePhase.stopped, .running(sessionID: UUID()),
-            .livePaused(sessionID: UUID()), .suspended,
-        ] {
-            instance.activity.placeForTesting(phase)
-            #expect(!viewModel.isBusy(instance), "\(phase)")
-        }
-    }
-
-    @Test("isBusy covers every transitioning phase")
-    func isBusyCoversTransitions() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make()
-        viewModel.library.admitForTesting([instance])
-
-        for phase in Self.transitionalPhases {
-            instance.activity.placeForTesting(phase)
-            #expect(viewModel.isBusy(instance), "\(phase)")
-        }
-    }
-
-    /// The state that motivates the lifecycle term: a pause holds `.running`
-    /// until the VZ call returns, so no phase-driven surface can render it —
-    /// and a call that never returns stays invisible.
-    @Test("isBusy reads true through a settling pause whose phase still says running")
+    /// A pause presents `.running` until the VZ call returns, so no
+    /// status-driven surface can render it — the operation holding the VM is
+    /// what the sidebar's busy term reads.
+    @Test("A settling pause holds the VM while its status still says running")
     func isBusyCoversSettlingPause() async throws {
         let (viewModel, suspending) = makeSuspendingViewModel()
         let instance = VMInstanceFixture.make()
@@ -3991,15 +3956,14 @@ struct VMLibraryViewModelTests {
         await suspending.waitUntilSuspended()
 
         #expect(instance.status == .running)
-        #expect(!instance.isTransitioning)
-        #expect(viewModel.isBusy(instance))
+        #expect(instance.phase.operation?.kind == .pausing)
 
         suspending.resumeSuspended()
         try await pause.value
-        #expect(!viewModel.isBusy(instance))
+        #expect(instance.phase.operation == nil)
     }
 
-    @Test("An isBusy wait resolves by observation when a settling pause ends")
+    @Test("A wait on the operation resolves by observation when a settling pause ends")
     func isBusyWakesAnObservedWait() async throws {
         let (viewModel, suspending) = makeSuspendingViewModel()
         let instance = VMInstanceFixture.make()
@@ -4008,12 +3972,12 @@ struct VMLibraryViewModelTests {
 
         let pause = Task { @MainActor in try await viewModel.lifecycle.pause(instance) }
         await suspending.waitUntilSuspended()
-        #expect(viewModel.isBusy(instance))
+        #expect(instance.phase.operation != nil)
 
         // Released from a separate task so the wait below arms first, making the
         // resolution an observation wake rather than an already-true predicate.
         Task { @MainActor in suspending.resumeSuspended() }
-        try await waitForChange { !viewModel.isBusy(instance) }
+        try await waitForChange { instance.phase.operation == nil }
 
         try await pause.value
     }
@@ -4217,12 +4181,18 @@ struct VMLibraryViewModelTests {
 
     /// Every mid-operation phase, each with the session identity its own case
     /// admits.
+    /// An operation of every kind that shows a status of its own.
     private static var transitionalPhases: [VMLifecyclePhase] {
-        [
-            .starting(sessionID: UUID()), .saving(sessionID: UUID()),
-            .capturingLive(sessionID: UUID()), .capturingAtRest,
-            .restoringSavedState(sessionID: UUID()), .revertingToSnapshot,
-            .installing(sessionID: UUID()),
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        return [
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.saving, from: live),
+            .operating(.capturingSnapshot(.live), from: live),
+            .operating(.capturingSnapshot(.stopped), from: .stopped),
+            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .operating(
+                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
+            .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
         ]
     }
 

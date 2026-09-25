@@ -60,7 +60,8 @@ struct StatusMenuVMSectionTests {
     @Test("rows(for:) includes only VMs keeping the app alive, titled name — status")
     func rowModel() {
         let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
-        let starting = makeInstance(name: "CI VM", phase: .starting(sessionID: nil))
+        let starting = makeInstance(
+            name: "CI VM", phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
         let stopped = makeInstance(name: "Idle VM", phase: .stopped)
 
         let rows = StatusMenuVMSection.rows(for: [running, starting, stopped].map(LibraryEntry.vm))

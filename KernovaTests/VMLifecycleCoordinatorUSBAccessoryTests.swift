@@ -85,7 +85,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         }()
         await service.attachStarted()
         // The guest goes away while VZ is capturing the device.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
         await attach
 
@@ -288,7 +288,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
                 instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
         }()
         try await service.waitStarted.wait { service.parkedWaitCount > 0 }
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         let start = ContinuousClock.now
         await snapshot
         let elapsed = ContinuousClock.now - start
@@ -378,7 +378,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         }()
         await service.attachStarted()
         // The guest goes away while VZ is capturing the device for the put-back.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
         await snapshot
 

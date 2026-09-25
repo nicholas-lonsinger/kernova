@@ -665,7 +665,7 @@ struct VMCommandCoreUSBAccessoryTests {
         let accessory = MockUSBAccessoryService.accessory(registryID: 7, serial: "0373")
         _ = try await attach(accessory, to: instance, in: harness)
         let key = try #require(accessory.identity?.key)
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         // A rule names hardware that is usually in a drawer, so requiring a
         // live guest would make the rows that most need removing unremovable.

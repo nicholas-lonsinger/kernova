@@ -6,6 +6,7 @@ import Testing
 @testable import Kernova
 
 @Suite("DetailRoute Tests", .admissionGated)
+@MainActor
 struct DetailRouteTests {
     /// A stand-in session identity for the live phases, which no CI test host
     /// can create a `VZVirtualMachine` for.
@@ -50,7 +51,7 @@ struct DetailRouteTests {
     @Test("Installing with a setup state routes to .setup")
     func installingWithStateRoutesToSetup() {
         let route = DetailRoute.resolve(
-            phase: .installing(sessionID: Self.session),
+            phase: .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
             hasSetupState: true,
             detailPaneMode: .display
         )
@@ -60,7 +61,7 @@ struct DetailRouteTests {
     @Test("Installing without a setup state routes to a transition")
     func installingWithoutStateRoutesToTransition() {
         let route = DetailRoute.resolve(
-            phase: .installing(sessionID: Self.session),
+            phase: .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
             hasSetupState: false,
             detailPaneMode: .display
         )
@@ -71,11 +72,11 @@ struct DetailRouteTests {
 
     @Test("Phases with a live display honor the chosen pane")
     func activeDisplayHonorsPane() {
+        let live = VMLifecyclePhase.running(sessionID: Self.session)
         for phase in [
-            VMLifecyclePhase.running(sessionID: Self.session),
-            .livePaused(sessionID: Self.session), .saving(sessionID: Self.session),
-            .capturingLive(sessionID: Self.session),
-            .restoringSavedState(sessionID: Self.session),
+            live, .livePaused(sessionID: Self.session), .operating(.saving, from: live),
+            .operating(.capturingSnapshot(.live), from: live),
+            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: Self.session),
         ] {
             let display = DetailRoute.resolve(
                 phase: phase,
@@ -99,7 +100,9 @@ struct DetailRouteTests {
     func startingRoutesToTransition() {
         for paneMode in [DetailPaneMode.display, .settings] {
             let route = DetailRoute.resolve(
-                phase: .starting(sessionID: Self.session),
+                phase: .operating(
+                    .bringUp(.starting(recovery: false)), from: .stopped,
+                    boundSession: Self.session),
                 hasSetupState: false,
                 detailPaneMode: paneMode
             )
@@ -109,12 +112,15 @@ struct DetailRouteTests {
 
     @Test("A session-less transition routes to its spinner, not the display pane")
     func sessionLessTransitionsRouteToTransition() {
-        // A revert always tears the session down before `.revertingToSnapshot`,
-        // and a disks-only capture never had one — both would otherwise replace
-        // the Settings form with the display backing view for the whole copy.
+        // A revert ends the session before it copies, and a disks-only capture
+        // never had one — both would otherwise replace the Settings form with
+        // the display backing view for the whole copy.
         for phase in [
-            VMLifecyclePhase.capturingAtRest, .revertingToSnapshot,
-            .restoringSavedState(sessionID: nil),
+            VMLifecyclePhase.operating(.capturingSnapshot(.stopped), from: .stopped),
+            .operating(
+                .bringUp(.reverting(snapshotID: Self.session, resumesAfter: false)),
+                from: .running(sessionID: Self.session), sessionEnd: .endedByOperation),
+            .operating(.bringUp(.restoringSavedState), from: .suspended),
         ] {
             for paneMode in [DetailPaneMode.display, .settings] {
                 let route = DetailRoute.resolve(

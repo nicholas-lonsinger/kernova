@@ -83,18 +83,22 @@ struct GuestAgentDiskMenuTests {
     }
 }
 
-/// Unit tests for `VMInstance.canManageGuestAgentDisk` — the hard gate
+/// Unit tests for the guest-agent disk affordance — the hard gate
 /// `MainMenuController.validate` applies before consulting the model above.
-@Suite("VMInstance.canManageGuestAgentDisk", .admissionGated)
+@Suite("Guest-agent disk affordance", .admissionGated)
 @MainActor
 struct GuestAgentDiskEligibilityTests {
+    private func eligible(_ instance: VMInstance) -> Bool {
+        instance.activity.admits(.affordance(.guestAgentDisk))
+    }
+
     @Test(
         "A live macOS guest can manage the disk",
         arguments: [
             VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
         ])
     func liveMacOSIsEligible(phase: VMLifecyclePhase) {
-        #expect(VMInstanceFixture.make(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
+        #expect(eligible(VMInstanceFixture.make(guestOS: .macOS, phase: phase)))
     }
 
     @Test(
@@ -103,21 +107,22 @@ struct GuestAgentDiskEligibilityTests {
             VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
         ])
     func liveLinuxIsNotEligible(phase: VMLifecyclePhase) {
-        #expect(!VMInstanceFixture.make(guestOS: .linux, phase: phase).canManageGuestAgentDisk)
+        #expect(!eligible(VMInstanceFixture.make(guestOS: .linux, phase: phase)))
     }
 
     @Test("A macOS guest suspended to disk cannot — USB hot-plug needs a live VM")
     func macOSWithoutLiveVMIsNotEligible() {
-        #expect(!VMInstanceFixture.make(guestOS: .macOS, phase: .suspended).canManageGuestAgentDisk)
+        #expect(!eligible(VMInstanceFixture.make(guestOS: .macOS, phase: .suspended)))
     }
 
     @Test(
         "A stopped macOS guest cannot",
         arguments: [
-            VMLifecyclePhase.stopped, .starting(sessionID: UUID()),
-            .failed(message: "Boot failed."),
+            PhaseFixture.settled(.stopped),
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .settled(.failed(message: "Boot failed.")),
         ])
-    func stoppedMacOSIsNotEligible(phase: VMLifecyclePhase) {
-        #expect(!VMInstanceFixture.make(guestOS: .macOS, phase: phase).canManageGuestAgentDisk)
+    func stoppedMacOSIsNotEligible(phase: PhaseFixture) {
+        #expect(!eligible(VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)))
     }
 }

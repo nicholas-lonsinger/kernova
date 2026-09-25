@@ -1,10 +1,8 @@
 import Foundation
 @testable import Kernova
 
-/// A mock virtualization service whose `start` and `pause` methods suspend until
-/// explicitly resumed.
-///
-/// Used to test operation serialization in `VMLifecycleCoordinator`.
+/// A mock virtualization service whose `start` and `pause` bodies suspend until
+/// explicitly resumed, while the operation that runs them holds the VM.
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
 ///   single `suspendedContinuation` slot; calling `suspendIfNeeded()` while another
@@ -21,16 +19,13 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnPause = true
 
-    /// When `true`, `resume` will suspend while the VM stands in the phase a
-    /// real resume of its kind stands in — `.restoringSavedState` for a cold
-    /// one building its configuration, the live-paused phase it was called in
-    /// for a hot one.
+    /// When `true`, a hot `resume` will suspend.
     ///
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnResume = false
 
-    /// When `true`, `revertToSnapshot` will suspend before tearing the session
-    /// down, standing in for the window a real revert spends copying files.
+    /// When `true`, `revertToSnapshot` will suspend before ending the session,
+    /// standing in for the window a real revert spends copying files.
     ///
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnRevert = false
@@ -89,87 +84,89 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     // MARK: - VirtualizationProviding
 
     func start(
-        _ instance: VMInstance, bootIntoRecovery: Bool = false,
-        provisioning: GuestProvisioningCredentials? = nil
-    ) async throws -> GuestStartRoute {
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
+        provisioning: GuestProvisioningCredentials?
+    ) async throws -> VMOperationEnding<GuestStartRoute> {
         startCallCount += 1
         lastStartProvisioning = provisioning
-        // Read before the suspension, as the real service decides it before its
-        // first await.
-        let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
-        // Before the suspension, as the real service leaves rest before its
-        // first await: a start in flight is what every other caller reads off
-        // the VM.
-        try instance.beginBringUp(route == .restoredSavedState ? .restoringSavedState : .starting)
+        guard case .bringUp(let kind) = context.operation.kind, let route = GuestStartRoute(kind)
+        else {
+            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
+        }
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
-        if let error = startError {
-            instance.tearDownSession(
-                restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
-                    error, on: instance, transientRestingPhase: .stopped))
-            throw error
-        }
-        instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
-        return route
+        if let error = startError { throw error }
+        if route == .restoredSavedState { instance.bundle.removeSaveFile() }
+        context.bindSessionForTesting(UUID())
+        return .rest(.live(.running), route)
     }
 
-    func stop(_ instance: VMInstance) async throws {
-        instance.restAfterPowerOff()
+    /// A guest that honors the request powers off, which reaches the VM as the
+    /// session event the real guest raises.
+    func requestStop(_ instance: VMInstance) async throws {
+        guard let sessionID = instance.liveSessionID else { return }
+        instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
     }
 
-    func forceStop(_ instance: VMInstance) async throws {
-        instance.restAfterPowerOff()
-    }
+    func forceStop(_ instance: VMInstance) async throws {}
 
-    func pause(_ instance: VMInstance) async throws {
+    func pause(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void> {
         if shouldSuspendOnPause {
             await suspendIfNeeded()
         }
-        instance.enter(.livePaused(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
+        return .rest(.live(.paused), ())
     }
 
-    func resume(_ instance: VMInstance) async throws {
-        // A cold resume rebuilds the VM from the save file and stands in
-        // `.restoringSavedState` for the whole of that build; a hot one resumes
-        // the session it already holds and touches no phase until it settles.
-        if instance.holdsSuspendedSession { try instance.beginBringUp(.restoringSavedState) }
+    func resume(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void> {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
         instance.bundle.removeSaveFile()
-        instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
+        return .rest(.live(.running), ())
     }
 
-    func save(_ instance: VMInstance) async throws {
+    func save(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void> {
         // The slot is what makes the VM resumable, so a real one is written:
         // every predicate a suspended VM is judged by reads the file.
         try VMInstanceFixture.writeSaveFile(for: instance)
-        instance.tearDownSession(restingAt: .suspended)
+        context.endSession()
+        return .rest(.slotOr(.stopped), ())
     }
 
-    func takeSnapshot(_ instance: VMInstance, snapshot: VMSnapshotRecord) async throws -> VMSnapshot {
-        let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
-        instance.enter(phases.capturing)
-        instance.enter(phases.resting)
-        return VMSnapshot(snapshot, macAddress: instance.configuration.macAddress)
+    func takeSnapshot(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        snapshot: VMSnapshotRecord
+    ) async throws -> VMOperationEnding<VMSnapshot> {
+        guard case .capturingSnapshot(let mode) = context.kind, mode.kind == snapshot.kind else {
+            throw VirtualizationError.invalidStateTransition(
+                from: instance.status, action: "take a snapshot of")
+        }
+        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: instance.configuration.macAddress))
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot,
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
-    ) async throws {
+    ) async throws -> VMOperationEnding<Void> {
         let plan = try await instance.bundle.planRestore(
             fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
+        context.operation.endSession()
         try await instance.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(plan)
         try await instance.bundle.installRestore(plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)
-        instance.tearDownSession(restingAt: .suspended)
+        return .rest(.slotOr(.stopped), ())
     }
 }

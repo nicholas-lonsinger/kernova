@@ -141,9 +141,10 @@ struct VMSleepWakeCoordinatorTests {
     func pauseAllForSleepSkipsNonRunning() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let starting = VMInstanceFixture.make(name: "Starting")
-        starting.activity.placeForTesting(.starting(sessionID: nil))
+        starting.activity.placeForTesting(
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped))
         let saving = VMInstanceFixture.make(name: "Saving")
-        saving.activity.placeForTesting(.saving(sessionID: UUID()))
+        saving.activity.placeForTesting(.operating(.saving, from: .running(sessionID: UUID())))
         let error = VMInstanceFixture.make(name: "Error")
         error.activity.placeForTesting(.failed(message: "Test failure"))
         roster.instances = [starting, saving, error]
@@ -166,7 +167,9 @@ struct VMSleepWakeCoordinatorTests {
         #expect(coordinator.sleepPausedInstanceIDs.isEmpty)
     }
 
-    @Test("A wake-time cold resume onto an identity another live VM holds is refused")
+    /// Wake's resume is a hot one: a VM that came to rest on its slot while
+    /// the host slept is not restored behind the user's back.
+    @Test("A wake-time resume of a VM that came to rest on its slot is refused, keeping the slot")
     func wakeColdResumeOntoALiveIdentityIsRefused() async throws {
         let virtService = MockVirtualizationService()
         let lifecycle = makeTestLifecycle(virtualization: virtService, fileSystem: fileSystem)
@@ -191,12 +194,13 @@ struct VMSleepWakeCoordinatorTests {
         // Between sleep and wake the paused VM came to rest on its suspend slot,
         // releasing its address, and its twin came up on it.
         try VMInstanceFixture.writeSaveFile(for: sleeper)
-        sleeper.tearDownSession(restingAt: .suspended)
+        sleeper.handleSessionEvent(.guestDidStop)
         twin.activity.placeForTesting(.running(sessionID: UUID()))
 
         await coordinator.resumeAllAfterWake()
 
-        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.resumeCallCount == 0)
+        #expect(virtService.startCallCount == 0)
         #expect(sleeper.phase == .suspended)
         #expect(sleeper.hasSaveFile)
         #expect(twin.status == .running)

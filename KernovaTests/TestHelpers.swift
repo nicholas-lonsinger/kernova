@@ -240,6 +240,108 @@ func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
     return wrapped
 }
 
+// MARK: - Operation phases
+
+extension VMLifecyclePhase {
+    /// An operation of `kind` holding a VM admitted from `startedFrom` — the
+    /// phase ``VMActivity`` commits, for a test to place.
+    ///
+    /// The operation holds the settled live session `startedFrom` names, or the
+    /// running session `boundSession` names once a bring-up bound one; none once
+    /// `sessionEnd` says the session ended.
+    @MainActor
+    static func operating(
+        _ kind: VMOperationKind, from startedFrom: VMLifecyclePhase,
+        boundSession: UUID? = nil, sessionEnd: VMSessionEnd? = nil
+    ) -> VMLifecyclePhase {
+        let session: VMOperationSession?
+        if sessionEnd != nil {
+            session = nil
+        } else if let boundSession {
+            session = VMOperationSession(id: boundSession, guest: .running)
+        } else {
+            switch startedFrom {
+            case .running(let id): session = VMOperationSession(id: id, guest: .running)
+            case .livePaused(let id): session = VMOperationSession(id: id, guest: .paused)
+            default: session = nil
+            }
+        }
+        return .operating(
+            VMOperation(
+                kind: kind, startedFrom: startedFrom, session: session, sessionEnd: sessionEnd,
+                outcome: VMOutcome()))
+    }
+}
+
+/// A phase a parameterized test places, described without the ``VMOutcome``
+/// an operation carries — so an argument list, which is built off the main
+/// actor, can name an operation.
+enum PhaseFixture: Sendable, CustomTestStringConvertible {
+    case settled(VMLifecyclePhase)
+    case operating(VMOperationKind, from: VMLifecyclePhase, boundSession: UUID? = nil)
+
+    @MainActor
+    var phase: VMLifecyclePhase {
+        switch self {
+        case .settled(let phase):
+            phase
+        case .operating(let kind, let startedFrom, let boundSession):
+            .operating(kind, from: startedFrom, boundSession: boundSession)
+        }
+    }
+
+    var testDescription: String {
+        switch self {
+        case .settled(let phase): "\(phase)"
+        case .operating(let kind, let startedFrom, _): "\(kind) from \(startedFrom)"
+        }
+    }
+}
+
+extension VMActivity {
+    /// Whether `request` is admitted outright right now.
+    func admits(_ request: VMAdmission.Request, posture: VMAdmission.Posture = .commit) -> Bool {
+        decide(request, posture: posture) == .admit
+    }
+}
+
+extension VMInstance {
+    /// Whether a revert holds the VM.
+    var isHeldByRevert: Bool {
+        guard case .bringUp(.reverting)? = phase.operation?.kind else { return false }
+        return true
+    }
+
+    /// Launches a guest setup operation whose body parks until cancelled —
+    /// an install or download in flight, as far as anything reading the VM can
+    /// tell — calling `onCancel` as the cancel lands.
+    ///
+    /// The VM must owe the setup and be at rest, as any launch requires.
+    @discardableResult
+    func launchParkedSetup(onCancel: @escaping @Sendable () -> Void = {}) throws -> VMOutcome {
+        let kind: GuestSetupKind =
+            configuration.linuxInstallContext != nil ? .linuxImageDownload : .macOSInstall
+        return try activity.launchBringUp(.settingUp(kind)) {
+            (_: borrowing VMBringUpContext) async throws -> VMOperationEnding<Void> in
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                onCancel()
+            }
+            throw CancellationError()
+        }
+    }
+
+    /// The task the guest setup holding the VM runs in, or `nil` when none
+    /// holds it — what a test cancels and waits out so nothing outlives it.
+    var setupOperationTask: Task<Void, Never>? {
+        guard let operation = phase.operation, operation.kind.belongs(to: .guestSetup) else {
+            return nil
+        }
+        return operation.outcome.task
+    }
+}
+
 // MARK: - Live-session vsock fixtures
 
 /// An instance standing in for one with a live session: every feature toggle on

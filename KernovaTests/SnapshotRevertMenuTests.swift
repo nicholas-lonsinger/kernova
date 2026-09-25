@@ -21,10 +21,16 @@ struct SnapshotRevertMenuTests {
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds), macAddress: nil)
     }
 
+    /// Whether the VM's own state admits a revert right now.
+    private func admitsRevert(_ instance: VMInstance) -> Bool {
+        instance.activity.admits(
+            .operation(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false))))
+    }
+
     private func rebuild(for instance: VMInstance?, isEnabled: Bool? = nil) -> NSMenu {
         let menu = NSMenu()
         SnapshotRevertMenu.rebuild(
-            menu, for: instance, isEnabled: isEnabled ?? instance?.canRevertToSnapshot ?? false,
+            menu, for: instance, isEnabled: isEnabled ?? instance.map(admitsRevert) ?? false,
             target: Target(), action: #selector(Target.revert(_:)))
         return menu
     }
@@ -81,7 +87,8 @@ struct SnapshotRevertMenuTests {
 
     @Test("Items are disabled while the VM is mid-transition")
     func itemsDisabledWhileTransitioning() {
-        let instance = makeInstance(phase: .starting(sessionID: nil))
+        let instance = makeInstance(
+            phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
 
         #expect(rebuild(for: instance).items.allSatisfy { !$0.isEnabled })
@@ -100,10 +107,9 @@ struct SnapshotRevertMenuTests {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
 
-        // `canRevertToSnapshot` alone reads `true` here: the VM is settled. The
-        // menu still has to follow the caller, which folds in whether an
-        // operation is unsettled.
-        #expect(instance.canRevertToSnapshot)
+        // The VM's own state admits the revert here. The menu still has to
+        // follow the caller's gate.
+        #expect(admitsRevert(instance))
         #expect(rebuild(for: instance, isEnabled: false).items.allSatisfy { !$0.isEnabled })
     }
 }

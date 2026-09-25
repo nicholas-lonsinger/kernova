@@ -89,7 +89,7 @@ struct SidebarViewControllerTests {
         instance.activity.placeForTesting(.failed(message: "Test failure"))
         #expect(instance.statusDisplayNSColor == .systemRed)
 
-        instance.activity.placeForTesting(.starting(sessionID: nil))
+        instance.activity.placeForTesting(.operating(.bringUp(.starting(recovery: false)), from: .stopped))
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
@@ -138,13 +138,16 @@ struct SidebarViewControllerTests {
     @Test(
         "Agent indicator suppressed outside a live session",
         arguments: [
-            VMLifecyclePhase.starting(sessionID: UUID()), .saving(sessionID: UUID()),
-            .restoringSavedState(sessionID: UUID()), .failed(message: "Boot failed."),
-            .initialBoot,
+            PhaseFixture.operating(
+                .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.saving, from: .running(sessionID: UUID())),
+            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .settled(.failed(message: "Boot failed.")),
+            .settled(.initialBoot),
         ]
     )
-    func agentSuppressedWhenNotInLiveSession(phase: VMLifecyclePhase) {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase)
+    func agentSuppressedWhenNotInLiveSession(phase: PhaseFixture) {
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -584,13 +587,16 @@ struct SidebarViewControllerTests {
     @Test(
         "A VM mid-operation offers neither stop — Virtualization takes a termination from neither",
         arguments: [
-            VMLifecyclePhase.starting(sessionID: UUID()), .saving(sessionID: UUID()),
-            .restoringSavedState(sessionID: UUID()), .capturingLive(sessionID: UUID()),
+            PhaseFixture.operating(
+                .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.saving, from: .running(sessionID: UUID())),
+            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
         ])
-    func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: VMLifecyclePhase) {
+    func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: PhaseFixture) {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make(phase: phase)
+        let instance = VMInstanceFixture.make(phase: phase.phase)
         viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -603,7 +609,8 @@ struct SidebarViewControllerTests {
     @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")
     func contextMenuNoForceStopDuringAColdCapture() {
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make(phase: .capturingAtRest)
+        let instance = VMInstanceFixture.make(
+            phase: .operating(.capturingSnapshot(.stopped), from: .stopped))
         viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 

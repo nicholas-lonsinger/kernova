@@ -340,7 +340,7 @@ struct VMLifecycleCoordinatorTests {
         await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
         #expect(virtService.pauseCallCount == 0)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         _ = try? await pause.value
         #expect(virtService.pauseCallCount == 1)
         #expect(!coordinator.hasUnsettledOperation(for: instance.id))
@@ -2031,7 +2031,7 @@ struct VMLifecycleCoordinatorTests {
             for: sessionID
         )
         // Force stop and restart: the pass acting for `sessionID` is overtaken.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         instance.beginSessionContext()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         let attachesBefore = removableMediaService.attachCallCount

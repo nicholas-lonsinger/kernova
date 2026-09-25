@@ -120,7 +120,7 @@ struct VMSessionContextTests {
         instance.beginSessionContext(bootedIntoRecovery: true)
         #expect(instance.sessionContext != nil)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
@@ -215,7 +215,7 @@ struct VMSessionContextTests {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
         instance.beginSessionContext()
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         #expect(instance.sessionContext == nil)
 
         instance.recordAttachedMedia(RemovableMediaDeviceInfo(path: "/tmp/late.iso", readOnly: true), for: sessionID)
@@ -233,7 +233,7 @@ struct VMSessionContextTests {
         instance.recordAttachedMedia(carried, for: sessionA)
 
         // Force stop, then a restart whose cold boot re-registers the same item.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         instance.beginSessionContext()
         let coldBooted = RemovableMediaDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
         instance.adoptBuildResult(
@@ -323,7 +323,7 @@ struct VMSessionContextTests {
             instance.beginSessionContext()
             #expect(
                 observationFires(reading: { track(instance) }) {
-                    instance.tearDownSession(restingAt: .stopped)
+                    instance.handleSessionEvent(.guestDidStop)
                 })
         }
     }

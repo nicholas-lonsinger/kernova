@@ -165,7 +165,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         instance.displayMode = .hidden
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(instance.displayMode == .inline)
     }
@@ -206,7 +206,7 @@ struct VMInstanceTests {
         instance.beginSessionContext()
         instance.markRemovableMediaReconcileOwed(for: sessionID)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(!instance.hasRemovableMediaReconcileOwed)
     }
@@ -799,7 +799,7 @@ struct VMInstanceTests {
         #expect(instance.networkAttachmentPending)
         let context = try #require(instance.sessionContext)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         // `NetworkAttachmentCoordinator.isActive` is private, so the mock link
         // observer is the only external signal that `stop()` actually ran —
@@ -1373,7 +1373,7 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(bootedIntoRecovery: true)
         #expect(instance.bootedIntoRecovery)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         #expect(!instance.bootedIntoRecovery)
 
         instance.beginSessionContext(bootedIntoRecovery: true)
@@ -1575,7 +1575,7 @@ struct VMInstanceTests {
         #expect(instance.hasSeenAgentThisSession)
         let context = try #require(instance.sessionContext)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         #expect(!context.hasSeenAgentThisSession)
     }
 
@@ -1587,7 +1587,7 @@ struct VMInstanceTests {
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
         let context = try #require(instance.sessionContext)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(context.agentExpectedButMissing == false)
         // The next session's context arms cleanly — the prior task was
@@ -1617,7 +1617,7 @@ struct VMInstanceTests {
 
         // Teardown, then a fresh session arming its own watchdog on a grace
         // long enough that it cannot legitimately fire during this test.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContext()
         instance.startAgentPostStartWatchdog(grace: .seconds(60))

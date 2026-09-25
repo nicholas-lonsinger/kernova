@@ -17,6 +17,7 @@ final class MockMacOSInstallService: MacOSInstallProviding {
 
     func install(
         into instance: VMInstance,
+        _ context: borrowing VMBringUpContext,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
@@ -24,12 +25,8 @@ final class MockMacOSInstallService: MacOSInstallProviding {
         lastRestoreImageURL = restoreImageURL
         onInstall?()
         if let error = installError { throw error }
-        // Mirror the real `MacOSInstallService` post-install state: VM
-        // released (via `guestDidStop` → `restAfterPowerOff` in production
-        // after `waitForVMStopped`; simulated directly here) and status
-        // `.stopped` so the caller's auto-boot runs the normal cold-boot
-        // path with no stale refs.
-        instance.restAfterPowerOff()
+        // No installer session is bound, so there is none whose end to await:
+        // the setup operation's ending rests the VM.
         return installedImage
     }
 }

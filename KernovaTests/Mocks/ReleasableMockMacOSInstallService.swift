@@ -41,6 +41,7 @@ final class ReleasableMockMacOSInstallService: MacOSInstallProviding {
 
     func install(
         into instance: VMInstance,
+        _ context: borrowing VMBringUpContext,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
@@ -54,9 +55,6 @@ final class ReleasableMockMacOSInstallService: MacOSInstallProviding {
                 parked = continuation
             }
         }
-        // Mirrors `MockMacOSInstallService`: the real service leaves the VM
-        // released and stopped before the caller chains its auto-boot.
-        instance.restAfterPowerOff()
         return installedImage
     }
 }

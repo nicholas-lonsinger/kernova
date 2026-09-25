@@ -435,7 +435,7 @@ struct VMRemovableMediaReconcilerTests {
 
         // Force Stop, then Start: the suspended attach now answers for a
         // session two transitions old.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         instance.beginSessionContext()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -464,7 +464,7 @@ struct VMRemovableMediaReconcilerTests {
         // an error the user caused and the rollback would describe the
         // successor's — here empty — live media.
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/A.iso")
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         instance.beginSessionContext()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -496,7 +496,7 @@ struct VMRemovableMediaReconcilerTests {
 
         // Force Stop; an edit to C made while stopped persists but queues
         // nothing, so B stays queued; then Start, cold-booting C.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         harness.library.editConfiguration(of: instance) { $0 = configC }
         instance.beginSessionContext()
         let successorID = UUID()
@@ -699,7 +699,7 @@ struct VMRemovableMediaReconcilerTests {
         // Queued, then the session goes before the pass gets its turn; the
         // successor starts with nothing owed.
         harness.library.editConfiguration(of: instance) { $0 = configA }
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         #expect(!instance.hasRemovableMediaReconcileOwed)
         instance.beginSessionContext()
         instance.activity.placeForTesting(.running(sessionID: UUID()))

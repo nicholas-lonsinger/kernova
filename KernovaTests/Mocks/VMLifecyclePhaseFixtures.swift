@@ -9,16 +9,11 @@ enum VMLifecyclePhaseKind: CaseIterable, Hashable {
     case stopped
     case initialBoot
     case failed
-    case installing
-    case starting
+    case suspended
     case running
     case livePaused
-    case saving
-    case capturingLive
-    case restoringSavedState
-    case suspended
-    case capturingAtRest
-    case revertingToSnapshot
+    case operating
+    case removed
 }
 
 extension VMLifecyclePhase {
@@ -32,52 +27,56 @@ extension VMLifecyclePhase {
         case .stopped: .stopped
         case .initialBoot: .initialBoot
         case .failed: .failed
-        case .installing: .installing
-        case .starting: .starting
+        case .suspended: .suspended
         case .running: .running
         case .livePaused: .livePaused
-        case .saving: .saving
-        case .capturingLive: .capturingLive
-        case .restoringSavedState: .restoringSavedState
-        case .suspended: .suspended
-        case .capturingAtRest: .capturingAtRest
-        case .revertingToSnapshot: .revertingToSnapshot
+        case .operating: .operating
+        case .removed: .removed
         }
     }
 }
 
-/// Every `VMLifecyclePhase` case, shared by the suites that sweep all of
-/// them — the sessionless and session-bearing variants of the three phases
-/// that admit either, `starting`, `installing` and `restoringSavedState`,
-/// each appearing twice.
-///
-/// `VMLifecyclePhaseTests.fixtureListIsComplete` is what keeps this list
-/// complete: it checks each kind's count, not just its presence, since a
-/// plain `Set(all.map(\.kind)) == Set(VMLifecyclePhaseKind.allCases)` would
-/// stay true with one of a nil/session pair missing. The kind switch above
-/// cannot be answered without a case, and the count check cannot pass
-/// without this constant listing that case the right number of times.
+/// Every settled `VMLifecyclePhase` case, and an operation of each
+/// declaration shape, shared by the suites that sweep all of them.
+@MainActor
 enum VMLifecyclePhaseFixtures {
     /// A stand-in session identity: a live phase names the `VZVirtualMachine`
     /// it describes, and no CI test host can create one.
-    static let session = UUID()
+    nonisolated static let session = UUID()
 
-    static let all: [VMLifecyclePhase] = [
+    nonisolated static let settled: [VMLifecyclePhase] = [
         .stopped,
         .initialBoot,
         .failed(message: "Boot failed."),
         .suspended,
-        .capturingAtRest,
-        .revertingToSnapshot,
-        .starting(sessionID: nil),
-        .installing(sessionID: nil),
-        .restoringSavedState(sessionID: nil),
-        .starting(sessionID: session),
-        .installing(sessionID: session),
-        .restoringSavedState(sessionID: session),
         .running(sessionID: session),
         .livePaused(sessionID: session),
-        .saving(sessionID: session),
-        .capturingLive(sessionID: session),
+        .removed,
     ]
+
+    /// One operation per declared status, identity and edit shape, with a
+    /// bring-up both before and after it bound its session.
+    static let operations: [VMLifecyclePhase] = {
+        let live = VMLifecyclePhase.running(sessionID: session)
+        return [
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped),
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: session),
+            .operating(.bringUp(.restoringSavedState), from: .suspended),
+            .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
+            .operating(
+                .bringUp(.reverting(snapshotID: session, resumesAfter: true)), from: live),
+            .operating(.pausing, from: live),
+            .operating(.resuming, from: .livePaused(sessionID: session)),
+            .operating(.saving, from: live),
+            .operating(.capturingSnapshot(.live), from: live),
+            .operating(.capturingSnapshot(.stopped), from: .stopped),
+            .operating(.deletingSnapshot, from: live),
+            .operating(.attachingUSB(registryID: 1), from: live),
+            .operating(.reconcilingMedia, from: live),
+            .operating(.forceStopping, from: live),
+            .operating(.deleting, from: .stopped),
+        ]
+    }()
+
+    static let all: [VMLifecyclePhase] = settled + operations
 }
