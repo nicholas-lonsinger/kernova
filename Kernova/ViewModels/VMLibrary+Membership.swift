@@ -498,8 +498,8 @@ extension VMLibrary {
     /// The discard is synchronous — the process ends immediately after, so a
     /// detached removal would never run.
     func abandonArrivalsForTermination() {
-        for arrival in arrivals {
-            guard arrival.requestCancel() != .publishing else { continue }
+        for arrival in arrivals where arrival.stage != .publishing {
+            _ = arrival.requestCancel()
             #log(
                 Self.logger, .notice,
                 "Terminating: abandoning \(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)'"
