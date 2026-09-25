@@ -72,7 +72,7 @@ extension VMCommandCore {
             throw CommandError.operationFailed(
                 verb: .start,
                 message:
-                    "\u{201C}\(instance.name)\u{201D} started, but Kernova could not record that its macOS account was created."
+                    "\u{201C}\(instance.name)\u{201D} started, but Kernova could not record that the boot that delivers its macOS account has run."
             )
         }
     }

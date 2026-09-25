@@ -2911,7 +2911,7 @@ struct VMCommandCoreTests {
         let failure = await commandError { try await harness.core.start(instance) }
 
         #expect(harness.virtualization.lastStartRoute == .coldBoot)
-        #expect(failure?.message.contains("started, but") == true)
+        #expect(failure?.message.contains("the boot that delivers its macOS account has run") == true)
         // The VM came up; only the record of the spent window is missing.
         #expect(instance.status == .running)
         #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())

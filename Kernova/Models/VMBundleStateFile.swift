@@ -152,8 +152,9 @@ struct VMBundleFiles: Sendable {
     /// Throws when `config.json`, the host state or the manifest cannot be
     /// read: a bundle whose contents are not known cannot be written. A
     /// pairings file that cannot be read is left in place and answered as
-    /// ``VMBundleRead/pairingsUnreadable``, with no pairings — a pairing is made
-    /// again by attaching the device once.
+    /// ``VMBundleRead/pairingsUnreadable``, with no pairings; every pairings
+    /// write reads it first, so each one fails for as long as it stays that
+    /// way.
     func read() throws -> VMBundleRead {
         try access.reading(url) { files in
             var pairings = USBAccessoryPairingSet()
