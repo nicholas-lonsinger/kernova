@@ -75,12 +75,19 @@ final class GuestAddressObserver {
     /// mode joins.
     func address(for instance: VMInstance) -> GuestIPAddress {
         let config = instance.configuration
+        guard config.networkEnabled, config.networkMode != .bridged,
+            instance.hasLiveVirtualMachine, let key = key(for: config)
+        else { return Self.address(withNoLiveGuest: config) }
+        return observedAddresses[key].map(GuestIPAddress.observed) ?? .notObserved
+    }
+
+    /// What a guest configured as `config` answers for an address while
+    /// nothing of it is live — a VM at rest, or one still being written.
+    static func address(withNoLiveGuest config: VMConfiguration) -> GuestIPAddress {
         guard config.networkEnabled else { return .unavailable }
         // Answered before the capability: external DHCP owns a bridged guest's
         // address whether or not this process can read the table.
-        if config.networkMode == .bridged { return .externallyAssigned }
-        guard instance.hasLiveVirtualMachine, let key = key(for: config) else { return .unavailable }
-        return observedAddresses[key].map(GuestIPAddress.observed) ?? .notObserved
+        return config.networkMode == .bridged ? .externallyAssigned : .unavailable
     }
 
     /// Starts reading the table if a VM is running on an app-managed network

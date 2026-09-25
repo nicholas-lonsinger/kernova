@@ -315,13 +315,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The wait is what makes a Finder open of a bundle *already in the library*
     /// still resolve to "select the existing VM": a launch document arrives
     /// while the first read is in flight, and `importVMs(fromDroppedURLs:)`
-    /// dedups by UUID against `instances` — against an empty library it would
+    /// dedups by UUID against the library's rows — against an empty library it would
     /// copy the bundle a second time instead. Awaiting a finished load resumes
     /// on the next tick, so an open arriving later is unaffected.
     ///
-    /// `importVMs(fromDroppedURLs:)` then reserves every destination in the batch
+    /// `importVMs(fromDroppedURLs:)` then reserves each destination in the batch
     /// without suspending and runs the copies concurrently, so two overlapping
-    /// triggers still see each other's phantoms.
+    /// triggers still see each other's arrivals.
     private func importVMs(from urls: [URL]) {
         Task { @MainActor in
             await self.libraryLoad?.value

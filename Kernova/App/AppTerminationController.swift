@@ -353,7 +353,7 @@ final class AppTerminationController: NSObject {
 
         case .terminateNow:
             cancellableLaunchWork?.cancel()
-            viewModel.cancelAndCleanupPreparing()
+            viewModel.abandonArrivalsForTermination()
             return .terminateNow
 
         case .saveThenTerminate:
@@ -429,13 +429,13 @@ final class AppTerminationController: NSObject {
     /// AppKit began. They differ only in the ending, which
     /// ``owesDeferredTerminationReply`` decides.
     private func runSavePassThenEndTermination() {
-        viewModel.cancelAndCleanupPreparing()
+        viewModel.abandonArrivalsForTermination()
         Task { @MainActor in
             await self.runTerminationSavePass()
             // A drop/odoc delivered during the async save window above can
-            // register a fresh phantom, so sweep again before leaving or that
-            // bundle is orphaned on disk.
-            self.viewModel.cancelAndCleanupPreparing()
+            // register a fresh arrival, so sweep again before leaving or its
+            // staged tree waits for the next launch's reclaim.
+            self.viewModel.abandonArrivalsForTermination()
             self.hasCompletedTerminationSavePass = true
             self.endTermination()
         }

@@ -44,18 +44,26 @@ final class StatusMenuVMSection {
         self.rowAction = rowAction
     }
 
-    /// The rows the section should show for `instances`, each carrying the
-    /// clipboard refusal that VM's transfer report holds.
+    /// The rows the section should show for `entries`: every arrival, and
+    /// each VM keeping the app alive with the clipboard refusal its transfer
+    /// report holds.
     ///
     /// The `isKeepingAppAlive` filter is what keeps a stopped VM off the
     /// dropdown, and with it that VM's report — the row is the only thing a
     /// notice line can hang under.
-    static func rows(for instances: [VMInstance]) -> [StatusMenuVMRow] {
-        instances.filter(\.isKeepingAppAlive).map { instance in
-            StatusMenuVMRow(
-                instanceID: instance.instanceID,
-                title: "\(instance.name) — \(instance.statusDisplayName)",
-                noticeText: Self.noticeText(for: instance))
+    static func rows(for entries: [LibraryEntry]) -> [StatusMenuVMRow] {
+        entries.compactMap { entry in
+            switch entry {
+            case .arriving(let arrival):
+                return StatusMenuVMRow(
+                    instanceID: arrival.id, title: "\(arrival.name) — \(arrival.displayLabel)")
+            case .vm(let instance):
+                guard instance.isKeepingAppAlive else { return nil }
+                return StatusMenuVMRow(
+                    instanceID: instance.instanceID,
+                    title: "\(instance.name) — \(instance.statusDisplayName)",
+                    noticeText: Self.noticeText(for: instance))
+            }
         }
     }
 

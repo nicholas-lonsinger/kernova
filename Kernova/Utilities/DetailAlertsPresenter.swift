@@ -361,20 +361,12 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.stopPausedConfig(instance)) }
     }
 
-    func presentCancelPreparing(for instance: VMInstance) {
-        // Worded now, while the row is still preparing: the copy can settle
-        // behind another alert, and confirming then is a real cancel — the core
-        // cleans up the settled copy — so the words must not depend on state
-        // that has moved on by the time the alert is drawn.
-        guard let state = instance.preparingState else {
-            #log(
-                Self.logger, .fault,
-                "Cancel requested for '\(instance.name, privacy: .public)', which is not preparing")
-            assertionFailure("Cancel requested for a VM that is not preparing: \(instance.name)")
-            return
-        }
-        let prompt = VMCommandCore.cancelPreparingPrompt(state.operation, on: instance)
-        enqueue { $0.present($0.cancelPreparingConfig(prompt, instance)) }
+    func presentCancelPreparing(for arrival: VMArrival) {
+        // Worded now, from the arrival's kind: the copy can settle behind
+        // another alert, so the words must not depend on state that has moved
+        // on by the time the alert is drawn.
+        let prompt = VMCommandCore.cancelPreparingPrompt(arrival.kind)
+        enqueue { $0.present($0.cancelPreparingConfig(prompt, arrival)) }
     }
 
     func presentInstallerMounted(
@@ -621,11 +613,11 @@ final class DetailAlertsPresenter: NSObject {
     /// The cancel confirmation for a create, clone or import, drawn from the
     /// prompt taken when the gesture was made.
     private func cancelPreparingConfig(
-        _ prompt: ConfirmationPrompt, _ instance: VMInstance
+        _ prompt: ConfirmationPrompt, _ arrival: VMArrival
     ) -> AlertConfiguration {
         AlertConfiguration(
             confirming: prompt,
-            confirm: { [weak self] in self?.viewModel.cancelPreparing(instance) })
+            confirm: { [weak self] in self?.viewModel.cancelArrival(arrival) })
     }
 
     /// The revert confirmation.

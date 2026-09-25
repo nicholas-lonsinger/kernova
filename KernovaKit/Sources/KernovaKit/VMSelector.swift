@@ -60,7 +60,6 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case delete
     case importVM
     case cancelPreparing
-    case awaitPreparing
     case editStorageDisk
     case editRemovableMedia
     case editSharedDirectory
@@ -109,7 +108,6 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .delete: "Delete"
         case .importVM: "Import"
         case .cancelPreparing: "Cancel"
-        case .awaitPreparing: "Wait for Copy"
         case .editStorageDisk: "Edit Storage Disks"
         case .editRemovableMedia: "Edit Removable Media"
         case .editSharedDirectory: "Edit Shared Directories"
@@ -126,9 +124,9 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// "accepts now" tells a user nothing.
     ///
     /// The reads, which only answer a question, the reveal that brings a VM in
-    /// front of the user whatever state it is in, the Finder reveal and the
-    /// settle wait, which address the bundle rather than the guest, and the
-    /// quit, which addresses no VM at all.
+    /// front of the user whatever state it is in, the Finder reveal, which
+    /// addresses the bundle rather than the guest, and the quit, which
+    /// addresses no VM at all.
     ///
     /// The settings write is here too, for a different reason: every state
     /// takes a write of *some* key — the clipboard and Ephemeral Mode flags are
@@ -140,7 +138,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
             .usbAccessories, .availableUSBAccessories, .usbPairings,
             .forgetUSBPairing, .events, .reveal,
-            .showInFinder, .awaitPreparing, .configurationKeys, .configuration, .setConfiguration,
+            .showInFinder, .configurationKeys, .configuration, .setConfiguration,
             .quit:
             true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,

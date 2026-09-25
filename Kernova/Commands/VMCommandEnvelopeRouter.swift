@@ -196,8 +196,10 @@ struct VMCommandEnvelopeRouter {
             try commands.setSnapshotNotes(selector, snapshot: snapshot, notes: notes)
             return .ok
 
-        case .clone(let selector, let machineIdentity):
-            return .summary(try commands.clone(selector, machineIdentity: machineIdentity))
+        case .clone(let selector, let machineIdentity, let waitForOutcome):
+            return .summary(
+                try await commands.clone(
+                    selector, machineIdentity: machineIdentity, waitForOutcome: waitForOutcome))
         case .rename(let selector, let newName):
             try commands.rename(selector, to: newName)
             return .ok
@@ -206,13 +208,11 @@ struct VMCommandEnvelopeRouter {
                 selector, permanently: permanently, alsoRemoving: Set(alsoRemoving),
                 confirmed: confirmed)
             return .ok
-        case .importVM(let path):
-            return .summary(try await commands.importVM(atPath: path))
+        case .importVM(let path, let waitForOutcome):
+            return .summary(try await commands.importVM(atPath: path, waitForOutcome: waitForOutcome))
         case .cancelPreparing(let selector, let confirmed):
-            try commands.cancelPreparing(selector, confirmed: confirmed)
+            try await commands.cancelPreparing(selector, confirmed: confirmed)
             return .ok
-        case .awaitPreparing(let selector):
-            return .summary(try await commands.awaitPreparing(selector))
 
         case .editStorageDisk(let selector, let edit):
             try await apply(edit, to: selector)

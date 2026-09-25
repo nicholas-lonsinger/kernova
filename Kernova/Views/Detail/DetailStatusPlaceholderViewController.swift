@@ -1,8 +1,8 @@
 import AppKit
 
 /// Centered spinner + status label shown in the detail pane during transient
-/// states (starting, suspending, restoring, …) and while a create/clone/import is
-/// preparing.
+/// states (starting, suspending, restoring, …) and for a selected arrival — a
+/// create, clone or import still writing its bundle.
 @MainActor
 final class DetailStatusPlaceholderViewController: NSViewController {
     private let spinner = NSProgressIndicator()

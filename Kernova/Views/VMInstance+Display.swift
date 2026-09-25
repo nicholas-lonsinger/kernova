@@ -80,18 +80,17 @@ extension VMInstance {
         vsockDropService?.reportUnreadableDrop()
     }
 
-    /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
+    /// Display name that distinguishes cold-paused ("Suspended") and live-paused ("Paused").
     var statusDisplayName: String {
-        if let state = preparingState { return state.displayLabel }
-        return isColdPaused ? "Suspended" : status.displayName
+        isColdPaused ? "Suspended" : status.displayName
     }
 
     /// Color used to tint the sidebar's OS icon.
     ///
-    /// Preparing, cold-paused, and running-while-awaiting-network-reattach are
-    /// orange, live-paused is yellow, and the remaining states follow `status`.
+    /// Cold-paused and running-while-awaiting-network-reattach are orange,
+    /// live-paused is yellow, and the remaining states follow `status`.
     var statusDisplayNSColor: NSColor {
-        if isPreparing || isColdPaused { return StatusColor.warning }
+        if isColdPaused { return StatusColor.warning }
         if status == .running && networkAttachmentPending { return StatusColor.warning }
         switch status {
         // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
@@ -119,7 +118,6 @@ extension VMInstance {
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     var statusToolTip: String? {
-        if let state = preparingState { return state.displayLabel }
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
         if status == .running, networkAttachmentPending {

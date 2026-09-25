@@ -441,8 +441,7 @@ extension VMCommandCore {
         of instance: VMInstance, verb: VMVerb, _ change: (inout VMSnapshotManifest) -> Void
     ) throws {
         do {
-            guard let bundle = instance.bundle else { throw VMLibrary.SettingsRefusal.noBundle }
-            try bundle.commitSnapshotManifest(change)
+            try instance.bundle.commitSnapshotManifest(change)
         } catch {
             #log(
                 Self.logger, .error,

@@ -34,6 +34,9 @@ final class DetailContainerViewController: NSViewController {
     /// point the app knows of no VM to show and cannot yet say there is none.
     private let unloadedLibraryView = NSView()
     private var routerVC: VMDetailRouterViewController?
+    /// What a selected arrival shows: its label under a spinner, until it
+    /// becomes the VM the router takes over.
+    private var arrivalPlaceholderVC: DetailStatusPlaceholderViewController?
     private var currentContentView: NSView?
     private var displayedInstanceID: UUID?
 
@@ -111,6 +114,20 @@ final class DetailContainerViewController: NSViewController {
         guard viewModel.hasLoadedLibrary else {
             displayedInstanceID = nil
             showContentView(unloadedLibraryView)
+            return
+        }
+        if case .arriving(let arrival)? = viewModel.selectedEntry {
+            displayedInstanceID = nil
+            let placeholder: DetailStatusPlaceholderViewController
+            if let existing = arrivalPlaceholderVC {
+                placeholder = existing
+            } else {
+                placeholder = DetailStatusPlaceholderViewController()
+                addChild(placeholder)
+                arrivalPlaceholderVC = placeholder
+            }
+            placeholder.configure(label: arrival.displayLabel)
+            showContentView(placeholder.view)
             return
         }
         if let selected = viewModel.selectedInstance {
@@ -217,6 +234,8 @@ final class DetailContainerViewController: NSViewController {
                 // never leave `unloadedLibraryView`.
                 _ = self.viewModel.hasLoadedLibrary
                 _ = self.viewModel.selectedInstance
+                // A selected arrival's label follows its stage ("Cancelling…").
+                _ = self.viewModel.selectedEntry?.arrival?.displayLabel
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
@@ -402,8 +421,8 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentStopPaused(for: instance)
     }
 
-    func presentCancelPreparing(for instance: VMInstance) {
-        alertsPresenter.presentCancelPreparing(for: instance)
+    func presentCancelPreparing(for arrival: VMArrival) {
+        alertsPresenter.presentCancelPreparing(for: arrival)
     }
 
     func presentInstallerMounted(

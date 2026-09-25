@@ -353,8 +353,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// depends on state, retitles it.
     func validate(_ menuItem: NSMenuItem) -> Bool {
         // App-level commands — New, Show Library, Open VMs Folder, Quit
-        // Completely — are never gated on the selected VM's state, or a
-        // preparing import would disable the GUI's only full-quit affordance.
+        // Completely — are never gated on the selection, or a selected import
+        // still copying would disable the GUI's only full-quit affordance.
         guard let capability = Self.capability(for: menuItem.action) else { return true }
 
         // The two titles that do not depend on a VM, applied before the

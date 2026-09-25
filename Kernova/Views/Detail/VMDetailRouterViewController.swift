@@ -67,7 +67,6 @@ final class VMDetailRouterViewController: NSViewController {
         observation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                _ = self.instance.preparingState
                 _ = self.instance.phase
                 _ = self.instance.detailPaneMode
                 _ = self.instance.setupState
@@ -81,7 +80,6 @@ final class VMDetailRouterViewController: NSViewController {
     private func apply() {
         guard isViewLoaded else { return }
         let route = DetailRoute.resolve(
-            preparingLabel: instance.preparingState?.displayLabel,
             phase: instance.phase,
             hasSetupState: instance.setupState != nil,
             detailPaneMode: instance.detailPaneMode)
@@ -93,7 +91,7 @@ final class VMDetailRouterViewController: NSViewController {
 
     private func render(_ route: DetailRoute) {
         switch route {
-        case .preparing(let label), .transition(let label):
+        case .transition(let label):
             placeholderVC.configure(label: label)
             setContent(child: placeholderVC, banner: nil)
 

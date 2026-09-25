@@ -146,7 +146,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// The dropdown's VM rows for the current library.
     private func currentRows() -> [StatusMenuVMRow] {
-        StatusMenuVMSection.rows(for: viewModel.instances)
+        StatusMenuVMSection.rows(for: viewModel.entries)
     }
 
     // MARK: - Transfer readout
@@ -274,7 +274,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// rather than replacing the running-count line, so headless users never
     /// lose the at-a-glance view of how many VMs are running.
     private func updateTooltip() {
-        let count = viewModel.instances.lazy.filter(\.isKeepingAppAlive).count
+        let count =
+            viewModel.instances.lazy.filter(\.isKeepingAppAlive).count + viewModel.arrivals.count
         var lines: [String]
         switch count {
         case 0: lines = ["Kernova"]

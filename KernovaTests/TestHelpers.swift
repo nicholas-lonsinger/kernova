@@ -86,7 +86,6 @@ func makeWiredLibrary(
         storageService: storage,
         snapshotStore: snapshotStore ?? MockVMSnapshotStore(files: storage.files),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
-        fileSystem: fileSystem,
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,

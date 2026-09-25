@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 2
+    public static let currentProtocolVersion = 3
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -74,16 +74,16 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
         case setSnapshotNotes(VMSelector, snapshot: UUID, notes: String)
 
-        case clone(VMSelector, machineIdentity: CloneMachineIdentity)
+        /// `waitForOutcome` answers the settled VM, or throws the copy's
+        /// failure; without it the row the copy fills is answered at once.
+        case clone(VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool)
         case rename(VMSelector, newName: String)
         case delete(VMSelector, permanently: Bool, alsoRemoving: [UUID], confirmed: Bool)
         /// `path` is read as this Mac names it; the app obtains the authority to
-        /// read it, which a sandboxed client cannot hand over.
-        case importVM(path: String)
+        /// read it, which a sandboxed client cannot hand over. `waitForOutcome`
+        /// is the clone's.
+        case importVM(path: String, waitForOutcome: Bool)
         case cancelPreparing(VMSelector, confirmed: Bool)
-        /// Waits for a clone or import still copying to settle, answering the
-        /// settled row.
-        case awaitPreparing(VMSelector)
 
         case editStorageDisk(VMSelector, StorageDiskEdit)
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
@@ -140,7 +140,6 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .delete: .delete
             case .importVM: .importVM
             case .cancelPreparing: .cancelPreparing
-            case .awaitPreparing: .awaitPreparing
             case .editStorageDisk: .editStorageDisk
             case .editRemovableMedia: .editRemovableMedia
             case .editSharedDirectory: .editSharedDirectory

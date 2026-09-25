@@ -124,7 +124,7 @@ protocol VMLibraryPresenting: AnyObject {
     /// Show the stop-paused confirmation (resume-and-shut-down vs. force stop).
     func presentStopPaused(for instance: VMInstance)
     /// Show the cancel-preparing (create/clone/import) confirmation.
-    func presentCancelPreparing(for instance: VMInstance)
+    func presentCancelPreparing(for arrival: VMArrival)
     /// Show the "guest agent disk attached, here are the next steps" alert,
     /// worded for `purpose` (install vs. install-or-uninstall) and for how
     /// `delivery` put the disk in front of the guest.

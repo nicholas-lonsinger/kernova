@@ -10,6 +10,10 @@ protocol VMStorageProviding: Sendable {
     func listVMBundles() throws -> [URL]
     func createVMBundle(at bundleURL: URL) throws
     func publishBundle(from stagedURL: URL, to bundleURL: URL) throws
+    /// Whether a bundle — a directory holding a configuration — is at `bundleURL`.
+    func bundleExists(at bundleURL: URL) -> Bool
+    /// Removes a staged tree outright.
+    func discardStagedBundle(at stagedURL: URL) throws
     @discardableResult
     func reclaimStagedBundles() -> Task<Void, Never>
     func deleteVMBundle(at bundleURL: URL) throws

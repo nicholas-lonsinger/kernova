@@ -248,8 +248,8 @@ final class VMSettingsViewController: NSViewController {
                 // Registers the observed addresses, so the IP address row
                 // follows each read of the host's table.
                 _ = self.viewModel.guestAddress(for: self.instance)
-                // Registers every instance's `preparingState`, so the Storage
-                // lock follows a clone of *this* VM starting and finishing.
+                // Registers the library's arrivals, so the Storage lock
+                // follows a clone of *this* VM starting and finishing.
                 _ = self.viewModel.capabilities.isAvailable(.editStorageDisks, on: self.instance)
             },
             apply: { [weak self] in self?.apply() }

@@ -82,6 +82,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var publishBundleCallCount = 0
     var reclaimStagedBundlesCallCount = 0
 
+    /// Every staged tree discarded, in order, whether or not the discard
+    /// threw.
+    var discardedStagedURLs: [URL] = []
+
     /// Every staged path handed out, in order — the only way a test can name one,
     /// since each is minted fresh rather than derived from a configuration.
     var stagedBundleURLs: [URL] = []
@@ -94,6 +98,13 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var createVMBundleError: (any Error)?
     var cloneVMBundleError: (any Error)?
     var publishBundleError: (any Error)?
+    var discardStagedBundleError: (any Error)?
+
+    /// Runs on the main actor once a publish's rename has landed and before
+    /// the publishing arrival resumes — the window between the rename and the
+    /// arrival's adoption. The publish runs detached while the main actor
+    /// waits on it, so the hop cannot deadlock.
+    var afterPublish: (@MainActor () -> Void)?
     /// Thrown by every later replace of `config.json`.
     var saveConfigurationError: (any Error)? {
         get { files.replaceError(for: VMBundleLayout.configRelativePath) }
@@ -205,6 +216,26 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             try fm.moveItem(at: stagedURL, to: bundleURL)
         }
         files.moveBundle(from: stagedURL, to: bundleURL)
+        if let afterPublish {
+            DispatchQueue.main.sync { MainActor.assumeIsolated { afterPublish() } }
+        }
+    }
+
+    func bundleExists(at bundleURL: URL) -> Bool {
+        files.data(atRelativePath: VMBundleLayout.configRelativePath, in: bundleURL) != nil
+    }
+
+    func discardStagedBundle(at stagedURL: URL) throws {
+        discardedStagedURLs.append(stagedURL)
+        if let error = discardStagedBundleError { throw error }
+        try? FileManager.default.removeItem(at: stagedURL)
+        files.removeBundle(at: stagedURL)
+    }
+
+    /// Moves a bundle within the store, as the Finder moving it inside the VMs
+    /// directory would.
+    func moveBundle(from source: URL, to destination: URL) {
+        files.moveBundle(from: source, to: destination)
     }
 
     @discardableResult

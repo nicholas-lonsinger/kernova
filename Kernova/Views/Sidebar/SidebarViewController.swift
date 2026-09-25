@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 /// Pure-AppKit sidebar: a source-list `NSOutlineView` listing virtual machines
 /// under a collapsible "Virtual Machines" group.
 ///
-/// A two-level tree of ``SidebarSection`` group rows over `VMInstance` leaf rows,
+/// A two-level tree of ``SidebarSection`` group rows over library-entry leaf rows
+/// — a `VMInstance`, or a `VMArrival` still writing its bundle —
 /// driven by three ``ObservationLoop``s (instances, selection, active rename);
 /// per-row live updates are owned by each ``SidebarVMRowCellView``. Selection is
 /// a guarded two-way binding to `viewModel.selectedID`; reorder and Finder-bundle
@@ -146,12 +147,10 @@ final class SidebarViewController: NSViewController {
             instancesObservation = observeRecurring(
                 track: { [weak self] in
                     guard let self else { return }
-                    _ = self.viewModel.instances.map(\.id)
-                    // A phantom create/clone/import registers before its background write
-                    // starts (`isPreparing` still false) and settles to "real"
-                    // later without any id-list change; tracking this too routes
-                    // that settle through `reloadInstances()`.
-                    _ = self.viewModel.instances.map(\.isPreparing)
+                    // An arrival's adoption replaces its entry in place under
+                    // the same id, so the entries themselves are what is
+                    // tracked, not their ids.
+                    _ = self.viewModel.entries.map(\.object)
                     // The install-prompt preference is snapshotted into each cell
                     // at configure time, so a Settings-window toggle only reaches
                     // the badges through a reload.
@@ -217,16 +216,16 @@ final class SidebarViewController: NSViewController {
         defer { isUpdatingSelectionFromModel = false }
 
         guard let id = viewModel.selectedID,
-            let instance = viewModel.instances.first(where: { $0.id == id })
+            let item = viewModel.entries.first(where: { $0.id == id })?.object
         else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
 
-        var row = outlineView.row(forItem: instance)
-        if row < 0, let section = sectionContaining(instance) {
+        var row = outlineView.row(forItem: item)
+        if row < 0, let section = sectionContaining(item) {
             outlineView.expandItem(section)
-            row = outlineView.row(forItem: instance)
+            row = outlineView.row(forItem: item)
         }
         guard row >= 0 else { return }
         if outlineView.selectedRow != row {
@@ -371,19 +370,24 @@ final class SidebarViewController: NSViewController {
     ///
     /// Drives the split-view divider's Finder-style snap-to-fit.
     func widthToFitLongestRow() -> CGFloat? {
-        let instances = viewModel.instances
-        guard !instances.isEmpty else { return nil }
+        let entries = viewModel.entries
+        guard !entries.isEmpty else { return nil }
 
         guard
             let firstLeafRow = (0..<outlineView.numberOfRows).first(where: {
-                outlineView.item(atRow: $0) is VMInstance
+                Self.entryID(of: outlineView.item(atRow: $0)) != nil
             })
         else { return nil }
         let indentation = outlineView.frameOfCell(atColumn: 0, row: firstLeafRow).minX
 
         let widestContent =
-            instances.map { instance in
-                SidebarVMRowCellView.contentWidth(
+            entries.map { entry in
+                guard case .vm(let instance) = entry else {
+                    return SidebarVMRowCellView.contentWidth(
+                        forName: entry.name, showsAgentAccessory: false,
+                        showsEphemeralAccessory: false)
+                }
+                return SidebarVMRowCellView.contentWidth(
                     forName: instance.name,
                     showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                         for: instance,
@@ -407,12 +411,21 @@ final class SidebarViewController: NSViewController {
 
     // MARK: - Helpers
 
-    private func sectionContaining(_ instance: VMInstance) -> SidebarSection? {
-        sections.first { children(of: $0).contains { $0 === instance } }
+    private func sectionContaining(_ item: AnyObject) -> SidebarSection? {
+        sections.first { children(of: $0).contains { $0 === item } }
     }
 
-    private func children(of section: SidebarSection) -> [VMInstance] {
-        section === SidebarSection.virtualMachines ? viewModel.instances : []
+    private func children(of section: SidebarSection) -> [AnyObject] {
+        section === SidebarSection.virtualMachines ? viewModel.entries.map(\.object) : []
+    }
+
+    /// The library identifier of a leaf row's item, or `nil` for a group row.
+    private static func entryID(of item: Any?) -> UUID? {
+        switch item {
+        case let instance as VMInstance: instance.id
+        case let arrival as VMArrival: arrival.id
+        default: nil
+        }
     }
 }
 
@@ -438,7 +451,8 @@ extension SidebarViewController: NSOutlineViewDataSource {
     func outlineView(
         _ outlineView: NSOutlineView, pasteboardWriterForItem item: Any
     ) -> NSPasteboardWriting? {
-        guard let instance = item as? VMInstance, !instance.isPreparing else { return nil }
+        // Arrivals are not draggable: their place is settled once they are VMs.
+        guard let instance = item as? VMInstance else { return nil }
         let pbItem = NSPasteboardItem()
         pbItem.setString(instance.id.uuidString, forType: Self.rowPasteboardType)
         return pbItem
@@ -457,8 +471,8 @@ extension SidebarViewController: NSOutlineViewDataSource {
             // Internal reorder — constrain to between VM rows.
             let count = children(of: vmSection).count
             var target = index
-            if let instance = item as? VMInstance {
-                target = children(of: vmSection).firstIndex { $0 === instance } ?? count
+            if let item, Self.entryID(of: item) != nil {
+                target = children(of: vmSection).firstIndex { $0 === item as AnyObject } ?? count
             } else if index == NSOutlineViewDropOnItemIndex {
                 target = count
             }
@@ -490,15 +504,15 @@ extension SidebarViewController: NSOutlineViewDataSource {
         guard let pbItem = info.draggingPasteboard.pasteboardItems?.first,
             let idString = pbItem.string(forType: Self.rowPasteboardType),
             let id = UUID(uuidString: idString),
-            let sourceIndex = viewModel.instances.firstIndex(where: { $0.id == id }),
+            let sourceIndex = viewModel.entries.firstIndex(where: { $0.id == id }),
             let target = Self.reorderTarget(
-                sourceIndex: sourceIndex, proposedIndex: index, count: viewModel.instances.count)
+                sourceIndex: sourceIndex, proposedIndex: index, count: viewModel.entries.count)
         else { return false }
-        viewModel.moveVM(fromOffsets: IndexSet(integer: sourceIndex), toOffset: target)
+        viewModel.moveEntries(fromOffsets: IndexSet(integer: sourceIndex), toOffset: target)
         return true
     }
 
-    /// Maps a drag-drop child index to the `moveVM` `toOffset`, or `nil` for a no-op.
+    /// Maps a drag-drop child index to the `moveEntries` `toOffset`, or `nil` for a no-op.
     ///
     /// A no-op is a drop into the row's own gap. A drop "on" the group
     /// (`NSOutlineViewDropOnItemIndex`) appends. `Array.move(fromOffsets:toOffset:)`
@@ -558,6 +572,14 @@ extension SidebarViewController: NSOutlineViewDelegate {
             return cell
         }
 
+        if let arrival = item as? VMArrival {
+            let cell =
+                outlineView.makeView(
+                    withIdentifier: SidebarArrivalRowCellView.reuseIdentifier, owner: nil)
+                as? SidebarArrivalRowCellView ?? SidebarArrivalRowCellView()
+            cell.configure(arrival: arrival)
+            return cell
+        }
         guard let instance = item as? VMInstance else { return nil }
         let cell =
             outlineView.makeView(withIdentifier: SidebarVMRowCellView.reuseIdentifier, owner: nil)
@@ -617,10 +639,10 @@ extension SidebarViewController: NSOutlineViewDelegate {
         outlineView.cancelPendingRename()
         guard !isUpdatingSelectionFromModel else { return }
         let row = outlineView.selectedRow
-        if row >= 0, let instance = outlineView.item(atRow: row) as? VMInstance {
-            if viewModel.selectedID != instance.id { viewModel.selectedID = instance.id }
+        if row >= 0, let id = Self.entryID(of: outlineView.item(atRow: row)) {
+            if viewModel.selectedID != id { viewModel.selectedID = id }
         } else if let id = viewModel.selectedID,
-            !viewModel.instances.contains(where: { $0.id == id })
+            !viewModel.entries.contains(where: { $0.id == id })
         {
             // Empty selection clears the model only when the selected VM is
             // truly gone — a transient -1 from collapsing the group (or an
@@ -647,32 +669,38 @@ extension SidebarViewController {
     /// Builds the right-click menu for the clicked row, selecting it first
     /// (matching standard source-list behavior).
     func contextMenu(forRow row: Int) -> NSMenu? {
-        guard row >= 0, let instance = outlineView.item(atRow: row) as? VMInstance else { return nil }
+        guard row >= 0, let item = outlineView.item(atRow: row), let id = Self.entryID(of: item)
+        else { return nil }
 
         isUpdatingSelectionFromModel = true
         if outlineView.selectedRow != row {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
         }
         isUpdatingSelectionFromModel = false
-        if viewModel.selectedID != instance.id { viewModel.selectedID = instance.id }
+        if viewModel.selectedID != id { viewModel.selectedID = id }
 
+        if let arrival = item as? VMArrival { return buildContextMenu(for: arrival) }
+        guard let instance = item as? VMInstance else { return nil }
         return buildContextMenu(for: instance)
+    }
+
+    /// An arrival offers only the cancel of its create, clone or import.
+    func buildContextMenu(for arrival: VMArrival) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let cancel = NSMenuItem(
+            title: arrival.kind.cancelLabel, action: #selector(menuCancelPreparing(_:)),
+            keyEquivalent: "")
+        cancel.target = self
+        cancel.representedObject = arrival
+        menu.addItem(cancel)
+        return menu
     }
 
     func buildContextMenu(for instance: VMInstance) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let capabilities = viewModel.capabilities
-
-        if instance.isPreparing {
-            if let operation = instance.preparingState?.operation {
-                menu.addItem(item(operation.cancelLabel, #selector(menuCancelPreparing(_:)), instance))
-            }
-            if capabilities.isAvailable(.showInFinder, on: instance) {
-                menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
-            }
-            return menu
-        }
 
         // Lifecycle
         var startItem: NSMenuItem?
@@ -935,8 +963,8 @@ extension SidebarViewController {
     }
 
     @objc private func menuCancelPreparing(_ sender: NSMenuItem) {
-        guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.requestCancelPreparing(instance)
+        guard let arrival = sender.representedObject as? VMArrival else { return }
+        viewModel.requestCancelPreparing(arrival)
     }
 }
 

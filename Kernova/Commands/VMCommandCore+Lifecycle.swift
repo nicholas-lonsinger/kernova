@@ -187,15 +187,18 @@ extension VMCommandCore {
     /// answer for — an account already answered for included, which is what
     /// makes both verbs replace rather than refuse.
     private func guestAccountToAnswerFor(_ instance: VMInstance) -> GuestAccountIntent? {
-        switch capabilities.guestAccountState(of: instance) {
-        case .none: nil
-        case .owed(let account), .answered(let account, _): account
-        }
+        VMCapabilityCatalog.deliverableGuestAccount(of: instance.configuration)
     }
 
-    /// Validates `password` against the account `instance` names and holds it —
-    /// the one path an answer reaches the VM by, whether a door supplied it or a
-    /// create carried it.
+    /// Validates `password` against the account `instance` names and holds it.
+    func holdGuestAccountPassword(_ password: String, for instance: VMInstance) throws {
+        try holdGuestAccountPassword(password, for: instance.id, configuredAs: instance.configuration)
+    }
+
+    /// Validates `password` against the account `configuration` names and holds
+    /// it for the VM identified by `id` — the one path an answer reaches a VM
+    /// by, whether a door supplied it or a create carried it for the arrival
+    /// that becomes the VM.
     ///
     /// Virtualization's verdict is taken here rather than at the boot: a
     /// password it turns down produces no account, and a boot that ran anyway
@@ -204,24 +207,26 @@ extension VMCommandCore {
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
     /// stays as the last line of defence, where coming up unprovisioned beats
     /// not coming up at all.
-    func holdGuestAccountPassword(_ password: String, for instance: VMInstance) throws {
-        guard let account = guestAccountToAnswerFor(instance) else {
+    func holdGuestAccountPassword(
+        _ password: String, for id: UUID, configuredAs configuration: VMConfiguration
+    ) throws {
+        guard let account = VMCapabilityCatalog.deliverableGuestAccount(of: configuration) else {
             throw CommandError.invalidArgument(
-                "\u{201C}\(instance.name)\u{201D} creates no macOS account, so there is no password to set."
+                "\u{201C}\(configuration.name)\u{201D} creates no macOS account, so there is no password to set."
             )
         }
         let credentials = GuestProvisioningCredentials(intent: account, password: password)
         if let refusal = MacOSGuestProvisioning.validate(credentials) {
             #log(
                 Self.logger, .notice,
-                "macOS turned down the password for the account '\(account.username, privacy: .public)' on '\(instance.name, privacy: .public)'"
+                "macOS turned down the password for the account '\(account.username, privacy: .public)' on '\(configuration.name, privacy: .public)'"
             )
             throw CommandError.invalidArgument(refusal.message)
         }
-        library.holdGuestAccountPassword(GuestAccountPassword(password), for: instance)
+        library.holdGuestAccountPassword(GuestAccountPassword(password), for: id)
         #log(
             Self.logger, .notice,
-            "Holding the password for the account '\(account.username, privacy: .public)' '\(instance.name, privacy: .public)' was set up with"
+            "Holding the password for the account '\(account.username, privacy: .public)' '\(configuration.name, privacy: .public)' was set up with"
         )
     }
 
@@ -651,7 +656,6 @@ extension VMCommandCore {
     private func requestStop(
         _ instance: VMInstance, disposition: StopDisposition, confirmed: Bool
     ) async throws {
-        try refuseIfPreparing(instance)
         switch disposition {
         case .graceful:
             // VZ rejects `requestStop()` on a paused VM ("Invalid virtual
@@ -974,9 +978,6 @@ extension VMCommandCore {
 
     func open(_ selector: VMSelector) throws {
         let instance = try resolve(selector)
-        // An imported bundle carrying a save file rests its phantom `.paused`,
-        // which reads as having a display while the copy is still writing —
-        // and a preparing row admits no verb that would surface one.
         try require(.open, on: instance)
         ActivationRequester.requestActivation()
         surfaceDisplay?(instance)
@@ -984,21 +985,29 @@ extension VMCommandCore {
 
     // MARK: - Reveal
 
-    /// Brings the VM in front of the user whatever state it is in.
+    /// Brings the VM — or the arrival still writing one — in front of the user
+    /// whatever state it is in.
     ///
     /// The branch is the ``VMCapability/open`` gate rather than a display test
-    /// of its own, so the one VM whose display is not the right thing to
-    /// surface — the phantom of an import still copying, resting `.paused` —
-    /// lands on its library row instead, and by the same predicate that refuses
-    /// it an ``open(_:)``.
+    /// of its own, so a VM whose display is not the right thing to surface
+    /// lands on its library row instead, by the same predicate that refuses it
+    /// an ``open(_:)``. An arrival has no display, so it always lands there.
     func reveal(_ selector: VMSelector) throws {
-        let instance = try resolve(selector)
+        let instance: VMInstance
+        switch try resolveEntry(selector) {
+        case .arriving(let arrival):
+            ActivationRequester.requestActivation()
+            revealInLibrary?(arrival.id)
+            return
+        case .vm(let found):
+            instance = found
+        }
         try require(.reveal, on: instance)
         ActivationRequester.requestActivation()
         if capabilities.accepts(.open, on: instance) {
             surfaceDisplay?(instance)
         } else {
-            revealInLibrary?(instance)
+            revealInLibrary?(instance.id)
         }
     }
 

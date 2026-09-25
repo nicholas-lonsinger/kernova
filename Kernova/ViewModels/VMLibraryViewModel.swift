@@ -64,12 +64,18 @@ final class VMLibraryViewModel {
 
     var instances: [VMInstance] { library.instances }
 
+    var entries: [LibraryEntry] { library.entries }
+
+    var arrivals: [VMArrival] { library.arrivals }
+
     var selectedID: UUID? {
         get { library.selectedID }
         set { library.selectedID = newValue }
     }
 
     var selectedInstance: VMInstance? { library.selectedInstance }
+
+    var selectedEntry: LibraryEntry? { library.selectedEntry }
 
     var hasLoadedLibrary: Bool { library.hasLoadedLibrary }
 
@@ -91,10 +97,10 @@ final class VMLibraryViewModel {
 
     func reconcileWithDisk() { library.reconcileWithDisk() }
 
-    func cancelAndCleanupPreparing() { library.cancelAndCleanupPreparing() }
+    func abandonArrivalsForTermination() { library.abandonArrivalsForTermination() }
 
-    func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
-        library.moveVM(fromOffsets: source, toOffset: destination)
+    func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
+        library.moveEntries(fromOffsets: source, toOffset: destination)
     }
 
     func waitForRevertsToSettle() async { await library.waitForRevertsToSettle() }
@@ -532,7 +538,6 @@ final class VMLibraryViewModel {
             storageService: storageService,
             snapshotStore: snapshotStore,
             lifecycle: lifecycle,
-            fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
@@ -575,8 +580,8 @@ final class VMLibraryViewModel {
         core.readyDisplay = { [weak self] instance in
             self?.onReadyDisplay?(instance)
         }
-        core.revealInLibrary = { [weak self] instance in
-            self?.revealInLibrary(instance)
+        core.revealInLibrary = { [weak self] id in
+            self?.revealInLibrary(id)
         }
         core.revealInFinder = { [weak self] instance in
             self?.onRevealInFinder?(instance)
@@ -683,7 +688,7 @@ final class VMLibraryViewModel {
         case .displayWindow:
             onOpenDisplayWindow?(instance)
         case .library:
-            revealInLibrary(instance)
+            revealInLibrary(instance.id)
             focusInlineDisplay(for: instance)
         }
     }
@@ -712,10 +717,10 @@ final class VMLibraryViewModel {
         presenter.focusGuestDisplay(for: instance)
     }
 
-    /// Selects the VM and asks for the library window — what a reveal lands on
+    /// Selects the row and asks for the library window — what a reveal lands on
     /// when there is no display to surface.
-    private func revealInLibrary(_ instance: VMInstance) {
-        selectedID = instance.id
+    private func revealInLibrary(_ id: UUID) {
+        selectedID = id
         onSurfaceLibrary?()
     }
 
@@ -1026,30 +1031,40 @@ final class VMLibraryViewModel {
 
     // MARK: - Import
 
-    /// Filters `urls` to `.kernova` bundles and imports the batch.
+    /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited.
     ///
-    /// Each bundle's destination is reserved and its phantom row registered synchronously (see
-    /// ``VMCommandCore/importVM(from:)``), so two overlapping triggers never collide on a
-    /// destination name and never wait behind each other's copies.
+    /// Each import reserves its destination and registers its arrival in the
+    /// first synchronous segment of its own task (see
+    /// ``VMCommandCore/importVM(from:waitForOutcome:)``), so two overlapping
+    /// triggers never collide on a destination name and never wait behind each
+    /// other's copies.
     ///
-    /// Returns whether any bundle was accepted for import — `true` means at least one
-    /// bundle was reserved, not that every import will succeed.
+    /// Returns whether any bundle was handed to an import — `true` means at
+    /// least one import was started, not that every one will succeed.
     @discardableResult
     func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
         for url in bundles {
-            runSync(on: nil) { _ = try self.commands.importVM(from: url) }
+            Task {
+                await run(on: nil) {
+                    _ = try await self.commands.importVM(from: url, waitForOutcome: false)
+                }
+            }
         }
         return true
     }
 
     #if DEBUG
-    /// Test-only seam awaiting every in-flight preparing (create/clone/import) task.
-    func awaitPreparingForTesting() async {
-        for task in instances.compactMap({ $0.preparingState?.task }) {
-            await task.value
+    /// Test-only seam awaiting every arrival in the library, including any
+    /// registered while an earlier one is awaited.
+    func awaitArrivalsForTesting() async {
+        while let arrival = library.arrivals.first {
+            _ = try? await arrival.settled.value
+            // The row leaves in the same main-actor turn the outcome settles
+            // in; a later turn lets that removal land before looking again.
+            await Task.yield()
         }
     }
     #endif
@@ -1079,43 +1094,49 @@ final class VMLibraryViewModel {
         case .some(true): identity = .new
         case .some(false): identity = .keep
         }
-        do {
-            _ = try commands.clone(.id(instance.id), machineIdentity: identity)
-        } catch let error as CommandError {
-            if case .invalidState = error {
-                #log(
-                    Self.logger, .debug,
-                    "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
-                )
-            } else {
-                present(error, for: instance)
+        Task {
+            do {
+                _ = try await commands.clone(
+                    .id(instance.id), machineIdentity: identity, waitForOutcome: false)
+            } catch let error as CommandError {
+                if case .invalidState = error {
+                    #log(
+                        Self.logger, .debug,
+                        "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
+                    )
+                } else {
+                    present(error, for: instance)
+                }
+            } catch {
+                surfaceError(error.localizedDescription)
             }
-        } catch {
-            surfaceError(error.localizedDescription)
         }
     }
 
     // MARK: - Cancel Preparing
 
     /// Opens the cancel-create/clone/import confirmation.
-    func requestCancelPreparing(_ instance: VMInstance) {
-        presenter?.presentCancelPreparing(for: instance)
+    func requestCancelPreparing(_ arrival: VMArrival) {
+        presenter?.presentCancelPreparing(for: arrival)
     }
 
     /// Cancels an in-flight create, clone or import from that confirmation's confirm.
-    func cancelPreparing(_ instance: VMInstance) {
-        do {
-            try commands.cancelPreparing(.id(instance.id), confirmed: true)
-        } catch let error as CommandError {
-            // The row went while the confirmation was up — a settled copy is
-            // cleaned up rather than refused, so what reaches here is a VM that
-            // is no longer in the library, or one that is no longer at rest.
-            #log(
-                Self.logger, .notice,
-                "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
-            )
-        } catch {
-            surfaceError(error.localizedDescription)
+    func cancelArrival(_ arrival: VMArrival) {
+        Task {
+            do {
+                try await commands.cancelPreparing(.id(arrival.id), confirmed: true)
+            } catch let error as CommandError {
+                // The arrival settled while the confirmation was up: a failed
+                // one left no row, an adopted one is a VM the cancel refuses,
+                // and one that published is moved to the Trash only while the
+                // delete verb still takes it.
+                #log(
+                    Self.logger, .notice,
+                    "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message, privacy: .public)"
+                )
+            } catch {
+                surfaceError(error.localizedDescription)
+            }
         }
     }
 

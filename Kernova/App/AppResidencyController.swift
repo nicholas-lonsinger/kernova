@@ -705,8 +705,8 @@ final class AppResidencyController: WindowResidencyHosting {
     ///   shutting down empties its display window) is answered by
     ///   ``unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)``. What *Continue
     ///   running in the menu bar* governs is the last close, not a hide.
-    /// - **Work in flight.** Termination trashes partial bundles
-    ///   (`cancelAndCleanupPreparingInstances`) and hard-aborts a VM that is
+    /// - **Work in flight.** Termination abandons the creates, clones and imports
+    ///   still writing (`abandonArrivalsForTermination()`) and hard-aborts a VM that is
     ///   mid-save, mid-restore, mid-start or mid-install — `applicationShouldTerminate`
     ///   only save-suspends VMs already settled at `.running` or `.paused`. An
     ///   ordinary window close must not destroy that work, so it keeps the Dock

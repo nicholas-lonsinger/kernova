@@ -86,26 +86,55 @@ struct VMStorageService: Sendable {
     /// Renames a finished staged bundle into `vmsDirectory`, the single instant at
     /// which a write becomes a VM the library can load.
     ///
-    /// The rename is the collision guard: `moveItem` refuses an occupied
-    /// destination, so nothing between a check and the move can take the name.
+    /// `renamex_np` with `RENAME_EXCL` is the collision guard: the kernel returns
+    /// `EEXIST` for an occupied destination — an empty or non-empty directory, or
+    /// a file — in the same call that renames. `FileManager.moveItem` checks
+    /// first and renames after, so a concurrent publish to the same name can win
+    /// the gap, and the loser fails with Cocoa error 512 over `ENOTEMPTY`
+    /// (`docs/research/2026-09-24-file-coordination-rename-and-flock.md`,
+    /// "Moving a staged directory into place").
+    ///
+    /// - Throws: ``VMStorageError/bundleAlreadyExists(_:)`` when the destination
+    ///   is occupied; a `POSIXError` for any other failure.
     func publishBundle(from stagedURL: URL, to bundleURL: URL) throws {
-        do {
-            try FileManager.default.moveItem(at: stagedURL, to: bundleURL)
-        } catch let error as NSError
-            where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError
-        {
+        let result = stagedURL.withUnsafeFileSystemRepresentation { source in
+            bundleURL.withUnsafeFileSystemRepresentation { destination -> Int32 in
+                guard let source, let destination else { return ENAMETOOLONG }
+                return renamex_np(source, destination, UInt32(RENAME_EXCL)) == 0 ? 0 : errno
+            }
+        }
+        switch result {
+        case 0:
+            break
+        case EEXIST:
             throw VMStorageError.bundleAlreadyExists(bundleURL)
+        default:
+            throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO)
         }
         #log(
             Self.logger, .notice,
             "Published VM bundle \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
+    func bundleExists(at bundleURL: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: VMBundleLayout(bundleURL: bundleURL).configURL.path(percentEncoded: false))
+    }
+
+    /// Removes a staged tree outright: its payload is incomplete or unpublished,
+    /// and its source still exists.
+    func discardStagedBundle(at stagedURL: URL) throws {
+        try FileManager.default.removeItem(at: stagedURL)
+        #log(
+            Self.logger, .notice,
+            "Discarded the staged bundle at \(stagedURL.lastPathComponent, privacy: .public)")
+    }
+
     /// Discards every staged bundle an earlier run left behind, returning the
     /// task its removals run on.
     ///
     /// An interrupted write leaves a tree whose payload is incomplete and whose
-    /// source still exists, so it is removed outright rather than trashed. The
+    /// source still exists, so it is discarded outright rather than trashed. The
     /// enumeration is synchronous — one `readdir` — while the removals run
     /// detached, because a staged tree can be multi-gigabyte and this runs at
     /// launch. Nothing has to await the returned task: every staged name is
@@ -128,11 +157,7 @@ struct VMStorageService: Sendable {
         return Task.detached {
             for entry in entries {
                 do {
-                    try FileManager.default.removeItem(at: entry)
-                    #log(
-                        Self.logger, .notice,
-                        "Reclaimed the staged bundle an interrupted write left at \(entry.lastPathComponent, privacy: .public)"
-                    )
+                    try discardStagedBundle(at: entry)
                 } catch {
                     #log(
                         Self.logger, .warning,

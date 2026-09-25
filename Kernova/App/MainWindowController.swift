@@ -428,14 +428,13 @@ extension MainWindowController: NSToolbarItemValidation {
         case Self.toolbarNewVM:
             return true
         case Self.toolbarShowInFinder:
-            // Available even while preparing — the bundle already exists on disk.
             return instance.map { capabilities.isAvailable(.showInFinder, on: $0) } ?? false
         case Self.toolbarClone:
             return instance.map { capabilities.isAvailable(.clone, on: $0) } ?? false
         case Self.toolbarMoveToTrash:
             return instance.map { capabilities.isAvailable(.delete, on: $0) } ?? false
         default:
-            guard let instance, !instance.isPreparing else { return false }
+            guard instance != nil else { return false }
 
             if toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
                 // Group subitems are enabled/disabled directly in updateToolbarItems()
