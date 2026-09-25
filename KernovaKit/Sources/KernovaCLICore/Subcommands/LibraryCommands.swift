@@ -59,16 +59,21 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
+        /// The one request this command line stands for — the wait for the copy
+        /// included, unless `--no-wait`.
+        func request() throws -> VMCommandRequest.Verb {
+            .clone(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                machineIdentity: identity?.machineIdentity ?? .followPreference,
+                waitForOutcome: !noWait)
+        }
+
         /// Clones the VM and writes the row the copy produced.
         func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
+            let request = try request()
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
-            let answer = try client.send(
-                .clone(
-                    selector, machineIdentity: identity?.machineIdentity ?? .followPreference,
-                    waitForOutcome: !noWait)
-            ).payload()
+            let answer = try client.send(request).payload()
             guard case .summary(let row) = answer else { throw answer.unexpectedAnswer }
             try PreparingCopy.write(row, options: options)
         }

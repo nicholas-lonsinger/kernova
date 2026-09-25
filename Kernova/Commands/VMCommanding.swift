@@ -24,9 +24,10 @@ import KernovaKit
 /// implementation detail — if it is ever revisited, only the implementation
 /// moves.
 ///
-/// A verb that completes synchronously is spelled synchronously. Reserving an
-/// import destination is the case that matters: a batch's reservations have to
-/// see each other's phantom rows, which one suspension point between them would
+/// A verb that completes synchronously is spelled synchronously. A create,
+/// clone or import registers its arrival before its first suspension point,
+/// whether or not it then waits: a batch's destination reservations have to
+/// see each other's arrivals, which one suspension point between them would
 /// break.
 @MainActor
 protocol VMCommanding: AnyObject {
