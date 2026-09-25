@@ -20,16 +20,20 @@ struct VMLiveIdentitiesTests {
         }
         let library = makeWiredLibrary(holding: [first, second], preferences: preferences)
 
-        try first.beginBringUp(.starting)
-        #expect(first.phase == .starting(sessionID: nil))
+        first.activity.placeForTesting(
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped))
 
-        // No session exists yet on either side: the phase alone is what makes
-        // the first live to the second's check.
-        let conflict = #expect(throws: VMIdentityConflict.self) {
-            try second.beginBringUp(.starting)
+        // No session exists yet on either side: the operation alone is what
+        // makes the first live to the second's check.
+        guard
+            case .refuse(.identityConflict(let conflict)) = second.activity.decide(
+                .start(recovery: false), posture: .commit)
+        else {
+            Issue.record("the twin's start was not refused on its identity")
+            return
         }
-        #expect(conflict?.other === first)
-        #expect(conflict?.reason == .machineIdentity)
+        #expect(conflict.other === first)
+        #expect(conflict.reason == .machineIdentity)
         #expect(second.phase == .stopped)
         withExtendedLifetime(library) {}
     }

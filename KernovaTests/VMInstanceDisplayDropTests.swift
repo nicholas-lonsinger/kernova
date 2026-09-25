@@ -220,7 +220,7 @@ struct VMInstanceDisplayDropTests {
         // The toggle closes the Clipboard window and disables the toolbar item
         // that carries the ring, which is why the menu-bar status item — driven
         // by this report alone — is where the drop has to show.
-        #expect(!instance.canShowClipboard)
+        #expect(!instance.activity.admits(.affordance(.clipboard), posture: .offer))
 
         let operation = ClipboardTransferOperation(
             gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,

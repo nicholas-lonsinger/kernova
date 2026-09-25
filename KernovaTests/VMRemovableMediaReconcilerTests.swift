@@ -58,6 +58,11 @@ struct VMRemovableMediaReconcilerTests {
         return (instance, sessionID)
     }
 
+    /// Whether a removable-media reconcile holds `instance`.
+    private func isReconciling(_ instance: VMInstance) -> Bool {
+        instance.phase.operation?.kind == .reconcilingMedia
+    }
+
     /// Helper: build a config with a single removable media item.
     private func configWithRemovable(
         _ base: VMConfiguration,
@@ -74,8 +79,9 @@ struct VMRemovableMediaReconcilerTests {
     func refuseUnattachableEditTracksThePhase() {
         let reconciler = makeHarness().reconciler
         let sessionID = UUID()
+        let live = VMLifecyclePhase.running(sessionID: sessionID)
         let unattachable: [VMLifecyclePhase] = [
-            .saving(sessionID: sessionID), .capturingLive(sessionID: sessionID),
+            .operating(.saving, from: live), .operating(.capturingSnapshot(.live), from: live),
         ]
         let admitting: [VMLifecyclePhase] = [
             .running(sessionID: sessionID), .livePaused(sessionID: sessionID), .stopped, .suspended,
@@ -305,7 +311,7 @@ struct VMRemovableMediaReconcilerTests {
         let new = RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)
 
         harness.library.editConfiguration(of: instance) { $0.removableMedia = [new] }
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
@@ -330,7 +336,7 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance) {
             $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
         }
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
@@ -349,7 +355,7 @@ struct VMRemovableMediaReconcilerTests {
         let good = RemovableMediaItem(path: "/tmp/good.iso", readOnly: true)
 
         harness.library.editConfiguration(of: instance) { $0.removableMedia = [bad, good] }
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 2)
         #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/good.iso"])
@@ -576,7 +582,7 @@ struct VMRemovableMediaReconcilerTests {
         await mock.waitUntilSuspended()
         mock.attachError = nil
         mock.resumeSuspended()
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 2)
         #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/B.iso"])
@@ -605,7 +611,7 @@ struct VMRemovableMediaReconcilerTests {
         mock.resumeSuspended()
         await mock.waitUntilSuspended()
         mock.resumeSuspended()
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 2)
         #expect(instance.liveRemovableMedia.isEmpty)
@@ -614,54 +620,31 @@ struct VMRemovableMediaReconcilerTests {
         #expect(failures.showError)
     }
 
-    @Test("apply marks the session as owing a reconcile until the queue drains")
-    func applyMarksTheDebtUntilTheQueueDrains() async throws {
+    @Test("apply holds the VM in a reconcile from the edit's commit until the pass drains")
+    func applyHoldsTheVMUntilThePassDrains() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let (instance, _) = makeRunningInstance(in: harness)
-        #expect(!instance.hasRemovableMediaReconcileOwed)
+        #expect(!isReconciling(instance))
 
         let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
         harness.library.editConfiguration(of: instance) { $0 = configA }
 
-        // Owed from the enqueue itself, before the pass has had a turn.
-        #expect(instance.hasRemovableMediaReconcileOwed)
+        // Held from the edit's own commit, before the pass has had a turn.
+        #expect(isReconciling(instance))
         await mock.waitUntilSuspended()
-        #expect(instance.hasRemovableMediaReconcileOwed)
+        #expect(isReconciling(instance))
 
         mock.resumeSuspended()
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
         #expect(mock.attachCallCount == 1)
         #expect(instance.liveRemovableMedia.count == 1)
     }
 
-    @Test("A pass ending while the session is live but unattachable still clears the debt")
-    func debtIsClearedOnALiveButUnattachableSession() async throws {
-        // The context survives a transitional phase, so a flag left on it
-        // would be owed forever once the phase settles back — parking every
-        // later serialized operation on a wait nothing can end.
-        let mock = SuspendingMockRemovableMediaDeviceService()
-        let harness = makeHarness(removableMediaDeviceService: mock)
-        let (instance, sessionID) = makeRunningInstance(in: harness)
-
-        let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
-        harness.library.editConfiguration(of: instance) { $0 = configA }
-        await mock.waitUntilSuspended()
-
-        instance.activity.placeForTesting(.capturingLive(sessionID: sessionID))
-        mock.resumeSuspended()
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
-
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-        #expect(!instance.hasRemovableMediaReconcileOwed)
-        #expect(mock.attachCallCount == 1)
-        #expect(!failures.showError)
-    }
-
-    @Test("A save issued right after an edit waits for the pass and then proceeds")
-    func saveIssuedAfterAnEditWaitsForThePass() async throws {
+    @Test("A save issued right after an edit is refused as busy until the pass ends")
+    func saveIssuedAfterAnEditIsRefusedUntilThePassEnds() async throws {
         // The reported shape: an edit, then Suspend in the same breath. The
-        // save must not tear the session down under the pass its edit queued,
+        // save must not tear the session down under the pass its edit started,
         // or the saved state carries a device set the configuration no longer
         // describes.
         let mock = SuspendingMockRemovableMediaDeviceService()
@@ -670,15 +653,17 @@ struct VMRemovableMediaReconcilerTests {
 
         let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
         harness.library.editConfiguration(of: instance) { $0 = configA }
-        let lifecycle = harness.lifecycle
-        let save = Task { @MainActor in try await lifecycle.save(instance) }
-
         await mock.waitUntilSuspended()
+
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.reconcilingMedia))) {
+            try await harness.lifecycle.save(instance)
+        }
         #expect(harness.virtualization.saveCallCount == 0)
         #expect(instance.hasLiveSession)
 
         mock.resumeSuspended()
-        try await save.value
+        await waitForObservedChange { !isReconciling(instance) }
+        try await harness.lifecycle.save(instance)
         #expect(mock.attachCallCount == 1)
         #expect(mock.completedOperationCount == 1)
         #expect(harness.virtualization.saveCallCount == 1)
@@ -696,21 +681,23 @@ struct VMRemovableMediaReconcilerTests {
         let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
         let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
 
-        // Queued, then the session goes before the pass gets its turn; the
-        // successor starts with nothing owed.
+        // Started, then the session goes before the pass gets its turn: the
+        // pass has nothing to act for, and the VM rests where the guest's end
+        // left it.
         harness.library.editConfiguration(of: instance) { $0 = configA }
         instance.handleSessionEvent(.guestDidStop)
-        #expect(!instance.hasRemovableMediaReconcileOwed)
-        instance.beginSessionContext()
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        for _ in 0..<10 { await Task.yield() }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 0)
-        #expect(!instance.hasRemovableMediaReconcileOwed)
+        #expect(instance.phase == .stopped)
+
+        // The successor starts with nothing held.
+        instance.beginSessionContext()
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         // A later edit on the successor drives only its own target.
         harness.library.editConfiguration(of: instance) { $0 = configB }
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/B.iso")
@@ -733,7 +720,7 @@ struct VMRemovableMediaReconcilerTests {
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)]
         }
 
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
+        await waitForObservedChange { !isReconciling(instance) }
 
         // The detach landed and the attach did not, so the config describes an
         // empty drive — in memory and in the bundle alike.

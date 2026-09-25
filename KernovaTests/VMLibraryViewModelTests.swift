@@ -215,7 +215,7 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 0)
 
         suspending.resumeSuspended()
-        try await resume.value
+        _ = try await resume.value
     }
 
     @Test("deleteVM permanently hard-deletes the bundle, bypassing the Trash")

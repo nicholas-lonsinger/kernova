@@ -46,23 +46,26 @@ struct VMLifecycleCoordinatorTests {
 
     // MARK: - Lifecycle Forwarding
 
+    private static let coldBoot = VMBringUpKind.starting(recovery: false)
+
     @Test("start forwards to virtualization service")
     func startForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        _ = try await coordinator.start(instance)
+        _ = try await coordinator.start(instance, Self.coldBoot)
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == false)
     }
 
-    @Test("start forwards the bootIntoRecovery flag to the virtualization service")
+    @Test("start forwards a Recovery boot to the virtualization service")
     func startForwardsBootIntoRecovery() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
+        // Recovery is a macOS guest's boot, so only one is admitted to it.
+        let instance = VMInstanceFixture.make(guestOS: .macOS)
 
-        _ = try await coordinator.start(instance, bootIntoRecovery: true)
+        _ = try await coordinator.start(instance, .starting(recovery: true))
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == true)
@@ -74,7 +77,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        try await coordinator.stop(instance)
+        try await coordinator.requestStop(instance)
 
         #expect(virtService.stopCallCount == 1)
     }
@@ -105,7 +108,7 @@ struct VMLifecycleCoordinatorTests {
     func resumeForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.activity.placeForTesting(.suspended)
+        instance.activity.placeForTesting(.livePaused(sessionID: UUID()))
 
         try await coordinator.resume(instance)
 
@@ -132,7 +135,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
     }
 
@@ -141,65 +144,55 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.stop(instance)
+            try await coordinator.requestStop(instance)
         }
     }
 
-    // MARK: - Operation Serialization
+    // MARK: - One Operation per VM
 
-    @Test("hasActiveOperation returns false when no operation is running")
-    func hasActiveOperationInitiallyFalse() {
-        let (coordinator, _, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-    }
-
-    @Test("hasActiveOperation returns true during an in-flight operation")
-    func hasActiveOperationTrueDuringOperation() async throws {
+    @Test("An operation holds the VM from its admission until its body ends")
+    func anOperationHoldsTheVMWhileItRuns() async throws {
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = VMInstanceFixture.make()
+        #expect(instance.phase.operation == nil)
 
-        // Start an operation that will suspend
         let task = Task { @MainActor in
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
-
-        // Wait for the operation to begin (the mock will signal via its continuation)
         await suspendingService.waitUntilSuspended()
 
-        #expect(coordinator.hasActiveOperation(for: instance.id))
+        #expect(instance.phase.operation?.kind == .bringUp(Self.coldBoot))
 
-        // Let the operation complete
         suspendingService.resumeSuspended()
         _ = try await task.value
+        #expect(instance.phase.operation == nil)
     }
 
-    @Test("an observed wait on hasUnsettledOperation wakes when the operation ends")
-    func hasUnsettledOperationWakesAnObservedWait() async throws {
+    @Test("an observed wait on the phase wakes when the operation ends")
+    func theOperationsEndWakesAnObservedWait() async throws {
         // What the termination save pass holds a quit on: a pause or resume
-        // settles without changing `VMStatus`, so the pass waits on this read
+        // ends without changing `VMStatus`, so the pass waits on the phase
         // through `withObservationTracking`. Were it not observable the wait
         // would have nothing to wake on and the quit would hang.
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = VMInstanceFixture.make()
-        let instanceID = instance.id
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
         await suspendingService.waitUntilSuspended()
-        #expect(coordinator.hasUnsettledOperation(for: instanceID))
+        #expect(instance.phase.operation != nil)
 
-        // The wait is on the *fire*, not on the read it guards: a coordinator
+        // The wait is on the *fire*, not on the read it guards: a phase
         // publishing no change would let the read settle anyway, so only the
         // fire separates a wait that woke from one that outlived its backstop.
         let gate = AsyncGate()
         let fired = ObservationFireRecorder()
         withObservationTracking {
-            _ = coordinator.hasUnsettledOperation(for: instanceID)
+            _ = instance.phase.operation
         } onChange: {
             fired.record()
             gate.notify()
@@ -209,141 +202,92 @@ struct VMLifecycleCoordinatorTests {
         // ordering the pass sees.
         Task { @MainActor in suspendingService.resumeSuspended() }
         try await gate.wait { fired.didFire }
-        #expect(!coordinator.hasUnsettledOperation(for: instanceID))
         _ = try await task.value
+        #expect(instance.phase.operation == nil)
     }
 
-    @Test("a stop taking the claim mid-operation leaves the operation unsettled")
-    func stopDoesNotSettleTheOperationItInterrupts() async throws {
-        // The pass waits before saving. `stop` and `forceStop` release the claim
-        // so a user can always break in, but the operation they interrupt is
-        // still inside VZ — resolving the wait there would issue the save as a
-        // second concurrent VZ operation.
+    @Test("a stop during an operation that tolerates it leaves the operation holding the VM")
+    func stopDoesNotEndTheOperationItInterrupts() async throws {
+        // The pass waits before saving. A stop reaches the guest mid-pause so a
+        // user can always break in, but the pause it interrupts is still inside
+        // VZ — ending the operation there would let the save in as a second
+        // concurrent VZ operation.
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let task = Task { @MainActor in
-            try await coordinator.start(instance)
-        }
+        let pause = Task { @MainActor in try await coordinator.pause(instance) }
         await suspendingService.waitUntilSuspended()
 
-        try await coordinator.stop(instance)
+        try await coordinator.requestStop(instance)
 
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-        #expect(coordinator.hasUnsettledOperation(for: instance.id))
+        #expect(instance.phase.operation?.kind == .pausing)
+        #expect(instance.phase.operation?.sessionEnd == .poweredOff)
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.pausing))) {
+            try await coordinator.save(instance)
+        }
 
         suspendingService.resumeSuspended()
-        _ = try await task.value
-        #expect(!coordinator.hasUnsettledOperation(for: instance.id))
+        try await pause.value
+        #expect(instance.phase == .stopped)
     }
 
-    @Test("concurrent operation on the same VM throws operationInProgress")
+    @Test("a second operation on a VM an operation holds is refused as busy")
     func rejectsConcurrentOperationOnSameVM() async throws {
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = VMInstanceFixture.make()
 
-        // Start an operation that will suspend
         let task = Task { @MainActor in
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
-
         await suspendingService.waitUntilSuspended()
 
-        // A second operation on the same VM should be rejected
-        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+        await #expect(throws: VMAdmissionRefusal.self) {
             try await coordinator.pause(instance)
         }
+        #expect(instance.phase.operation?.kind == .bringUp(Self.coldBoot))
 
-        // Clean up
         suspendingService.resumeSuspended()
         _ = try await task.value
     }
 
-    @Test("a serialized operation waits out an owed removable-media reconcile")
-    func serializedOperationWaitsForAnOwedReconcile() async throws {
+    @Test("an operation asked for during a media reconcile is refused as busy")
+    func operationDuringAReconcileIsRefused() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        let sessionID = UUID()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
-        instance.markRemovableMediaReconcileOwed(for: sessionID)
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        instance.activity.placeForTesting(.operating(.reconcilingMedia, from: live))
 
-        let pause = Task { @MainActor in try await coordinator.pause(instance) }
-        await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
-
-        // The claim is held while the wait runs, and the body has not started.
-        #expect(coordinator.hasActiveOperation(for: instance.id))
-        #expect(virtService.pauseCallCount == 0)
-
-        instance.clearRemovableMediaReconcileOwed(for: sessionID)
-        try await pause.value
-        #expect(virtService.pauseCallCount == 1)
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-    }
-
-    @Test("a second operation arriving during the reconcile wait is refused")
-    func secondOperationDuringTheReconcileWaitIsRefused() async throws {
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-        let sessionID = UUID()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
-        instance.markRemovableMediaReconcileOwed(for: sessionID)
-
-        let pause = Task { @MainActor in try await coordinator.pause(instance) }
-        await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
-
-        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.reconcilingMedia))) {
+            try await coordinator.pause(instance)
+        }
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.reconcilingMedia))) {
             try await coordinator.save(instance)
         }
+        #expect(virtService.pauseCallCount == 0)
         #expect(virtService.saveCallCount == 0)
-
-        instance.clearRemovableMediaReconcileOwed(for: sessionID)
-        try await pause.value
-        #expect(virtService.pauseCallCount == 1)
     }
 
-    @Test("stop and forceStop do not wait out an owed reconcile")
-    func stopDoesNotWaitForAnOwedReconcile() async throws {
+    @Test("stop and forceStop reach a guest a media reconcile holds")
+    func stopDoesNotWaitOutAReconcile() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         for forced in [false, true] {
             let instance = VMInstanceFixture.make()
-            let sessionID = UUID()
-            instance.activity.placeForTesting(.running(sessionID: sessionID))
-            instance.beginSessionContext()
-            instance.markRemovableMediaReconcileOwed(for: sessionID)
+            let live = VMLifecyclePhase.running(sessionID: UUID())
+            instance.activity.placeForTesting(.operating(.reconcilingMedia, from: live))
 
             if forced {
                 try await coordinator.forceStop(instance)
             } else {
-                try await coordinator.stop(instance)
+                try await coordinator.requestStop(instance)
             }
-            #expect(instance.status == .stopped)
+            // The guest is gone; the reconcile still holds the VM until its
+            // own pass ends.
+            #expect(instance.status == .stopped, "forced: \(forced)")
+            #expect(instance.phase.operation?.kind == .reconcilingMedia, "forced: \(forced)")
         }
         #expect(virtService.stopCallCount == 1)
         #expect(virtService.forceStopCallCount == 1)
-    }
-
-    @Test("a session torn down mid-wait releases the waiting operation")
-    func teardownMidWaitReleasesTheWaitingOperation() async throws {
-        // A force stop during the wait drops the debt with the context; the
-        // waiter wakes and the body runs against whatever the VM rests at.
-        let (coordinator, virtService, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-        let sessionID = UUID()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
-        instance.markRemovableMediaReconcileOwed(for: sessionID)
-
-        let pause = Task { @MainActor in try await coordinator.pause(instance) }
-        await waitForObservedChange { coordinator.hasUnsettledOperation(for: instance.id) }
-        #expect(virtService.pauseCallCount == 0)
-
-        instance.handleSessionEvent(.guestDidStop)
-        _ = try? await pause.value
-        #expect(virtService.pauseCallCount == 1)
-        #expect(!coordinator.hasUnsettledOperation(for: instance.id))
     }
 
     @Test("a snapshot delete during another operation is rejected, not run")
@@ -353,12 +297,12 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make(bundleFactory: VMBundle.Factory(machineFiles: store))
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
         await suspendingService.waitUntilSuspended()
 
         // A revert reads the very directory this would move to the Trash.
-        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.bringUp(Self.coldBoot)))) {
             try await coordinator.discardSnapshot(instance, snapshotID: UUID()) {}
         }
         #expect(store.discardedIDs.isEmpty)
@@ -373,157 +317,101 @@ struct VMLifecycleCoordinatorTests {
         let instance1 = VMInstanceFixture.make(name: "VM 1")
         let instance2 = VMInstanceFixture.make(name: "VM 2")
 
-        // Start an operation on instance1 that suspends
         let task = Task { @MainActor in
-            try await coordinator.start(instance1)
+            try await coordinator.start(instance1, Self.coldBoot)
         }
-
         await suspendingService.waitUntilSuspended()
 
-        // A different VM should still be able to start (uses regular mock behavior for second call)
         suspendingService.shouldSuspendOnStart = false
-        _ = try await coordinator.start(instance2)
+        _ = try await coordinator.start(instance2, Self.coldBoot)
 
-        // Clean up
         suspendingService.resumeSuspended()
         _ = try await task.value
     }
 
-    @Test("lock is released after operation completes successfully")
-    func lockReleasedAfterSuccess() async throws {
+    @Test("the VM is free for the next operation once one succeeds")
+    func releasedAfterSuccess() async throws {
         let (coordinator, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        _ = try await coordinator.start(instance)
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        _ = try await coordinator.start(instance, Self.coldBoot)
+        #expect(instance.phase.operation == nil)
 
-        // A second operation should succeed
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
         try await coordinator.pause(instance)
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        #expect(instance.phase.operation == nil)
     }
 
-    @Test("lock is released after operation fails")
-    func lockReleasedAfterError() async throws {
+    @Test("the VM is free for a retry once an operation fails")
+    func releasedAfterError() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.startError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
 
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        #expect(instance.phase.operation == nil)
 
-        // Should be able to retry after failure
         virtService.startError = nil
-        _ = try await coordinator.start(instance)
+        _ = try await coordinator.start(instance, Self.coldBoot)
         #expect(virtService.startCallCount == 2)
     }
 
-    @Test("stop bypasses serialization during an active operation")
-    func stopBypassesSerializationDuringActiveOperation() async throws {
+    @Test(
+        "A stop during a bring-up is refused, and the bring-up keeps the VM",
+        arguments: [false, true])
+    func stopDuringABringUpIsRefused(forced: Bool) async throws {
+        // Virtualization takes no stop while it is still starting a guest, so
+        // a bring-up tolerates neither stop.
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = VMInstanceFixture.make()
 
-        // Start an operation that will suspend
         let task = Task { @MainActor in
-            try await coordinator.start(instance)
+            try await coordinator.start(instance, Self.coldBoot)
         }
-
         await suspendingService.waitUntilSuspended()
-        #expect(coordinator.hasActiveOperation(for: instance.id))
 
-        // Stop should succeed even though start is in flight
-        try await coordinator.stop(instance)
+        await #expect(throws: VMAdmissionRefusal.self) {
+            if forced {
+                try await coordinator.forceStop(instance)
+            } else {
+                try await coordinator.requestStop(instance)
+            }
+        }
+        #expect(instance.phase.operation?.kind == .bringUp(Self.coldBoot))
 
-        // Active operation flag should be cleared by stop
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-
-        // Clean up — let the suspended start complete
         suspendingService.resumeSuspended()
-        _ = try? await task.value
+        _ = try await task.value
+        #expect(instance.status == .running)
     }
 
-    @Test("forceStop bypasses serialization during an active operation")
-    func forceStopBypassesSerializationDuringActiveOperation() async throws {
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        // Start an operation that will suspend
-        let task = Task { @MainActor in
-            try await coordinator.start(instance)
-        }
-
-        await suspendingService.waitUntilSuspended()
-        #expect(coordinator.hasActiveOperation(for: instance.id))
-
-        // Force stop should succeed even though start is in flight
-        try await coordinator.forceStop(instance)
-
-        // Active operation flag should be cleared by forceStop
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-
-        // Clean up
-        suspendingService.resumeSuspended()
-        _ = try? await task.value
-    }
-
-    @Test("stop does not affect active operation tracking")
-    func stopDoesNotAffectActiveOperationTracking() async throws {
+    @Test("a stop takes no admission of its own")
+    func stopTakesNoAdmission() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        try await coordinator.stop(instance)
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        try await coordinator.requestStop(instance)
+        #expect(instance.phase.operation == nil)
         #expect(virtService.stopCallCount == 1)
     }
 
-    @Test("stop error does not affect active operation tracking")
-    func stopErrorDoesNotAffectActiveOperationTracking() async throws {
+    @Test("a stop that fails leaves the VM running and free")
+    func stopErrorLeavesTheVMFree() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = VMInstanceFixture.make()
+        let sessionID = UUID()
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.stop(instance)
+            try await coordinator.requestStop(instance)
         }
 
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-
-        // Should be able to start after failed stop
-        _ = try await coordinator.start(instance)
-        #expect(virtService.startCallCount == 1)
-    }
-
-    @Test("token prevents stale defer from clobbering after stop clears entry")
-    func tokenPreventsStaleRemoval() async throws {
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        // Start an operation that will suspend (acquires token A)
-        let task = Task { @MainActor in
-            try await coordinator.start(instance)
-        }
-
-        await suspendingService.waitUntilSuspended()
-        #expect(coordinator.hasActiveOperation(for: instance.id))
-
-        // Stop clears the active operation entry (invalidating token A)
-        try await coordinator.stop(instance)
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
-
-        // Resume the suspended start — its defer should NOT re-clear the entry
-        // because its token no longer matches
-        suspendingService.resumeSuspended()
-        _ = try? await task.value
-
-        // Now start a new operation — this should succeed because
-        // the stale defer didn't clobber anything
-        suspendingService.shouldSuspendOnStart = false
-        _ = try await coordinator.start(instance)
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        #expect(instance.phase == .running(sessionID: sessionID))
+        try await coordinator.pause(instance)
+        #expect(virtService.pauseCallCount == 1)
     }
 
     // MARK: - macOS Installation
@@ -531,12 +419,12 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS with localFile context sets hasDownloadStep to false")
     func installMacOSLocalFile() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let instance = VMInstanceFixture.make { $0.installContext = context }
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(installService.installCallCount == 1)
     }
@@ -547,9 +435,6 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("installLatest-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: downloads)
-        let instance = VMInstanceFixture.make()
-        let library = makeWiredLibrary(holding: [instance])
-        defer { withExtendedLifetime(library) {} }
         // What the wizard persisted: the fallback name it shows before its own
         // lookup answers.
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
@@ -557,8 +442,11 @@ struct VMLifecycleCoordinatorTests {
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
         )
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         let expected = downloads.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
@@ -590,7 +478,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         let expected = downloads.appendingPathComponent(
@@ -609,9 +497,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
     func installMacOSCatalogUsesPinnedURL() async throws {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-        let library = makeWiredLibrary(holding: [instance])
-        defer { withExtendedLifetime(library) {} }
         let pinned = try #require(Self.pinnedRestoreImageURL)
         let context = MacOSInstallContext(
             source: .catalogVersion,
@@ -622,8 +507,11 @@ struct VMLifecycleCoordinatorTests {
             version: "15.6.1",
             build: "24G90"
         )
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(ipswService.fetchCallCount == 0)
         #expect(ipswService.downloadCallCount == 1)
@@ -634,15 +522,15 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS rejects a catalog context with no pinned URL")
     func installMacOSCatalogWithoutURLThrows() async {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
         let context = MacOSInstallContext(
             source: .catalogVersion,
             downloadDestinationPath: FileManager.default.temporaryDirectory
                 .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
         )
+        let instance = VMInstanceFixture.make { $0.installContext = context }
 
         await #expect(throws: IPSWError.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
         // Never silently falls back to resolving the latest image.
         #expect(ipswService.fetchCallCount == 0)
@@ -666,11 +554,11 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSError() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         installService.installError = DownloadError.downloadFailed(URLError(.badServerResponse))
-        let instance = VMInstanceFixture.make()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let instance = VMInstanceFixture.make { $0.installContext = context }
 
         do {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
             Issue.record("Expected error to be thrown")
         } catch {
             #expect(instance.status == .error)
@@ -689,7 +577,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: (any Error).self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(instance.status == .initialBoot)
@@ -706,7 +594,7 @@ struct VMLifecycleCoordinatorTests {
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(instance.configuration.installContext == nil)
         #expect(instance.setupState == nil)
@@ -715,13 +603,13 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS records the image the install ran from")
     func installMacOSRecordsTheInstalledImage() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let instance = VMInstanceFixture.make { $0.installContext = context }
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
         installService.installedImage = .macOSRestoreImage(version: "15.6.1", build: "24G90")
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(
             instance.configuration.installedImage
@@ -731,13 +619,13 @@ struct VMLifecycleCoordinatorTests {
     @Test("A failed install records no image")
     func installMacOSFailureRecordsNoImage() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let instance = VMInstanceFixture.make { $0.installContext = context }
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
         installService.installError = MacOSInstallError.unsupportedRestoreImage
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
-        _ = try? await coordinator.installMacOS(on: instance, context: context)
+        _ = try? await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(instance.configuration.installedImage == nil)
     }
@@ -761,7 +649,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: CancellationError.self) {
-            try await coordinator.installMacOS(on: instance, context: originalContext)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(instance.configuration.installContext == originalContext)
@@ -790,7 +678,7 @@ struct VMLifecycleCoordinatorTests {
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(ipswService.lastDownloadDiscardsExisting == true)
         #expect(ipswService.lastDownloadDestinationURL == destination)
@@ -821,7 +709,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         let derived = temp.appendingPathComponent(
@@ -864,7 +752,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(ipswService.lastDownloadDiscardsExisting == true)
@@ -903,7 +791,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         do {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
             Issue.record("Expected freshDownloadCleanupFailed")
         } catch DownloadError.freshDownloadCleanupFailed {
             #expect(instance.status == .error)
@@ -936,7 +824,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         do {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
             Issue.record("Expected invalidDownloadDestination")
         } catch DownloadError.invalidDownloadDestination {
             #expect(instance.status == .error)
@@ -963,7 +851,7 @@ struct VMLifecycleCoordinatorTests {
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         // Nothing at the destination is disturbed: the download resumes or
         // skips over whatever is already there. The destination did not move
@@ -978,7 +866,6 @@ struct VMLifecycleCoordinatorTests {
             .appendingPathComponent("cancelResumeData-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = CancellationError()
-        let instance = VMInstanceFixture.make()
         // The destination the resolved image derives, so the cancel is the only
         // thing that could reach the partial sitting there.
         let context = MacOSInstallContext(
@@ -987,9 +874,10 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
+        let instance = VMInstanceFixture.make { $0.installContext = context }
 
         await #expect(throws: CancellationError.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         // User cancel must preserve resume data so a future Start can resume
@@ -1007,16 +895,16 @@ struct VMLifecycleCoordinatorTests {
             code: NSURLErrorCancelled,
             userInfo: nil
         )
-        let instance = VMInstanceFixture.make()
         let context = MacOSInstallContext(
             source: .downloadLatest,
             downloadDestinationPath: temp.appendingPathComponent(
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
+        let instance = VMInstanceFixture.make { $0.installContext = context }
 
         await #expect(throws: CancellationError.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(ipswService.discardResumeDataCallCount == 0)
@@ -1041,7 +929,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         do {
-            try await coordinator.installMacOS(on: instance, context: originalContext)
+            try await coordinator.launchGuestSetup(on: instance).value()
             Issue.record("Expected error to be thrown")
         } catch {
             #expect(ipswService.discardResumeDataCallCount == 0)
@@ -1077,7 +965,7 @@ struct VMLifecycleCoordinatorTests {
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(ipswService.downloadCallCount == 0)
@@ -1106,7 +994,7 @@ struct VMLifecycleCoordinatorTests {
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         // The replace belongs to the download, which never ran.
@@ -1128,7 +1016,7 @@ struct VMLifecycleCoordinatorTests {
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await coordinator.installMacOS(on: instance, context: context)
+            try await coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(installService.installCallCount == 1)
@@ -1165,7 +1053,7 @@ struct VMLifecycleCoordinatorTests {
             storage.saveConfigurationError = nil
         }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         #expect(installService.lastRestoreImageURL?.lastPathComponent == "Moved.ipsw")
         // The heal never landed: the bundle still named the picked path.
@@ -1239,8 +1127,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(
             context: LinuxInstallContext(source: .catalogEntry(entry)), in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(
-            on: instance, context: LinuxInstallContext(source: .catalogEntry(entry)))
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -1284,7 +1171,7 @@ struct VMLifecycleCoordinatorTests {
                 makeLinuxCatalogEntry(distribution: "Ubuntu Desktop", version: "26.04 LTS")))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(
             instance.configuration.installedImage
@@ -1298,7 +1185,7 @@ struct VMLifecycleCoordinatorTests {
         let context = makeCustomURLContext(fixture: fixture, verified: true)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(instance.configuration.installedImage == nil)
     }
@@ -1312,7 +1199,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        _ = try? await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        _ = try? await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(instance.configuration.installedImage == nil)
     }
@@ -1328,7 +1215,7 @@ struct VMLifecycleCoordinatorTests {
             $0.storageDisks = [existing]
         }
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let disks = try #require(instance.configuration.storageDisks)
         #expect(disks.count == 2)
@@ -1342,7 +1229,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture) { $0.storageDisks = [] }
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let disks = try #require(instance.configuration.storageDisks)
         #expect(disks.count == 2)
@@ -1359,7 +1246,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(fixture.downloadService.downloadCallCount == 0)
@@ -1385,7 +1272,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(fixture.downloadService.downloadCallCount == 1)
@@ -1405,7 +1292,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         let expected = fixture.downloads.appendingPathComponent(
@@ -1428,7 +1315,7 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: stale.path(percentEncoded: false))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -1476,7 +1363,7 @@ struct VMLifecycleCoordinatorTests {
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
         do {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
             Issue.record("Expected checksumMismatch")
         } catch DownloadError.checksumMismatch(let filename, let expected, let actual) {
             // The name the mirror published, which is what the user is shown —
@@ -1512,7 +1399,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(fixture.fileSystem.trashedURLs == [destination])
@@ -1533,7 +1420,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let written = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.lastDownloadDestinationURL == written)
@@ -1560,7 +1447,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(
@@ -1589,7 +1476,7 @@ struct VMLifecycleCoordinatorTests {
             return persist?(mutate) ?? .refused(.noLibrary)
         }
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.downloadCallCount == 0)
@@ -1624,7 +1511,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
@@ -1651,7 +1538,7 @@ struct VMLifecycleCoordinatorTests {
         let context = makeCustomURLContext(fixture: fixture, verified: false)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
         #expect(fixture.downloadService.downloadCallCount == 1)
@@ -1674,7 +1561,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
         // The ordinary path owns this: the download skips over the file already
@@ -1699,7 +1586,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.adoptExistingFileCallCount == 1)
@@ -1728,7 +1615,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
         // The ordinary path handles it: the download skips over the file
@@ -1746,7 +1633,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: CancellationError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(fixture.downloadService.downloadCallCount == 0)
@@ -1765,7 +1652,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: CancellationError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(fixture.downloadService.discardResumeDataCallCount == 0)
@@ -1781,7 +1668,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: LinuxImageResolveError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(instance.status == .error)
@@ -1808,7 +1695,7 @@ struct VMLifecycleCoordinatorTests {
             return persist?(mutate) ?? .refused(.noLibrary)
         }
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         #expect(observedSteps == [0, 1])
         #expect(instance.setupState == nil)
@@ -1834,7 +1721,7 @@ struct VMLifecycleCoordinatorTests {
         let context = makeCustomURLContext(fixture: fixture, verified: true)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         // The URL is re-resolved on every attempt, for the size that bounds the
         // transfer — not to find out which file to fetch.
@@ -1867,7 +1754,7 @@ struct VMLifecycleCoordinatorTests {
             return persist?(mutate) ?? .refused(.noLibrary)
         }
 
-        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
 
         // Download is the whole flow, so the pipeline never leaves step 0.
         #expect(observedSteps == [0, 0])
@@ -1890,7 +1777,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         // Left in place it would satisfy the skip-existing fast path forever.
@@ -1918,7 +1805,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: LinuxImageURLError.self) {
-            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
         }
 
         #expect(fixture.downloadService.downloadCallCount == 0)

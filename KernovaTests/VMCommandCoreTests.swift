@@ -2735,8 +2735,9 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         harness.virtualization.startError = makeVMLimitExceededError()
         var reported: [CommandError] = []
-        // The chained boot runs after `setupTask` is cleared, so the report is
-        // what says the work is over — and it lands after the event does.
+        // The chained boot runs after the setup operation has ended, so the
+        // report is what says the work is over — and it lands after the event
+        // does.
         let settled = AsyncStream<Void>.makeStream()
         harness.core.onFailure = { failure, _ in
             reported.append(failure)

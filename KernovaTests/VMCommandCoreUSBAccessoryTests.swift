@@ -261,7 +261,10 @@ struct VMCommandCoreUSBAccessoryTests {
 
     @Test("Only a guest that is already running takes an accessory edit")
     func editNeedsALiveGuest() async throws {
-        for phase: VMLifecyclePhase in [.stopped, .suspended, .starting(sessionID: UUID())] {
+        for phase: VMLifecyclePhase in [
+            .stopped, .suspended,
+            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+        ] {
             let harness = makeHarness()
             let service = try #require(harness.accessories)
             service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))

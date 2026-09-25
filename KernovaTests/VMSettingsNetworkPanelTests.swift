@@ -800,7 +800,7 @@ struct VMSettingsNetworkPanelTests {
 
         let (savingVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
-            isReadOnly: true, phase: .saving(sessionID: UUID()))
+            isReadOnly: true, phase: .operating(.saving, from: .running(sessionID: UUID())))
         #expect(panelHeaderLockHints(in: savingVC).allSatisfy { !$0.isHidden })
         #expect(!panelHeaderLockHints(in: savingVC).isEmpty)
     }
@@ -830,8 +830,10 @@ struct VMSettingsNetworkPanelTests {
 
     @Test("Transitional and suspended phases lock the picker")
     func transitionalStatesLockThePicker() throws {
-        for phase in [
-            VMLifecyclePhase.saving(sessionID: UUID()), .revertingToSnapshot, .suspended,
+        for phase: VMLifecyclePhase in [
+            .operating(.saving, from: .running(sessionID: UUID())),
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
+            .suspended,
         ] {
             // Suspended carries no live `VZVirtualMachine` — there is no
             // session to hot-swap an attachment on — and its saved state pins
