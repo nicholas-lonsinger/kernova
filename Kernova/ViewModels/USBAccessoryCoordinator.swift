@@ -209,8 +209,8 @@ final class USBAccessoryCoordinator {
         }
         guard !owed.isEmpty else { return }
         Task { [weak self] in
-            // One at a time: each attach is serialized on the instance, and a
-            // second issued under the first would be refused outright.
+            // One at a time: each attach is an operation holding the VM, and
+            // a second issued under the first would be refused as busy.
             for accessory in owed {
                 await self?.autoAttach(accessory.registryID, to: instance)
             }
@@ -219,20 +219,17 @@ final class USBAccessoryCoordinator {
 
     // MARK: - The One Automatic Attach
 
-    /// Passes the accessory `registryID` names through to `instance`, once
-    /// whatever that VM is doing has settled.
+    /// Passes the accessory `registryID` names through to `instance`.
     ///
-    /// The wait is what makes the re-checks below answer about the VM's settled
-    /// state: `VMLifecycleCoordinator` rejects a concurrent operation rather
-    /// than queueing it, and a save, a stop or a snapshot capture ejects every
-    /// passthrough device and can rest at a phase that still reads as live
-    /// while it does. Waiting first means a device re-assigned under a save is
-    /// held, because by the time this looks the VM is suspended.
+    /// Waits for nothing: the attachable edge that asks for this fires at the
+    /// commit that frees the VM, and a VM an operation holds refuses the attach
+    /// as busy — a save or a capture ejects every passthrough device, so a
+    /// device re-assigned under one stays with the host.
     ///
     /// Nothing is alerted about: the user did not ask for this attach, so a
-    /// failure leaves the accessory with the host and says so in the log.
+    /// failure or a refusal leaves the accessory with the host and says so in
+    /// the log.
     private func autoAttach(_ registryID: UInt64, to instance: VMInstance) async {
-        _ = await lifecycle.awaitSettledOutcome(for: instance.id)
         guard let sessionID = instance.attachableSessionID else {
             #log(
                 Self.logger, .notice,

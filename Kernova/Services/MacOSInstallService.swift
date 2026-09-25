@@ -16,12 +16,8 @@ final class MacOSInstallService {
 
     // MARK: - Installation
 
-    /// Installs macOS from a restore image into the given VM instance.
-    ///
-    /// The caller has already entered
-    /// ``VMLifecyclePhase/installing(sessionID:)``
-    /// (``VMActivity/beginBringUp(_:)``), the phase the installer's session is
-    /// promoted into.
+    /// Installs macOS from a restore image into the given VM instance, under
+    /// the guest-setup bring-up that holds it.
     ///
     /// `progressHandler` receives installation progress in 0.0–1.0.
     ///
@@ -31,6 +27,7 @@ final class MacOSInstallService {
     ///   incompatible with this host, or any error rethrown from `VZMacOSInstaller`.
     func install(
         into instance: VMInstance,
+        _ context: borrowing VMBringUpContext,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
@@ -67,11 +64,7 @@ final class MacOSInstallService {
         )
 
         instance.adoptBuildResult(result)
-        // A cancel caught by the check below unwinds with `instance.session` set,
-        // which `VMCommandCore.runGuestSetup`'s `catch is CancellationError` tears
-        // down. One caught before `attachSession` would leave the open session
-        // context — its pipes and its security scopes — with no matching VM.
-        guard let session = await instance.attachSession(from: result) else {
+        guard let session = await instance.attachSession(context, from: result) else {
             throw VirtualizationError.noVirtualMachine
         }
         // Short of `bringUpSession`: an installer boot runs no vsock
@@ -88,24 +81,15 @@ final class MacOSInstallService {
             }
         }
 
-        // `VZMacOSInstaller.install` resolves its completion handler before VZ has
-        // finished propagating the post-install guest shutdown through `vm.state`.
-        // Without this wait the caller's auto-boot races the auxiliary-storage file
-        // lock ("Failed to lock auxiliary storage"), and `guestDidStop` hasn't yet
-        // cleared `instance.session`.
-        await session.waitUntilStopped(timeout: .seconds(30))
+        // `VZMacOSInstaller.install` resolves its completion handler before VZ
+        // has finished shutting the installed guest down, and the boot chained
+        // after the setup would race the auxiliary-storage file lock that
+        // session still holds.
+        _ = try await context.operation.sessionEnded()
 
-        // `waitUntilStopped` observes cancellation but never throws, so the signal
-        // has to be re-raised here: otherwise a cancel landing during the wait lets
-        // the install return success and `runGuestSetup` auto-boots it.
+        // A cancel landing after the session ended has to be raised here, or the
+        // install returns success and the setup chains a boot.
         try Task.checkCancellation()
-
-        // If the delegate never fired (timed out, or deallocated before
-        // `guestDidStop` ran), tear down explicitly so a later boot doesn't
-        // observe a stale attached VM.
-        if instance.hasLiveVirtualMachine {
-            instance.restAfterPowerOff()
-        }
 
         instance.setupState?.progress = .fraction(1.0)
 

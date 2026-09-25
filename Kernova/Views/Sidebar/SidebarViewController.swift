@@ -586,9 +586,8 @@ extension SidebarViewController: NSOutlineViewDelegate {
             // Capture `instance` weakly: the cell stores these closures, so a
             // strong capture would keep a deleted VM alive until the cell is
             // recycled.
-            isBusy: { [weak self, weak instance] in
-                guard let self, let instance else { return false }
-                return self.viewModel.isBusy(instance)
+            isBusy: { [weak instance] in
+                instance?.phase.operation != nil
             },
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }

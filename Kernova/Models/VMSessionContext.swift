@@ -130,12 +130,6 @@ final class VMSessionContext {
     /// running.
     var liveRemovableMedia: [RemovableMediaDeviceInfo] = []
 
-    /// `true` from the moment a removable-media edit is queued for this
-    /// session until the reconcile pass has drained it — the window a
-    /// lifecycle operation waits out so it acts on the device set the
-    /// configuration describes.
-    var removableMediaReconcileOwed = false
-
     // MARK: - Runtime USB Accessories
 
     /// Host USB accessories passed through to this guest.
@@ -182,7 +176,6 @@ final class VMSessionContext {
         serialInputPipe = nil
         serialOutputPipe = nil
         liveRemovableMedia = []
-        removableMediaReconcileOwed = false
         liveUSBAccessories = []
         // Releasing the session releases the actor, its delegate adapter, and
         // the `VZVirtualMachine`; the boot paths' file-lock retry covers the

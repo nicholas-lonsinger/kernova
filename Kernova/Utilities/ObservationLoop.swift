@@ -143,3 +143,31 @@ func waitForObservedChange(
             })
     }
 }
+
+/// Suspends until `predicate` holds, or throws `CancellationError` once the
+/// calling task is cancelled — for a wait that something other than the
+/// awaited change may need to end. Same contract on `predicate` as
+/// ``waitForObservedChange(until:)``.
+@MainActor
+func waitForObservedChangeUnlessCancelled(
+    until predicate: @escaping @MainActor () -> Bool
+) async throws {
+    guard !predicate() else { return }
+    let box = ObservationLoopBox()
+    let satisfied = await withTaskCancellationHandler {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            box.arm(continuation)
+            box.loop = observeRecurring(
+                track: { _ = predicate() },
+                apply: {
+                    guard predicate() else { return }
+                    box.settle(true)
+                }
+            )
+            if Task.isCancelled { box.settle(false) }
+        }
+    } onCancel: {
+        Task { @MainActor in box.settle(false) }
+    }
+    if !satisfied { throw CancellationError() }
+}

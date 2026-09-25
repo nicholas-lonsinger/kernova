@@ -20,86 +20,41 @@ final class VirtualizationService {
 
     // MARK: - Start
 
-    /// Starts a virtual machine, optionally restoring from a saved state.
+    /// Brings the guest up the way the bring-up holding the VM names: a cold
+    /// boot, a Recovery boot, or the restore of the bundle's saved state.
     ///
-    /// `bootIntoRecovery` boots into macOS Recovery for this launch only, and
-    /// applies to a macOS cold boot alone — no effect on Linux guests or on the
-    /// restore-from-save path.
-    ///
-    /// `provisioning` is the account this boot creates inside the guest. The same
-    /// value goes into every file-lock retry, each of which is the same boot
-    /// trying again. A recovery boot and a restore from a save file both read
-    /// none, for the reason
+    /// `provisioning` is the account a cold boot creates inside the guest. The
+    /// same value goes into every file-lock retry, each of which is the same
+    /// boot trying again. A recovery boot and a restore from a save file both
+    /// read none, for the reason
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
     /// states.
     func start(
-        _ instance: VMInstance, bootIntoRecovery: Bool = false,
-        provisioning: GuestProvisioningCredentials? = nil
-    ) async throws -> GuestStartRoute {
-        #log(
-            Self.logger, .debug,
-            "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public), bootIntoRecovery=\(bootIntoRecovery, privacy: .public)"
-        )
-        guard instance.canStart else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
-        }
-
-        // The branch and the answer are one value: the route decides which way
-        // the guest is brought up, and is what the caller is told was done.
-        let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
-        try instance.beginBringUp(route == .restoredSavedState ? .restoringSavedState : .starting)
-        if bootIntoRecovery, route.dropsRecoveryBoot {
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
+        provisioning: GuestProvisioningCredentials?
+    ) async throws -> VMOperationEnding<GuestStartRoute> {
+        let operationKind = context.operation.kind
+        guard case .bringUp(let kind) = operationKind, let route = GuestStartRoute(kind) else {
             #log(
                 Self.logger, .fault,
-                "Recovery boot of '\(instance.name, privacy: .public)' ignored: it holds a saved state, so the start restores instead"
+                "start of '\(instance.name, privacy: .public)' ran under \(String(describing: operationKind), privacy: .public)"
             )
-            assertionFailure("A Recovery boot was asked of a VM holding a saved state")
+            assertionFailure("VirtualizationService.start outside a start or restore bring-up")
+            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
         }
-        var attemptSessionID: UUID?
+        #log(
+            Self.logger, .debug,
+            "start: route=\(String(describing: route), privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
+        )
         do {
-            let sessionID: UUID
             switch route {
             case .restoredSavedState:
-                sessionID = try await restoreFromSaveFile(
-                    instance, attemptSessionID: &attemptSessionID)
+                try await restoreFromSaveFile(instance, context)
             case .coldBoot, .recoveryBoot:
-                sessionID = try await coldBootRetryingLockContention(
-                    instance, bootIntoRecovery: bootIntoRecovery,
-                    provisioning: route.deliversGuestProvisioning ? provisioning : nil,
-                    attemptSessionID: &attemptSessionID)
+                try await coldBootRetryingLockContention(
+                    instance, context, bootIntoRecovery: route == .recoveryBoot,
+                    provisioning: route.deliversGuestProvisioning ? provisioning : nil)
             }
-
-            guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
-                // The session this start acted for went away between VZ
-                // reporting the machine up and here — a `didStopWithError`, a
-                // force stop, or a revert. Whatever released it rested the VM,
-                // and reported the failure if there was one, so the start is
-                // over rather than failed — and the route still answers, because
-                // the guest did come up.
-                #log(
-                    Self.logger, .notice,
-                    "VM '\(instance.name, privacy: .public)' lost its session before the start settled — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-                return route
-            }
-            // Activation waits for `.running`: VZ documents runtime attachment
-            // swapping for a running VM, and a boot or restore that came up
-            // detached is reconciled here.
-            instance.activateNetworkAttachment()
-            // The watchdog flips `agentExpectedButMissing` when a VM that has seen
-            // the agent before gets no Hello within the grace period. No-op for
-            // fresh VMs (no `lastSeenAgentVersion`), for Linux, and for recovery
-            // boots, which never run the agent.
-            instance.startAgentPostStartWatchdog()
-            switch route {
-            case .recoveryBoot:
-                #log(
-                    Self.logger, .notice,
-                    "Started VM '\(instance.name, privacy: .public)' in recovery mode")
-            case .coldBoot, .restoredSavedState:
-                #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)'")
-            }
-            return route
         } catch {
             // A restore failure already logged itself with the full error chain.
             if !Self.isRestoreFailure(error) {
@@ -109,18 +64,20 @@ final class VirtualizationService {
                     "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
                 )
             }
-            if !Self.tearDownIfStillOwned(
-                instance, actingFor: attemptSessionID,
-                restingAt: Self.restingPhaseAfterLifecycleFailure(
-                    error, on: instance, transientRestingPhase: .stopped))
-            {
-                #log(
-                    Self.logger, .notice,
-                    "Start of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-            }
             throw error
         }
+        switch route {
+        case .recoveryBoot:
+            #log(
+                Self.logger, .notice,
+                "Started VM '\(instance.name, privacy: .public)' in recovery mode")
+        case .coldBoot, .restoredSavedState:
+            #log(Self.logger, .notice, "Started VM '\(instance.name, privacy: .public)'")
+        }
+        // A session that went away between VZ reporting the machine up and
+        // here rests the VM where its end says; the route still answers,
+        // because the guest did come up.
+        return .rest(.live(.running), route)
     }
 
     // MARK: - Cold Boot
@@ -133,45 +90,27 @@ final class VirtualizationService {
     /// which lags `vm.state == .stopped` by more the more guest memory there is to
     /// tear down. No public VZ API observes the release, so gating on state cannot
     /// be airtight; a bounded retry against the ground-truth failure is.
-    ///
-    /// `attemptSessionID` carries out the session the attempt in flight owns
-    /// right now: `nil` before its `VZVirtualMachine` exists, and again once it
-    /// is released.
     private func coldBootRetryingLockContention(
-        _ instance: VMInstance, bootIntoRecovery: Bool,
-        provisioning: GuestProvisioningCredentials?, attemptSessionID: inout UUID?
-    ) async throws -> UUID {
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext, bootIntoRecovery: Bool,
+        provisioning: GuestProvisioningCredentials?
+    ) async throws {
         var attempt = 0
         while true {
             do {
-                return try await coldBoot(
-                    instance, bootIntoRecovery: bootIntoRecovery, provisioning: provisioning,
-                    attemptSessionID: &attemptSessionID)
+                try await coldBoot(
+                    instance, context, bootIntoRecovery: bootIntoRecovery,
+                    provisioning: provisioning)
+                return
             } catch let startError {
                 guard Self.isFileLockContention(startError),
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw startError }
-                // An interrupt that landed on this attempt's session has already
-                // rested the VM; retrying would release a successor's context and
-                // boot a second machine behind it. Rethrowing hands the outer
-                // catch the same non-ownership answer.
-                guard Self.attemptStillOwnsThePhase(instance, actingFor: attemptSessionID) else {
-                    #log(
-                        Self.logger, .notice,
-                        "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention after it was overtaken — not retrying"
-                    )
-                    throw startError
-                }
                 attempt += 1
                 #log(
                     Self.logger, .warning,
                     "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
-                // Back to the sessionless form of the phase the retry stays in:
-                // the attempt's `VZVirtualMachine` is released, and the VM is
-                // still starting.
-                instance.tearDownSession(restingAt: .starting(sessionID: nil))
-                attemptSessionID = nil
+                context.operation.endSession()
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
@@ -185,30 +124,22 @@ final class VirtualizationService {
     }
 
     /// Builds a fresh configuration and `VZVirtualMachine`, wires the session
-    /// plumbing, and starts the machine — one cold-boot attempt, returning the
-    /// identity of the session it brought up.
-    ///
-    /// `attemptSessionID` carries out the session this attempt owns right now:
-    /// `nil` before its `VZVirtualMachine` exists, and again once it is
-    /// released. A throw leaves it naming whatever the caller must act for.
+    /// plumbing, and starts the machine — one cold-boot attempt.
     private func coldBoot(
-        _ instance: VMInstance, bootIntoRecovery: Bool,
-        provisioning: GuestProvisioningCredentials?, attemptSessionID: inout UUID?
-    ) async throws -> UUID {
-        // Per attempt, not once per start: the lock-contention retry loop tears the
-        // session down between attempts, taking this context's scopes with it.
-        attemptSessionID = nil
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext, bootIntoRecovery: Bool,
+        provisioning: GuestProvisioningCredentials?
+    ) async throws {
+        // Per attempt, not once per start: the lock-contention retry loop ends
+        // the session between attempts, taking this context's scopes with it.
         instance.beginSessionContext(bootedIntoRecovery: bootIntoRecovery)
         let result = try await buildConfiguration(for: instance)
-        guard let session = await instance.bringUpSession(with: result) else {
+        guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        attemptSessionID = session.id
         let startOptions = MacOSGuestProvisioning.macOSStartOptions(
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS,
             provisioning: provisioning)
         try await session.start(options: startOptions)
-        return session.id
     }
 
     /// Detects VZ's advisory file-lock contention on a VM's backing files.
@@ -219,7 +150,7 @@ final class VirtualizationService {
     /// code, no `EAGAIN`) — matching localized text would be locale-fragile. A
     /// disk-image attach failure arrives wrapped in a `ConfigurationBuilderError`,
     /// so unwrap before matching or the contention retry never fires.
-    static func isFileLockContention(_ error: Error) -> Bool {
+    nonisolated static func isFileLockContention(_ error: Error) -> Bool {
         if let builderError = error as? ConfigurationBuilderError,
             let underlying = builderError.underlyingAttachError
         {
@@ -247,30 +178,10 @@ final class VirtualizationService {
 
     // MARK: - Stop
 
-    /// Requests a graceful ACPI shutdown of the virtual machine.
-    func stop(_ instance: VMInstance) async throws {
-        #log(
-            Self.logger, .debug,
-            "stop: status=\(instance.status.displayName, privacy: .public), holdsSuspendedSession=\(instance.holdsSuspendedSession, privacy: .public)"
-        )
+    /// Sends the live guest the ACPI shutdown request.
+    func requestStop(_ instance: VMInstance) async throws {
+        guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
         do {
-            // A saved state with nothing live: there is no guest to ask, so the
-            // stop discards the slot.
-            if instance.holdsSuspendedSession {
-                guard instance.discardSavedState() else {
-                    throw VirtualizationError.savedStateNotDiscarded
-                }
-                #log(
-                    Self.logger, .notice,
-                    "Discarded saved state for VM '\(instance.name, privacy: .public)'")
-                return
-            }
-
-            guard instance.canStop, let session = instance.session else {
-                throw VirtualizationError.invalidStateTransition(
-                    from: instance.status, action: "stop")
-            }
-
             try await session.requestStop()
             #log(Self.logger, .notice, "Requested stop for VM '\(instance.name, privacy: .public)'")
         } catch {
@@ -282,39 +193,11 @@ final class VirtualizationService {
         }
     }
 
-    /// Terminates the guest where it stands.
-    ///
-    /// The service holds ``VMLifecyclePhase/canForceStop`` too, so a machine no
-    /// door should have offered this for is turned back here rather than handed
-    /// to VZ.
+    /// Terminates the live guest where it stands.
     func forceStop(_ instance: VMInstance) async throws {
-        #log(
-            Self.logger, .debug,
-            "forceStop: status=\(instance.status.displayName, privacy: .public), holdsSuspendedSession=\(instance.holdsSuspendedSession, privacy: .public)"
-        )
+        guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
         do {
-            // A saved state with nothing live: there is no guest to terminate,
-            // so the force stop discards the slot.
-            if instance.holdsSuspendedSession {
-                guard instance.discardSavedState() else {
-                    throw VirtualizationError.savedStateNotDiscarded
-                }
-                #log(
-                    Self.logger, .notice,
-                    "Discarded saved state for VM '\(instance.name, privacy: .public)'")
-                return
-            }
-
-            guard instance.canForceStop else {
-                throw VirtualizationError.invalidStateTransition(
-                    from: instance.status, action: "force stop")
-            }
-            guard let session = instance.session else {
-                throw VirtualizationError.noVirtualMachine
-            }
-
             try await session.stop()
-            instance.restAfterPowerOff()
             #log(Self.logger, .notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
         } catch {
             #log(
@@ -327,218 +210,134 @@ final class VirtualizationService {
 
     // MARK: - Pause / Resume
 
-    func pause(_ instance: VMInstance) async throws {
-        #log(Self.logger, .debug, "pause: status=\(instance.status.displayName, privacy: .public)")
-        guard instance.canPause, let session = instance.session else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "pause")
-        }
-
-        let sessionID = session.id
+    func pause(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void> {
+        guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
         do {
             try await session.pause()
-            guard instance.settle(.livePaused(sessionID: sessionID), for: sessionID) else {
-                #log(
-                    Self.logger, .notice,
-                    "VM '\(instance.name, privacy: .public)' lost its session before the pause settled — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-                return
-            }
-            // The grace clock only means something while the guest is executing
-            // — a frozen guest cannot say Hello, so letting it run would blame
-            // the agent for the pause.
-            instance.cancelAgentPostStartWatchdog()
-            #log(Self.logger, .notice, "Paused VM '\(instance.name, privacy: .public)'")
         } catch {
-            // The phase stays untouched: the pause did not take, so the VM is
-            // where it was, still holding the session — and the guest stays
-            // usable, with Stop, Force Stop and a retried Pause all offered.
-            // Resting at a phase naming no session would strand it instead:
-            // liveness is read off the phase, so every later event this
-            // still-live session raises — the guest's own shutdown above all —
-            // would be dropped, and the pipes, vsock listeners, security scopes
-            // and file locks it holds would never be released.
-            //
-            // The failure reaches the user as the thrown error, which is what
-            // every caller of this already surfaces.
+            // The VM stays where it was, still holding the session, with Stop,
+            // Force Stop and a retried Pause all offered; the failure reaches
+            // the user as the thrown error.
             #log(
                 Self.logger, .error,
                 "Failed to pause VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
+        // The grace clock only means something while the guest is executing
+        // — a frozen guest cannot say Hello, so letting it run would blame
+        // the agent for the pause.
+        instance.cancelAgentPostStartWatchdog()
+        #log(Self.logger, .notice, "Paused VM '\(instance.name, privacy: .public)'")
+        return .rest(.live(.paused), ())
     }
 
-    /// Resumes a paused virtual machine.
-    ///
-    /// Hot resume when the VM is still in memory; cold resume rebuilds it and
-    /// restores from the save file.
-    func resume(_ instance: VMInstance) async throws {
-        #log(
-            Self.logger, .debug,
-            "resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
-        )
-        // ``VMInstance/canResume`` reads the suspend slot, so a cold resume
-        // reaching here has one to restore from.
-        guard instance.canResume else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
-        }
-
-        // A hot resume's live VM already holds its identity; a cold one builds a
-        // fresh VM that claims it. A refusal leaves the VM suspended on its slot,
-        // with nothing to tear down.
-        if instance.session == nil { try instance.beginBringUp(.restoringSavedState) }
-
-        // A hot resume acts for the session it already holds; a cold one for
-        // whichever session the restore brings up.
-        let hotResumeSessionID = instance.session?.id
-        var attemptSessionID = hotResumeSessionID
+    /// Resumes a live-paused guest from memory.
+    func resume(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void> {
+        guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
         do {
-            let sessionID: UUID
-            if let session = instance.session {
-                try await session.resume()
-                sessionID = session.id
-            } else {
-                // Arms nothing below: a restore resumes whatever guest state
-                // was frozen, which may be a Recovery session that never runs
-                // the agent, and no host-side flag survives the save to say
-                // which. The accept path arms once a control channel actually
-                // shows up.
-                sessionID = try await restoreFromSaveFile(
-                    instance, attemptSessionID: &attemptSessionID)
-            }
-
-            guard instance.settle(.running(sessionID: sessionID), for: sessionID) else {
-                #log(
-                    Self.logger, .notice,
-                    "VM '\(instance.name, privacy: .public)' lost its session before the resume settled — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-                return
-            }
-            // Idempotent re-activation reconciles an attachment the host link
-            // may have invalidated during the pause.
-            instance.activateNetworkAttachment()
-            if hotResumeSessionID != nil {
-                instance.bundle.removeSaveFile()
-                // The guest is executing again, and this is the same session
-                // that was paused — so `bootedIntoRecovery` still governs, and
-                // a channel that died during the pause gets its grace clock
-                // back. A no-op while the agent is connected.
-                instance.startAgentPostStartWatchdog()
-            }
-
-            #log(Self.logger, .notice, "Resumed VM '\(instance.name, privacy: .public)'")
+            try await session.resume()
         } catch {
-            // A restore failure already logged itself with the full error chain.
-            if !Self.isRestoreFailure(error) {
-                #log(
-                    Self.logger, .error,
-                    "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-            }
-            if !Self.tearDownIfStillOwned(
-                instance, actingFor: attemptSessionID,
-                restingAt: Self.restingPhaseAfterLifecycleFailure(
-                    error, on: instance, transientRestingPhase: nil))
-            {
-                #log(
-                    Self.logger, .notice,
-                    "Resume of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-            }
+            #log(
+                Self.logger, .error,
+                "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
             throw error
         }
+        instance.bundle.removeSaveFile()
+        #log(Self.logger, .notice, "Resumed VM '\(instance.name, privacy: .public)'")
+        return .rest(.live(.running), ())
     }
 
-    // MARK: - Save / Restore
+    // MARK: - Save
 
-    /// Saves the current VM state to disk (pause + snapshot).
-    func save(_ instance: VMInstance) async throws {
-        #log(Self.logger, .debug, "save: status=\(instance.status.displayName, privacy: .public)")
-        guard instance.canSave, let session = instance.session else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "save")
+    /// Writes the guest's state to the bundle's suspend slot (pause, then
+    /// save) and ends the session.
+    func save(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void> {
+        guard let session = context.session, let sessionID = context.sessionID else {
+            throw VirtualizationError.noVirtualMachine
         }
-
-        let sessionID = session.id
-        instance.settle(.saving(sessionID: sessionID), for: sessionID)
-
         do {
             try await Self.detachUSBAccessories(from: instance, session: session, for: sessionID)
             try await session.pauseIfRunning()
             try await session.saveMachineState(to: instance.bundle.saveFileURL)
-            // No sidecar metadata is needed beside the save file: removable media
-            // carry stable UUIDs and storage disks stable virtio block identifiers
-            // in `config`, and VZ matches both on restore.
-            guard
-                Self.tearDownIfStillOwned(
-                    instance, actingFor: sessionID,
-                    restingAt: instance.restingPhase(withoutSlot: .stopped))
-            else {
-                // The guest went away mid-write, so the slot on disk is however
-                // far VZ got. Resting suspended would offer it as resumable;
-                // the VM stays where the teardown put it instead.
-                #log(
-                    Self.logger, .notice,
-                    "VM '\(instance.name, privacy: .public)' lost its session mid-suspend — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-                return
-            }
-            #log(Self.logger, .notice, "Saved state for VM '\(instance.name, privacy: .public)'")
         } catch {
             #log(
                 Self.logger, .error,
                 "Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            // Drops the slot this attempt's own throw left part-written, before
-            // the rest, so no observer sees a truncated one offered as a
-            // resumable session. A no-op when the guest went away mid-write
-            // instead: `didStopWithError` fires while the phase is still
-            // `.saving` and drops it there.
-            instance.dropTruncatedSaveFile()
-            // That same event is the interrupt this operation meets, and it
-            // rests the VM itself — so a failure written over the top would
-            // report a state this attempt did not produce.
-            if !Self.tearDownIfStillOwned(
-                instance, actingFor: sessionID,
-                restingAt: .failed(message: error.localizedDescription))
-            {
-                #log(
-                    Self.logger, .notice,
-                    "Suspend of '\(instance.name, privacy: .public)' failed after it was overtaken — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-            }
-            throw error
+            // `saveMachineState` writes the slot in place, so a throw leaves it
+            // part-written — which a relaunch would offer as a resumable
+            // session that cannot restore.
+            instance.bundle.removeSaveFile()
+            // A guest that went away under the write rests the VM where its
+            // end says; a failure written over it would report a state this
+            // save did not produce.
+            let rest: VMOperationRest =
+                context.sessionEnd == nil
+                ? .at(.failed(message: error.localizedDescription)) : .afterSessionEnd
+            return .failed(rest, error)
         }
+        guard context.sessionEnd == nil else {
+            // The guest went away mid-write, so the slot on disk is however far
+            // VZ got.
+            instance.bundle.removeSaveFile()
+            #log(
+                Self.logger, .notice,
+                "VM '\(instance.name, privacy: .public)' lost its session mid-suspend — its partial saved state was dropped"
+            )
+            return .rest(.afterSessionEnd, ())
+        }
+        // No sidecar metadata is needed beside the save file: removable media
+        // carry stable UUIDs and storage disks stable virtio block identifiers
+        // in `config`, and VZ matches both on restore.
+        context.endSession()
+        #log(Self.logger, .notice, "Saved state for VM '\(instance.name, privacy: .public)'")
+        return .rest(.slotOr(.stopped), ())
     }
 
     // MARK: - Snapshots
 
-    /// Captures `snapshot`, in the mode the VM is in right now: a live capture
-    /// writes the guest's memory into the snapshot's own saved state and copies
-    /// the bundle's disks beside it, a suspended capture clones the bundle's
-    /// suspend slot beside the disk copies, and a stopped capture copies the
-    /// disks alone.
+    /// Captures `snapshot` in the mode the capture operation was admitted in:
+    /// a live capture writes the guest's memory into the snapshot's own saved
+    /// state and copies the bundle's disks beside it, a suspended capture
+    /// clones the bundle's suspend slot beside the disk copies, and a stopped
+    /// capture copies the disks alone.
     ///
     /// A live capture pauses the guest for the write and puts it back the way it
     /// was found, so the VM keeps running across a snapshot — and the suspend
     /// slot is untouched either way. A failure discards the half-written
     /// snapshot directory and leaves the VM where it was: live, paused at
-    /// worst, or stopped.
-    func takeSnapshot(_ instance: VMInstance, snapshot: VMSnapshotRecord) async throws -> VMSnapshot {
+    /// worst, or at rest.
+    func takeSnapshot(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        snapshot: VMSnapshotRecord
+    ) async throws -> VMOperationEnding<VMSnapshot> {
+        let operationKind = context.kind
+        guard case .capturingSnapshot(let mode) = operationKind, mode.kind == snapshot.kind else {
+            #log(
+                Self.logger, .fault,
+                "A \(snapshot.kind.rawValue, privacy: .public) snapshot of '\(instance.name, privacy: .public)' ran under \(String(describing: operationKind), privacy: .public)"
+            )
+            assertionFailure("A snapshot record whose kind its capture operation does not take")
+            throw VirtualizationError.invalidStateTransition(
+                from: instance.status, action: "take a snapshot of")
+        }
         #log(
             Self.logger, .debug,
             "takeSnapshot: kind=\(snapshot.kind.rawValue, privacy: .public), status=\(instance.status.displayName, privacy: .public)"
         )
-        // Re-validates rather than trusting the kind the caller stamped: the VM
-        // can change state between the sheet being confirmed and the capture
-        // running, and a snapshot listed in the manifest under a kind the
-        // capture didn't actually produce would fail every later revert.
-        guard let mode = instance.snapshotCaptureMode, mode.kind == snapshot.kind else {
-            throw VirtualizationError.invalidStateTransition(
-                from: instance.status, action: "take a snapshot of")
-        }
         switch mode {
         case .live:
-            return try await takeWarmSnapshot(instance, snapshot: snapshot)
+            guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
+            return try await Self.captureWarmSnapshot(
+                instance, context, snapshot: snapshot, session: session)
         case .suspended:
             return try await takeSuspendedSnapshot(instance, snapshot: snapshot)
         case .stopped:
@@ -546,42 +345,29 @@ final class VirtualizationService {
         }
     }
 
-    /// The guest's memory plus the bundle's disks, from a live VM.
-    private func takeWarmSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord
-    ) async throws -> VMSnapshot {
-        guard instance.canSave, let session = instance.session else {
-            throw VirtualizationError.invalidStateTransition(
-                from: instance.status, action: "take a snapshot of")
-        }
-        return try await Self.captureWarmSnapshot(
-            instance, snapshot: snapshot, session: session, sessionID: session.id)
-    }
-
-    /// The body of a warm capture, over the VZ operations it needs rather than a
-    /// concrete session.
+    /// The guest's memory plus the bundle's disks, from a live VM, over the VZ
+    /// operations it needs rather than a concrete session.
     ///
-    /// Split from ``takeWarmSnapshot(_:snapshot:)`` so the resting phase
-    /// this settles on — the one place a capture can hand the VM back to a
-    /// session that is no longer there — is reachable without the virtualization
-    /// entitlement a real `VZVirtualMachine` needs.
-    @discardableResult
+    /// Takes the session as a parameter so the resting phase it answers — the
+    /// one place a capture can hand the VM back to a session that is no longer
+    /// there — is reachable without the virtualization entitlement a real
+    /// `VZVirtualMachine` needs.
     static func captureWarmSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord,
-        session: any VMSnapshotSessionOperating, sessionID: UUID
-    ) async throws -> VMSnapshot {
-        let wasRunning = instance.phase == .running(sessionID: sessionID)
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        snapshot: VMSnapshotRecord, session: any VMSnapshotSessionOperating
+    ) async throws -> VMOperationEnding<VMSnapshot> {
+        guard let sessionID = context.sessionID else { throw VirtualizationError.noVirtualMachine }
+        let wasRunning = instance.phase.operation?.startedFrom == .running(sessionID: sessionID)
         let bundle = instance.bundle
         let configuration = instance.configuration
         let snapshotID = snapshot.id
-        instance.settle(.capturingLive(sessionID: sessionID), for: sessionID)
 
         do {
             let prepared = try await bundle.prepareSnapshot(snapshotID, configuration: configuration)
 
             // The guest is still there afterwards, so these are put back once
             // the capture is done — see
-            // ``VMLifecycleCoordinator/takeSnapshot(_:snapshot:)``.
+            // ``VMLifecycleCoordinator/takeSnapshot(_:snapshot:record:)``.
             try await detachUSBAccessories(
                 from: instance, session: session, for: sessionID)
             try await captureLiveState(
@@ -590,80 +376,61 @@ final class VirtualizationService {
                 try await bundle.captureDisks(
                     intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
             }
-
-            let settled = instance.settle(
-                wasRunning ? .running(sessionID: sessionID) : .livePaused(sessionID: sessionID),
-                for: sessionID)
-            if settled {
-                #log(
-                    logger, .notice,
-                    "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
-                )
-            } else {
-                // The guest went away while its disks were copied. The saved
-                // state and the disks were both written before that happened,
-                // so the snapshot is complete and the caller records it — the
-                // VM stays where the teardown left it rather than being handed
-                // back to a session nothing holds.
-                #log(
-                    logger, .notice,
-                    "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)', which lost its session mid-capture — leaving it \(instance.status.displayName, privacy: .public)"
-                )
-            }
-            return VMSnapshot(snapshot, macAddress: configuration.macAddress)
         } catch {
             await bundle.removeSnapshotDirectory(snapshotID)
             #log(
                 logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            let resting = await restingPhaseAfterFailedWarmCapture(
-                instance, session: session, sessionID: sessionID, wasRunning: wasRunning)
-            instance.settle(resting, for: sessionID)
-            throw error
+            let guest = await guestAfterFailedWarmCapture(
+                instance, context, session: session, wasRunning: wasRunning)
+            return .failed(.live(guest), error)
         }
+
+        if context.sessionID == nil {
+            // The guest went away while its disks were copied. The saved state
+            // and the disks were both written before that happened, so the
+            // snapshot is complete and the caller records it.
+            #log(
+                logger, .notice,
+                "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)', which lost its session mid-capture"
+            )
+        } else {
+            #log(
+                logger, .notice,
+                "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+            )
+        }
+        return .rest(
+            .live(wasRunning ? .running : .paused),
+            VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }
 
     /// The bundle's disks alone, from a stopped VM — no VZ work, so nothing is
     /// paused and no saved state is written.
-    ///
-    /// ``VMLifecyclePhase/capturingAtRest`` is load-bearing while the copy runs:
-    /// it bars a start that would write the disks being read, and makes an
-    /// explicit quit wait the copy out
-    /// (``VMLifecyclePhase/terminationMustWaitOut``).
     private func takeColdSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshotRecord
-    ) async throws -> VMSnapshot {
-        guard instance.phase == .stopped else {
-            throw VirtualizationError.invalidStateTransition(
-                from: instance.status, action: "take a snapshot of")
-        }
-
+    ) async throws -> VMOperationEnding<VMSnapshot> {
         let bundle = instance.bundle
         let configuration = instance.configuration
         let snapshotID = snapshot.id
-        instance.enter(.capturingAtRest)
-
         do {
             let prepared = try await bundle.prepareSnapshot(snapshotID, configuration: configuration)
             try await bundle.captureDisks(
                 intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
-
-            instance.enter(instance.restingPhase(withoutSlot: .stopped))
-            #log(
-                Self.logger, .notice,
-                "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
-            )
-            return VMSnapshot(snapshot, macAddress: configuration.macAddress)
         } catch {
             await bundle.removeSnapshotDirectory(snapshotID)
             #log(
                 Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
+        #log(
+            Self.logger, .notice,
+            "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+        )
+        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }
 
     /// The bundle's suspend slot plus its disks, from a VM paused to disk.
@@ -672,49 +439,30 @@ final class VirtualizationService {
     /// written, and the slot the VM would resume from is left in place. The
     /// clone shares its blocks with that slot, so the capture costs the volume
     /// nothing until a resume drops the bundle's copy.
-    ///
-    /// ``VMLifecyclePhase/capturingAtRest`` is load-bearing while the copy runs:
-    /// it bars a resume that would consume the slot mid-copy, and makes an
-    /// explicit quit wait the copy out
-    /// (``VMLifecyclePhase/terminationMustWaitOut``).
     private func takeSuspendedSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshotRecord
-    ) async throws -> VMSnapshot {
-        // The slot, not the phase: ``VMInstance/snapshotCaptureMode`` offers this
-        // capture to any VM resting on one, and a guard that read the phase
-        // would refuse a capture the surface had already taken consent for.
-        guard instance.holdsSuspendedSession else {
-            throw VirtualizationError.invalidStateTransition(
-                from: instance.status, action: "take a snapshot of")
-        }
-
+    ) async throws -> VMOperationEnding<VMSnapshot> {
         let bundle = instance.bundle
         let configuration = instance.configuration
         let snapshotID = snapshot.id
-        let resting = instance.phase
-        instance.enter(.capturingAtRest)
-
         do {
             let prepared = try await bundle.prepareSnapshot(snapshotID, configuration: configuration)
             try await bundle.captureDisks(
                 intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
             try await bundle.captureSuspendSlot(intoSnapshot: snapshotID)
-
-            instance.enter(instance.restingPhase(withoutSlot: resting))
-            #log(
-                Self.logger, .notice,
-                "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
-            )
-            return VMSnapshot(snapshot, macAddress: configuration.macAddress)
         } catch {
             await bundle.removeSnapshotDirectory(snapshotID)
             #log(
                 Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(instance.restingPhase(withoutSlot: resting))
             throw error
         }
+        #log(
+            Self.logger, .notice,
+            "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+        )
+        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }
 
     /// Takes every passthrough USB accessory off `instance` before its state is
@@ -787,70 +535,74 @@ final class VirtualizationService {
         }
     }
 
-    /// Where a VM rests after a warm capture failed.
+    /// Where a live guest is left after a warm capture failed.
     ///
     /// The guest may be paused anywhere between the pause and the resume, so
-    /// the recovery is to put it back — and a VM that cannot be resumed is left
-    /// live-paused, which Resume retries. The caller settles the answer for
-    /// `sessionID`, so one produced for a session that has since gone is dropped
-    /// rather than resting the VM live over nothing.
-    static func restingPhaseAfterFailedWarmCapture(
-        _ instance: VMInstance, session: any VMSnapshotSessionOperating, sessionID: UUID,
-        wasRunning: Bool
-    ) async -> VMLifecyclePhase {
-        guard wasRunning, instance.liveSessionID == sessionID else {
-            return .livePaused(sessionID: sessionID)
-        }
+    /// the recovery is to put it back — and a guest that cannot be resumed is
+    /// left live-paused, which Resume retries.
+    static func guestAfterFailedWarmCapture(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        session: any VMSnapshotSessionOperating, wasRunning: Bool
+    ) async -> VMGuestRunState {
+        guard wasRunning, context.sessionID != nil else { return .paused }
         do {
             try await session.resumeIfPaused()
-            return .running(sessionID: sessionID)
+            return .running
         } catch {
             #log(
                 logger, .warning,
                 "Could not resume '\(instance.name, privacy: .public)' after a failed snapshot: \(error.localizedDescription, privacy: .public)"
             )
-            return .livePaused(sessionID: sessionID)
+            return .paused
         }
     }
+
+    // MARK: - Revert
 
     /// Returns the VM to a snapshot: its live session is discarded and the
     /// snapshot's disks and configuration are written back over the bundle's.
     ///
-    /// The VM lands in the state the snapshot captured. A warm snapshot installs
-    /// its saved state and a VM that was live is resumed into it; a cold
-    /// snapshot drops the bundle's saved state and the VM rests stopped,
-    /// whatever it was doing before.
+    /// A warm snapshot installs its saved state, and a revert whose kind
+    /// `resumesAfter` restores it inside this same operation; a cold snapshot
+    /// drops the bundle's saved state and the VM rests stopped, whatever it
+    /// was doing before.
     ///
     /// The snapshot keeps its own copies, so it stays revertible. A failure
     /// bringing the VM back up afterwards arrives as
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` — the files are
     /// in place by then, so the caller records the revert as having landed.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot,
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
-    ) async throws {
+    ) async throws -> VMOperationEnding<Void> {
+        let operationKind = context.operation.kind
+        guard case .bringUp(.reverting(_, let resumesAfter)) = operationKind else {
+            #log(
+                Self.logger, .fault,
+                "revert of '\(instance.name, privacy: .public)' ran under \(String(describing: operationKind), privacy: .public)"
+            )
+            assertionFailure("VirtualizationService.revertToSnapshot outside a revert")
+            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "revert")
+        }
         #log(
             Self.logger, .debug,
             "revertToSnapshot: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public)"
         )
-        guard instance.canRevertToSnapshot else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "revert")
-        }
-
         let bundle = instance.bundle
         let snapshotID = snapshot.id
 
         // Read-only, and ahead of the teardown: a snapshot that turns out to be
         // incomplete refuses without having cost the user the live guest.
-        let plan = try await bundle.planRestore(fromSnapshot: snapshotID, kind: snapshot.kind)
+        let plan: VMSnapshotRestorePlan
+        do {
+            plan = try await bundle.planRestore(fromSnapshot: snapshotID, kind: snapshot.kind)
+        } catch {
+            return .failed(.asStarted, error)
+        }
 
         // A live guest's memory and disks are exactly what the revert replaces,
         // and the user confirmed losing them — so terminate rather than save.
-        // Both the termination and the resume that closes this read the one
-        // session, so no second reading of liveness can disagree with it.
-        let liveSession = instance.session
-        let wasLive = liveSession != nil
-        if let session = liveSession {
+        if let session = context.operation.session {
             do {
                 try await session.stop()
             } catch {
@@ -860,7 +612,7 @@ final class VirtualizationService {
                 )
             }
         }
-        instance.tearDownSession(restingAt: .revertingToSnapshot)
+        context.operation.endSession()
 
         // Staged, then committed, then installed: nothing in the bundle moves
         // until the files are cloned aside and the configuration — which the
@@ -881,41 +633,31 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            instance.enter(instance.restingPhase(withoutSlot: .stopped))
-            throw error
+            return .failed(.slotOr(.stopped), error)
         }
-
-        // A warm revert leaves the snapshot's saved state in the bundle and a
-        // cold one leaves none, so the write that just landed is what says
-        // where the VM rests.
-        //
-        // Entered directly rather than through `restAfterPowerOff()`, whose
-        // `onPoweredOff` hook would re-enter the ephemeral revert this may
-        // itself be. The session went with the teardown above, so there is
-        // nothing left here to release.
-        instance.enter(instance.restingPhase(withoutSlot: .stopped))
         #log(
             Self.logger, .notice,
             "Reverted VM '\(instance.name, privacy: .public)' to snapshot '\(snapshot.name, privacy: .public)'"
         )
 
-        // A VM that was live goes back to being live at the captured state; one
-        // that was stopped stays suspended for the user to start. A cold
-        // snapshot captured no live state to go back to, so the session ends.
-        if wasLive, plan.kind == .warm {
-            do {
-                try await resume(instance)
-            } catch {
-                throw VirtualizationError.revertResumeFailed(underlying: error)
-            }
+        // A warm revert leaves the snapshot's saved state in the bundle and a
+        // cold one leaves none, so the write that just landed is what says
+        // where the VM rests — unless the revert goes back to being live at
+        // the captured state, which only a warm snapshot captured.
+        guard resumesAfter, plan.kind == .warm else { return .rest(.slotOr(.stopped), ()) }
+        do {
+            try await restoreFromSaveFile(instance, context)
+        } catch {
+            return .failed(.slotOr(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
+        return .rest(.live(.running), ())
     }
 
     // MARK: - Error Classification
 
     /// How far an `NSUnderlyingErrorKey` walk follows the chain — framework
     /// `userInfo` can nest arbitrarily deep, or cyclically.
-    private static let maxUnderlyingErrorDepth = 4
+    nonisolated private static let maxUnderlyingErrorDepth = 4
 
     /// Returns `true` when the error is a transient environmental condition (e.g. too many
     /// concurrent VMs) rather than a problem with the VM itself.
@@ -923,7 +665,7 @@ final class VirtualizationService {
     /// Transient leaves a plain start in `.stopped` and an install in
     /// `.initialBoot`, with no stored message; permanent rests at `.failed`
     /// (red) carrying the message for the banner and tooltip.
-    static func isTransientStartError(_ error: Error) -> Bool {
+    nonisolated static func isTransientStartError(_ error: Error) -> Bool {
         // Checked ahead of the builder-error rule below: contention on a disk image
         // surfaces *as* a builder error and is still transient — the lock holder is
         // a dying VZVirtualMachine that releases it at deallocation.
@@ -947,7 +689,7 @@ final class VirtualizationService {
     /// `VZMacOSInstaller.install()` surfaces the cap as `.installationFailed`
     /// carrying the real code underneath, so the top level alone identifies it
     /// on the plain-start path only.
-    static func isVirtualMachineLimitExceeded(_ error: Error) -> Bool {
+    nonisolated static func isVirtualMachineLimitExceeded(_ error: Error) -> Bool {
         underlyingErrorChain(error as NSError).contains {
             $0.domain == VZError.errorDomain
                 && VZError.Code(rawValue: $0.code) == .virtualMachineLimitExceeded
@@ -964,7 +706,7 @@ final class VirtualizationService {
 
     /// `error` followed by up to ``maxUnderlyingErrorDepth`` of its
     /// `NSUnderlyingErrorKey` ancestors.
-    private static func underlyingErrorChain(_ error: NSError) -> [NSError] {
+    nonisolated private static func underlyingErrorChain(_ error: NSError) -> [NSError] {
         var chain: [NSError] = []
         var current: NSError? = error
         while let nsError = current, chain.count <= maxUnderlyingErrorDepth {
@@ -992,82 +734,6 @@ final class VirtualizationService {
         return underlying
     }
 
-    /// Whether an attempt that has just failed still owns where `instance`
-    /// rests, or has been overtaken and must leave the phase alone.
-    ///
-    /// ``VMLifecycleCoordinator/hasActiveOperation(for:)`` documents the reason
-    /// this is needed: a stop or a force stop releases another operation's claim
-    /// so the user can always interrupt, but the interrupted body keeps running
-    /// and reaches its `catch` with the VM already settled by whatever
-    /// interrupted it — `.stopped` from a force stop, `.failed` from a guest
-    /// failure. Resting again over that reports a state the attempt did not
-    /// produce, and puts a red banner on a deliberate force stop.
-    ///
-    /// `sessionID` names the session the attempt acted for, and is `nil` while
-    /// it has yet to create one — recognized instead by the VM still being
-    /// mid-operation, since every phase an interruption rests at is a settled
-    /// one. That fallback is sound because an in-flight phase offers no
-    /// interrupt to be overtaken by: ``VMLifecyclePhase/canForceStop`` admits
-    /// none of them, and ``VMLifecyclePhase/isAtRest`` is false at each.
-    static func attemptStillOwnsThePhase(
-        _ instance: VMInstance, actingFor sessionID: UUID?
-    ) -> Bool {
-        if let sessionID { return instance.liveSessionID == sessionID }
-        return instance.isTransitioning
-    }
-
-    /// Rests `instance` at `phase`, tearing its session down, unless the attempt
-    /// acting for `sessionID` has been overtaken — in which case nothing is
-    /// touched and `false` comes back for the caller to log.
-    ///
-    /// The one shape every lifecycle failure path takes, so no site can settle a
-    /// VM another operation already settled. `phase` is an ordinary parameter:
-    /// classifying where a failure rests reads the instance without changing it,
-    /// so computing one an overtaken attempt will not use costs nothing.
-    static func tearDownIfStillOwned(
-        _ instance: VMInstance, actingFor sessionID: UUID?, restingAt phase: VMLifecyclePhase
-    ) -> Bool {
-        guard attemptStillOwnsThePhase(instance, actingFor: sessionID) else { return false }
-        instance.tearDownSession(restingAt: phase)
-        return true
-    }
-
-    /// Where a failed start or resume leaves `instance`, for the caller to rest
-    /// at as it tears the session down.
-    ///
-    /// A bundle still holding its suspend slot rests suspended, with the file
-    /// untouched: a bring-up that gave up before the restore — over a missing
-    /// disk, an unusable share, an invalid configuration — left the saved state
-    /// exactly as it found it, and that is what the next bring-up loads. No
-    /// message either, because the VM is resumable rather than stuck: the
-    /// failure reaches the user as the thrown error.
-    ///
-    /// Without a slot, a start classifies through
-    /// ``restingPhaseAfterStartFailure(_:transientRestingPhase:)`` (which is
-    /// what `transientRestingPhase` names), and a resume rests at `.failed`
-    /// carrying the message.
-    static func restingPhaseAfterLifecycleFailure(
-        _ error: Error, on instance: VMInstance, transientRestingPhase: VMLifecyclePhase?
-    ) -> VMLifecyclePhase {
-        instance.restingPhase(
-            withoutSlot: transientRestingPhase.map {
-                restingPhaseAfterStartFailure(error, transientRestingPhase: $0)
-            } ?? .failed(message: error.localizedDescription))
-    }
-
-    /// Where a failed start or install leaves the VM: a transient failure at
-    /// `transientRestingPhase` carrying no message, a permanent one at
-    /// `.failed` carrying the description the banner and tooltip show.
-    ///
-    /// `transientRestingPhase` is where the VM was before the attempt —
-    /// `.stopped` for a plain start, `.initialBoot` for a pending install.
-    static func restingPhaseAfterStartFailure(
-        _ error: Error, transientRestingPhase: VMLifecyclePhase
-    ) -> VMLifecyclePhase {
-        isTransientStartError(error)
-            ? transientRestingPhase : .failed(message: error.localizedDescription)
-    }
-
     // MARK: - Private Helpers
 
     /// Builds a VZ configuration off the main actor to avoid blocking the UI,
@@ -1089,53 +755,30 @@ final class VirtualizationService {
     /// retrying with bounded backoff when the attempt fails on VZ file-lock
     /// contention (see ``isFileLockContention(_:)``) — the restore-path
     /// counterpart of
-    /// ``coldBootRetryingLockContention(_:bootIntoRecovery:provisioning:attemptSessionID:)``.
+    /// ``coldBootRetryingLockContention(_:_:bootIntoRecovery:provisioning:)``.
     ///
     /// A restore or resume failure surfaces as
     /// ``VirtualizationError/restoreFailed(underlying:)`` with the save file
     /// left in place — a cold boot over a suspended session destroys it, so
-    /// discarding the saved state stays an explicit user action
-    /// (`stop(_:)` on a cold-paused VM).
-    ///
-    /// The caller has already entered
-    /// ``VMLifecyclePhase/restoringSavedState(sessionID:)``
-    /// (``VMActivity/beginBringUp(_:)``), the phase
-    /// ``VMActivity/attachSession(from:)`` promotes to name each attempt's
-    /// session.
-    ///
-    /// `attemptSessionID` carries out the session the attempt in flight owns
-    /// right now: `nil` before its `VZVirtualMachine` exists, and again once it
-    /// is released.
+    /// discarding the saved state stays an explicit user action.
     private func restoreFromSaveFile(
-        _ instance: VMInstance, attemptSessionID: inout UUID?
-    ) async throws -> UUID {
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext
+    ) async throws {
         var attempt = 0
         while true {
             do {
-                return try await restoreFromSaveFileAttempt(
-                    instance, attemptSessionID: &attemptSessionID)
+                try await restoreFromSaveFileAttempt(instance, context)
+                return
             } catch let attemptError {
                 guard Self.isFileLockContention(Self.unwrappedRestoreFailure(attemptError)),
                     let delay = Self.fileLockRetryDelay(forAttempt: attempt)
                 else { throw attemptError }
-                // An interrupt that landed on this attempt's session has already
-                // rested the VM; retrying would release a successor's context and
-                // boot a second machine behind it. Rethrowing hands the outer
-                // catch the same non-ownership answer.
-                guard Self.attemptStillOwnsThePhase(instance, actingFor: attemptSessionID) else {
-                    #log(
-                        Self.logger, .notice,
-                        "Restore of '\(instance.name, privacy: .public)' hit file-lock contention after it was overtaken — not retrying"
-                    )
-                    throw attemptError
-                }
                 attempt += 1
                 #log(
                     Self.logger, .warning,
                     "Restore of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
-                instance.tearDownSession(restingAt: .restoringSavedState(sessionID: nil))
-                attemptSessionID = nil
+                context.operation.endSession()
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
@@ -1148,31 +791,23 @@ final class VirtualizationService {
         }
     }
 
-    /// One restore attempt: build, attach, restore, resume, returning the
-    /// identity of the session it brought up. A configuration build failure
-    /// propagates as-is (the caller's attachment explainers match on it); a
-    /// restore or resume failure is wrapped in `restoreFailed`.
-    ///
-    /// `attemptSessionID` carries out the session this attempt owns right now:
-    /// `nil` before its `VZVirtualMachine` exists, and again once it is
-    /// released. A throw leaves it naming whatever the caller must act for.
+    /// One restore attempt: build, attach, restore, resume. A configuration
+    /// build failure propagates as-is (the caller's attachment explainers match
+    /// on it); a restore or resume failure is wrapped in `restoreFailed`.
     private func restoreFromSaveFileAttempt(
-        _ instance: VMInstance, attemptSessionID: inout UUID?
-    ) async throws -> UUID {
-        attemptSessionID = nil
+        _ instance: VMInstance, _ context: borrowing VMBringUpContext
+    ) async throws {
         instance.beginSessionContext()
         let result = try await buildConfiguration(for: instance)
-        guard let session = await instance.bringUpSession(with: result) else {
+        guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        attemptSessionID = session.id
 
         #log(Self.logger, .debug, "restoreFromSaveFile: attempting restore from save file")
         do {
             try await session.restoreMachineState(from: instance.bundle.saveFileURL)
             try await session.resume()
             instance.bundle.removeSaveFile()
-            return session.id
         } catch {
             let nsError = error as NSError
             #log(

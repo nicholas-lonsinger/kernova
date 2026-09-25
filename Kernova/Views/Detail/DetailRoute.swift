@@ -30,32 +30,34 @@ enum DetailRoute: Equatable {
         detailPaneMode: DetailPaneMode
     ) -> DetailRoute {
         let label = phase.status.displayName
-        switch phase {
+        let displayRoute: DetailRoute
+        if phase.hasActiveDisplay {
+            displayRoute = detailPaneMode == .settings ? .settings(isReadOnly: true) : .display
+        } else {
+            displayRoute = .transition(label: label)
+        }
+        // An operation that presents the phase it started from routes as that
+        // phase.
+        switch phase.presented {
         case .stopped:
             return .settings(isReadOnly: false)
         case .failed(let message):
             return .error(message: message)
         case .initialBoot:
             return .initialBoot
-        case .installing:
-            return hasSetupState ? .setup : .transition(label: label)
-        default:
-            // A transitional phase claims an active display only while it still
-            // has a session to host: a revert tears one down before entering
-            // `.revertingToSnapshot`, and a disks-only capture never had one.
-            // Without this they route to the display pane, which replaces the
-            // Settings form with the backing view for the length of the copy.
-            //
-            // Settled phases are excluded: a suspended VM has no session
-            // either, and it shows the display pane's own idle state, not a
-            // spinner.
-            if phase.isTransitioning, phase.sessionID == nil {
-                return .transition(label: label)
+        case .operating(let operation):
+            if case .bringUp(.settingUp) = operation.kind {
+                return hasSetupState ? .setup : .transition(label: label)
             }
-            if phase.hasActiveDisplay {
-                return detailPaneMode == .settings ? .settings(isReadOnly: true) : .display
-            }
-            return .transition(label: label)
+            // An operation claims an active display only while it still has a
+            // session to host: a revert ends one before it copies, and a
+            // disks-only capture never had one. Without this they route to the
+            // display pane, which replaces the Settings form with the backing
+            // view for the length of the copy.
+            guard operation.session != nil else { return .transition(label: label) }
+            return displayRoute
+        case .suspended, .running, .livePaused, .removed:
+            return displayRoute
         }
     }
 }

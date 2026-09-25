@@ -1,20 +1,13 @@
 import Foundation
 import KernovaLogging
 
-/// Coordinates VM lifecycle operations and the guest-setup pipelines — a macOS
+/// Runs the lifecycle operations and the guest-setup pipelines — a macOS
 /// install, and a Linux installer image fetched, checked against whatever
-/// digest stands behind it, and attached.
+/// digest stands behind it, and attached — each inside the operation its VM's
+/// ``VMActivity`` admits.
 ///
 /// All methods re-throw errors — the caller is responsible for presentation.
-///
-/// Each VM can have at most one in-flight lifecycle operation at a time;
-/// concurrent requests for the same VM are rejected with
-/// ``LifecycleError/operationInProgress``. An operation also waits out any
-/// removable-media reconcile the live session owes before its body runs, so it
-/// acts on the device set the configuration describes. `stop` and `forceStop`
-/// bypass both, so a hung operation can always be interrupted.
 @MainActor
-@Observable
 final class VMLifecycleCoordinator {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLifecycleCoordinator")
 
@@ -35,9 +28,9 @@ final class VMLifecycleCoordinator {
     /// One bound over the whole put-back rather than one per accessory: the
     /// waits run together. It covers the event arriving late — a detach's
     /// re-assignment lands in well under a second — and does not outlast an
-    /// accessory that is not coming back, because the VM's operation claim is
-    /// held for the whole wait and a start arriving behind it would be refused
-    /// as busy.
+    /// accessory that is not coming back, because the capture operation holds
+    /// the VM for the whole wait and a start arriving behind it is refused as
+    /// busy.
     private let usbAccessoryReturnTimeout: Duration
 
     /// Trashes an image that failed verification.
@@ -48,27 +41,6 @@ final class VMLifecycleCoordinator {
     ///
     /// `nil` disables normalization.
     private let downloadsDirectory: URL?
-
-    /// Maps VM ID → operation token for VMs that currently have a lifecycle operation in flight.
-    ///
-    /// The token allows `defer` blocks to avoid clobbering entries inserted by a later operation.
-    private var activeOperations: [UUID: UUID] = [:]
-
-    /// Maps VM ID → the number of ``serialized`` bodies still executing for it.
-    ///
-    /// Counted rather than flagged: `stop` and `forceStop` clear a claim without
-    /// stopping the body that held it, so a second operation can acquire the
-    /// claim and run alongside the first. Each body clears its own entry.
-    private var unsettledOperations: [UUID: Int] = [:]
-
-    /// Maps VM ID → how that VM's most recent ``serialized`` body ended.
-    ///
-    /// One entry per VM: taking a claim drops it, and the body writes its own
-    /// before the count falls. What it buys a caller joining an operation is the
-    /// error the body actually threw — which is what the operation's own caller
-    /// gets, and is unrecoverable from the phase a failure rests at, since a
-    /// transient one rests at `.stopped` carrying no message.
-    private var settledOutcomes: [UUID: OperationOutcome] = [:]
 
     init(
         virtualizationService: any VirtualizationProviding,
@@ -101,211 +73,103 @@ final class VMLifecycleCoordinator {
         self.downloadsDirectory = downloadsDirectory
     }
 
-    // MARK: - Errors
-
-    /// How a ``serialized`` body ended.
-    enum OperationOutcome {
-        case succeeded
-        case failed(any Error)
-    }
-
-    enum LifecycleError: LocalizedError {
-        case operationInProgress(vmName: String)
-
-        var errorDescription: String? {
-            switch self {
-            case .operationInProgress(let vmName):
-                "An operation is already in progress for '\(vmName)'. Please wait for it to complete."
-            }
-        }
-    }
-
-    // MARK: - Operation Serialization
-
-    /// Whether a serialized operation currently *claims* this VM — the read that
-    /// decides whether a new request is rejected.
-    func hasActiveOperation(for instanceID: UUID) -> Bool {
-        activeOperations[instanceID] != nil
-    }
-
-    /// Whether any serialized operation for this VM is still running its body,
-    /// and so may still have a VZ call in flight.
-    ///
-    /// Distinct from ``hasActiveOperation(for:)``, which tracks the claim:
-    /// `stop` and `forceStop` release another operation's claim so a user can
-    /// interrupt one, but the interrupted body keeps running. A caller deciding
-    /// whether it may issue its *own* VZ operation therefore asks this, not the
-    /// claim, or it acts while VZ is still busy.
-    ///
-    /// Observable, so a `withObservationTracking` wait on it wakes when the
-    /// operation ends — which is what lets a caller hold for an operation whose
-    /// ``VMStatus`` never changes (a pause settles at `.running`, a resume at
-    /// `.paused`).
-    func hasUnsettledOperation(for instanceID: UUID) -> Bool {
-        unsettledOperations[instanceID] != nil
-    }
-
-    /// Suspends until no ``serialized`` body is still executing for this VM, and
-    /// answers with how the last one ended — `nil` when none had run.
-    ///
-    /// The outcome is read *inside* the wait's own predicate, at the instant the
-    /// count reaches zero. Reading it after the wait returned would be reading a
-    /// main-actor turn later, where the next operation's claim has already
-    /// replaced it. The predicate's one assignment is the exception to
-    /// ``waitForObservedChange(until:)``'s side-effect-free rule, and the reason
-    /// this seam exists instead of the bare wait at the call site.
-    func awaitSettledOutcome(for instanceID: UUID) async -> OperationOutcome? {
-        var captured: OperationOutcome?
-        await waitForObservedChange { [self] in
-            guard !hasUnsettledOperation(for: instanceID) else { return false }
-            captured = settledOutcomes[instanceID]
-            return true
-        }
-        return captured
-    }
-
-    /// Removes any active-operation tracking for the given VM.
-    ///
-    /// Call when a VM is deleted to avoid stale entries in the dictionary.
-    func clearActiveOperation(for instanceID: UUID) {
-        activeOperations.removeValue(forKey: instanceID)
-        settledOutcomes.removeValue(forKey: instanceID)
-    }
-
-    /// Executes `body` only if no other operation is already in flight for this VM.
-    ///
-    /// The `defer` removes the claim only if its token still matches, so a stale
-    /// removal cannot clobber a token written by `stop`/`forceStop` or by a
-    /// subsequent operation. The unsettled count is dropped unconditionally,
-    /// because it tracks *this* body and nothing else can end it.
-    ///
-    /// The claim is taken before the reconcile wait, so a request arriving
-    /// during the wait is refused like one arriving during the body, and the
-    /// unsettled count already covers the wait for a caller holding on it. The
-    /// wait cannot deadlock: the reconciler's attach and detach are not
-    /// serialized, and a force stop tears the session down, which drops the
-    /// debt with the context.
-    private func serialized<T>(
-        _ instance: VMInstance,
-        action: String,
-        body: () async throws -> T
-    ) async throws -> T {
-        guard !hasActiveOperation(for: instance.id) else {
-            #log(
-                Self.logger, .warning,
-                "Rejected \(action, privacy: .public) for '\(instance.name, privacy: .public)': operation already in progress"
-            )
-            throw LifecycleError.operationInProgress(vmName: instance.name)
-        }
-
-        let token = UUID()
-        activeOperations[instance.id] = token
-        unsettledOperations[instance.id, default: 0] += 1
-        settledOutcomes.removeValue(forKey: instance.id)
-        defer {
-            if activeOperations[instance.id] == token {
-                activeOperations.removeValue(forKey: instance.id)
-            }
-            let remaining = (unsettledOperations[instance.id] ?? 1) - 1
-            unsettledOperations[instance.id] = remaining > 0 ? remaining : nil
-        }
-
-        #log(
-            Self.logger, .debug,
-            "Acquired operation lock for '\(instance.name, privacy: .public)' (action: \(action, privacy: .public))")
-        await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
-        // Recorded before the `defer` drops the count, so a caller waking on the
-        // count reaching zero finds the outcome already in place.
-        do {
-            let value = try await body()
-            settledOutcomes[instance.id] = .succeeded
-            return value
-        } catch {
-            settledOutcomes[instance.id] = .failed(error)
-            throw error
-        }
-    }
-
     // MARK: - Lifecycle
 
+    /// Brings `instance` up by the start or restore bring-up `kind` names.
     func start(
-        _ instance: VMInstance, bootIntoRecovery: Bool = false,
+        _ instance: VMInstance, _ kind: VMBringUpKind,
         provisioning: GuestProvisioningCredentials? = nil
     ) async throws -> GuestStartRoute {
-        try await serialized(instance, action: "start") {
-            try await virtualizationService.start(
-                instance, bootIntoRecovery: bootIntoRecovery, provisioning: provisioning)
+        try await instance.activity.bringUp(kind) { context in
+            try await virtualizationService.start(instance, context, provisioning: provisioning)
         }
     }
 
-    /// Requests a graceful stop.
-    ///
-    /// Bypasses serialization so users can always interrupt an in-progress
-    /// operation, clearing the active-operation token *before* calling the
-    /// service to invalidate any in-flight operation's defer guard.
-    func stop(_ instance: VMInstance) async throws {
-        activeOperations.removeValue(forKey: instance.id)
-        try await virtualizationService.stop(instance)
+    /// Requests a graceful stop — a session action, which takes no admission
+    /// of its own, so an operation that tolerates it keeps holding the VM.
+    func requestStop(_ instance: VMInstance) async throws {
+        try await instance.activity.requestStop {
+            try await virtualizationService.requestStop(instance)
+        }
     }
 
-    /// Immediately terminates the VM.
-    ///
-    /// Bypasses serialization so a termination lands during any operation that
-    /// holds the claim without moving the VM out of the phases
-    /// ``VMLifecyclePhase/canForceStop`` admits, clearing the active-operation
-    /// token *before* calling the service to invalidate that operation's defer
-    /// guard.
+    /// Immediately terminates the VM — see ``VMActivity/forceStop(_:)``.
     func forceStop(_ instance: VMInstance) async throws {
-        activeOperations.removeValue(forKey: instance.id)
-        try await virtualizationService.forceStop(instance)
+        try await instance.activity.forceStop {
+            try await virtualizationService.forceStop(instance)
+        }
+    }
+
+    /// Ends the suspension the bundle holds: the saved state goes, and the VM
+    /// rests stopped.
+    ///
+    /// The two are one operation because a suspension whose slot is gone is a
+    /// dead end — Resume has nothing to load and the settings stay locked
+    /// behind a file that is not there. A removal the file system turned down
+    /// leaves the VM resting on the slot it still holds and throws
+    /// ``VirtualizationError/savedStateNotDiscarded``.
+    func discardSavedState(_ instance: VMInstance) throws {
+        try instance.activity.performNow(.discardingSavedState) {
+            (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+            instance.bundle.removeSaveFile()
+            guard !instance.hasSaveFile else {
+                return .failed(.asStarted, VirtualizationError.savedStateNotDiscarded)
+            }
+            #log(
+                Self.logger, .notice,
+                "Discarded saved state for VM '\(instance.name, privacy: .public)'")
+            return .rest(.at(.stopped), ())
+        }
     }
 
     func pause(_ instance: VMInstance) async throws {
-        try await serialized(instance, action: "pause") {
-            try await virtualizationService.pause(instance)
+        try await instance.activity.perform(.pausing) { context in
+            try await virtualizationService.pause(instance, context)
         }
     }
 
+    /// Resumes a live-paused VM from memory.
     func resume(_ instance: VMInstance) async throws {
-        try await serialized(instance, action: "resume") {
-            try await virtualizationService.resume(instance)
+        try await instance.activity.perform(.resuming) { context in
+            try await virtualizationService.resume(instance, context)
         }
     }
 
     /// Suspends the VM to disk.
     ///
     /// The accessories the write ejects stay off, on both outcomes: the guest
-    /// is going away, and a suspend that fails takes the session down with it
-    /// (``VirtualizationService/tearDownIfStillOwned(_:actingFor:restingAt:)``),
+    /// is going away, and a suspend that fails takes the session down with it,
     /// so there is no guest left to put anything back on.
     func save(_ instance: VMInstance) async throws {
-        try await serialized(instance, action: "save") {
-            try await virtualizationService.save(instance)
+        try await instance.activity.perform(.saving) { context in
+            try await virtualizationService.save(instance, context)
         }
     }
 
     // MARK: - Snapshots
 
+    /// Captures `snapshot` in `mode` and lists it with `record`, inside one
+    /// capture operation.
+    ///
+    /// A warm capture takes every passthrough accessory off before it writes
+    /// the guest's state, because a saved state carrying one cannot be
+    /// restored. Unlike a suspend the guest is still running afterwards, so
+    /// they go back on — on the path where the capture threw part-way as well,
+    /// since it ejected the same hardware up to wherever it stopped. `record`
+    /// that throws leaves nothing behind: unlisted files are files no surface
+    /// can reach or remove, so the capture is undone.
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord
+        _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotRecord,
+        record: @MainActor (VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
-        try await serialized(instance, action: "takeSnapshot") {
-            // A warm capture takes every passthrough accessory off before it
-            // writes the guest's state, because a saved state carrying one
-            // cannot be restored. Unlike a suspend the guest is still running
-            // afterwards, so they go back on: a snapshot is not a reason to
-            // unplug the user's hardware. Read before the capture, since the
-            // capture is what clears them.
-            //
-            // A capture that threw ejected the same hardware, up to wherever it
-            // stopped, and left the guest running — so the put-back owes the
-            // user the same thing on that path as on the one that succeeded.
+        try await instance.activity.perform(.capturingSnapshot(mode)) { context in
+            // Read before the capture, since the capture is what clears them.
             let held = instance.liveUSBAccessories
-            let sessionID = instance.attachableSessionID
-            let captured: VMSnapshot
+            let sessionID = context.sessionID
+            let ending: VMOperationEnding<VMSnapshot>
             do {
-                captured = try await virtualizationService.takeSnapshot(
-                    instance, snapshot: snapshot)
+                ending = try await virtualizationService.takeSnapshot(
+                    instance, context, snapshot: snapshot)
             } catch {
                 if let sessionID {
                     await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
@@ -315,7 +179,14 @@ final class VMLifecycleCoordinator {
             if let sessionID {
                 await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
             }
-            return captured
+            guard case .rest(let rest, let captured) = ending else { return ending }
+            do {
+                try record(captured)
+            } catch {
+                await instance.bundle.removeSnapshotDirectory(captured.id)
+                return .failed(rest, error)
+            }
+            return ending
         }
     }
 
@@ -342,7 +213,7 @@ final class VMLifecycleCoordinator {
         ejectedFrom held: [AttachedUSBAccessory], on instance: VMInstance, for sessionID: UUID
     ) async {
         guard let usbAccessoryService, !held.isEmpty,
-            instance.attachableSessionID == sessionID
+            instance.liveSessionID == sessionID
         else { return }
         let stillHeld = Set(instance.liveUSBAccessories.map(\.deviceID))
         let ejected = held.filter { !stillHeld.contains($0.deviceID) }
@@ -351,11 +222,11 @@ final class VMLifecycleCoordinator {
         let returned = await returningAccessories(ejected, on: instance, for: sessionID)
         for item in ejected {
             guard let accessory = returned[item.deviceID] else { continue }
-            guard instance.attachableSessionID == sessionID else { return }
+            guard instance.liveSessionID == sessionID else { return }
             do {
                 let reattached = try await usbAccessoryService.attach(
                     accessory.registryID, to: instance)
-                guard instance.attachableSessionID == sessionID else {
+                guard instance.liveSessionID == sessionID else {
                     try? await usbAccessoryService.detach(
                         deviceID: reattached.deviceID, from: instance)
                     return
@@ -382,13 +253,13 @@ final class VMLifecycleCoordinator {
     /// Every wait is started before any is awaited, so the deadline they carry
     /// bounds the put-back once rather than once per accessory: the
     /// re-assignments are independent and arrive when macOS is ready, while a
-    /// sequential wait would hold this VM's operation claim for the timeout
+    /// sequential wait would hold the capture operation for the timeout
     /// multiplied by however many accessories the guest had, with the last
     /// one's budget starting only once the first had given up.
     ///
     /// The guest going away cancels them, because nothing can be put back on a
-    /// session that is gone and the deadline would otherwise keep the claim
-    /// past a stop the user is waiting on.
+    /// session that is gone and the deadline would otherwise keep the capture
+    /// holding the VM past a stop the user is waiting on.
     private func returningAccessories(
         _ ejected: [AttachedUSBAccessory], on instance: VMInstance, for sessionID: UUID
     ) async -> [UUID: USBAccessoryInfo] {
@@ -411,9 +282,9 @@ final class VMLifecycleCoordinator {
         guard !pending.isEmpty else { return [:] }
 
         let sessionWatch = observeRecurring(
-            track: { _ = instance.attachableSessionID },
+            track: { _ = instance.liveSessionID },
             apply: {
-                guard instance.attachableSessionID != sessionID else { return }
+                guard instance.liveSessionID != sessionID else { return }
                 for entry in pending { entry.wait.cancel() }
             })
         defer { sessionWatch.cancel() }
@@ -421,7 +292,7 @@ final class VMLifecycleCoordinator {
         var found: [UUID: USBAccessoryInfo] = [:]
         for entry in pending {
             let returned = await entry.wait.value
-            guard instance.attachableSessionID == sessionID else {
+            guard instance.liveSessionID == sessionID else {
                 #log(
                     Self.logger, .notice,
                     "'\(instance.name, privacy: .public)' went away before the USB accessories the capture took off came back, so they stay with the host"
@@ -440,29 +311,53 @@ final class VMLifecycleCoordinator {
         return found
     }
 
-    func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot,
-        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
-    ) async throws {
-        try await serialized(instance, action: "revertToSnapshot") {
-            try await virtualizationService.revertToSnapshot(
-                instance, snapshot: snapshot, commitConfiguration: commitConfiguration)
+    /// Starts the revert of `instance` to `snapshot` as an operation no caller
+    /// has to wait on, answering its outcome.
+    ///
+    /// Admitted and committed before this returns, so whatever asks next —
+    /// a Start, a quit, the next power-off — finds the VM held by the revert.
+    /// `landed` runs inside the operation once the snapshot's files are in the
+    /// bundle, including when the resume after them failed; a throw from it
+    /// fails the revert.
+    @discardableResult
+    func startRevert(
+        _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
+        commitConfiguration: @escaping @MainActor (VMSnapshotRestorePlan) throws -> Void,
+        landed: @escaping @MainActor () throws -> Void
+    ) throws -> VMOutcome {
+        try instance.activity.launchBringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: resumesAfter)
+        ) { [virtualizationService] context in
+            let ending = try await virtualizationService.revertToSnapshot(
+                instance, context, snapshot: snapshot, commitConfiguration: commitConfiguration)
+            switch ending {
+            case .rest(let rest, _):
+                do { try landed() } catch { return .failed(rest, error) }
+            case .failed(let rest, let error):
+                // A resume that failed left the reverted files in place, so the
+                // VM's state does descend from this snapshot. Any other failure
+                // left nothing behind.
+                guard case VirtualizationError.revertResumeFailed = error else { break }
+                do { try landed() } catch { return .failed(rest, error) }
+            case .removed:
+                break
+            }
+            return ending
         }
     }
 
     /// Takes one snapshot off the list with `unlist`, then moves its captured
-    /// files to the Trash.
-    ///
-    /// Serialized like the operations that read those files, so a delete cannot
-    /// run while a revert is copying out of the same directory — and `unlist`
-    /// runs inside the same claim, so a delete this refuses as busy has
-    /// unlisted nothing. An `unlist` that throws leaves the files in place.
+    /// files to the Trash, inside one operation — so a delete cannot run while
+    /// a revert is copying out of the same directory, and a delete refused as
+    /// busy has unlisted nothing. An `unlist` that throws leaves the files in
+    /// place.
     func discardSnapshot(
         _ instance: VMInstance, snapshotID: UUID, unlist: @MainActor () throws -> Void
     ) async throws {
-        try await serialized(instance, action: "discardSnapshot") {
+        try await instance.activity.perform(.deletingSnapshot) { _ in
             try unlist()
             try await instance.bundle.discardSnapshot(snapshotID)
+            return .rest(.asStarted, ())
         }
     }
 
@@ -526,202 +421,238 @@ final class VMLifecycleCoordinator {
         return String(path.dropLast())
     }
 
-    func installMacOS(
+    // MARK: - Guest Setup
+
+    /// Starts the guest setup `instance`'s configuration still owes — a macOS
+    /// install, or a Linux installer image download — as an operation that
+    /// owns its task, answering its outcome.
+    ///
+    /// Admitted and committed before this returns, so a second request is
+    /// refused as busy, and Cancel Setup (``VMActivity/cancel(_:)``) cancels
+    /// the operation's own task. A cancel — or a failure that raced one —
+    /// rests the VM at `.initialBoot` for a retry that resumes the download.
+    @discardableResult
+    func launchGuestSetup(on instance: VMInstance) throws -> VMOutcome {
+        guard let setup = instance.configuration.pendingGuestSetup else {
+            throw VMAdmissionRefusal(refusal: .invalidState)
+        }
+        let kind: GuestSetupKind =
+            switch setup {
+            case .macOSInstall: .macOSInstall
+            case .linuxImageDownload: .linuxImageDownload
+            }
+        return try instance.activity.launchBringUp(.settingUp(kind)) { operation in
+            do {
+                switch setup {
+                case .macOSInstall(let context):
+                    try await self.installMacOS(on: instance, operation, context: context)
+                case .linuxImageDownload(let context):
+                    try await self.downloadLinuxImage(on: instance, context: context)
+                }
+                // A cancel accepted while the pipeline was drawing to a close
+                // still means the VM must not boot.
+                try Task.checkCancellation()
+            } catch {
+                instance.setupState = nil
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+            return .rest(.at(.stopped), ())
+        }
+    }
+
+    private func installMacOS(
         on instance: VMInstance,
+        _ operation: borrowing VMBringUpContext,
         context: MacOSInstallContext
     ) async throws {
-        try await serialized(instance, action: "installMacOS") {
-            try instance.beginBringUp(.installing)
-            #log(
-                Self.logger, .debug,
-                "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(context.source.rawValue, privacy: .public)"
-            )
+        #log(
+            Self.logger, .debug,
+            "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(context.source.rawValue, privacy: .public)"
+        )
 
-            do {
-                let ipswURL: URL
+        do {
+            let ipswURL: URL
 
-                // Live for the install's duration when the local IPSW carries a
-                // security bookmark — the context survives app relaunches, so the
-                // wizard's panel grant is long gone. The download path needs no
-                // scope; its destination is entitlement-covered Downloads.
-                var localIPSWScope: ScopedAccess?
-                defer { localIPSWScope?.release() }
+            // Live for the install's duration when the local IPSW carries a
+            // security bookmark — the context survives app relaunches, so the
+            // wizard's panel grant is long gone. The download path needs no
+            // scope; its destination is entitlement-covered Downloads.
+            var localIPSWScope: ScopedAccess?
+            defer { localIPSWScope?.release() }
 
-                switch context.source {
-                case .downloadLatest, .catalogVersion, .customURL:
-                    guard let persistedDestination = context.downloadDestinationURL else {
+            switch context.source {
+            case .downloadLatest, .catalogVersion, .customURL:
+                guard let persistedDestination = context.downloadDestinationURL else {
+                    throw IPSWError.noDownloadURL
+                }
+
+                instance.setupState = .macOSInstall(hasDownloadStep: true)
+
+                // Local because a moved latest destination lapses it below.
+                var requestedFreshDownload = context.requestedFreshDownload
+
+                // A catalog pick or a checked URL names its image and its
+                // destination at wizard time, so the install downloads that
+                // build however long it sits unstarted. Only "Download
+                // Latest" resolves here, and its destination follows the
+                // answer.
+                let remoteURL: URL
+                let downloadDestination: URL
+                if context.source.usesPinnedURL {
+                    guard let pinnedURL = context.remoteURL else {
                         throw IPSWError.noDownloadURL
                     }
-
-                    instance.setupState = .macOSInstall(hasDownloadStep: true)
-
-                    // Local because a moved latest destination lapses it below.
-                    var requestedFreshDownload = context.requestedFreshDownload
-
-                    // A catalog pick or a checked URL names its image and its
-                    // destination at wizard time, so the install downloads that
-                    // build however long it sits unstarted. Only "Download
-                    // Latest" resolves here, and its destination follows the
-                    // answer.
-                    let remoteURL: URL
-                    let downloadDestination: URL
-                    if context.source.usesPinnedURL {
-                        guard let pinnedURL = context.remoteURL else {
-                            throw IPSWError.noDownloadURL
-                        }
-                        remoteURL = pinnedURL
-                        // A persisted destination outside Downloads (a hand-edited
-                        // config.json) can never be written and has no picker to
-                        // re-point it, so the invariant is enforced at use time.
-                        downloadDestination = normalizedDownloadDestination(
-                            for: persistedDestination, remoteURL: remoteURL)
-                        if downloadDestination != persistedDestination {
-                            #log(
-                                Self.logger, .notice,
-                                "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
-                            )
-                        }
-                    } else {
-                        remoteURL = try await ipswService.fetchLatestRestoreImage().url
-                        downloadDestination = latestDownloadDestination(
-                            persisted: persistedDestination, resolvedURL: remoteURL)
-                        if downloadDestination != persistedDestination {
-                            #log(
-                                Self.logger, .notice,
-                                "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
-                            )
-                            // "Download & Replace" was confirmed against the
-                            // wizard's destination; a destination that moved
-                            // names a file the user never saw, so the intent
-                            // lapses rather than retargets.
-                            requestedFreshDownload = false
-                            // A moved destination also means the fetch changed
-                            // builds, so the old path's partial download can
-                            // never be resumed — discard its sidecar before the
-                            // only pointer to it moves.
-                            ipswService.discardResumeData(
-                                at: persistedDestination, permanently: false)
-                            // Keep the persisted path on the file the download
-                            // actually writes, so resume across relaunches and
-                            // delete-time cleanup stay keyed to it — a step the
-                            // install stops on, since a download no record
-                            // points at can be neither resumed nor cleaned up.
-                            try instance.performConfigurationMutation {
-                                $0.installContext?.downloadDestinationPath =
-                                    downloadDestination.path(percentEncoded: false)
-                                $0.installContext?.requestedFreshDownload = false
-                            }.get()
-                        }
-                    }
-
-                    // Honor "Download & Replace" intent ONCE: the download
-                    // trashes the existing IPSW and any bundle beside it while
-                    // holding its per-destination claim — trashing from out here
-                    // could delete bytes another VM is streaming into the same
-                    // bundle. The flag clears before the download so a retry
-                    // after a partial-install failure reuses what it fetched.
-                    if requestedFreshDownload {
-                        // `downloadDestinationPath` survives through `config.json`
-                        // on disk, so a stray edit could otherwise have us
-                        // trashing an arbitrary file.
-                        guard downloadDestination.pathExtension.lowercased() == "ipsw" else {
-                            #log(
-                                Self.logger, .error,
-                                "installMacOS: refusing to honor requestedFreshDownload for non-IPSW destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
-                            )
-                            throw DownloadError.invalidDownloadDestination(
-                                path: downloadDestination.path(percentEncoded: false)
-                            )
-                        }
-
+                    remoteURL = pinnedURL
+                    // A persisted destination outside Downloads (a hand-edited
+                    // config.json) can never be written and has no picker to
+                    // re-point it, so the invariant is enforced at use time.
+                    downloadDestination = normalizedDownloadDestination(
+                        for: persistedDestination, remoteURL: remoteURL)
+                    if downloadDestination != persistedDestination {
                         #log(
                             Self.logger, .notice,
-                            "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — the existing IPSW + bundle are trashed before the download starts"
+                            "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
                         )
-                        // Recorded before anything is trashed, or a retry would
-                        // trash what this download fetched.
+                    }
+                } else {
+                    remoteURL = try await ipswService.fetchLatestRestoreImage().url
+                    downloadDestination = latestDownloadDestination(
+                        persisted: persistedDestination, resolvedURL: remoteURL)
+                    if downloadDestination != persistedDestination {
+                        #log(
+                            Self.logger, .notice,
+                            "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
+                        )
+                        // "Download & Replace" was confirmed against the
+                        // wizard's destination; a destination that moved
+                        // names a file the user never saw, so the intent
+                        // lapses rather than retargets.
+                        requestedFreshDownload = false
+                        // A moved destination also means the fetch changed
+                        // builds, so the old path's partial download can
+                        // never be resumed — discard its sidecar before the
+                        // only pointer to it moves.
+                        ipswService.discardResumeData(
+                            at: persistedDestination, permanently: false)
+                        // Keep the persisted path on the file the download
+                        // actually writes, so resume across relaunches and
+                        // delete-time cleanup stay keyed to it — a step the
+                        // install stops on, since a download no record
+                        // points at can be neither resumed nor cleaned up.
                         try instance.performConfigurationMutation {
+                            $0.installContext?.downloadDestinationPath =
+                                downloadDestination.path(percentEncoded: false)
                             $0.installContext?.requestedFreshDownload = false
                         }.get()
                     }
-
-                    try await ipswService.downloadRestoreImage(
-                        from: remoteURL,
-                        to: downloadDestination,
-                        discardsExistingDownload: requestedFreshDownload
-                    ) { progress in
-                        instance.setupState?.progress = .download(progress)
-                    }
-
-                    instance.setupState?.advance(progress: .fraction(0))
-                    ipswURL = downloadDestination
-
-                case .localFile:
-                    guard let localURL = context.localIPSWURL else {
-                        throw IPSWError.noDownloadURL
-                    }
-                    let reference = instance.configuration.externalFileReferences
-                        .first { $0.kind == .localIPSW }
-                    let opened = reference.flatMap { ScopedAccess.open($0) }
-                    localIPSWScope = opened?.scope
-                    // Prefer the bookmark's resolved URL — it tracks the file if
-                    // it moved since the wizard pick.
-                    ipswURL = localIPSWScope?.url ?? localURL
-                    // The context survives relaunches until the install succeeds,
-                    // so its stored path and bookmark can both drift between
-                    // retries. The install reads the resolved URL above, so a
-                    // write that fails costs nothing here: it is reported, and
-                    // the next attempt resolves the bookmark again.
-                    if let reference, let healed = opened?.healedTo {
-                        instance.performConfigurationMutation {
-                            $0.healExternalReference(
-                                reference, movedTo: healed.path, bookmark: healed.bookmark)
-                        }
-                    }
-
-                    instance.setupState = .macOSInstall(hasDownloadStep: false)
                 }
 
-                let installedImage = try await installService.install(
-                    into: instance,
-                    restoreImageURL: ipswURL
-                ) { @MainActor progress in
-                    instance.setupState?.progress = .fraction(progress)
+                // Honor "Download & Replace" intent ONCE: the download
+                // trashes the existing IPSW and any bundle beside it while
+                // holding its per-destination claim — trashing from out here
+                // could delete bytes another VM is streaming into the same
+                // bundle. The flag clears before the download so a retry
+                // after a partial-install failure reuses what it fetched.
+                if requestedFreshDownload {
+                    // `downloadDestinationPath` survives through `config.json`
+                    // on disk, so a stray edit could otherwise have us
+                    // trashing an arbitrary file.
+                    guard downloadDestination.pathExtension.lowercased() == "ipsw" else {
+                        #log(
+                            Self.logger, .error,
+                            "installMacOS: refusing to honor requestedFreshDownload for non-IPSW destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
+                        )
+                        throw DownloadError.invalidDownloadDestination(
+                            path: downloadDestination.path(percentEncoded: false)
+                        )
+                    }
+
+                    #log(
+                        Self.logger, .notice,
+                        "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — the existing IPSW + bundle are trashed before the download starts"
+                    )
+                    // Recorded before anything is trashed, or a retry would
+                    // trash what this download fetched.
+                    try instance.performConfigurationMutation {
+                        $0.installContext?.requestedFreshDownload = false
+                    }.get()
                 }
 
-                // Clear the persisted install intent so subsequent Starts take the
-                // normal boot path, record the image this VM now carries, and
-                // clear `setupState` so the progress UI tears down before the
-                // caller chains an auto-boot. The account the VM was set up with
-                // stays: the boot that delivers it has not run yet, and anything
-                // interrupting the two must leave the next Start something to ask
-                // about. An install whose completion does not land fails: the
-                // context stays on disk, so the next Start installs again.
-                try instance.performConfigurationMutation {
-                    $0.installContext = nil
-                    $0.installedImage = installedImage
-                }.get()
-                instance.setupState = nil
-            } catch is CancellationError {
-                #log(Self.logger, .info, "macOS installation cancelled for '\(instance.name, privacy: .public)'")
-                // Re-throw so the caller knows to flip the VM back to
-                // .initialBoot rather than auto-booting on a non-success.
-                throw CancellationError()
-            } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
-                #log(Self.logger, .info, "IPSW download cancelled for '\(instance.name, privacy: .public)'")
-                // Normalize to CancellationError for consistent caller-side handling.
-                throw CancellationError()
-            } catch {
-                let nsError = error as NSError
-                #log(
-                    Self.logger, .error,
-                    "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationService.underlyingChainDescription(nsError), privacy: .public)]"
-                )
-                instance.enter(
-                    VirtualizationService.restingPhaseAfterStartFailure(
-                        error, transientRestingPhase: .initialBoot))
-                throw error
+                try await ipswService.downloadRestoreImage(
+                    from: remoteURL,
+                    to: downloadDestination,
+                    discardsExistingDownload: requestedFreshDownload
+                ) { progress in
+                    instance.setupState?.progress = .download(progress)
+                }
+
+                instance.setupState?.advance(progress: .fraction(0))
+                ipswURL = downloadDestination
+
+            case .localFile:
+                guard let localURL = context.localIPSWURL else {
+                    throw IPSWError.noDownloadURL
+                }
+                let reference = instance.configuration.externalFileReferences
+                    .first { $0.kind == .localIPSW }
+                let opened = reference.flatMap { ScopedAccess.open($0) }
+                localIPSWScope = opened?.scope
+                // Prefer the bookmark's resolved URL — it tracks the file if
+                // it moved since the wizard pick.
+                ipswURL = localIPSWScope?.url ?? localURL
+                // The context survives relaunches until the install succeeds,
+                // so its stored path and bookmark can both drift between
+                // retries. The install reads the resolved URL above, so a
+                // write that fails costs nothing here: it is reported, and
+                // the next attempt resolves the bookmark again.
+                if let reference, let healed = opened?.healedTo {
+                    instance.performConfigurationMutation {
+                        $0.healExternalReference(
+                            reference, movedTo: healed.path, bookmark: healed.bookmark)
+                    }
+                }
+
+                instance.setupState = .macOSInstall(hasDownloadStep: false)
             }
+
+            let installedImage = try await installService.install(
+                into: instance,
+                operation,
+                restoreImageURL: ipswURL
+            ) { @MainActor progress in
+                instance.setupState?.progress = .fraction(progress)
+            }
+
+            // Clear the persisted install intent so subsequent Starts take the
+            // normal boot path, record the image this VM now carries, and
+            // clear `setupState` so the progress UI tears down before the
+            // caller chains an auto-boot. The account the VM was set up with
+            // stays: the boot that delivers it has not run yet, and anything
+            // interrupting the two must leave the next Start something to ask
+            // about. An install whose completion does not land fails: the
+            // context stays on disk, so the next Start installs again.
+            try instance.performConfigurationMutation {
+                $0.installContext = nil
+                $0.installedImage = installedImage
+            }.get()
+            instance.setupState = nil
+        } catch is CancellationError {
+            #log(Self.logger, .info, "macOS installation cancelled for '\(instance.name, privacy: .public)'")
+            // Re-thrown as the cancel it is, which rests the VM at
+            // .initialBoot rather than chaining a boot.
+            throw CancellationError()
+        } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
+            #log(Self.logger, .info, "IPSW download cancelled for '\(instance.name, privacy: .public)'")
+            // Normalize to CancellationError for consistent caller-side handling.
+            throw CancellationError()
+        } catch {
+            let nsError = error as NSError
+            #log(
+                Self.logger, .error,
+                "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationService.underlyingChainDescription(nsError), privacy: .public)]"
+            )
+            throw error
         }
     }
 
@@ -831,159 +762,149 @@ final class VMLifecycleCoordinator {
     /// Every step is re-entrant: a cancelled or failed attempt leaves the
     /// context in place, so the next Start resolves again and resumes from
     /// whatever partial bytes are on disk.
-    func downloadLinuxImage(
+    private func downloadLinuxImage(
         on instance: VMInstance,
         context: LinuxInstallContext
     ) async throws {
-        try await serialized(instance, action: "downloadLinuxImage") {
-            try instance.beginBringUp(.installing)
-            #log(
-                Self.logger, .debug,
-                "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', image=\(context.imageDisplayName, privacy: .public)"
-            )
+        #log(
+            Self.logger, .debug,
+            "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', image=\(context.imageDisplayName, privacy: .public)"
+        )
 
-            do {
-                instance.setupState = .linuxImage(hasVerifyStep: context.hasVerifyStep)
+        do {
+            instance.setupState = .linuxImage(hasVerifyStep: context.hasVerifyStep)
 
-                // Resolved on every attempt: a catalog entry because the mirror
-                // renames its ISO in place (see `LinuxImageCatalogEntry`), a
-                // pasted URL because the size it answers with is the ceiling
-                // this transfer is held to.
-                let image: ResolvedLinuxImage
-                switch context.source {
-                case .catalogEntry(let entry):
-                    image = try await linuxImageResolveService.resolve(entry)
-                case .customURL(let custom):
-                    image = try await linuxImageResolveService.resolve(custom)
-                }
+            // Resolved on every attempt: a catalog entry because the mirror
+            // renames its ISO in place (see `LinuxImageCatalogEntry`), a
+            // pasted URL because the size it answers with is the ceiling
+            // this transfer is held to.
+            let image: ResolvedLinuxImage
+            switch context.source {
+            case .catalogEntry(let entry):
+                image = try await linuxImageResolveService.resolve(entry)
+            case .customURL(let custom):
+                image = try await linuxImageResolveService.resolve(custom)
+            }
 
-                // `image.destinationFilename`, never the name the source gave
-                // the ISO: Downloads holds everything the user has ever
-                // fetched, and a file already sitting under the source's name
-                // is one the download would adopt in place of fetching, or
-                // trash for failing a digest that was never its own.
-                guard
-                    let downloadDestination = linuxDownloadDestination(
-                        persisted: context.downloadDestinationURL,
-                        filename: image.destinationFilename)
-                else {
-                    throw DownloadError.invalidDownloadDestination(
-                        path: context.downloadDestinationURL?.path(percentEncoded: false)
-                            ?? image.destinationFilename)
-                }
+            // `image.destinationFilename`, never the name the source gave
+            // the ISO: Downloads holds everything the user has ever
+            // fetched, and a file already sitting under the source's name
+            // is one the download would adopt in place of fetching, or
+            // trash for failing a digest that was never its own.
+            guard
+                let downloadDestination = linuxDownloadDestination(
+                    persisted: context.downloadDestinationURL,
+                    filename: image.destinationFilename)
+            else {
+                throw DownloadError.invalidDownloadDestination(
+                    path: context.downloadDestinationURL?.path(percentEncoded: false)
+                        ?? image.destinationFilename)
+            }
 
-                if let persisted = context.downloadDestinationURL,
-                    persisted != downloadDestination
-                {
-                    #log(
-                        Self.logger, .notice,
-                        "downloadLinuxImage: the resolution moved to '\(image.filename, privacy: .public)', downloading to '\(downloadDestination.lastPathComponent, privacy: .public)'"
-                    )
-                    // The partial at the abandoned path belongs to an image
-                    // this download is no longer fetching, so discard it before
-                    // the only pointer to it moves.
-                    downloadService.discardResumeData(at: persisted, permanently: false)
-                }
-                // Keep the persisted path on the file the download writes, so
-                // resume across relaunches and delete-time cleanup stay keyed
-                // to it; the download does not start unless it lands.
-                try instance.performConfigurationMutation {
-                    $0.linuxInstallContext?.downloadDestinationPath =
-                        downloadDestination.path(percentEncoded: false)
-                }.get()
-
-                // The mirror's own size, so the bar reads against the whole
-                // file from the first sample; the transfer's `Content-Length`
-                // governs once bytes are moving.
-                instance.setupState?.progress = .download(
-                    DownloadProgress(
-                        bytesWritten: 0,
-                        totalBytes: Int64(clamping: image.sizeBytes),
-                        bytesPerSecond: 0))
-
-                // The Download step reports nothing while the probe runs: it
-                // reads a file the user already has and fetches none of the
-                // bytes the bar counts. The seeded `0 B / <size>` above is what
-                // a transfer opening its connection shows too.
-                if try await adoptLocalImage(image, as: downloadDestination) {
-                    // The digest decided the adoption, so Verify has nothing
-                    // left to check and the step is drawn finished.
-                    if context.hasVerifyStep {
-                        instance.setupState?.advance(progress: .fraction(1))
-                    }
-                } else {
-                    // Never replaces: the destination is named for this URL, so
-                    // a file already there is what a prior attempt at this same
-                    // image fetched, and adopting it is right — the verify step
-                    // below holds it to the same digest a fresh download would
-                    // face.
-                    try await downloadService.download(
-                        from: image.isoURL,
-                        to: downloadDestination,
-                        discardsExistingDownload: false,
-                        expectedSizeBytes: image.sizeBytes
-                    ) { progress in
-                        instance.setupState?.progress = .download(progress)
-                    }
-
-                    // Runs whether the bytes were just fetched or the download
-                    // skipped over a file already sitting complete at the
-                    // destination: an image nothing has checked is an image
-                    // that could install anything. A pasted URL with no digest
-                    // behind it has nothing to check against, and the wizard
-                    // said so.
-                    if let expected = image.sha256?.lowercased() {
-                        instance.setupState?.advance(progress: .fraction(0))
-                        let digest = try await FileDigest.sha256(of: downloadDestination) {
-                            fraction in
-                            instance.setupState?.progress = .fraction(fraction)
-                        }
-                        guard digest == expected else {
-                            #log(
-                                Self.logger, .error,
-                                "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the expected \(expected, privacy: .public)"
-                            )
-                            discardUnverifiedImage(at: downloadDestination)
-                            throw DownloadError.checksumMismatch(
-                                filename: image.filename, expected: expected, actual: digest)
-                        }
-                    }
-                }
-
-                try attachInstallerImage(
-                    at: downloadDestination, named: image.filename,
-                    from: InstalledImage(linuxSource: context.source), to: instance)
-                instance.setupState = nil
-                // Unlike a macOS install, no VZ session ran whose power-off
-                // would take the VM out of the install phase — and the caller
-                // chains a Start straight off this return.
-                instance.endGuestSetup()
-            } catch is CancellationError {
-                #log(
-                    Self.logger, .info,
-                    "Linux image download cancelled for '\(instance.name, privacy: .public)'")
-                // Re-thrown so the caller flips the VM back to .initialBoot
-                // rather than auto-booting on a non-success.
-                throw CancellationError()
-            } catch let error as NSError
-                where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
+            if let persisted = context.downloadDestinationURL,
+                persisted != downloadDestination
             {
                 #log(
-                    Self.logger, .info,
-                    "Linux image download cancelled for '\(instance.name, privacy: .public)'")
-                // Normalize to CancellationError for consistent caller-side handling.
-                throw CancellationError()
-            } catch {
-                let nsError = error as NSError
-                #log(
-                    Self.logger, .error,
-                    "Linux image download failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
+                    Self.logger, .notice,
+                    "downloadLinuxImage: the resolution moved to '\(image.filename, privacy: .public)', downloading to '\(downloadDestination.lastPathComponent, privacy: .public)'"
                 )
-                instance.enter(
-                    VirtualizationService.restingPhaseAfterStartFailure(
-                        error, transientRestingPhase: .initialBoot))
-                throw error
+                // The partial at the abandoned path belongs to an image
+                // this download is no longer fetching, so discard it before
+                // the only pointer to it moves.
+                downloadService.discardResumeData(at: persisted, permanently: false)
             }
+            // Keep the persisted path on the file the download writes, so
+            // resume across relaunches and delete-time cleanup stay keyed
+            // to it; the download does not start unless it lands.
+            try instance.performConfigurationMutation {
+                $0.linuxInstallContext?.downloadDestinationPath =
+                    downloadDestination.path(percentEncoded: false)
+            }.get()
+
+            // The mirror's own size, so the bar reads against the whole
+            // file from the first sample; the transfer's `Content-Length`
+            // governs once bytes are moving.
+            instance.setupState?.progress = .download(
+                DownloadProgress(
+                    bytesWritten: 0,
+                    totalBytes: Int64(clamping: image.sizeBytes),
+                    bytesPerSecond: 0))
+
+            // The Download step reports nothing while the probe runs: it
+            // reads a file the user already has and fetches none of the
+            // bytes the bar counts. The seeded `0 B / <size>` above is what
+            // a transfer opening its connection shows too.
+            if try await adoptLocalImage(image, as: downloadDestination) {
+                // The digest decided the adoption, so Verify has nothing
+                // left to check and the step is drawn finished.
+                if context.hasVerifyStep {
+                    instance.setupState?.advance(progress: .fraction(1))
+                }
+            } else {
+                // Never replaces: the destination is named for this URL, so
+                // a file already there is what a prior attempt at this same
+                // image fetched, and adopting it is right — the verify step
+                // below holds it to the same digest a fresh download would
+                // face.
+                try await downloadService.download(
+                    from: image.isoURL,
+                    to: downloadDestination,
+                    discardsExistingDownload: false,
+                    expectedSizeBytes: image.sizeBytes
+                ) { progress in
+                    instance.setupState?.progress = .download(progress)
+                }
+
+                // Runs whether the bytes were just fetched or the download
+                // skipped over a file already sitting complete at the
+                // destination: an image nothing has checked is an image
+                // that could install anything. A pasted URL with no digest
+                // behind it has nothing to check against, and the wizard
+                // said so.
+                if let expected = image.sha256?.lowercased() {
+                    instance.setupState?.advance(progress: .fraction(0))
+                    let digest = try await FileDigest.sha256(of: downloadDestination) {
+                        fraction in
+                        instance.setupState?.progress = .fraction(fraction)
+                    }
+                    guard digest == expected else {
+                        #log(
+                            Self.logger, .error,
+                            "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the expected \(expected, privacy: .public)"
+                        )
+                        discardUnverifiedImage(at: downloadDestination)
+                        throw DownloadError.checksumMismatch(
+                            filename: image.filename, expected: expected, actual: digest)
+                    }
+                }
+            }
+
+            try attachInstallerImage(
+                at: downloadDestination, named: image.filename,
+                from: InstalledImage(linuxSource: context.source), to: instance)
+            instance.setupState = nil
+        } catch is CancellationError {
+            #log(
+                Self.logger, .info,
+                "Linux image download cancelled for '\(instance.name, privacy: .public)'")
+            // Re-thrown as the cancel it is, which rests the VM at
+            // .initialBoot rather than chaining a boot.
+            throw CancellationError()
+        } catch let error as NSError
+            where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
+        {
+            #log(
+                Self.logger, .info,
+                "Linux image download cancelled for '\(instance.name, privacy: .public)'")
+            // Normalize to CancellationError for consistent caller-side handling.
+            throw CancellationError()
+        } catch {
+            let nsError = error as NSError
+            #log(
+                Self.logger, .error,
+                "Linux image download failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
+            )
+            throw error
         }
     }
 
@@ -1100,30 +1021,28 @@ final class VMLifecycleCoordinator {
     // MARK: - USB Accessories
 
     /// Passes the accessory `registryID` names through to the guest of the
-    /// session `sessionID` names, and records the attachment.
+    /// session `sessionID` names, and records the attachment, inside an
+    /// operation holding the VM.
     ///
-    /// Serialized like every other operation, which is what makes the save
-    /// paths' "no passthrough device on the controller when `saveMachineState`
-    /// runs" post-condition hold by construction rather than by timing: a save
-    /// or a snapshot cannot start while this is in flight, and this cannot
-    /// start while one of those is.
+    /// The operation is what makes the save paths' "no passthrough device on
+    /// the controller when `saveMachineState` runs" post-condition hold by
+    /// construction rather than by timing: a save or a snapshot cannot start
+    /// while this is in flight, and this cannot start while one of those is.
     @discardableResult
     func attachUSBAccessory(
         _ registryID: UInt64,
         to instance: VMInstance,
         for sessionID: UUID
     ) async throws -> AttachedUSBAccessory {
-        try await serialized(instance, action: "attachUSBAccessory") {
+        try await instance.activity.perform(.attachingUSB(registryID: registryID)) { context in
             guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
-            guard instance.attachableSessionID == sessionID else {
-                throw USBAccessoryError.noVirtualMachine
-            }
+            guard context.sessionID == sessionID else { throw USBAccessoryError.noVirtualMachine }
             let attached = try await usbAccessoryService.attach(registryID, to: instance)
             // VZ captured the device while this was suspended, so a session that
             // went away under the call would leave it captured by a VM nothing
             // holds. Hand it back rather than record an attachment against a
             // session that is gone.
-            guard instance.attachableSessionID == sessionID else {
+            guard context.sessionID == sessionID else {
                 try? await usbAccessoryService.detach(deviceID: attached.deviceID, from: instance)
                 #log(
                     Self.logger, .notice,
@@ -1132,12 +1051,12 @@ final class VMLifecycleCoordinator {
                 throw USBAccessoryError.noVirtualMachine
             }
             instance.recordAttachedAccessory(attached, for: sessionID)
-            return attached
+            return .rest(.asStarted, attached)
         }
     }
 
     /// Detaches the passthrough device `deviceID` names and clears its tracking
-    /// entry.
+    /// entry, inside an operation holding the VM.
     ///
     /// A device VZ no longer holds is a success, not a failure: a surprise
     /// unplug or a save's own detach sweep may have got there first, and the
@@ -1148,11 +1067,9 @@ final class VMLifecycleCoordinator {
         from instance: VMInstance,
         for sessionID: UUID
     ) async throws {
-        try await serialized(instance, action: "detachUSBAccessory") {
+        try await instance.activity.perform(.detachingUSB(deviceID: deviceID)) { context in
             guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
-            guard instance.attachableSessionID == sessionID else {
-                throw USBAccessoryError.noVirtualMachine
-            }
+            guard context.sessionID == sessionID else { throw USBAccessoryError.noVirtualMachine }
             do {
                 try await usbAccessoryService.detach(deviceID: deviceID, from: instance)
             } catch USBAccessoryError.deviceNotFound {
@@ -1162,6 +1079,7 @@ final class VMLifecycleCoordinator {
                 )
             }
             instance.forgetAttachedAccessory(deviceID: deviceID, for: sessionID)
+            return .rest(.asStarted, ())
         }
     }
 }

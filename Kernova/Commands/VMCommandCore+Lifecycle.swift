@@ -12,43 +12,40 @@ extension VMCommandCore {
     }
 
     /// The start every surface reaches, with the instance already resolved.
+    ///
+    /// Decided before anything else happens, so a busy VM refuses before the
+    /// account question is raised; the preparation that follows is
+    /// synchronous, and the bring-up re-decides in the same main-actor turn.
     func start(_ instance: VMInstance, recovery: Bool = false) async throws {
-        try require(.start, on: instance)
-        // Both phases a start's bring-up stands in: a boot with a save file
-        // enters `.restoringSavedState` rather than `.starting`.
-        switch instance.phase {
-        case .starting, .restoringSavedState:
-            guard !recovery else {
-                throw CommandError.busy(
-                    vm: summary(instance), operation: instance.status.displayName.lowercased())
+        let request = VMAdmission.Request.start(recovery: recovery)
+        switch instance.activity.decide(request, posture: .commit) {
+        case .refuse(let reason):
+            if recovery, reason == .invalidState,
+                instance.activity.decide(.start(recovery: false), posture: .commit) == .admit
+            {
+                throw CommandError.unsupported(capability: "starting in macOS Recovery")
             }
+            throw admissionRefusal(reason, on: instance)
+        case .join(let outcome):
             readyDisplay?(instance)
-            return try await joinBringUp(instance, verb: .start) {
-                bringUpFailure($0, verb: .start, on: instance)
-            }
-        default:
+            return try await joinBringUp(instance, outcome, verb: .start)
+        case .admit:
             break
         }
-        if recovery, !capabilities.accepts(.startInRecovery, on: instance) {
-            throw CommandError.unsupported(capability: "starting in macOS Recovery")
-        }
+        guard
+            let kind = VMAdmission.bringUpKind(
+                for: request, phase: instance.phase, facts: instance.admissionFacts)
+        else { throw invalidState(instance) }
 
         // Before the setup dispatch, so an install nobody answered for is
         // turned back rather than running and chaining a boot that is.
-        let provisioning = try guestProvisioning(for: instance, recovery: recovery)
+        let provisioning = try guestProvisioning(for: instance, kind: kind)
 
-        // Dispatch on the surviving setup context, not status, so `.error`
-        // retries route through the same pipeline too. The pipeline chains the
-        // boot that spends the account, and reads the answer where this did.
-        switch instance.configuration.pendingGuestSetup {
-        case .macOSInstall(let context):
-            installAndAutoBoot(instance, context: context)
+        // The setup pipeline chains the boot that spends the account, and
+        // reads the answer where this did.
+        if case .settingUp = kind {
+            try runGuestSetup(on: instance)
             return
-        case .linuxImageDownload(let context):
-            downloadAndAutoBoot(instance, context: context)
-            return
-        case nil:
-            break
         }
 
         // Before the boot geometry is applied: a pop-out VM's window is what
@@ -57,8 +54,7 @@ extension VMCommandCore {
         applyMatchWindowBootResolution(to: instance)
         let route: GuestStartRoute
         do {
-            route = try await lifecycle.start(
-                instance, bootIntoRecovery: recovery, provisioning: provisioning)
+            route = try await lifecycle.start(instance, kind, provisioning: provisioning)
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
@@ -82,25 +78,21 @@ extension VMCommandCore {
     /// Waits out the bring-up already in flight for `instance` and answers with
     /// what that bring-up answered its own caller.
     ///
-    /// `refusal` is the verb's own error mapping, so a joined failure carries
-    /// the removable attachment or the capacity explanation the direct caller
-    /// gets rather than a second, blander rendering — a transient failure rests
-    /// the VM at `.stopped` with no message at all, so the phase cannot supply
-    /// one.
-    ///
-    /// The wait is on the operation still running its body, not on the claim: a
-    /// cold boot retrying VZ file-lock contention rests at
-    /// ``VMLifecyclePhase/starting(sessionID:)`` with no session between
-    /// attempts, and a claim that `stop` released is not an operation that has
-    /// finished.
+    /// A joined failure goes through the verb's own error mapping, so it
+    /// carries the removable attachment or the capacity explanation the direct
+    /// caller gets rather than a second, blander rendering — a transient
+    /// failure rests the VM at `.stopped` with no message at all, so the phase
+    /// cannot supply one.
     private func joinBringUp(
-        _ instance: VMInstance, verb: VMVerb, refusal: (any Error) -> CommandError
+        _ instance: VMInstance, _ outcome: VMOutcome, verb: VMVerb
     ) async throws {
         #log(
             Self.logger, .notice,
             "Joining the bring-up already in flight for '\(instance.name, privacy: .public)'")
-        if case .failed(let error) = await lifecycle.awaitSettledOutcome(for: instance.id) {
-            throw refusal(error)
+        do {
+            try await outcome.value()
+        } catch {
+            throw bringUpFailure(error, verb: verb, on: instance)
         }
         // Reached when the bring-up reported success but the VM is not live —
         // its session was released before the start settled, which rests the VM
@@ -136,15 +128,20 @@ extension VMCommandCore {
     /// they were and its retry neither asks again nor has to.
     ///
     /// Only the cold boot ``GuestStartRoute/deliversGuestProvisioning`` names
-    /// reads anything: a recovery boot and a restore both carry no account and
-    /// spend no window, so neither asks for one — and the question is put to
-    /// the same route derivation the start itself branches on, so what is read
-    /// here and what the boot does cannot disagree.
+    /// reads anything — or the guest setup that chains one: a recovery boot
+    /// and a restore both carry no account and spend no window, so neither
+    /// asks for one, and the question is put to the bring-up the start itself
+    /// performs, so what is read here and what the boot does cannot disagree.
     private func guestProvisioning(
-        for instance: VMInstance, recovery: Bool
+        for instance: VMInstance, kind: VMBringUpKind
     ) throws -> GuestProvisioningCredentials? {
-        let route = GuestStartRoute(startOf: instance, bootIntoRecovery: recovery)
-        guard route.deliversGuestProvisioning else { return nil }
+        let deliversAccount: Bool =
+            switch kind {
+            case .settingUp: true
+            case .starting, .restoringSavedState, .reverting:
+                GuestStartRoute(kind)?.deliversGuestProvisioning ?? false
+            }
+        guard deliversAccount else { return nil }
         switch capabilities.guestAccountState(of: instance) {
         case .none:
             return nil
@@ -325,14 +322,11 @@ extension VMCommandCore {
     ) -> CommandError {
         // A refusal, not a failure: the VM never left where it was, and the
         // refusal logged itself where it was raised.
-        if error is VMIdentityConflict { return failure(error, verb: verb, on: instance) }
+        if error is VMAdmissionRefusal { return failure(error, verb: verb, on: instance) }
         #log(
             Self.logger, .error,
             "Failed to \(verb.rawValue, privacy: .public) '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
         )
-        if case VMLifecycleCoordinator.LifecycleError.operationInProgress = error {
-            return failure(error, verb: verb, on: instance)
-        }
         if let failure = bringUpFailedAttachment(from: error, verb: verb, on: instance) {
             return .operationFailed(
                 verb: verb, message: error.localizedDescription,
@@ -434,60 +428,32 @@ extension VMCommandCore {
 
     // MARK: - Guest Setup
 
-    /// Runs a guest-setup pipeline for an `.initialBoot` (or `.error` with a
-    /// surviving context) VM and, on success, chains an auto-boot.
+    /// Starts the guest-setup pipeline an `.initialBoot` (or `.error` with a
+    /// surviving context) VM owes and, on success, chains an auto-boot.
     ///
     /// A permanent failure leaves the VM in `.error` so the banner keeps the
     /// message on screen; cancel and transient failures (the running-VM cap)
     /// return it to `.initialBoot` for a retry that resumes the download from
     /// the `.kernovadownload` bundle if present.
-    private func runGuestSetup(
-        on instance: VMInstance,
-        _ pipeline: @escaping (VMLifecycleCoordinator) async throws -> Void
-    ) {
-        if instance.setupTask != nil { return }  // guard against rapid double-click
-        instance.setupTask = Task { [weak self] in
-            guard let self else { return }
-            defer { instance.setupTask = nil }
+    private func runGuestSetup(on instance: VMInstance) throws {
+        let outcome: VMOutcome
+        do {
+            outcome = try lifecycle.launchGuestSetup(on: instance)
+        } catch {
+            throw failure(error, verb: .start, on: instance)
+        }
+        Task { [weak self] in
             do {
-                try await pipeline(self.lifecycle)
-                // A cancel accepted while the pipeline was drawing to a close
-                // still means the VM must not boot. Raised inside this `do` so
-                // it takes the cancel branch below rather than falling through
-                // into the chained start, and after the last suspension point
-                // the pipeline has, so nothing can slip between the two.
-                try Task.checkCancellation()
+                try await outcome.value()
             } catch is CancellationError {
-                // Tear down a VM the install attached before cancellation fired: a
-                // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
-                // the old one is still alive on `instance.session`.
-                instance.tearDownSession(restingAt: .initialBoot)
-                instance.setupState = nil
                 #log(
                     Self.logger, .notice,
                     "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
                 return
             } catch {
-                // Same teardown reason as the cancel branch: an attached VM from a
-                // partial install must not bleed into the next retry. The
-                // pipeline classified its own failure into a resting phase, so
-                // the teardown keeps that — unless a cancel raced the failure
-                // (user intent was cancel, so drop the message and take no
-                // dialog), or the throw came from before the classification and
-                // the VM is still in an install phase naming its session.
-                let classified = instance.phase
-                let restingAtCancel = Task.isCancelled || classified.sessionID != nil
-                instance.tearDownSession(restingAt: restingAtCancel ? .initialBoot : classified)
-                instance.setupState = nil
-                if Task.isCancelled {
-                    #log(
-                        Self.logger, .notice,
-                        "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
-                    )
-                } else if let explained = self.explainedFailure(
-                    for: error, verb: .start, on: instance)
-                {
+                guard let self else { return }
+                if let explained = self.explainedFailure(for: error, verb: .start, on: instance) {
                     self.reportUnattendedFailure(
                         .operationFailed(
                             verb: .start, title: explained.title, message: explained.message),
@@ -498,17 +464,7 @@ extension VMCommandCore {
                 }
                 return
             }
-            // Setup is done; the boot that follows is an ordinary start, and its
-            // failure is reported the same way a direct one's is — including the
-            // removable-attachment recovery, which a flattened title-and-message
-            // into a plain alert.
-            instance.setupState = nil
-            // Cleared here, ahead of the trailing `defer`: the gate this backs
-            // (`allowedVerbs`' `.cancelGuestSetup`, and the cancel refusal
-            // itself) covers exactly the setup phase, not the boot chained
-            // after it — a cancel landing in that window would answer `.ok`
-            // while touching a task no longer doing anything cancellable.
-            instance.setupTask = nil
+            guard let self else { return }
             // Before the boot, which would otherwise ask about an account this
             // is about to end: the setup that just landed is the first thing to
             // read the guest's real version. A drop that does not land stops
@@ -521,14 +477,16 @@ extension VMCommandCore {
                     on: instance)
                 return
             }
+            // Setup is done; the boot that follows is a fresh admission, and
+            // its failure is reported the same way a direct one's is —
+            // including the removable-attachment recovery. A VM deleted in
+            // between is gone, not failed.
             do {
                 try await self.start(instance)
-            } catch let failure as CommandError {
-                self.reportUnattendedFailure(failure, on: instance)
             } catch {
+                guard instance.phase != .removed else { return }
                 self.reportUnattendedFailure(
-                    .operationFailed(verb: .start, message: error.localizedDescription),
-                    on: instance)
+                    self.failure(error, verb: .start, on: instance), on: instance)
             }
         }
     }
@@ -553,21 +511,6 @@ extension VMCommandCore {
         try library.retractGuestAccount(for: instance).get()
     }
 
-    /// Drives the macOS install pipeline, then chains the boot that spends the
-    /// account the VM owes.
-    private func installAndAutoBoot(_ instance: VMInstance, context: MacOSInstallContext) {
-        runGuestSetup(on: instance) { lifecycle in
-            try await lifecycle.installMacOS(on: instance, context: context)
-        }
-    }
-
-    /// Drives the Linux installer-image pipeline, then chains the boot.
-    private func downloadAndAutoBoot(_ instance: VMInstance, context: LinuxInstallContext) {
-        runGuestSetup(on: instance) { lifecycle in
-            try await lifecycle.downloadLinuxImage(on: instance, context: context)
-        }
-    }
-
     /// Cancels the in-progress guest setup — a macOS install, or a Linux
     /// installer image being fetched or verified.
     ///
@@ -576,14 +519,17 @@ extension VMCommandCore {
     func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
         let instance = try resolve(selector)
         try require(.cancelGuestSetup, on: instance)
-        guard let task = instance.setupTask else { throw invalidState(instance) }
         guard confirmed else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
         }
         #log(Self.logger, .info, "Cancelling setup for '\(instance.name, privacy: .public)'")
-        task.cancel()
-        // `runGuestSetup`'s cancel catch owns the status transition and
-        // `setupState` cleanup — don't duplicate it here.
+        do {
+            // The setup operation's own ending owns the status transition and
+            // the `setupState` cleanup.
+            try instance.activity.cancel(.guestSetup)
+        } catch {
+            throw failure(error, verb: .cancelGuestSetup, on: instance)
+        }
     }
 
     /// The confirmation a guest-setup cancel raises, worded for the step
@@ -681,7 +627,11 @@ extension VMCommandCore {
             }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
-                try await lifecycle.stop(instance)
+                if instance.holdsSuspendedSession {
+                    try lifecycle.discardSavedState(instance)
+                } else {
+                    try await lifecycle.requestStop(instance)
+                }
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
@@ -700,10 +650,11 @@ extension VMCommandCore {
             }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
             do {
-                // The service writes the record, because only it knows which of
-                // the two outcomes happened — a termination, or the discard a
-                // VM resting on a slot gets.
-                try await lifecycle.forceStop(instance)
+                if instance.holdsSuspendedSession {
+                    try lifecycle.discardSavedState(instance)
+                } else {
+                    try await lifecycle.forceStop(instance)
+                }
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
@@ -713,8 +664,8 @@ extension VMCommandCore {
     /// Resumes a paused VM then requests a graceful ACPI shutdown.
     private func resumeThenShutDown(_ instance: VMInstance) async throws {
         do {
-            try await lifecycle.resume(instance)
-            try await lifecycle.stop(instance)
+            try await resumeOrRestore(instance)
+            try await lifecycle.requestStop(instance)
         } catch {
             #log(
                 Self.logger, .error,
@@ -766,7 +717,7 @@ extension VMCommandCore {
         // booting over it and the restore consumes the file — but
         // ``VMBundle/removeSaveFile()`` reports a refusal by logging it, so a
         // slot can outlive the restore that meant to spend it, and the VM does
-        // come back on it (``VMActivity/restAfterPowerOff()``).
+        // come back on it (``VMActivity/restingPhase(withoutSlot:)``).
         let keepsSuspendedSession = instance.hasSaveFile
         let suspendedSessionLost =
             "The suspended session, and everything changed inside the guest during it, are discarded."
@@ -808,7 +759,8 @@ extension VMCommandCore {
         // A paused VM routes through the stop-paused refusal instead, so
         // offering the graceful shutdown here would chain one onto the other.
         let alternatives =
-            instance.canStop && instance.status != .paused
+            instance.activity.decide(.sessionAction(.requestStop), posture: .commit) == .admit
+                && instance.status != .paused
             ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
             : []
         let title: String
@@ -834,7 +786,6 @@ extension VMCommandCore {
 
     func pause(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
-        try require(.pause, on: instance)
         do {
             try await lifecycle.pause(instance)
         } catch {
@@ -846,22 +797,36 @@ extension VMCommandCore {
         }
     }
 
+    /// A hot resume of a live-paused VM, or the restore of the saved state one
+    /// holds — joining a restore already in flight.
     func resume(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
-        try require(.resume, on: instance)
-
-        if case .restoringSavedState = instance.phase {
+        switch instance.activity.decide(.resume, posture: .commit) {
+        case .refuse(let reason):
+            throw admissionRefusal(reason, on: instance)
+        case .join(let outcome):
             readyDisplay?(instance)
-            return try await joinBringUp(instance, verb: .resume) {
-                bringUpFailure($0, verb: .resume, on: instance)
-            }
+            return try await joinBringUp(instance, outcome, verb: .resume)
+        case .admit:
+            break
         }
-
         readyDisplay?(instance)
         do {
-            try await lifecycle.resume(instance)
+            try await resumeOrRestore(instance)
         } catch {
             throw bringUpFailure(error, verb: .resume, on: instance)
+        }
+    }
+
+    /// The Resume `instance`'s state names: the restore of the saved state it
+    /// holds, or a hot resume from memory.
+    private func resumeOrRestore(_ instance: VMInstance) async throws {
+        if let kind = VMAdmission.bringUpKind(
+            for: .resume, phase: instance.phase, facts: instance.admissionFacts)
+        {
+            _ = try await lifecycle.start(instance, kind)
+        } else {
+            try await lifecycle.resume(instance)
         }
     }
 
@@ -870,7 +835,6 @@ extension VMCommandCore {
     }
 
     func suspend(_ instance: VMInstance) async throws {
-        try require(.suspend, on: instance)
         do {
             try await lifecycle.save(instance)
         } catch {
@@ -893,11 +857,11 @@ extension VMCommandCore {
     /// power-off is what a `timeout` bounds; without one it is unbounded,
     /// matching what a graceful shutdown means — a guest that will not go down
     /// is neither restarted nor terminated behind the user's back. The settle
-    /// after it is always unbounded: `restAfterPowerOff()` fires the power-off hook
-    /// a turn after the status, so an Ephemeral VM's baseline revert registers
-    /// there, and bringing the VM up mid-revert would either be refused as busy
-    /// or boot off disks the revert is still overwriting. No guest can withhold
-    /// that work, so no deadline belongs on it.
+    /// after it is always unbounded: an Ephemeral VM's power-off admits its
+    /// baseline revert in the step that rests it, and bringing the VM up
+    /// mid-revert is refused as busy. No guest can withhold that work, so no
+    /// deadline belongs on it. A VM deleted in the meantime is refused by the
+    /// bring-up it would have got.
     ///
     /// Where the VM lands decides which verb brings it back up. A power-off
     /// normally lands it stopped, but an Ephemeral VM's baseline revert can hand
@@ -921,9 +885,8 @@ extension VMCommandCore {
         try refuseOwedGuestAccount(instance)
         try await stop(instance, disposition: .graceful, confirmed: true)
         try await awaitPowerOff(instance, within: timeout, verb: .restart)
-        await waitForObservedChange { [library] in
-            !library.isBusy(instance) && !library.hasRevertInFlight(for: instance.id)
-                && (instance.canStart || instance.canResume)
+        await waitForObservedChange {
+            instance.phase.operation == nil && !instance.hasLiveVirtualMachine
         }
         switch capabilities.bringUpVerb(for: instance) {
         case .resume:

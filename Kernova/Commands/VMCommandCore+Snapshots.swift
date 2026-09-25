@@ -2,15 +2,6 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Where a revert leaves its failure for the caller that awaited it.
-///
-/// A reference so the revert's own task can fill it in before the `await` on
-/// that task returns.
-@MainActor
-final class RevertOutcome {
-    var failure: CommandError?
-}
-
 /// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.
 extension VMCommandCore {
     // MARK: - Sizes
@@ -47,7 +38,8 @@ extension VMCommandCore {
         return snapshotSummary(snapshot, on: instance)
     }
 
-    /// The capture itself, answering the snapshot that landed.
+    /// The capture itself, listed in the manifest inside the same capture
+    /// operation, answering the snapshot that landed.
     ///
     /// Throws rather than reporting a nil, so a caller chaining off it (the
     /// revert's check-point) stops rather than proceeding on a lost checkpoint.
@@ -56,7 +48,10 @@ extension VMCommandCore {
     ) async throws -> VMSnapshot {
         // Stamped at confirm time, not when the caller decided: the VM can
         // start, stop, or suspend in between.
-        guard let mode = instance.snapshotCaptureMode else {
+        guard
+            let mode = VMAdmission.settledCaptureMode(
+                phase: instance.phase, facts: instance.admissionFacts)
+        else {
             #log(
                 Self.logger, .notice,
                 "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
@@ -68,9 +63,13 @@ extension VMCommandCore {
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: mode.kind)
-        let captured: VMSnapshot
         do {
-            captured = try await lifecycle.takeSnapshot(instance, snapshot: snapshot)
+            return try await lifecycle.takeSnapshot(instance, mode: mode, snapshot: snapshot) {
+                captured in
+                try self.commitSnapshotManifest(of: instance, verb: .takeSnapshot) {
+                    $0.insert(captured)
+                }
+            }
         } catch {
             #log(
                 Self.logger, .error,
@@ -78,15 +77,6 @@ extension VMCommandCore {
             )
             throw failure(error, verb: .takeSnapshot, on: instance)
         }
-        do {
-            try commitSnapshotManifest(of: instance, verb: .takeSnapshot) { $0.insert(captured) }
-        } catch {
-            // Unlisted files are files no surface can reach or remove, so the
-            // capture is undone rather than left orphaned in the bundle.
-            await instance.bundle.removeSnapshotDirectory(snapshot.id)
-            throw error
-        }
-        return captured
     }
 
     // MARK: - Revert
@@ -111,9 +101,7 @@ extension VMCommandCore {
         // Awaited *and* answered for: a caller that waited on the revert is told
         // whether the rollback happened, rather than getting a success while an
         // alert about the failure goes somewhere else.
-        let outcome = RevertOutcome()
-        await startRevert(instance, to: snapshot, outcome: outcome).value
-        if let failure = outcome.failure { throw failure }
+        try await awaitRevert(instance, startRevert(instance, to: snapshot))
     }
 
     /// The refusal a revert raises, and the copy every surface renders it with.
@@ -122,7 +110,7 @@ extension VMCommandCore {
         // offered wherever a capture can be taken, which covers every at-rest
         // state; only a VM mid-operation is offered the revert alone.
         let alternatives =
-            instance.canTakeSnapshot
+            instance.snapshotCaptureMode != nil
             ? [
                 ConfirmationAlternative(
                     title: "Take Snapshot, Then Revert", takesCheckpoint: true)
@@ -142,7 +130,7 @@ extension VMCommandCore {
     static func revertMessage(_ snapshot: VMSnapshot, _ vm: VMInstance) -> String {
         let taken = SnapshotDateFormat.string(from: snapshot.createdAt)
         let guestLoss =
-            vm.canTakeSnapshot
+            vm.snapshotCaptureMode != nil
             ? "Everything changed inside the guest since then will be lost unless you take a snapshot first."
             : "Everything changed inside the guest since then will be lost."
 
@@ -174,51 +162,14 @@ extension VMCommandCore {
         }
     }
 
-    /// Registers a revert and runs it.
+    /// Starts the revert of `instance` to `snapshot`, admitted and committed
+    /// before this returns — so a termination gate or a Start that reads the
+    /// VM right after a power-off finds the revert that power-off requested —
+    /// and answers its outcome.
     ///
-    /// Registration happens *before this returns*, not when the copy starts:
-    /// the task body runs no earlier than the caller's next suspension, so a
-    /// termination gate that reads ``VMLibrary/hasRevertInFlight`` immediately
-    /// after a power-off sees the revert the power-off requested. Registering
-    /// from inside the task instead would leave a window where the revert is
-    /// pending and invisible.
-    ///
-    /// `outcome` decides where a failure goes: a caller awaiting the task takes
-    /// it back through the box and throws it, and a revert nobody is waiting on
-    /// — the Ephemeral baseline a power-off starts — passes none and has it
-    /// reported through ``VMCommandCore/onFailure``.
-    @discardableResult
-    func startRevert(
-        _ instance: VMInstance, to snapshot: VMSnapshot, outcome: RevertOutcome? = nil
-    ) -> Task<Void, Never> {
-        let requestID = UUID()
-        let task = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.performRevert(instance, to: snapshot)
-            } catch let failure as CommandError {
-                if let outcome {
-                    outcome.failure = failure
-                } else {
-                    self.report(failure, on: instance)
-                }
-            } catch {
-                let failure = CommandError.operationFailed(
-                    verb: .revertToSnapshot, message: error.localizedDescription)
-                if let outcome {
-                    outcome.failure = failure
-                } else {
-                    self.report(failure, on: instance)
-                }
-            }
-            self.library.revertTasks[requestID] = nil
-        }
-        library.revertTasks[requestID] = VMLibrary.RevertRegistration(
-            instanceID: instance.id, task: task)
-        return task
-    }
-
-    private func performRevert(_ instance: VMInstance, to snapshot: VMSnapshot) async throws {
+    /// The manifest's current marker is written inside the revert operation,
+    /// once the snapshot's files are in the bundle.
+    func startRevert(_ instance: VMInstance, to snapshot: VMSnapshot) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             #log(
                 Self.logger, .notice,
@@ -231,33 +182,40 @@ extension VMCommandCore {
             )
         }
         // A VM that is live goes back to being live once the files are in
-        // place, so the window it comes up in is chosen before the teardown. A
-        // cold snapshot ends the session for good, so there is none to choose.
-        if instance.hasLiveVirtualMachine, snapshot.kind == .warm {
-            readyDisplay?(instance)
-        }
-        var revertFailure: CommandError?
+        // place; a cold snapshot ends the session for good.
+        let resumesAfter = instance.phase.isSettledLive && snapshot.kind == .warm
+        let outcome: VMOutcome
         do {
-            try await lifecycle.revertToSnapshot(instance, snapshot: snapshot) { [library] plan in
-                try library.commitRevertedConfiguration(plan, on: instance)
-            }
+            outcome = try lifecycle.startRevert(
+                instance, to: snapshot, resumesAfter: resumesAfter,
+                commitConfiguration: { [library] plan in
+                    try library.commitRevertedConfiguration(plan, on: instance)
+                },
+                landed: { [weak self] in
+                    try self?.commitSnapshotManifest(of: instance, verb: .revertToSnapshot) {
+                        $0.currentID = snapshot.id
+                    }
+                })
+        } catch {
+            throw failure(error, verb: .revertToSnapshot, on: instance)
+        }
+        // The window the VM comes back up in is chosen before the teardown
+        // the revert's task begins with.
+        if resumesAfter { readyDisplay?(instance) }
+        return outcome
+    }
+
+    /// Waits for the revert `outcome` belongs to and throws how it failed.
+    private func awaitRevert(_ instance: VMInstance, _ outcome: VMOutcome) async throws {
+        do {
+            try await outcome.value()
         } catch {
             #log(
                 Self.logger, .error,
                 "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            let mapped = failure(error, verb: .revertToSnapshot, on: instance)
-            // A resume that failed left the reverted files in place, so the VM's
-            // state does descend from this snapshot and the marker says so —
-            // written below before the failure is raised. Any other failure left
-            // nothing behind, so the marker stays where it was.
-            guard case VirtualizationError.revertResumeFailed = error else { throw mapped }
-            revertFailure = mapped
+            throw failure(error, verb: .revertToSnapshot, on: instance)
         }
-        try commitSnapshotManifest(of: instance, verb: .revertToSnapshot) {
-            $0.currentID = snapshot.id
-        }
-        if let revertFailure { throw revertFailure }
     }
 
     // MARK: - Ephemeral Mode
@@ -265,29 +223,30 @@ extension VMCommandCore {
     /// Returns an Ephemeral Mode VM to its baseline after a power-off; a no-op
     /// for every other VM.
     ///
-    /// Reached from ``VMActivity/onPoweredOff``, which fires inside the stop
-    /// that caused it — so the revert runs in its own task, after that stop has
-    /// released the VM.
+    /// Reached from ``VMActivity/onPoweredOff``, which fires in the step that
+    /// rests the VM — so the revert is admitted there, before anything else can
+    /// be decided against the VM, and a failure nobody waits on is reported.
     func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return }
-        revertToEphemeralBaseline(instance, baseline)
-    }
-
-    /// The revert an ephemeral power-off performs, on the same path a
-    /// user-confirmed revert takes — including its error reporting, so a
-    /// baseline that cannot be restored is never silently skipped.
-    ///
-    /// `outcome`, when given, takes the failure back to a caller that is
-    /// waiting; without one it is reported, because nothing is.
-    @discardableResult
-    private func revertToEphemeralBaseline(
-        _ instance: VMInstance, _ baseline: VMSnapshot, outcome: RevertOutcome? = nil
-    ) -> Task<Void, Never> {
         #log(
             Self.logger, .notice,
             "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
         )
-        return startRevert(instance, to: baseline, outcome: outcome)
+        let outcome: VMOutcome
+        do {
+            outcome = try startRevert(instance, to: baseline)
+        } catch {
+            report(failure(error, verb: .revertToSnapshot, on: instance), on: instance)
+            return
+        }
+        Task { [weak self] in
+            do {
+                try await outcome.value()
+            } catch {
+                guard let self else { return }
+                self.report(self.failure(error, verb: .revertToSnapshot, on: instance), on: instance)
+            }
+        }
     }
 
     /// Routes an ephemeral VM's Discard Saved State through the baseline revert
@@ -301,9 +260,11 @@ extension VMCommandCore {
     func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async throws -> Bool {
         guard instance.holdsSuspendedSession, let baseline = instance.ephemeralBaselineSnapshot
         else { return false }
-        let outcome = RevertOutcome()
-        await revertToEphemeralBaseline(instance, baseline, outcome: outcome).value
-        if let failure = outcome.failure { throw failure }
+        #log(
+            Self.logger, .notice,
+            "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
+        )
+        try await awaitRevert(instance, startRevert(instance, to: baseline))
         return true
     }
 

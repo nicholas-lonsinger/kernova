@@ -2,8 +2,9 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Which identity another live VM already claims — the refusal every bring-up
-/// passes (``VMActivity/beginBringUp(_:)``). Live is
+/// Which identity another live VM already claims — the identity term
+/// admission decides every bring-up against
+/// (``VMAdmission/Facts/identityConflict``). Live is
 /// ``VMActivity/holdsLiveIdentity``.
 @MainActor
 final class VMLiveIdentities {

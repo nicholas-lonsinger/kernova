@@ -727,6 +727,24 @@ final class VMInstance: VMActivityOwner {
         detailPaneMode = .display
     }
 
+    func operationDidSettleRunning(_ kind: VMOperationKind) {
+        switch kind {
+        case .bringUp(.starting), .resuming:
+            activateNetworkAttachment()
+            startAgentPostStartWatchdog()
+        case .bringUp(.restoringSavedState), .bringUp(.reverting):
+            // Arms no watchdog: a restore resumes whatever guest state was
+            // frozen, which may be a Recovery session that never runs the
+            // agent, and no host-side flag survives the save to say which.
+            // The accept path arms once a control channel actually shows up.
+            activateNetworkAttachment()
+        case .bringUp(.settingUp), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
+            .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping,
+            .discardingSavedState, .deleting, .copyingOut:
+            break
+        }
+    }
+
     // MARK: - Serial Console I/O
 
     /// Begins reading from the serial output pipe.
@@ -956,7 +974,7 @@ final class VMInstance: VMActivityOwner {
     /// Recovery (which never runs the agent), an agent has been seen before on
     /// this VM, the agent isn't already connected, no install is in progress,
     /// and no watchdog is already armed. Cancelled by any inbound Hello, by a
-    /// pause, and by `tearDownSession`.
+    /// pause, and by the session's teardown.
     func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
         guard let context = sessionContext else { return }
         guard configuration.guestOS == .macOS else { return }

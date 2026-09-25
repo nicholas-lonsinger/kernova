@@ -3,7 +3,7 @@ import Foundation
 /// Persisted intent to install macOS into a VM that has not yet completed
 /// its initial boot.
 ///
-/// Consulted by `VMLifecycleCoordinator.installMacOS(on:context:)` on every
+/// Consulted by `VMLifecycleCoordinator.installMacOS(on:_:context:)` on every
 /// Start while non-nil.
 struct MacOSInstallContext: Codable, Sendable, Equatable {
     enum Source: String, Codable, Sendable, Equatable {

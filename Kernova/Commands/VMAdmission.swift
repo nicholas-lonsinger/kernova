@@ -142,6 +142,16 @@ enum VMAdmission {
         return phase == .stopped ? .stopped : nil
     }
 
+    /// The mode a capture is offered in: ``captureMode(phase:facts:)`` over the
+    /// settled phase the VM rests at, or the one an operation holding it
+    /// started from — so an operation in flight dims Take Snapshot rather than
+    /// hiding it.
+    static func settledCaptureMode(
+        phase: VMLifecyclePhase, facts: Facts
+    ) -> VMSnapshotCaptureMode? {
+        captureMode(phase: phase.operation?.startedFrom ?? phase, facts: facts)
+    }
+
     /// The edit classes a settled phase admits.
     static func editClasses(settledAt phase: VMLifecyclePhase, facts: Facts) -> VMEditClasses {
         switch phase {

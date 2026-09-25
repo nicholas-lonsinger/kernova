@@ -84,8 +84,6 @@ final class VMLibraryViewModel {
 
     var hasRevertInFlight: Bool { library.hasRevertInFlight }
 
-    func isBusy(_ instance: VMInstance) -> Bool { library.isBusy(instance) }
-
     func hasCloneInFlight(from instance: VMInstance) -> Bool {
         library.hasCloneInFlight(from: instance)
     }
@@ -1292,9 +1290,10 @@ final class VMLibraryViewModel {
     /// Starts every VM marked to start automatically, one after another.
     ///
     /// Sequential: each guest commits its whole memory allocation at start, and
-    /// the duplicate machine-ID and MAC refusal every bring-up passes
-    /// (``VMActivity/beginBringUp(_:)``) counts a VM still coming up as live, so
-    /// a twin checked beside it would be refused by a boot that may yet fail.
+    /// the duplicate machine-ID and MAC refusal every bring-up is admitted past
+    /// (``VMAdmission/Facts/identityConflict``) counts a VM still coming up as
+    /// live, so a twin checked beside it would be refused by a boot that may
+    /// yet fail.
     ///
     /// Per-VM failures are logged and surfaced by those two methods; the pass
     /// carries on to the next VM either way.
@@ -1381,7 +1380,7 @@ final class VMLibraryViewModel {
                         ?? .operationFailed(verb: verb, message: error.localizedDescription),
                     on: instance)
             }
-            if instance.isActive {
+            if instance.isKeepingAppAlive {
                 startedCount += 1
             } else {
                 failedCount += 1

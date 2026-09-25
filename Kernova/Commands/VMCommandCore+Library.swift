@@ -556,10 +556,6 @@ extension VMCommandCore {
         // re-check catches — trashing the bundle then would pull the disk
         // image out from under a guest that is running or about to be.
         try require(.delete, on: instance)
-        guard !lifecycle.hasActiveOperation(for: instance.id) else {
-            throw CommandError.busy(
-                vm: summary(instance), operation: instance.status.displayName.lowercased())
-        }
         guard confirmed else {
             throw CommandError.confirmationRequired(
                 Self.deletePrompt(
@@ -572,55 +568,57 @@ extension VMCommandCore {
             toDelete = await externalAttachments(for: instance).filter {
                 alsoRemoving.contains($0.id) && !$0.isShared
             }
-            // Resolving the externals suspends, and the sheet's key equivalents
-            // stay live, so both gates run again on the far side of it — a Start
-            // that landed in the gap must still refuse. Nothing between here and
-            // the bundle delete suspends.
-            try require(.delete, on: instance)
-            guard !lifecycle.hasActiveOperation(for: instance.id) else {
-                throw CommandError.busy(
-                    vm: summary(instance), operation: instance.status.displayName.lowercased())
-            }
         }
+        // One operation from the bundle's removal to the last external file's,
+        // so nothing can start the VM, or be decided against it, while its
+        // files go — and a Start that landed while the externals resolved is
+        // what refuses it here.
         do {
-            if permanently {
-                try storageService.permanentlyDeleteVMBundle(at: instance.bundleURL)
-            } else {
-                try storageService.deleteVMBundle(at: instance.bundleURL)
+            try await instance.activity.perform(.deleting) { _ in
+                do {
+                    if permanently {
+                        try storageService.permanentlyDeleteVMBundle(at: instance.bundleURL)
+                    } else {
+                        try storageService.deleteVMBundle(at: instance.bundleURL)
+                    }
+                } catch {
+                    #log(
+                        Self.logger, .error,
+                        "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                    throw CommandError.operationFailed(
+                        verb: .delete, message: error.localizedDescription)
+                }
+                cleanupSetupResumeData(for: instance, permanently: permanently)
+                if permanently {
+                    #log(
+                        Self.logger, .notice,
+                        "Permanently deleted VM '\(instance.name, privacy: .public)'")
+                } else {
+                    #log(
+                        Self.logger, .notice,
+                        "Moved VM '\(instance.name, privacy: .public)' to Trash")
+                }
+                // Externals go *after* the bundle, so a failure here leaves no
+                // VM naming files that are gone.
+                let vmName = instance.name
+                for attachment in toDelete {
+                    await trashExternalFile(
+                        at: URL(fileURLWithPath: attachment.path),
+                        bookmark: attachment.reference.bookmark,
+                        label: attachment.label,
+                        vmName: vmName,
+                        verb: .delete,
+                        permanently: permanently)
+                }
+                // Dropped in the step that removes the VM, with nothing
+                // suspending in between.
+                library.evict(instance)
+                library.persistOrder()
+                return .removed(())
             }
         } catch {
-            #log(
-                Self.logger, .error,
-                "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            throw CommandError.operationFailed(verb: .delete, message: error.localizedDescription)
-        }
-        // Ordered after the delete, which throws on a volume with no Trash or a
-        // bundle another process holds: a VM that survives a failed delete
-        // keeps naming whatever is still sitting in its bundle. Nothing live
-        // can reach here, so the teardown releases a stale context rather than
-        // a running VM.
-        instance.tearDownSession(restingAt: instance.restingPhase(withoutSlot: .stopped))
-        cleanupSetupResumeData(for: instance, permanently: permanently)
-        lifecycle.clearActiveOperation(for: instance.id)
-        library.evict(instance)
-        library.persistOrder()
-        if permanently {
-            #log(Self.logger, .notice, "Permanently deleted VM '\(instance.name, privacy: .public)'")
-        } else {
-            #log(Self.logger, .notice, "Moved VM '\(instance.name, privacy: .public)' to Trash")
-        }
-        // Externals go *after* the bundle, so the VM disappears from the
-        // library even if one of these fails.
-        let vmName = instance.name
-        for attachment in toDelete {
-            await trashExternalFile(
-                at: URL(fileURLWithPath: attachment.path),
-                bookmark: attachment.reference.bookmark,
-                label: attachment.label,
-                vmName: vmName,
-                verb: .delete,
-                permanently: permanently)
+            throw failure(error, verb: .delete, on: instance)
         }
     }
 

@@ -739,7 +739,7 @@ final class DetailAlertsPresenter: NSObject {
     /// (`requireWritable: !disk.readOnly`), so marking that entry Read Only
     /// skips the check the bring-up died on. It is named only while the VM's
     /// settings can be reached — `holdsSavedState` is exactly what closes them
-    /// (``VMInstance/canEditSettings``) — because advice nobody in that state
+    /// (``VMAdmission/editClasses(settledAt:facts:)``) — because advice nobody in that state
     /// can follow is worse than none. Everything else the file-system reasons
     /// could be is put to the user as a condition to check, for the reason
     /// ``StartFailedAttachment/Reason`` gives.

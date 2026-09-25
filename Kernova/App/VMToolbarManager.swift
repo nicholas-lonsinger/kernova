@@ -244,11 +244,7 @@ final class VMToolbarManager: NSObject {
     /// for a host to call inside its observation `track:` closure.
     ///
     /// The read set lives beside the expressions it feeds so the two cannot
-    /// drift. The settle signal is what makes that load-bearing: whether an
-    /// operation is still unsettled lives on ``VMLifecycleCoordinator``, and no
-    /// per-VM property mirrors it — a host tracking only its instance never
-    /// wakes for a hot pause or resume, and Take Snapshot stays lit for the
-    /// whole window a capture would be rejected in.
+    /// drift.
     func trackItemState() {
         guard let instance = instanceProvider() else { return }
         for capability in VMCapability.allCases {

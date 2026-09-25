@@ -27,6 +27,9 @@ protocol VMActivityOwner: AnyObject {
     /// Called once a power-off has rested the VM, before
     /// ``VMActivity/onPoweredOff`` fires.
     func guestDidPowerOff()
+
+    /// Called once an operation of `kind` has ended with the guest running.
+    func operationDidSettleRunning(_ kind: VMOperationKind)
 }
 
 /// Where a VM is in its lifecycle, the live session it holds, and the one
@@ -321,15 +324,18 @@ final class VMActivity {
             rest = target
             result = .failure(error)
         case .removed(let value):
-            releaseSession()
+            if sessionContext != nil { releaseSession() }
             setPhase(.removed)
             outcome.resolve(.success(()))
             return .success(value)
         }
         let resting = resolve(rest, for: operation)
-        if !resting.isSettledLive, operation.session != nil { releaseSession() }
+        // A bring-up that failed before it bound a session still holds the
+        // context it opened, with that context's pipes and security scopes.
+        if !resting.isSettledLive, sessionContext != nil { releaseSession() }
         setPhase(resting)
         outcome.resolve(result.map { _ in () })
+        if case .running = resting { owner?.operationDidSettleRunning(operation.kind) }
         if operation.sessionEnd == .poweredOff || rest == .poweredOff {
             owner?.guestDidPowerOff()
             onPoweredOff?()
@@ -620,9 +626,14 @@ final class VMActivity {
 
     fileprivate var operationSessionEnd: VMSessionEnd? { phase.operation?.sessionEnd }
 
+    /// Ends the operation's session, or — before a bring-up bound one —
+    /// releases the context it opened.
     fileprivate func endOperationSessionItself() {
-        guard let sessionID = operationSessionID else { return }
-        endOperationSession(sessionID, .endedByOperation)
+        if let sessionID = operationSessionID {
+            endOperationSession(sessionID, .endedByOperation)
+        } else if sessionContext != nil {
+            releaseSession()
+        }
     }
 }
 
@@ -655,15 +666,18 @@ struct VMOperationContext: ~Copyable, Sendable {
     @MainActor var sessionEnd: VMSessionEnd? { activity.operationSessionEnd }
 
     /// Ends the operation's session itself — a save, a revert, a retried boot
-    /// attempt — keeping the operation.
+    /// attempt — keeping the operation; before a bring-up has bound a session,
+    /// releases the context it opened.
     @MainActor func endSession() {
         activity.endOperationSessionItself()
     }
 
     /// Waits for the operation's session to end, and answers how.
-    @MainActor func sessionEnded() async -> VMSessionEnd {
+    ///
+    /// - Throws: `CancellationError` once the operation's task is cancelled.
+    @MainActor func sessionEnded() async throws -> VMSessionEnd {
         let activity = activity
-        await waitForObservedChange { activity.operationSessionEnd != nil }
+        try await waitForObservedChangeUnlessCancelled { activity.operationSessionEnd != nil }
         return activity.operationSessionEnd ?? .endedByOperation
     }
 }

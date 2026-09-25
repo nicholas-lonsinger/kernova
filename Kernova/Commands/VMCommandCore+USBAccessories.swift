@@ -11,7 +11,7 @@ extension VMCommandCore {
     /// What a refusal calls the capability, completing "This build of Kernova
     /// does not support …" — or, for the one VM-scoped cause, "This virtual
     /// machine does not support …".
-    private static let usbAccessoryCapability = "USB accessory passthrough"
+    static let usbAccessoryCapability = "USB accessory passthrough"
 
     // MARK: - Reads
 
