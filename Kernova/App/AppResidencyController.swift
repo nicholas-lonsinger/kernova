@@ -333,7 +333,7 @@ final class AppResidencyController: WindowResidencyHosting {
     private func makeStatusItemController() -> HostAgentStatusItemController {
         HostAgentStatusItemController(
             viewModel: viewModel,
-            onOpen: { [weak self] vmID in self?.summonStatusItemTarget(for: vmID) },
+            onOpen: { [weak self] entryID in self?.summonStatusItemTarget(for: entryID) },
             onOpenClipboard: { [weak self] vmID in
                 guard let self else { return }
                 guard
@@ -407,18 +407,23 @@ final class AppResidencyController: WindowResidencyHosting {
     /// library or other VMs' windows back on screen, and summoning the library
     /// ("Open Kernova") must not restore any display windows.
     ///
-    /// A `nil` or unknown id opens the library, which is where a VM that has left
-    /// the library is looked for.
-    private func summonStatusItemTarget(for vmID: UUID?) {
+    /// An arrival's row opens the library with the arrival selected, since the
+    /// library is its only surface. A `nil` or unknown id opens the library,
+    /// which is where a VM that has left the library is looked for.
+    func summonStatusItemTarget(for entryID: UUID?) {
         guard
-            let instance = vmID.flatMap({ id in
-                viewModel.instances.first(where: { $0.instanceID == id })
+            let entry = entryID.flatMap({ id in
+                viewModel.entries.first(where: { $0.id == id })
             })
         else {
             summonUserInterface()
             return
         }
-        viewModel.selectedID = instance.instanceID
+        viewModel.selectedID = entry.id
+        guard let instance = entry.vm else {
+            summonUserInterface()
+            return
+        }
         switch viewModel.capabilities.revealSurface(for: instance) {
         case .displayWindow:
             summonUserInterface(showing: .display(instance))
@@ -551,7 +556,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// the Dock icon is what brings it forward, so only a summon and an
     /// outside request call this.
     ///
-    /// The caller puts its surface up in the same main-actor job: the unhide
+    /// A summon puts its surface up in the same main-actor job: the unhide
     /// reconcile ``noteDidUnhide()`` schedules runs as a later job and reads
     /// the window list, where a surface not yet shown would read as a window
     /// closed during the hide.
@@ -568,8 +573,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// behind it, so this asks for none. Whoever holds the request activates
     /// the app: the `kernova` tool by pid, a link's opener through its Launch
     /// Services request, a script that says `activate`. Reached through
-    /// ``ActivationRequester/requestActivation()``, right before the verb puts
-    /// its surface up.
+    /// ``ActivationRequester/requestActivation()``, once the verb has passed
+    /// its checks and is about to surface.
     private func prepareForExternalSurface() {
         setActivationPolicy(.regular)
         leaveHiddenState()
@@ -651,10 +656,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// answer — and must not run the reconcile: the status menu dismisses
     /// *before* its action fires, so its close otherwise lands a reconcile
     /// between the summon's `.regular` morph and the deferred window show,
-    /// flipping the app back to `.accessory` mid-summon. The activate then
-    /// fires while the app is `.accessory`, and the re-morph re-appends it to
-    /// the ⌘-Tab switcher's tail with no activation event after it — leaving
-    /// the freshly summoned app last in ⌘-Tab.
+    /// flipping the app back to `.accessory` mid-summon.
     static func windowCloseAffectsActivationPolicy(_ window: NSWindow) -> Bool {
         window.styleMask.contains(.titled)
     }
@@ -773,8 +775,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// window closed, and an unhide is the one moment where a person has just
     /// asked for the app.
     ///
-    /// An unhide the app performs itself runs this too, and finds the surface
-    /// it unhid for already on screen (``leaveHiddenState()``).
+    /// A summon's unhide runs this too, and finds the summoned surface already
+    /// on screen (``leaveHiddenState()``).
     func noteDidUnhide() {
         pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }
     }

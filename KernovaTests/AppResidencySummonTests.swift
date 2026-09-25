@@ -28,7 +28,9 @@ struct AppResidencySummonTests {
             case laterJob
         }
 
-        var isHidden: Bool
+        /// Held across an unhide, so every presentation that would unhide
+        /// records its own.
+        let isHidden: Bool
         private(set) var steps: [Step] = []
         let gate = AsyncGate()
         /// Runs inside the unhide call, where AppKit could deliver
@@ -51,7 +53,6 @@ struct AppResidencySummonTests {
             AppResidencyController.ForegroundControl(
                 isHidden: { [self] in isHidden },
                 unhideWithoutActivation: { [self] in
-                    isHidden = false
                     record(.unhide)
                     onUnhide()
                 },
@@ -130,11 +131,32 @@ struct AppResidencySummonTests {
         adoptAppWindow(try #require(registry.libraryWindow))
 
         // The summon's job runs behind the delivered one, so once the summon has
-        // asked, anything the delivered one did is recorded ahead of it.
+        // asked, anything the delivered one did is recorded ahead of it — and
+        // the fake stays hidden, so an unhide by both would record two.
         controller.presentSummonedInterface()
         controller.summonUserInterface()
         try await foreground.gate.wait { foreground.activations > 0 }
 
         #expect(foreground.steps == [.unhide, .activate(libraryOnScreen: true)])
+    }
+
+    @Test("A status-item row for an arrival selects it and summons the library")
+    func arrivalRowSelectsTheArrival() async throws {
+        let foreground = RecordingForeground(isHidden: false)
+        let (controller, _, viewModel) = makeController(foreground: foreground)
+        let arrival = VMArrival(
+            id: UUID(), kind: .importing,
+            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi),
+            destinationURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("Arriving.kernova", isDirectory: true)
+        ) { _ in throw CancellationError() }
+        viewModel.library.register(arrival)
+        viewModel.selectedID = nil
+
+        controller.summonStatusItemTarget(for: arrival.id)
+        try await foreground.gate.wait { foreground.activations > 0 }
+
+        #expect(viewModel.selectedID == arrival.id)
+        #expect(foreground.steps == [.activate(libraryOnScreen: true)])
     }
 }
