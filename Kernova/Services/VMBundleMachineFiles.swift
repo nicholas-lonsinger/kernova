@@ -2,11 +2,9 @@ import Foundation
 import KernovaLogging
 import Virtualization
 
-/// The file operations behind a VM bundle's machine files: the snapshot
-/// directories inside `Snapshots/` — one per snapshot, holding its VZ saved
-/// state, the configuration it was captured under and copy-on-write disk
-/// copies — the suspend slot, the firmware and platform files, and the
-/// in-bundle disks.
+/// The file operations behind ``VMBundle``'s machine files, against the real
+/// filesystem. A snapshot's directory holds its VZ saved state, the
+/// configuration it was captured under and copy-on-write disk copies.
 ///
 /// `VMBundleLayout` owns the names; this owns the file operations.
 struct VMBundleMachineFiles: VMBundleMachineFileWorking {

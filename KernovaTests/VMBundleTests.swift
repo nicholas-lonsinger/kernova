@@ -54,7 +54,7 @@ struct VMBundleTests {
     /// A bundle over `read` whose machine files go through the real file work,
     /// trashing through ``fileSystem``.
     private func makeBundle(_ read: VMBundleRead) -> VMBundle {
-        VMBundle(read, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem))
+        VMBundle.Factory(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem)).make(read)
     }
 
     /// The bundle's files through `access`, the production access by default.

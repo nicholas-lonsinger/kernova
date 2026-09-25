@@ -3,14 +3,15 @@ import KernovaLogging
 
 /// One VM bundle on disk: its state files — `config.json`, `host-state.json`,
 /// `Snapshots/manifest.json` and `usb-accessories.json` — with the values last
-/// committed to them, and its machine files — the snapshot directories, the
-/// suspend slot, the firmware and platform files, and the in-bundle disks.
+/// committed to them, and its machine files — the snapshot directories and the
+/// restore staging, the suspend slot, the firmware and platform files, and the
+/// in-bundle disks.
 ///
 /// The only reader and writer of the state files, and the only writer of the
-/// machine files. Built only from a ``VMBundleRead``, so it exists only for a
-/// bundle already on disk, and each value it holds is one a coordinated read
-/// found or a committed write left on disk: memory never holds a value disk
-/// lacks.
+/// machine files. Built only by a ``Factory`` from a ``VMBundleRead``, so it
+/// exists only for a bundle already on disk, and each value it holds is one a
+/// coordinated read found or a committed write left on disk: memory never
+/// holds a value disk lacks.
 ///
 /// A commit reads the file, applies its change to what the file holds, replaces
 /// the file, and only then publishes the new value; one that throws leaves the
@@ -42,13 +43,42 @@ final class VMBundle {
     private(set) var snapshotManifest: VMSnapshotManifest
     private(set) var usbPairings: USBAccessoryPairingSet
 
-    init(_ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking) {
+    fileprivate init(_ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking) {
         files = read.files
         self.machineFiles = machineFiles
         configuration = read.configuration
         hostState = read.hostState
         snapshotManifest = read.snapshotManifest
         usbPairings = read.usbPairings
+    }
+
+    /// What builds every ``VMBundle``, holding the machine-file work they share
+    /// where nothing else can reach it.
+    ///
+    /// Its one other operation is the launch reclaim of restore staging, which
+    /// runs before any bundle is built.
+    struct Factory: Sendable {
+        private let machineFiles: any VMBundleMachineFileWorking
+
+        init(machineFiles: any VMBundleMachineFileWorking) {
+            self.machineFiles = machineFiles
+        }
+
+        @MainActor
+        func make(_ read: VMBundleRead) -> VMBundle {
+            VMBundle(read, machineFiles: machineFiles)
+        }
+
+        /// Removes the restore staging directory an interrupted revert left in
+        /// each of `bundleURLs`.
+        ///
+        /// Blocks on the filesystem. Only for bundles no ``VMBundle`` of this
+        /// run holds yet, so no revert can be staging there.
+        func reclaimRestoreStaging(in bundleURLs: [URL]) {
+            for bundleURL in bundleURLs {
+                machineFiles.sweepRestoreStaging(bundleURL: bundleURL)
+            }
+        }
     }
 
     /// Sets a committed value only when it moved, so a no-op write wakes no

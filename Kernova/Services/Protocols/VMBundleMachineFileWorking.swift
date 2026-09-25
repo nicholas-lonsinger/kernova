@@ -29,10 +29,8 @@ struct VMSnapshotRestorePlan: Sendable {
     let kind: VMSnapshotKind
 }
 
-/// The file work behind ``VMBundle``'s machine files: the `Snapshots/` store
-/// (captured copies, restore staging, footprints), the suspend slot, the
-/// firmware and platform files, and the in-bundle disks. The state files are
-/// ``VMBundleFiles``'.
+/// The file work behind ``VMBundle``'s machine files, which a
+/// ``VMBundle/Factory`` holds for the bundles it builds.
 ///
 /// Every method blocks on the filesystem, so ``VMBundle`` calls them off the
 /// main actor.

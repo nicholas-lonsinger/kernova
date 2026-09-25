@@ -350,7 +350,7 @@ struct VMLifecycleCoordinatorTests {
     func rejectsSnapshotDeleteDuringAnotherOperation() async throws {
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let store = MockVMBundleMachineFiles()
-        let instance = VMInstanceFixture.make(machineFiles: store)
+        let instance = VMInstanceFixture.make(bundleFactory: VMBundle.Factory(machineFiles: store))
 
         let task = Task { @MainActor in
             try await coordinator.start(instance)

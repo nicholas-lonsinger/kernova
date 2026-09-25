@@ -4631,9 +4631,8 @@ struct VMLibraryViewModelTests {
         let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
         let existing = VMInstance(
-            bundle: VMBundle(
-                VMInstanceFixture.read(bundleURL, from: storage.files),
-                machineFiles: viewModel.library.machineFiles),
+            bundle: viewModel.library.bundleFactory.make(
+                VMInstanceFixture.read(bundleURL, from: storage.files)),
             phase: .stopped,
             preferences: makeTestPreferences())
         viewModel.library.admitForTesting(existing)

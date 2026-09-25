@@ -33,7 +33,6 @@ final class VMLibraryViewModel {
 
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
-    let machineFiles: any VMBundleMachineFileWorking
     let lifecycle: VMLifecycleCoordinator
 
     /// Pauses running VMs for system sleep and resumes them on wake.
@@ -520,8 +519,6 @@ final class VMLibraryViewModel {
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
-        let machineFiles = machineFiles ?? VMBundleMachineFiles(fileSystem: fileSystem)
-        self.machineFiles = machineFiles
         self.preferences = preferences
         self.entitlements = entitlements
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
@@ -540,7 +537,8 @@ final class VMLibraryViewModel {
         self.lifecycle = lifecycle
         let library = VMLibrary(
             storageService: storageService,
-            machineFiles: machineFiles,
+            bundleFactory: VMBundle.Factory(
+                machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: fileSystem)),
             lifecycle: lifecycle,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,

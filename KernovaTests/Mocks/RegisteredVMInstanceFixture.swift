@@ -22,7 +22,7 @@ enum RegisteredVMInstanceFixture {
         let instance = VMInstanceFixture.make(
             name: name, guestOS: guestOS, phase: phase, preferences: preferences, hostState: hostState,
             snapshots: VMSnapshotManifest(snapshots: snapshots), files: storage.files,
-            machineFiles: library.machineFiles,
+            bundleFactory: library.bundleFactory,
             mutate: {
                 $0.networkEnabled = false
                 mutate(&$0)

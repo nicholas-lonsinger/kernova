@@ -33,7 +33,7 @@ extension VMLibrary {
     /// it holds until its next revert, whose staging discards it first.
     private func reclaimRestoreStaging() async {
         let storage = storageService
-        let machineFiles = machineFiles
+        let bundleFactory = bundleFactory
         await Task.detached(priority: .userInitiated) {
             let bundles: [URL]
             do {
@@ -47,9 +47,7 @@ extension VMLibrary {
                 )
                 return
             }
-            for bundleURL in bundles {
-                machineFiles.sweepRestoreStaging(bundleURL: bundleURL)
-            }
+            bundleFactory.reclaimRestoreStaging(in: bundles)
         }.value
     }
 

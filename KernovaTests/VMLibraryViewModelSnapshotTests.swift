@@ -82,7 +82,7 @@ struct VMLibraryViewModelSnapshotTests {
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(
             name: name, phase: phase, preferences: preferences, files: files,
-            machineFiles: viewModel.library.machineFiles, mutate: mutate)
+            bundleFactory: viewModel.library.bundleFactory, mutate: mutate)
         viewModel.library.admitForTesting(instance)
         return instance
     }

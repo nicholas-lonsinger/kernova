@@ -11,9 +11,9 @@ enum VMInstanceFixture {
     /// `hostState`, `snapshots` and `pairings` seed the bundle's files, which
     /// the instance then reads as a load would. `files` is where they live — a
     /// store of the instance's own unless the test passes one it also reads.
-    /// `machineFiles` is what the bundle's machine files go through — a
-    /// ``MockVMBundleMachineFiles`` of the instance's own unless the test
-    /// passes one it also reads.
+    /// `bundleFactory` builds the bundle — over a ``MockVMBundleMachineFiles``
+    /// of the instance's own unless the test passes a factory over one it
+    /// also reads, or a library's.
     static func make(
         name: String = "Test VM",
         guestOS: VMGuestOS = .linux,
@@ -23,7 +23,7 @@ enum VMInstanceFixture {
         snapshots: VMSnapshotManifest = VMSnapshotManifest(),
         pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
         files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
-        machineFiles: (any VMBundleMachineFileWorking)? = nil,
+        bundleFactory: VMBundle.Factory? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         var config = VMConfiguration(
@@ -32,9 +32,8 @@ enum VMInstanceFixture {
         let url = bundleURL(for: config.id)
         files.seed(config, hostState: hostState, snapshots: snapshots, pairings: pairings, at: url)
         return VMInstance(
-            bundle: VMBundle(
-                read(url, from: files),
-                machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: files)),
+            bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
+                .make(read(url, from: files)),
             phase: phase, preferences: preferences)
     }
 
@@ -43,8 +42,8 @@ enum VMInstanceFixture {
     /// that drives the real machine files or reads the bundle's files back off
     /// disk. The caller takes it away again with ``removeBundle(of:)``.
     ///
-    /// `machineFiles` defaults to a real ``VMBundleMachineFiles`` that trashes
-    /// through a ``MockFileSystem``.
+    /// `bundleFactory` defaults to one over a real ``VMBundleMachineFiles``
+    /// that trashes through a ``MockFileSystem``.
     ///
     /// `snapshots` is written before the read; each snapshot's MAC address is
     /// whatever its own `config.json` on disk holds when the bundle is read.
@@ -54,7 +53,7 @@ enum VMInstanceFixture {
         phase: VMLifecyclePhase = .stopped,
         preferences: AppPreferences = makeTestPreferences(),
         snapshots: VMSnapshotManifest = VMSnapshotManifest(),
-        machineFiles: (any VMBundleMachineFileWorking)? = nil,
+        bundleFactory: VMBundle.Factory? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) throws -> VMInstance {
         var config = VMConfiguration(
@@ -68,9 +67,9 @@ enum VMInstanceFixture {
             try files.update(.snapshotManifest) { $0 = snapshots }
         }
         return VMInstance(
-            bundle: VMBundle(
-                try files.read(),
-                machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem())),
+            bundle: (bundleFactory
+                ?? VMBundle.Factory(machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem())))
+                .make(try files.read()),
             phase: phase, preferences: preferences)
     }
 

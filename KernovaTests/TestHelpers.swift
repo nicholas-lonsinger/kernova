@@ -85,7 +85,8 @@ func makeWiredLibrary(
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
-        machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files),
+        bundleFactory: VMBundle.Factory(
+            machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files)),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,

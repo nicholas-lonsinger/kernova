@@ -254,7 +254,8 @@ struct VirtualizationServiceTests {
     func warmCaptureDoesNotHandTheVMBackToADeadSession() async throws {
         let sessionID = UUID()
         let store = MockVMBundleMachineFiles()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID), machineFiles: store)
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
         let snapshot = VMSnapshotRecord(name: "Before the update")
         // `didStopWithError` lands while the disks copy, exactly as a guest
@@ -290,7 +291,8 @@ struct VirtualizationServiceTests {
     func warmCaptureRestoresTheRunningPhase() async throws {
         let sessionID = UUID()
         let store = MockVMBundleMachineFiles()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID), machineFiles: store)
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
         let snapshot = VMSnapshotRecord(name: "Before the update")
 
@@ -304,7 +306,8 @@ struct VirtualizationServiceTests {
     func warmCaptureRestoresTheLivePausedPhase() async throws {
         let sessionID = UUID()
         let store = MockVMBundleMachineFiles()
-        let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: sessionID), machineFiles: store)
+        let instance = VMInstanceFixture.make(
+            phase: .livePaused(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .paused)
 
         try await VirtualizationService.captureWarmSnapshot(
@@ -318,7 +321,8 @@ struct VirtualizationServiceTests {
     func warmCaptureFailureRestsWhereTheGuestIs() async throws {
         let sessionID = UUID()
         let store = MockVMBundleMachineFiles()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID), machineFiles: store)
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
         store.captureError = VMSnapshotError.snapshotMissingSavedState
 
@@ -351,7 +355,8 @@ struct VirtualizationServiceTests {
         machineFiles: (any VMBundleMachineFileWorking)? = nil
     ) throws -> RevertFixture {
         let instance = try VMInstanceFixture.makeOnDisk(
-            name: "Revert VM", phase: phase, machineFiles: machineFiles
+            name: "Revert VM", phase: phase,
+            bundleFactory: machineFiles.map(VMBundle.Factory.init(machineFiles:))
         ) {
             $0.memorySizeInGB = 16
             $0.macAddress = macAddress
