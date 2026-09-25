@@ -10,6 +10,9 @@ final class VMCommandClient {
     private let fd: Int32
     private var decoder = StreamFrameDecoder()
     private var isClosed = false
+    /// Brings forward the process with the given pid, for an
+    /// ``VMCommandResponse/Result/activate`` frame.
+    private let activate: (pid_t) -> Void
 
     /// The process on the other end, or `nil` when the kernel would not say.
     ///
@@ -19,12 +22,13 @@ final class VMCommandClient {
     /// identify without one.
     let peerProcessIdentifier: pid_t?
 
-    /// Connects to the socket at `path`.
+    /// Connects to the socket at `path`; `activate` is what answers the app's
+    /// request to be brought forward, handed the peer's pid.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable`` when nothing
     ///   is listening there — the app is not running, or this build resolves no
     ///   app-group container to hold the socket.
-    init(socketPath: String) throws {
+    init(socketPath: String, activate: @escaping (pid_t) -> Void = PeerActivation.activate) throws {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
             throw CLIFailure(.unavailable, "Could not open a socket: \(Self.reason(errno)).")
@@ -53,6 +57,7 @@ final class VMCommandClient {
             throw CLIFailure(.unavailable, "Kernova is not answering: \(Self.reason(code)).")
         }
         fd = descriptor
+        self.activate = activate
         peerProcessIdentifier = Self.peerProcessIdentifier(of: descriptor)
     }
 
@@ -135,6 +140,9 @@ final class VMCommandClient {
     }
 
     /// The next framed answer, or `nil` once the app hangs up.
+    ///
+    /// An ``VMCommandResponse/Result/activate`` frame is answered here and read
+    /// past, so no caller ever sees one.
     private func nextResponse() throws -> VMCommandResponse? {
         while true {
             // A frame this build will not buffer means the peer is not the one
@@ -151,6 +159,10 @@ final class VMCommandClient {
                         VMCommandResponse.self, from: Data(frame))
                 else {
                     throw CLIFailure(.unavailable, "Kernova sent an answer this tool cannot read.")
+                }
+                if case .activate = response.result {
+                    if let peerProcessIdentifier { activate(peerProcessIdentifier) }
+                    continue
                 }
                 return response
             }

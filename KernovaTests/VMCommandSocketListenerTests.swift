@@ -24,9 +24,8 @@ struct VMCommandSocketListenerTests {
         let authorizer: MockPeerAuthorizer
         /// Fires whenever the listener adopts or forgets a connection.
         let connectionsChanged: AsyncGate
-        /// Fires when the listener asks the app to come forward.
-        let surfaced: AsyncGate
-        let surfaceCount: Counter
+        /// How many times the listener readied the app to surface.
+        let preparationCount: Counter
         let path: String
         /// Lets a test hold the library read open, the way a cold launch does.
         let readiness: LibraryReadiness
@@ -96,8 +95,7 @@ struct VMCommandSocketListenerTests {
         commands.library = library
         let authorizer = MockPeerAuthorizer(authorization)
         let connectionsChanged = AsyncGate()
-        let surfaced = AsyncGate()
-        let surfaceCount = Counter()
+        let preparationCount = Counter()
         let readiness = LibraryReadiness(landed: libraryHasLanded)
         let claim = try makeClaim()
         let path = claim.socketPath
@@ -106,14 +104,11 @@ struct VMCommandSocketListenerTests {
             authorizer: authorizer,
             copyClaim: .success(claim),
             awaitReady: { await readiness.wait() },
-            onSurfaceRequested: {
-                surfaceCount.increment()
-                surfaced.notify()
-            })
+            prepareToSurface: { preparationCount.increment() })
         listener.onConnectionsChangedForTesting = { connectionsChanged.notify() }
         return Harness(
             listener: listener, commands: commands, authorizer: authorizer,
-            connectionsChanged: connectionsChanged, surfaced: surfaced, surfaceCount: surfaceCount,
+            connectionsChanged: connectionsChanged, preparationCount: preparationCount,
             path: path, readiness: readiness)
     }
 
@@ -182,8 +177,13 @@ struct VMCommandSocketListenerTests {
         #expect(try await client.nextResponse()?.result == .summaries([alpha]))
     }
 
-    @Test("A verb that surfaces asks the app forward first; one that does not, does not")
-    func surfacingVerbsAskTheAppForward() async throws {
+    @Test(
+        "A verb that surfaces readies the app and asks the client to activate it before answering",
+        arguments: [
+            VMCommandRequest.Verb.open(.name("Alpha")),
+            .reveal(.name("Alpha")),
+        ])
+    func surfacingVerbsAskTheClientToActivate(_ verb: VMCommandRequest.Verb) async throws {
         let alpha = VMSummary(id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable)
         let harness = try makeHarness(library: [alpha])
         harness.listener.start()
@@ -192,24 +192,54 @@ struct VMCommandSocketListenerTests {
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        // A read puts nothing on screen, so nothing is brought forward.
-        try client.send(VMCommandRequest(verb: .list))
-        _ = try await client.nextResponse()
-        #expect(harness.surfaceCount.value == 0)
+        try client.send(VMCommandRequest(verb: verb))
 
-        // `open` does, and a window ordered front behind the terminal that
-        // asked for it has answered nobody.
-        try client.send(VMCommandRequest(verb: .open(.id(alpha.id))))
-        _ = try await client.nextResponse()
-        try await harness.surfaced.wait { harness.surfaceCount.value == 1 }
-        #expect(harness.surfaceCount.value == 1)
+        // Ahead of the answer, so the client has activated the app by the time
+        // it reads that the window is up.
+        #expect(try await client.nextResponse()?.result == .activate)
+        #expect(try await client.nextResponse()?.result == .ok)
+        #expect(harness.preparationCount.value == 1)
+    }
+
+    @Test("A verb that puts nothing on screen answers with no activate frame")
+    func nonSurfacingVerbsSendNoActivate() async throws {
+        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+        let harness = try makeHarness(library: [alpha])
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.send(VMCommandRequest(verb: .list))
+        #expect(try await client.nextResponse()?.result == .summaries([alpha]))
 
         // A headless start is a bring-up nobody asked to see.
-        try client.send(
-            VMCommandRequest(
-                verb: .start(.id(alpha.id), recovery: false)))
-        _ = try await client.nextResponse()
-        #expect(harness.surfaceCount.value == 1)
+        try client.send(VMCommandRequest(verb: .start(.id(alpha.id), recovery: false)))
+        #expect(try await client.nextResponse()?.result == .ok)
+
+        #expect(harness.preparationCount.value == 0)
+    }
+
+    @Test("A permission panel a verb puts up asks the client on that connection to activate")
+    func permissionPanelAsksTheConnectionsClient() async throws {
+        let harness = try makeHarness()
+        // The real authority, with only the panel's display stood in for: the
+        // user dismisses it, so the verb answers with the refusal.
+        harness.commands.sourceAuthority = PowerboxSourceAuthority(present: { _ in .cancel })
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        // A path nothing can read, so the sandbox's grant is what is asked for.
+        let unreadable = "/nonexistent-\(UUID().uuidString)/Alpha.kernova"
+        try client.send(VMCommandRequest(verb: .importVM(path: unreadable)))
+
+        #expect(try await client.nextResponse()?.result == .activate)
+        #expect(try await client.nextResponse()?.failure != nil)
+        #expect(harness.preparationCount.value == 1)
     }
 
     @Test("A client that hangs up cancels the verb it left running")
@@ -358,7 +388,7 @@ struct VMCommandSocketListenerTests {
             authorizer: MockPeerAuthorizer(),
             copyClaim: .failure(reason),
             awaitReady: {},
-            onSurfaceRequested: {})
+            prepareToSurface: {})
         listener.start()
         #expect(listener.connectionCountForTesting == 0)
         listener.stop()
@@ -373,7 +403,7 @@ struct VMCommandSocketListenerTests {
             authorizer: nil,
             copyClaim: .success(claim),
             awaitReady: {},
-            onSurfaceRequested: {})
+            prepareToSurface: {})
         listener.start()
         #expect(!FileManager.default.fileExists(atPath: path))
         listener.stop()

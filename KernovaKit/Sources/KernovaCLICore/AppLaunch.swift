@@ -2,8 +2,7 @@ import AppKit
 import Foundation
 import KernovaAppRegistry
 
-/// Launching the app this tool is embedded in — the one place here that reaches
-/// AppKit.
+/// Launching the app this tool is embedded in.
 enum AppLaunch {
     /// Whatever `openApplication` reported after the request left, `nil` while
     /// it has not answered or answered success.

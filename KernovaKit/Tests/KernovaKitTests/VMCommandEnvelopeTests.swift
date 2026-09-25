@@ -284,6 +284,7 @@ struct VMCommandEnvelopeTests {
             .refused(.authorizationRefused(reason: "not this team")),
             .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
             .refused(.undecodableRequest("the bytes are not JSON")),
+            .activate,
         ]
         for result in results {
             let response = VMCommandResponse(result: result)

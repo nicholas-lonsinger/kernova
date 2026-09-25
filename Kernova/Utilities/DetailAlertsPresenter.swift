@@ -433,7 +433,7 @@ final class DetailAlertsPresenter: NSObject {
             outstanding.prompt.vm.id == request.prompt.vm.id, let window
         {
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             #log(
                 Self.logger, .notice,
                 "Already asking for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; raising that question"

@@ -29,9 +29,10 @@ final class VMScriptingGateway {
     private let commands: any VMCommanding
     /// The app's first library read, shared with every other front door.
     private let readiness: LibraryReadiness
-    /// Brings the app forward for a surface something outside the process asked
-    /// for.
-    private let activate: @MainActor () -> Void
+    /// Readies the app to put up a surface something outside the process asked
+    /// for, without activating it: a script that wants Kernova in front says
+    /// `activate`.
+    private let prepareToSurface: @MainActor () -> Void
 
     /// Cocoa's own commands suspended on a read that arrived before the library
     /// landed, each answered once it has.
@@ -51,11 +52,11 @@ final class VMScriptingGateway {
 
     init(
         commands: any VMCommanding, readiness: LibraryReadiness,
-        activate: @escaping @MainActor () -> Void
+        prepareToSurface: @escaping @MainActor () -> Void
     ) {
         self.commands = commands
         self.readiness = readiness
-        self.activate = activate
+        self.prepareToSurface = prepareToSurface
     }
 
     // MARK: - Reads
@@ -290,17 +291,17 @@ final class VMScriptingGateway {
     /// rethrowing the first refusal.
     ///
     /// A verb that puts something on screen (``VMVerb/surfacesInterface``)
-    /// brings the app forward first, so the window it puts up opens in front of
-    /// the person who ran the script rather than behind Script Editor. A refusal
-    /// stops the run where it happened: an event addressing several VMs carries
-    /// back one error, and finishing the rest would leave a script unable to
-    /// tell how far the verb got.
+    /// readies the app to surface first, so the window it puts up is on screen
+    /// even from a hidden, headless app. A refusal stops the run where it
+    /// happened: an event addressing several VMs carries back one error, and
+    /// finishing the rest would leave a script unable to tell how far the verb
+    /// got.
     private func perform(
         _ verb: VMVerb, on selectors: [VMSelector],
         _ body: (VMSelector) async throws -> Void
     ) async throws {
         await readiness.ready()
-        if verb.surfacesInterface, !selectors.isEmpty { activate() }
+        if verb.surfacesInterface, !selectors.isEmpty { prepareToSurface() }
         for selector in selectors {
             do {
                 try await body(selector)

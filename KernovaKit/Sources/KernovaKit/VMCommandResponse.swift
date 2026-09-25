@@ -51,6 +51,16 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case failure(CommandErrorDTO)
         /// The request was refused by the envelope, before any verb ran.
         case refused(VMCommandTransportRefusal)
+        /// Not an answer: the app asks the requester to bring it forward, and
+        /// the answer to the same request follows.
+        ///
+        /// Only the requester can. The macOS 14 cooperative-activation contract
+        /// guarantees an activation the active app yields and then requests by
+        /// pid ([AppKit Release Notes for macOS
+        /// 14](https://developer.apple.com/documentation/macos-release-notes/appkit-release-notes-for-macos-14),
+        /// App Activation), while an app asking to activate itself with no user
+        /// event behind it is refused.
+        case activate
     }
 
     /// The refusal this response carries, or `nil` when the verb succeeded.

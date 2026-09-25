@@ -30,7 +30,8 @@ struct VMLifecycleScriptCommandsTests {
 
     private func makeGateway(_ commands: MockVMCommanding) -> VMScriptingGateway {
         VMScriptingGateway(
-            commands: commands, readiness: LibraryReadiness(awaitReady: {}), activate: {})
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}),
+            prepareToSurface: {})
     }
 
     // MARK: - Reading the event

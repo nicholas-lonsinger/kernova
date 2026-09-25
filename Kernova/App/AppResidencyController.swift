@@ -86,7 +86,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// outcome it applied.
     private var pendingUnhideReconcile: Task<UnhideOutcome, Never>?
 
-    /// Whether the unhide now being delivered is one ``unhideForSummon()``
+    /// Whether the unhide now being delivered is one ``unhideForSummon(_:)``
     /// performed, rather than the person reversing a ⌘H.
     private var isUnhidingForSummon = false
 
@@ -125,25 +125,20 @@ final class AppResidencyController: WindowResidencyHosting {
             surfaceLibrary: { [weak self] in self?.presentSummonedInterface() })
         AppDependencyManager.shared.add(dependency: gateway)
 
-        // The panel a named path's grant comes from has to bring the app
-        // forward first, and only this controller knows how — so the authority
-        // is built here and handed to the verbs that consult it.
-        viewModel.attachSourceAuthority(
-            PowerboxSourceAuthority(
-                activate: { [weak self] in self?.activateForExternalRequest() }))
+        viewModel.attachSourceAuthority(PowerboxSourceAuthority())
         let socket = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
             copyClaim: copyClaim,
             awaitReady: { await readiness.ready() },
-            onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() })
+            prepareToSurface: { [weak self] in self?.prepareForExternalSurface() })
         socket.start()
         commandSocket = socket
 
         urlGateway = VMURLGateway(
             commands: viewModel.commands,
             readiness: readiness,
-            activate: { [weak self] in self?.activateForExternalRequest() },
+            prepareToSurface: { [weak self] in self?.prepareForExternalSurface() },
             summonLibrary: { [weak self] in self?.presentSummonedInterface() },
             present: { [weak self] refusal in
                 self?.viewModel.surfaceUnawaitedFailure(refusal)
@@ -151,7 +146,7 @@ final class AppResidencyController: WindowResidencyHosting {
 
         scriptingGateway = VMScriptingGateway(
             commands: viewModel.commands, readiness: readiness,
-            activate: { [weak self] in self?.activateForExternalRequest() })
+            prepareToSurface: { [weak self] in self?.prepareForExternalSurface() })
     }
 
     /// Answers one `kernova:` link delivered to `application(_:open:)`.
@@ -479,18 +474,18 @@ final class AppResidencyController: WindowResidencyHosting {
         // be delivered inside the call, and the reconcile it schedules must run
         // behind the window show rather than reading a window list the show has
         // not reached yet.
-        unhideForSummon()
+        unhideForSummon { NSApp.unhide(nil) }
     }
 
-    /// Leaves the hidden state, so a surface this summon puts on screen is
-    /// actually on it.
+    /// Leaves the hidden state through `unhide`, so a surface this summon puts
+    /// on screen is actually on it.
     ///
     /// A launch that asked for the app hidden — `kernova`'s `hides`, an App
     /// Intents launch — stays hidden for the life of the process, and a hidden
     /// app displays no window however it is ordered, `orderFrontRegardless`
     /// included. Only a summon does this: a `.present` launch builds its library
     /// behind the hide, where the Dock icon is what brings it forward.
-    private func unhideForSummon() {
+    private func unhideForSummon(_ unhide: () -> Void) {
         guard NSApp.isHidden else { return }
         #log(Self.logger, .notice, "Summoned while hidden — unhiding")
         // Scoped across the call, which is what `applicationDidUnhide` is
@@ -498,26 +493,21 @@ final class AppResidencyController: WindowResidencyHosting {
         // and the unhide leg would otherwise read a window list the
         // presentation has not reached yet and demote the app mid-summon.
         isUnhidingForSummon = true
-        NSApp.unhide(nil)
+        unhide()
         isUnhidingForSummon = false
     }
 
-    /// Requests activation for a summon via Launch Services, so a menu-bar
-    /// status item or Dock menu selection — delivered as a FrontBoard scene
-    /// action with no `NSEvent` behind it — still lands a request WindowServer
-    /// accepts.
+    /// Requests activation for a status-item or Dock-menu summon via Launch
+    /// Services, the only two paths that still use it.
     ///
-    /// Cooperative activation stamps a request with the sending process's last
-    /// user-event time; a request with no event behind it (or one sent late,
-    /// after the event's stamp has gone stale) is rejected outright
-    /// (`CPS: Rejecting expired request`, observed 2026-08-26 in the WindowServer
-    /// log). Routing the request through Launch Services instead — which
-    /// carries it on the app's behalf — sidesteps the missing/stale stamp
-    /// rather than depending on one.
-    ///
-    /// `createsNewApplicationInstance = false` is load-bearing: without it, a
-    /// resident app requesting its own activation this way can spawn a second
-    /// process managing the same VM bundles.
+    /// Those selections arrive as a FrontBoard scene action with no `NSEvent`
+    /// behind it, and cooperative activation stamps a request with the sending
+    /// process's last user-event time: a request with no event behind it (or
+    /// one sent late, after the stamp has gone stale) is rejected outright
+    /// (`CPS: Rejecting expired request`, observed 2026-08-26 in the
+    /// WindowServer log). Launch Services carries the request on the app's
+    /// behalf, but it matches by bundle identifier and brings forward whichever
+    /// running copy it picks, which need not be this one.
     private func requestSummonActivation() {
         guard !NSApp.isActive else { return }
         let configuration = NSWorkspace.OpenConfiguration()
@@ -586,17 +576,17 @@ final class AppResidencyController: WindowResidencyHosting {
         host?.armAutoStartPass()
     }
 
-    /// Brings the app forward for a surface something outside the process asked
-    /// for.
+    /// Readies the app to put up a surface something outside the process asked
+    /// for, without activating it.
     ///
-    /// An in-process gesture needs none of this — the user is already in the
-    /// app — but a request arriving over the command socket carries no
-    /// `NSEvent`, so the window it surfaces would open behind whatever the
-    /// person is looking at.
-    private func activateForExternalRequest() {
-        unhideForSummon()
+    /// Anything the app does to activate itself is refused with no user event
+    /// behind it, `NSApp.unhide(_:)`'s own activation request included, so this
+    /// unhides without one. Whoever holds the request activates the app: the
+    /// `kernova` tool by pid, a link's opener through its Launch Services
+    /// request, a script that says `activate`.
+    private func prepareForExternalSurface() {
         setActivationPolicy(.regular)
-        requestSummonActivation()
+        unhideForSummon { NSApp.unhideWithoutActivation() }
     }
 
     /// What the resident app is presenting.
@@ -797,7 +787,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// window closed, and an unhide is the one moment where a person has just
     /// asked for the app.
     ///
-    /// An unhide ``unhideForSummon()`` performed is not that moment and decides
+    /// An unhide ``unhideForSummon(_:)`` performed is not that moment and decides
     /// nothing: the summon that asked for it is already putting a surface up.
     func noteDidUnhide() {
         guard !isUnhidingForSummon else { return }
